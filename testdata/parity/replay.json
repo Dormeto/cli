@@ -1,7 +1,7 @@
 {
   "manager": "0.10.0",
   "router": "0.29.0",
-  "commit": "2ce6feeaa4efa73727ab939c3502d347776ec907",
+  "commit": "580867f1891c87a400abc51d2938c4d6deb1c0da",
   "cases": [
     {
       "name": "replayIdle: one request a day, awake at the start, a wake of 60 s",
@@ -1414,7 +1414,8 @@
           },
           {
             "kind": "unknown",
-            "name": "something"
+            "backend": "ecs:x",
+            "reason": "denied"
           }
         ],
         "prices": [
@@ -1430,7 +1431,8 @@
           {
             "item": {
               "kind": "unknown",
-              "name": "something"
+              "backend": "ecs:x",
+              "reason": "denied"
             },
             "usd": null
           }
