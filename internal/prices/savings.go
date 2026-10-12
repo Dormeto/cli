@@ -7,6 +7,7 @@ package prices
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -104,19 +105,20 @@ func parseMs(s string) (int64, bool) {
 }
 
 // BaselineHours is the hours of [from, to] the baseline would have run. A
-// period that is not valid, or a time zone that is not an IANA name, is 0 hours.
-func BaselineHours(from, to string, b Baseline) float64 {
+// period that is not valid is 0 hours; a time zone that is not an IANA name is
+// an error (Node's Intl throws a RangeError), where the period is not empty.
+func BaselineHours(from, to string, b Baseline) (float64, error) {
 	a, okA := parseMs(from)
 	e, okB := parseMs(to)
 	if !okA || !okB || !(e > a) {
-		return 0
+		return 0, nil
 	}
 	if b.Kind == "always" {
-		return float64(e-a) / hourMs
+		return float64(e-a) / hourMs, nil
 	}
 	loc, ok := location(b.TimeZone)
 	if !ok {
-		return 0
+		return 0, fmt.Errorf("prices: unknown time zone %q", b.TimeZone)
 	}
 	var total int64
 	y, m, d := time.UnixMilli(a).In(loc).Date()
@@ -134,7 +136,7 @@ func BaselineHours(from, to string, b Baseline) float64 {
 		end := instant(dy, dm, dd, businessEnd, loc)
 		total += max(0, min(end, e)-max(start, a))
 	}
-	return float64(total) / hourMs
+	return float64(total) / hourMs, nil
 }
 
 // SavingsOf prices each ASLEEP phase's hours within the baseline by what it
@@ -147,7 +149,10 @@ func SavingsOf(ctx context.Context, phases []Phase, hourly func(context.Context,
 		if phase.State != "ASLEEP" {
 			continue
 		}
-		h := BaselineHours(phase.From, phase.To, baseline)
+		h, err := BaselineHours(phase.From, phase.To, baseline)
+		if err != nil {
+			return Savings{}, err
+		}
 		if h == 0 {
 			continue
 		}

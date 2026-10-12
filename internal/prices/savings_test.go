@@ -31,7 +31,13 @@ func price(item stopped.Item) (*float64, error) {
 	return &v, nil
 }
 
-func hoursOf(from, to string, b Baseline) float64 { return BaselineHours(from, to, b) }
+func hoursOf(from, to string, b Baseline) float64 {
+	h, err := BaselineHours(from, to, b)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
 
 func closeTo(t *testing.T, got, want float64) {
 	t.Helper()
@@ -128,5 +134,20 @@ func TestSavingsReturnsThePricesError(t *testing.T) {
 		func(context.Context, stopped.Item) (*float64, error) { return nil, context.Canceled }, Baseline{Kind: "always"})
 	if err != context.Canceled {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAnUnknownTimeZoneIsAnErrorNotNothingSaved(t *testing.T) {
+	bad := Baseline{Kind: "business-hours", TimeZone: "Mars/Olympus"}
+	if _, err := BaselineHours("2026-10-09T16:00:00.000Z", "2026-10-12T08:00:00.000Z", bad); err == nil {
+		t.Fatal("BaselineHours: no error")
+	}
+	// An empty period needs no zone (Node returns 0 before reading it).
+	if h, err := BaselineHours("2026-10-12T08:00:00.000Z", "2026-10-12T08:00:00.000Z", bad); err != nil || h != 0 {
+		t.Fatalf("empty period = %v, %v", h, err)
+	}
+	_, err := SavingsOf(context.Background(), []Phase{{State: "ASLEEP", From: "2026-10-09T16:00:00.000Z", To: "2026-10-12T08:00:00.000Z", Stopped: []stopped.Item{t3}}}, hourlyOf(t3), bad)
+	if err == nil {
+		t.Fatal("SavingsOf: no error")
 	}
 }

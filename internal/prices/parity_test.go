@@ -105,7 +105,11 @@ func TestSharedCases(t *testing.T) {
 				}
 				got = map[string]any{"prices": prices, "cache": cache.puts}
 			case "baselineHours":
-				got = BaselineHours(in.From, in.To, in.Baseline)
+				h, err := BaselineHours(in.From, in.To, in.Baseline)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = h
 			case "savingsOf":
 				hourly := func(_ context.Context, item stopped.Item) (*float64, error) {
 					want, _ := json.Marshal(item)
