@@ -1,0 +1,3449 @@
+{
+  "manager": "0.10.0",
+  "router": "0.29.0",
+  "commit": "2ce6feeaa4efa73727ab939c3502d347776ec907",
+  "cases": [
+    {
+      "name": "replayIdle: one request a day, awake at the start, a wake of 60 s",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 60,
+        "startAsleep": false
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:15:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T10:20:00.000Z",
+              "to": "2026-09-27T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T10:20:00.000Z",
+              "to": "2026-09-28T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-28T10:20:00.000Z",
+              "to": "2026-09-29T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-29T10:20:00.000Z",
+              "to": "2026-09-30T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-30T10:20:00.000Z",
+              "to": "2026-10-01T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-01T10:20:00.000Z",
+              "to": "2026-10-02T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T10:20:00.000Z",
+              "to": "2026-10-03T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-03T10:20:00.000Z",
+              "to": "2026-10-04T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-04T10:20:00.000Z",
+              "to": "2026-10-05T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-05T10:20:00.000Z",
+              "to": "2026-10-06T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-06T10:20:00.000Z",
+              "to": "2026-10-07T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-07T10:20:00.000Z",
+              "to": "2026-10-08T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-08T10:20:00.000Z",
+              "to": "2026-10-09T10:00:00.000Z"
+            },
+            {
+              "from": "2026-10-09T10:20:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 14,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-27T10:00:00.000Z", "2026-09-28T10:00:00.000Z", "2026-09-29T10:00:00.000Z", "2026-09-30T10:00:00.000Z", "2026-10-01T10:00:00.000Z", "2026-10-02T10:00:00.000Z", "2026-10-03T10:00:00.000Z", "2026-10-04T10:00:00.000Z", "2026-10-05T10:00:00.000Z", "2026-10-06T10:00:00.000Z", "2026-10-07T10:00:00.000Z", "2026-10-08T10:00:00.000Z", "2026-10-09T10:00:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: a request every 10 minutes for an hour, at 5 and 15 minutes",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 3],
+            [610, 3],
+            [620, 3],
+            [630, 3],
+            [640, 3],
+            [650, 3]
+          ]
+        },
+        "windows": [5, 15],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 5,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 6,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T10:10:00.000Z", "2026-09-26T10:20:00.000Z", "2026-09-26T10:30:00.000Z", "2026-09-26T10:40:00.000Z", "2026-09-26T10:50:00.000Z"]
+        },
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:10:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 1,
+          "wokeAt": ["2026-09-26T10:00:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: a silence just under the window keeps it awake, one of the window wakes it again",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [614, 1],
+            [630, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T10:50:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 2,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T10:30:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: naps only at a check: a window of 7 minutes",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1]
+          ]
+        },
+        "windows": [7],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 7,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T10:10:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 1,
+          "wokeAt": ["2026-09-26T10:00:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: requests during a wake are activity, not wakes",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [601, 2],
+            [602, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 180,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T10:20:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 1,
+          "wokeAt": ["2026-09-26T10:00:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: stays awake a full window after a wake",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 600,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T10:25:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 1,
+          "wokeAt": ["2026-09-26T10:00:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: asleep from the start without any request",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": []
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 0,
+          "wokeAt": []
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: a request starting at the check that naps comes after the nap",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [15, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": false
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:35:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 1,
+          "wokeAt": ["2026-09-26T00:15:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: a window of a day over a request every 6 hours: never asleep",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [0, 1],
+            [360, 1],
+            [720, 1],
+            [1080, 1],
+            [1440, 1],
+            [1800, 1],
+            [2160, 1],
+            [2520, 1],
+            [2880, 1],
+            [3240, 1],
+            [3600, 1],
+            [3960, 1],
+            [4320, 1],
+            [4680, 1],
+            [5040, 1],
+            [5400, 1],
+            [5760, 1],
+            [6120, 1],
+            [6480, 1],
+            [6840, 1],
+            [7200, 1],
+            [7560, 1],
+            [7920, 1],
+            [8280, 1],
+            [8640, 1],
+            [9000, 1],
+            [9360, 1],
+            [9720, 1],
+            [10080, 1],
+            [10440, 1],
+            [10800, 1],
+            [11160, 1],
+            [11520, 1],
+            [11880, 1],
+            [12240, 1],
+            [12600, 1],
+            [12960, 1],
+            [13320, 1],
+            [13680, 1],
+            [14040, 1],
+            [14400, 1],
+            [14760, 1],
+            [15120, 1],
+            [15480, 1],
+            [15840, 1],
+            [16200, 1],
+            [16560, 1],
+            [16920, 1],
+            [17280, 1],
+            [17640, 1],
+            [18000, 1],
+            [18360, 1],
+            [18720, 1],
+            [19080, 1],
+            [19440, 1],
+            [19800, 1]
+          ]
+        },
+        "windows": [1440],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": false
+      },
+      "output": [
+        {
+          "minutes": 1440,
+          "asleep": [],
+          "wakes": 0,
+          "wokeAt": []
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: a request in the last minute wakes it",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [20159, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-10-09T23:59:00.000Z"
+            }
+          ],
+          "wakes": 1,
+          "wokeAt": ["2026-10-09T23:59:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: minutes out of order or repeated are added up",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [650, 1],
+            [600, 2],
+            [600, 3],
+            [610, 1]
+          ]
+        },
+        "windows": [15],
+        "checkMinutes": 5,
+        "wakeSeconds": 0,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T10:30:00.000Z",
+              "to": "2026-09-26T10:50:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:10:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 2,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T10:50:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "replayIdle: every window tried with a current one of 25, checked every hour",
+      "input": {
+        "function": "replayIdle",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [700, 2],
+            [2100, 1],
+            [9000, 4]
+          ]
+        },
+        "windows": [5, 10, 15, 20, 25, 30, 45, 60, 90, 120],
+        "checkMinutes": 60,
+        "wakeSeconds": 45,
+        "startAsleep": true
+      },
+      "output": [
+        {
+          "minutes": 5,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T12:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 10,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T12:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 15,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T12:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 20,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T13:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 25,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T13:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 30,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T13:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 45,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T11:00:00.000Z",
+              "to": "2026-09-26T11:40:00.000Z"
+            },
+            {
+              "from": "2026-09-26T13:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T12:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T07:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 4,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-26T11:40:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 60,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T13:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T13:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T08:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 3,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 90,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T14:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T13:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T08:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 3,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        },
+        {
+          "minutes": 120,
+          "asleep": [
+            {
+              "from": "2026-09-26T00:00:00.000Z",
+              "to": "2026-09-26T10:00:00.000Z"
+            },
+            {
+              "from": "2026-09-26T14:00:00.000Z",
+              "to": "2026-09-27T11:00:00.000Z"
+            },
+            {
+              "from": "2026-09-27T14:00:00.000Z",
+              "to": "2026-10-02T06:00:00.000Z"
+            },
+            {
+              "from": "2026-10-02T09:00:00.000Z",
+              "to": "2026-10-10T00:00:00.000Z"
+            }
+          ],
+          "wakes": 3,
+          "wokeAt": ["2026-09-26T10:00:00.000Z", "2026-09-27T11:00:00.000Z", "2026-10-02T06:00:00.000Z"]
+        }
+      ]
+    },
+    {
+      "name": "recommendWindow: the shortest window avoiding 90% of the wakes the longest avoids",
+      "input": {
+        "function": "recommendWindow",
+        "rows": [
+          {
+            "minutes": 5,
+            "wakes": 40
+          },
+          {
+            "minutes": 10,
+            "wakes": 30
+          },
+          {
+            "minutes": 15,
+            "wakes": 20
+          },
+          {
+            "minutes": 20,
+            "wakes": 12
+          },
+          {
+            "minutes": 30,
+            "wakes": 11
+          },
+          {
+            "minutes": 45,
+            "wakes": 10
+          },
+          {
+            "minutes": 60,
+            "wakes": 10
+          },
+          {
+            "minutes": 90,
+            "wakes": 9
+          },
+          {
+            "minutes": 120,
+            "wakes": 9
+          }
+        ]
+      },
+      "output": 20
+    },
+    {
+      "name": "recommendWindow: the same wakes for every window: the shortest",
+      "input": {
+        "function": "recommendWindow",
+        "rows": [
+          {
+            "minutes": 5,
+            "wakes": 7
+          },
+          {
+            "minutes": 10,
+            "wakes": 7
+          },
+          {
+            "minutes": 15,
+            "wakes": 7
+          },
+          {
+            "minutes": 20,
+            "wakes": 7
+          },
+          {
+            "minutes": 30,
+            "wakes": 7
+          },
+          {
+            "minutes": 45,
+            "wakes": 7
+          },
+          {
+            "minutes": 60,
+            "wakes": 7
+          },
+          {
+            "minutes": 90,
+            "wakes": 7
+          },
+          {
+            "minutes": 120,
+            "wakes": 7
+          }
+        ]
+      },
+      "output": 5
+    },
+    {
+      "name": "recommendWindow: no wake at all: the shortest",
+      "input": {
+        "function": "recommendWindow",
+        "rows": [
+          {
+            "minutes": 5,
+            "wakes": 0
+          },
+          {
+            "minutes": 10,
+            "wakes": 0
+          },
+          {
+            "minutes": 15,
+            "wakes": 0
+          },
+          {
+            "minutes": 20,
+            "wakes": 0
+          },
+          {
+            "minutes": 30,
+            "wakes": 0
+          },
+          {
+            "minutes": 45,
+            "wakes": 0
+          },
+          {
+            "minutes": 60,
+            "wakes": 0
+          },
+          {
+            "minutes": 90,
+            "wakes": 0
+          },
+          {
+            "minutes": 120,
+            "wakes": 0
+          }
+        ]
+      },
+      "output": 5
+    },
+    {
+      "name": "recommendWindow: wakes rising again for a longer window: the first under the threshold",
+      "input": {
+        "function": "recommendWindow",
+        "rows": [
+          {
+            "minutes": 5,
+            "wakes": 40
+          },
+          {
+            "minutes": 10,
+            "wakes": 30
+          },
+          {
+            "minutes": 15,
+            "wakes": 12
+          },
+          {
+            "minutes": 20,
+            "wakes": 20
+          },
+          {
+            "minutes": 30,
+            "wakes": 11
+          },
+          {
+            "minutes": 45,
+            "wakes": 10
+          },
+          {
+            "minutes": 60,
+            "wakes": 10
+          },
+          {
+            "minutes": 90,
+            "wakes": 9
+          },
+          {
+            "minutes": 120,
+            "wakes": 9
+          }
+        ]
+      },
+      "output": 15
+    },
+    {
+      "name": "recommendWindow: only the nine windows are candidates, not a current 25 or 1,440",
+      "input": {
+        "function": "recommendWindow",
+        "rows": [
+          {
+            "minutes": 5,
+            "wakes": 40
+          },
+          {
+            "minutes": 10,
+            "wakes": 30
+          },
+          {
+            "minutes": 15,
+            "wakes": 20
+          },
+          {
+            "minutes": 20,
+            "wakes": 12
+          },
+          {
+            "minutes": 30,
+            "wakes": 11
+          },
+          {
+            "minutes": 45,
+            "wakes": 10
+          },
+          {
+            "minutes": 60,
+            "wakes": 10
+          },
+          {
+            "minutes": 90,
+            "wakes": 9
+          },
+          {
+            "minutes": 120,
+            "wakes": 9
+          },
+          {
+            "minutes": 25,
+            "wakes": 11
+          },
+          {
+            "minutes": 1440,
+            "wakes": 0
+          }
+        ]
+      },
+      "output": 20
+    },
+    {
+      "name": "recommendWindow: no row: the shortest of the nine",
+      "input": {
+        "function": "recommendWindow",
+        "rows": []
+      },
+      "output": 5
+    },
+    {
+      "name": "windowsFor: a current window of 15",
+      "input": {
+        "function": "windowsFor",
+        "current": 15
+      },
+      "output": [5, 10, 15, 20, 30, 45, 60, 90, 120]
+    },
+    {
+      "name": "windowsFor: a current window of 25",
+      "input": {
+        "function": "windowsFor",
+        "current": 25
+      },
+      "output": [5, 10, 15, 20, 25, 30, 45, 60, 90, 120]
+    },
+    {
+      "name": "windowsFor: a current window of 1440",
+      "input": {
+        "function": "windowsFor",
+        "current": 1440
+      },
+      "output": [5, 10, 15, 20, 30, 45, 60, 90, 120, 1440]
+    },
+    {
+      "name": "checkMinutesOf: rate(5 minutes)",
+      "input": {
+        "function": "checkMinutesOf",
+        "schedule": "rate(5 minutes)"
+      },
+      "output": 5
+    },
+    {
+      "name": "checkMinutesOf: rate(1 minute)",
+      "input": {
+        "function": "checkMinutesOf",
+        "schedule": "rate(1 minute)"
+      },
+      "output": 1
+    },
+    {
+      "name": "checkMinutesOf: rate(1 hour)",
+      "input": {
+        "function": "checkMinutesOf",
+        "schedule": "rate(1 hour)"
+      },
+      "output": 60
+    },
+    {
+      "name": "checkMinutesOf: rate(2 hours)",
+      "input": {
+        "function": "checkMinutesOf",
+        "schedule": "rate(2 hours)"
+      },
+      "output": 120
+    },
+    {
+      "name": "checkMinutesOf: cron(0/5 * * * ? *)",
+      "input": {
+        "function": "checkMinutesOf",
+        "schedule": "cron(0/5 * * * ? *)"
+      },
+      "output": 5
+    },
+    {
+      "name": "checkMinutesOf: no schedule",
+      "input": {
+        "function": "checkMinutesOf",
+        "schedule": null
+      },
+      "output": 5
+    },
+    {
+      "name": "idleWindowAdvice: each window priced, asleep hours, wakes and wait; the knee; the real wakes",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: within the business-hours baseline",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "Europe/Paris"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 11.562857142857142,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 11.48142857142857,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 11.4,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 11.318571428571428,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 11.155714285714282,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 10.911428571428571,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 10.667142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 10.17857142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 9.69,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: an item without a price: nothing priced, never a partial figure",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          },
+          {
+            "kind": "unknown",
+            "name": "something"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          },
+          {
+            "item": {
+              "kind": "unknown",
+              "name": "something"
+            },
+            "usd": null
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": false,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: no nap described yet: nothing priced",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": null,
+        "prices": [],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": false,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": null,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: a backend running 08:00 to 20:00 UTC: saves only while it ran",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": [
+          {
+            "from": "2026-09-26T08:00:00.000Z",
+            "to": "2026-09-26T20:00:00.000Z"
+          },
+          {
+            "from": "2026-09-27T08:00:00.000Z",
+            "to": "2026-09-27T20:00:00.000Z"
+          },
+          {
+            "from": "2026-09-28T08:00:00.000Z",
+            "to": "2026-09-28T20:00:00.000Z"
+          },
+          {
+            "from": "2026-09-29T08:00:00.000Z",
+            "to": "2026-09-29T20:00:00.000Z"
+          },
+          {
+            "from": "2026-09-30T08:00:00.000Z",
+            "to": "2026-09-30T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-01T08:00:00.000Z",
+            "to": "2026-10-01T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-02T08:00:00.000Z",
+            "to": "2026-10-02T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-03T08:00:00.000Z",
+            "to": "2026-10-03T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-04T08:00:00.000Z",
+            "to": "2026-10-04T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-05T08:00:00.000Z",
+            "to": "2026-10-05T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-06T08:00:00.000Z",
+            "to": "2026-10-06T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-07T08:00:00.000Z",
+            "to": "2026-10-07T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-08T08:00:00.000Z",
+            "to": "2026-10-08T20:00:00.000Z"
+          },
+          {
+            "from": "2026-10-09T08:00:00.000Z",
+            "to": "2026-10-09T20:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 16.188000000000002,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 16.074,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 15.959999999999999,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 15.846,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 15.617999999999999,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 15.276,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 14.934,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 14.249999999999996,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 13.565999999999999,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: a backend measured running all the time",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": [
+          {
+            "from": "2026-09-26T00:00:00.000Z",
+            "to": "2026-10-10T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: a backend measured never running: nothing saved",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": []
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 0,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: no wake measured yet: the wait unknown",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": null,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": null,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": null
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: clearly more wakes replayed than real ones: noisy",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 9,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 9,
+          "replayedWakes": 14,
+          "noisy": true
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: a few more wakes replayed than real ones: not noisy",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 10,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 10,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: 4 replayed wakes for 2 real ones: not noisy (at least 3 more)",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 2,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.946428571428573,
+            "usdMonth": 32.75871428571429,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.916666666666668,
+            "usdMonth": 32.718,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.886904761904763,
+            "usdMonth": 32.67728571428571,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.857142857142858,
+            "usdMonth": 32.63657142857143,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.797619047619047,
+            "usdMonth": 32.555142857142854,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.708333333333336,
+            "usdMonth": 32.433,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 23.619047619047617,
+            "usdMonth": 32.31085714285714,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 23.440476190476186,
+            "usdMonth": 32.06657142857143,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 23.26190476190476,
+            "usdMonth": 31.82228571428571,
+            "wakesPerDay": 0.2857142857142857,
+            "waitSecondsPerDay": 8.571428571428571
+          }
+        ],
+        "actual": {
+          "wakes": 2,
+          "replayedWakes": 4,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: compared over the time the history knows: onboarded on day 5",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 9,
+        "actualFrom": "2026-10-01T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 9,
+          "replayedWakes": 9,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: a history that knows none of the period: no comparison",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 2,
+        "actualFrom": null,
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 2,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: a current window of a day is shown, never recommended",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 1440,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 1,
+            "os": "Linux"
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 1440,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 32.59585714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 32.47371428571429,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 32.35157142857143,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 32.22942857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 31.985142857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 31.618714285714287,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 31.252285714285716,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 30.519428571428566,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 29.786571428571424,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 1440,
+            "asleepHours": 0,
+            "usdMonth": 0,
+            "wakesPerDay": 0,
+            "waitSecondsPerDay": 0
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 0,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: Spot capacity and pods on nodes, in Paris business hours",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [600, 1],
+            [2040, 1],
+            [3480, 1],
+            [4920, 1],
+            [6360, 1],
+            [7800, 1],
+            [9240, 1],
+            [10680, 1],
+            [12120, 1],
+            [13560, 1],
+            [15000, 1],
+            [16440, 1],
+            [17880, 1],
+            [19320, 1]
+          ]
+        },
+        "current": 15,
+        "checkMinutes": 5,
+        "wakeMs": 30000,
+        "startAsleep": false,
+        "actualWakes": 14,
+        "actualFrom": "2026-09-26T00:00:00.000Z",
+        "stopped": [
+          {
+            "kind": "ec2",
+            "type": "t3.medium",
+            "count": 2,
+            "os": "Linux",
+            "spot": true
+          },
+          {
+            "kind": "k8s-pods",
+            "count": 2,
+            "cpu": 0.25,
+            "memoryGb": 0.5,
+            "nodeType": "m5.large",
+            "os": "Linux",
+            "autoscaled": true,
+            "allocatable": {
+              "cpu": 1.93,
+              "memoryGb": 6.886
+            }
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux",
+              "spot": true
+            },
+            "usd": 0.038
+          },
+          {
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.25,
+              "memoryGb": 0.5,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "usd": 0.02772
+          }
+        ],
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "Europe/Paris"
+        },
+        "wakerTargetGroup": true,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 15,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 30,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.827380952380953,
+            "usdMonth": 16.664714285714286,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.73809523809524,
+            "usdMonth": 16.54735714285714,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 23.648809523809526,
+            "usdMonth": 16.43,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 23.559523809523807,
+            "usdMonth": 16.312642857142855,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 23.380952380952383,
+            "usdMonth": 16.07792857142857,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 23.11309523809524,
+            "usdMonth": 15.725857142857139,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 22.8452380952381,
+            "usdMonth": 15.373785714285715,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 22.309523809523807,
+            "usdMonth": 14.669642857142858,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 21.773809523809522,
+            "usdMonth": 13.965500000000002,
+            "wakesPerDay": 1,
+            "waitSecondsPerDay": 30
+          }
+        ],
+        "actual": {
+          "wakes": 14,
+          "replayedWakes": 14,
+          "noisy": false
+        },
+        "wakerTargetGroup": true
+      }
+    },
+    {
+      "name": "idleWindowAdvice: as the estimate calls it: a 60-minute window, no history, a Fargate service on Fargate and Fargate Spot",
+      "input": {
+        "function": "idleWindowAdvice",
+        "requests": {
+          "from": "2026-09-26T00:00:00.000Z",
+          "to": "2026-10-10T00:00:00.000Z",
+          "minutes": [
+            [540, 2],
+            [780, 1],
+            [1020, 5],
+            [1980, 2],
+            [2220, 1],
+            [2460, 5],
+            [3420, 2],
+            [3660, 1],
+            [3900, 5],
+            [4860, 2],
+            [5100, 1],
+            [5340, 5],
+            [6300, 2],
+            [6540, 1],
+            [6780, 5],
+            [7740, 2],
+            [7980, 1],
+            [8220, 5],
+            [9180, 2],
+            [9420, 1],
+            [9660, 5],
+            [10620, 2],
+            [10860, 1],
+            [11100, 5],
+            [12060, 2],
+            [12300, 1],
+            [12540, 5],
+            [13500, 2],
+            [13740, 1],
+            [13980, 5],
+            [14940, 2],
+            [15180, 1],
+            [15420, 5],
+            [16380, 2],
+            [16620, 1],
+            [16860, 5],
+            [17820, 2],
+            [18060, 1],
+            [18300, 5],
+            [19260, 2],
+            [19500, 1],
+            [19740, 5]
+          ]
+        },
+        "current": 60,
+        "checkMinutes": 5,
+        "wakeMs": 60000,
+        "startAsleep": false,
+        "actualWakes": 0,
+        "actualFrom": null,
+        "stopped": [
+          {
+            "kind": "fargate",
+            "vcpu": 0.25,
+            "memoryGb": 0.5,
+            "count": 1,
+            "arch": "x86_64",
+            "os": "Linux"
+          },
+          {
+            "kind": "fargate",
+            "vcpu": 0.25,
+            "memoryGb": 0.5,
+            "count": 3,
+            "arch": "x86_64",
+            "os": "Linux",
+            "spot": true
+          }
+        ],
+        "prices": [
+          {
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.25,
+              "memoryGb": 0.5,
+              "count": 1,
+              "arch": "x86_64",
+              "os": "Linux"
+            },
+            "usd": 0.0123425
+          },
+          {
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.25,
+              "memoryGb": 0.5,
+              "count": 3,
+              "arch": "x86_64",
+              "os": "Linux",
+              "spot": true
+            },
+            "usd": 0.01110825
+          }
+        ],
+        "baseline": {
+          "kind": "always"
+        },
+        "wakerTargetGroup": false,
+        "now": "2026-10-12T08:00:00.000Z",
+        "running": null
+      },
+      "output": {
+        "computedAt": "2026-10-12T08:00:00.000Z",
+        "from": "2026-09-26T00:00:00.000Z",
+        "to": "2026-10-10T00:00:00.000Z",
+        "current": 60,
+        "recommended": 5,
+        "checkMinutes": 5,
+        "wakeSeconds": 60,
+        "priced": true,
+        "windows": [
+          {
+            "minutes": 5,
+            "asleepHours": 23.494047619047617,
+            "usdMonth": 16.528591116071432,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 10,
+            "asleepHours": 23.23809523809524,
+            "usdMonth": 16.348522857142846,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 15,
+            "asleepHours": 22.98214285714286,
+            "usdMonth": 16.168454598214293,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 20,
+            "asleepHours": 22.726190476190474,
+            "usdMonth": 15.988386339285714,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 30,
+            "asleepHours": 22.21428571428572,
+            "usdMonth": 15.628249821428565,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 45,
+            "asleepHours": 21.446428571428573,
+            "usdMonth": 15.088045044642863,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 60,
+            "asleepHours": 20.678571428571427,
+            "usdMonth": 14.547840267857143,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 90,
+            "asleepHours": 19.14285714285714,
+            "usdMonth": 13.467430714285713,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          },
+          {
+            "minutes": 120,
+            "asleepHours": 17.607142857142843,
+            "usdMonth": 12.387021160714292,
+            "wakesPerDay": 3,
+            "waitSecondsPerDay": 180
+          }
+        ],
+        "actual": {
+          "wakes": 0,
+          "replayedWakes": 42,
+          "noisy": false
+        },
+        "wakerTargetGroup": false
+      }
+    }
+  ]
+}

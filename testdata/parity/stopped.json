@@ -1,0 +1,2442 @@
+{
+  "manager": "0.10.0",
+  "router": "0.29.0",
+  "commit": "2ce6feeaa4efa73727ab939c3502d347776ec907",
+  "cases": [
+    {
+      "name": "describeStopped: EC2 instances by type and OS; an Auto Scaling group at its desired capacity by the types of its instances",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "instance",
+            "id": "i-1"
+          },
+          {
+            "kind": "instance",
+            "id": "i-2"
+          },
+          {
+            "kind": "asg",
+            "name": "web",
+            "desired": 3,
+            "instances": ["i-3", "i-4", "i-5"]
+          }
+        ],
+        "answers": {
+          "ec2.describeInstances": [
+            {
+              "input": {
+                "InstanceIds": ["i-1"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-1",
+                        "InstanceType": "t3.medium",
+                        "PlatformDetails": "Linux/UNIX"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "InstanceIds": ["i-2"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-2",
+                        "InstanceType": "m5.large",
+                        "PlatformDetails": "Windows"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "InstanceIds": ["i-3", "i-4", "i-5"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-3",
+                        "InstanceType": "t3.small",
+                        "PlatformDetails": "Linux/UNIX"
+                      },
+                      {
+                        "InstanceId": "i-4",
+                        "InstanceType": "t3a.small",
+                        "PlatformDetails": "Linux/UNIX"
+                      },
+                      {
+                        "InstanceId": "i-5",
+                        "InstanceType": "t3.small",
+                        "PlatformDetails": "Linux/UNIX"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "ec2",
+          "type": "t3.medium",
+          "count": 1,
+          "os": "Linux"
+        },
+        {
+          "kind": "ec2",
+          "type": "m5.large",
+          "count": 1,
+          "os": "Windows"
+        },
+        {
+          "kind": "ec2",
+          "type": "t3.small",
+          "count": 2,
+          "os": "Linux"
+        },
+        {
+          "kind": "ec2",
+          "type": "t3a.small",
+          "count": 1,
+          "os": "Linux"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: an OS neither Linux nor Windows is said as it is",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "instance",
+            "id": "i-1"
+          }
+        ],
+        "answers": {
+          "ec2.describeInstances": [
+            {
+              "input": {
+                "InstanceIds": ["i-1"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-1",
+                        "InstanceType": "m5.large",
+                        "PlatformDetails": "Red Hat Enterprise Linux"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "ec2",
+          "type": "m5.large",
+          "count": 1,
+          "os": "Red Hat Enterprise Linux"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: Windows with its own license or with SQL Server is said as it is",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "instance",
+            "id": "i-1"
+          },
+          {
+            "kind": "instance",
+            "id": "i-2"
+          }
+        ],
+        "answers": {
+          "ec2.describeInstances": [
+            {
+              "input": {
+                "InstanceIds": ["i-1"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-1",
+                        "InstanceType": "m5.large",
+                        "PlatformDetails": "Windows BYOL"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "InstanceIds": ["i-2"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-2",
+                        "InstanceType": "m5.large",
+                        "PlatformDetails": "Windows with SQL Server Standard"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "ec2",
+          "type": "m5.large",
+          "count": 1,
+          "os": "Windows BYOL"
+        },
+        {
+          "kind": "ec2",
+          "type": "m5.large",
+          "count": 1,
+          "os": "Windows with SQL Server Standard"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a Fargate service, ARM: its task size times its desired count",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 2
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "launchType": "FARGATE"
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "512",
+                  "memory": "1024",
+                  "runtimePlatform": {
+                    "cpuArchitecture": "ARM64",
+                    "operatingSystemFamily": "LINUX"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 0.5,
+          "memoryGb": 1,
+          "arch": "arm64",
+          "os": "Linux",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a service on the FARGATE capacity provider",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 1
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "capacityProviderStrategy": [
+                      {
+                        "capacityProvider": "FARGATE",
+                        "weight": 1
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "256",
+                  "memory": "512"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a service on EC2 capacity stops nothing Dormeto counts",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 2
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "launchType": "EC2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": []
+    },
+    {
+      "name": "describeStopped: a Windows Fargate service",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 1
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "launchType": "FARGATE"
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "1024",
+                  "memory": "2048",
+                  "runtimePlatform": {
+                    "operatingSystemFamily": "WINDOWS_SERVER_2022_CORE"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 1,
+          "memoryGb": 2,
+          "arch": "x86_64",
+          "os": "Windows",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a service at a desired count of 0 stops nothing",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 0
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "launchType": "FARGATE"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": []
+    },
+    {
+      "name": "describeStopped: a task size the boundary refuses is an unknown item",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 1
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "launchType": "FARGATE"
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "error": {
+                "name": "AccessDeniedException",
+                "message": "User: arn:aws:sts::111122223333:assumed-role/dmt-router/x is not authorized to perform: ecs:DescribeTaskDefinition"
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "unknown",
+          "backend": "ecs:arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+          "reason": "User: arn:aws:sts::111122223333:assumed-role/dmt-router/x is not authorized to perform: ecs:DescribeTaskDefinition"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: RDS instances (Multi-AZ said), an Aurora cluster's provisioned instances, Aurora Serverless v2 at its minimum",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "rds-instance",
+            "id": "shop"
+          },
+          {
+            "kind": "rds-cluster",
+            "id": "aur"
+          },
+          {
+            "kind": "rds-cluster",
+            "id": "srv"
+          }
+        ],
+        "answers": {
+          "rds.describeDBClusters": [
+            {
+              "input": {
+                "DBClusterIdentifier": "aur"
+              },
+              "output": {
+                "DBClusters": [
+                  {
+                    "DBClusterIdentifier": "aur",
+                    "Engine": "aurora-postgresql"
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "DBClusterIdentifier": "srv"
+              },
+              "output": {
+                "DBClusters": [
+                  {
+                    "DBClusterIdentifier": "srv",
+                    "Engine": "aurora-mysql",
+                    "ServerlessV2ScalingConfiguration": {
+                      "MinCapacity": 0.5,
+                      "MaxCapacity": 4
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "rds.describeDBInstances": [
+            {
+              "input": {
+                "DBInstanceIdentifier": "shop"
+              },
+              "output": {
+                "DBInstances": [
+                  {
+                    "DBInstanceIdentifier": "shop",
+                    "DBInstanceClass": "db.t4g.micro",
+                    "Engine": "postgres",
+                    "MultiAZ": true
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "Filters": [
+                  {
+                    "Name": "db-cluster-id",
+                    "Values": ["aur"]
+                  }
+                ]
+              },
+              "output": {
+                "DBInstances": [
+                  {
+                    "DBInstanceIdentifier": "aur-1",
+                    "DBInstanceClass": "db.r6g.large",
+                    "Engine": "aurora-postgresql",
+                    "DBClusterIdentifier": "aur"
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "Filters": [
+                  {
+                    "Name": "db-cluster-id",
+                    "Values": ["srv"]
+                  }
+                ]
+              },
+              "output": {
+                "DBInstances": [
+                  {
+                    "DBInstanceIdentifier": "srv-1",
+                    "DBInstanceClass": "db.serverless",
+                    "Engine": "aurora-mysql",
+                    "DBClusterIdentifier": "srv"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "rds",
+          "class": "db.t4g.micro",
+          "engine": "postgres",
+          "multiAz": true
+        },
+        {
+          "kind": "rds",
+          "class": "db.r6g.large",
+          "engine": "aurora-postgresql",
+          "multiAz": false
+        },
+        {
+          "kind": "aurora-serverless",
+          "engine": "aurora-mysql",
+          "acu": 0.5
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: an instance on Spot is said so; a group's on-demand and Spot instances of one type are two items",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "instance",
+            "id": "i-1"
+          },
+          {
+            "kind": "asg",
+            "name": "web",
+            "desired": 3,
+            "instances": ["i-2", "i-3", "i-4"]
+          }
+        ],
+        "answers": {
+          "ec2.describeInstances": [
+            {
+              "input": {
+                "InstanceIds": ["i-1"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-1",
+                        "InstanceType": "t3.medium",
+                        "PlatformDetails": "Linux/UNIX",
+                        "InstanceLifecycle": "spot"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "InstanceIds": ["i-2", "i-3", "i-4"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-2",
+                        "InstanceType": "t3.medium",
+                        "PlatformDetails": "Linux/UNIX"
+                      },
+                      {
+                        "InstanceId": "i-3",
+                        "InstanceType": "t3.medium",
+                        "PlatformDetails": "Linux/UNIX",
+                        "InstanceLifecycle": "spot"
+                      },
+                      {
+                        "InstanceId": "i-4",
+                        "InstanceType": "t3.medium",
+                        "PlatformDetails": "Linux/UNIX"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "ec2",
+          "type": "t3.medium",
+          "count": 1,
+          "os": "Linux",
+          "spot": true
+        },
+        {
+          "kind": "ec2",
+          "type": "t3.medium",
+          "count": 2,
+          "os": "Linux"
+        },
+        {
+          "kind": "ec2",
+          "type": "t3.medium",
+          "count": 1,
+          "os": "Linux",
+          "spot": true
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a group whose desired capacity was not all described: the rest added to its first item",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "asg",
+            "name": "web",
+            "desired": 3,
+            "instances": ["i-1"]
+          }
+        ],
+        "answers": {
+          "ec2.describeInstances": [
+            {
+              "input": {
+                "InstanceIds": ["i-1"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-1",
+                        "InstanceType": "t3.small",
+                        "PlatformDetails": "Linux/UNIX",
+                        "InstanceLifecycle": "spot"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "ec2",
+          "type": "t3.small",
+          "count": 3,
+          "os": "Linux",
+          "spot": true
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a group at 0 stops nothing; one without an instance to read is an unknown item",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "asg",
+            "name": "idle",
+            "desired": 0,
+            "instances": []
+          },
+          {
+            "kind": "asg",
+            "name": "new",
+            "desired": 2,
+            "instances": []
+          }
+        ],
+        "answers": {}
+      },
+      "output": [
+        {
+          "kind": "unknown",
+          "backend": "asg:new",
+          "reason": "no instance to read its type from"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: Fargate and Fargate Spot: the base first, then the weights, an item each",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 5
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "capacityProviderStrategy": [
+                      {
+                        "capacityProvider": "FARGATE",
+                        "base": 1,
+                        "weight": 1
+                      },
+                      {
+                        "capacityProvider": "FARGATE_SPOT",
+                        "weight": 3
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "256",
+                  "memory": "512"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 2
+        },
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 3,
+          "spot": true
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: Fargate Spot only: one Spot item",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 2
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "capacityProviderStrategy": [
+                      {
+                        "capacityProvider": "FARGATE_SPOT",
+                        "weight": 1
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "256",
+                  "memory": "512"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 2,
+          "spot": true
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a share on EC2 capacity not counted",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 4
+          }
+        ],
+        "answers": {
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "capacityProviderStrategy": [
+                      {
+                        "capacityProvider": "app-asg",
+                        "weight": 1
+                      },
+                      {
+                        "capacityProvider": "FARGATE_SPOT",
+                        "weight": 1
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "256",
+                  "memory": "512"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 2,
+          "spot": true
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: Kubernetes pods on Fargate: the size given (CapacityProvisioned), else the requests plus 256 MB rounded up",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": null
+          }
+        ],
+        "answers": {
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/deployments/web"
+              },
+              "output": {
+                "kind": "Deployment",
+                "metadata": {
+                  "name": "web",
+                  "namespace": "demo"
+                },
+                "spec": {
+                  "replicas": 2,
+                  "selector": {
+                    "matchLabels": {
+                      "app": "web"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "kubernetes.list": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/namespaces/demo/pods",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {
+                      "CapacityProvisioned": "0.25vCPU 0.5GB"
+                    },
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-3-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "100m",
+                            "memory": "128Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.1",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-2",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {
+                      "CapacityProvisioned": "0.25vCPU 0.5GB"
+                    },
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-3-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "100m",
+                            "memory": "128Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.2",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-3",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-3-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "300m",
+                            "memory": "700Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.3",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-4",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-3-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "250m",
+                            "memory": "256Mi"
+                          }
+                        }
+                      }
+                    ],
+                    "initContainers": [
+                      {
+                        "name": "init",
+                        "resources": {
+                          "requests": {
+                            "cpu": "1",
+                            "memory": "1Gi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.4",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-5",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-3-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "32",
+                            "memory": "256Gi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.5",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-6",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-3-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "250m",
+                            "memory": "512Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Succeeded",
+                    "podIP": "10.0.3.6",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/replicasets",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d4f8",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "name": "web",
+                        "controller": true
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "eks-demo"
+              },
+              "output": {}
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 2
+        },
+        {
+          "kind": "fargate",
+          "vcpu": 0.5,
+          "memoryGb": 1,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 1
+        },
+        {
+          "kind": "fargate",
+          "vcpu": 1,
+          "memoryGb": 2,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 1
+        },
+        {
+          "kind": "unknown",
+          "backend": "k8s:eks-demo/demo/Deployment/web",
+          "reason": "pods larger than any Fargate size"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: Kubernetes pods on EC2 nodes: requests, the node's type, allocatable and capacity type, its autoscaler (Karpenter; the Cluster Autoscaler found by discovery)",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": null
+          },
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": "cluster-autoscaler"
+          }
+        ],
+        "answers": {
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/deployments/web"
+              },
+              "output": {
+                "kind": "Deployment",
+                "metadata": {
+                  "name": "web",
+                  "namespace": "demo"
+                },
+                "spec": {
+                  "replicas": 2,
+                  "selector": {
+                    "matchLabels": {
+                      "app": "web"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/nodes/ip-10-0-1-1.eu-west-1.compute.internal"
+              },
+              "output": {
+                "metadata": {
+                  "name": "ip-10-0-1-1.eu-west-1.compute.internal",
+                  "labels": {
+                    "node.kubernetes.io/instance-type": "m5.large",
+                    "kubernetes.io/os": "linux",
+                    "karpenter.sh/nodepool": "default",
+                    "karpenter.sh/capacity-type": "spot"
+                  }
+                },
+                "status": {
+                  "allocatable": {
+                    "cpu": "1930m",
+                    "memory": "7220184Ki"
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/nodes/ip-10-0-1-2.eu-west-1.compute.internal"
+              },
+              "output": {
+                "metadata": {
+                  "name": "ip-10-0-1-2.eu-west-1.compute.internal",
+                  "labels": {
+                    "node.kubernetes.io/instance-type": "t4g.medium",
+                    "kubernetes.io/os": "linux",
+                    "eks.amazonaws.com/nodegroup": "system",
+                    "eks.amazonaws.com/capacityType": "ON_DEMAND"
+                  }
+                },
+                "status": {
+                  "allocatable": {
+                    "cpu": "1930m",
+                    "memory": "3366880Ki"
+                  }
+                }
+              }
+            }
+          ],
+          "kubernetes.list": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/namespaces/demo/pods",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "250m",
+                            "memory": "512Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.1",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-2",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "250m",
+                            "memory": "512Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.2",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-3",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-2.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "500m",
+                            "memory": "1Gi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.3",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-4",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": null,
+                    "schedulerName": "default-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "250m",
+                            "memory": "512Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.4",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/replicasets",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d4f8",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "name": "web",
+                        "controller": true
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "eks-demo"
+              },
+              "output": {}
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "k8s-pods",
+          "cpu": 0.25,
+          "memoryGb": 0.5,
+          "nodeType": "m5.large",
+          "os": "Linux",
+          "spot": true,
+          "autoscaled": true,
+          "allocatable": {
+            "cpu": 1.93,
+            "memoryGb": 6.886
+          },
+          "count": 2
+        },
+        {
+          "kind": "k8s-pods",
+          "cpu": 0.5,
+          "memoryGb": 1,
+          "nodeType": "t4g.medium",
+          "os": "Linux",
+          "autoscaled": false,
+          "allocatable": {
+            "cpu": 1.93,
+            "memoryGb": 3.211
+          },
+          "count": 1
+        },
+        {
+          "kind": "k8s-pods",
+          "cpu": 0.25,
+          "memoryGb": 0.5,
+          "nodeType": "m5.large",
+          "os": "Linux",
+          "spot": true,
+          "autoscaled": true,
+          "allocatable": {
+            "cpu": 1.93,
+            "memoryGb": 6.886
+          },
+          "count": 2
+        },
+        {
+          "kind": "k8s-pods",
+          "cpu": 0.5,
+          "memoryGb": 1,
+          "nodeType": "t4g.medium",
+          "os": "Linux",
+          "autoscaled": true,
+          "allocatable": {
+            "cpu": 1.93,
+            "memoryGb": 3.211
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: Kubernetes pods without CPU and memory requests are said, not priced",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": null
+          }
+        ],
+        "answers": {
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/deployments/web"
+              },
+              "output": {
+                "kind": "Deployment",
+                "metadata": {
+                  "name": "web",
+                  "namespace": "demo"
+                },
+                "spec": {
+                  "replicas": 2,
+                  "selector": {
+                    "matchLabels": {
+                      "app": "web"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "kubernetes.list": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/namespaces/demo/pods",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {}
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.1",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/replicasets",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d4f8",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "name": "web",
+                        "controller": true
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "eks-demo"
+              },
+              "output": {}
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "unknown",
+          "backend": "k8s:eks-demo/demo/Deployment/web",
+          "reason": "pods without CPU and memory requests: their share of the node is unknown"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a Kubernetes cluster that cannot be reached: an unknown item",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": null
+          }
+        ],
+        "answers": {
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "eks-demo"
+              },
+              "error": {
+                "name": "Error",
+                "message": "cluster unreachable"
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "unknown",
+          "backend": "k8s:eks-demo/demo/Deployment/web",
+          "reason": "cluster unreachable"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: a Kubernetes owner gone: an unknown item with the API's reason",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": null
+          }
+        ],
+        "answers": {
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/deployments/web"
+              },
+              "error": {
+                "name": "KubernetesError",
+                "message": "/apis/apps/v1/namespaces/demo/deployments/web not found",
+                "status": 404,
+                "reason": "NotFound"
+              }
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "eks-demo"
+              },
+              "output": {}
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "unknown",
+          "backend": "k8s:eks-demo/demo/Deployment/web",
+          "reason": "/apis/apps/v1/namespaces/demo/deployments/web not found"
+        }
+      ]
+    },
+    {
+      "name": "describeStopped: several backends in order: an instance, a Fargate service and pods on a node",
+      "input": {
+        "function": "describeStopped",
+        "backends": [
+          {
+            "kind": "instance",
+            "id": "i-1"
+          },
+          {
+            "kind": "ecs",
+            "id": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+            "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+            "desired": 1
+          },
+          {
+            "kind": "k8s",
+            "id": "eks-demo/demo/Deployment/web",
+            "cluster": "eks-demo",
+            "namespace": "demo",
+            "owner": {
+              "kind": "Deployment",
+              "name": "web"
+            },
+            "autoscaler": null
+          }
+        ],
+        "answers": {
+          "ec2.describeInstances": [
+            {
+              "input": {
+                "InstanceIds": ["i-1"]
+              },
+              "output": {
+                "Reservations": [
+                  {
+                    "Instances": [
+                      {
+                        "InstanceId": "i-1",
+                        "InstanceType": "t4g.small",
+                        "PlatformDetails": "Linux/UNIX"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeServices": [
+            {
+              "input": {
+                "cluster": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                "services": ["arn:aws:ecs:eu-west-1:111122223333:service/app/web"]
+              },
+              "output": {
+                "services": [
+                  {
+                    "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/app/web",
+                    "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/app",
+                    "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3",
+                    "launchType": "FARGATE"
+                  }
+                ]
+              }
+            }
+          ],
+          "ecs.describeTaskDefinition": [
+            {
+              "input": {
+                "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:3"
+              },
+              "output": {
+                "taskDefinition": {
+                  "cpu": "256",
+                  "memory": "512"
+                }
+              }
+            }
+          ],
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/deployments/web"
+              },
+              "output": {
+                "kind": "Deployment",
+                "metadata": {
+                  "name": "web",
+                  "namespace": "demo"
+                },
+                "spec": {
+                  "replicas": 2,
+                  "selector": {
+                    "matchLabels": {
+                      "app": "web"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/nodes/ip-10-0-1-1.eu-west-1.compute.internal"
+              },
+              "output": {
+                "metadata": {
+                  "name": "ip-10-0-1-1.eu-west-1.compute.internal",
+                  "labels": {
+                    "node.kubernetes.io/instance-type": "m5.large",
+                    "kubernetes.io/os": "linux",
+                    "karpenter.sh/nodepool": "default"
+                  }
+                },
+                "status": {
+                  "allocatable": {
+                    "cpu": "1930m",
+                    "memory": "7220184Ki"
+                  }
+                }
+              }
+            }
+          ],
+          "kubernetes.list": [
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/api/v1/namespaces/demo/pods",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "annotations": {},
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "name": "web-5d4f8",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler",
+                    "containers": [
+                      {
+                        "name": "app",
+                        "resources": {
+                          "requests": {
+                            "cpu": "250m",
+                            "memory": "512Mi"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.1",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "input": {
+                "cluster": "eks-demo",
+                "path": "/apis/apps/v1/namespaces/demo/replicasets",
+                "query": {
+                  "labelSelector": "app=web"
+                }
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d4f8",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "apiVersion": "apps/v1",
+                        "kind": "Deployment",
+                        "name": "web",
+                        "controller": true
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "eks-demo"
+              },
+              "output": {}
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "kind": "ec2",
+          "type": "t4g.small",
+          "count": 1,
+          "os": "Linux"
+        },
+        {
+          "kind": "fargate",
+          "vcpu": 0.25,
+          "memoryGb": 0.5,
+          "arch": "x86_64",
+          "os": "Linux",
+          "count": 1
+        },
+        {
+          "kind": "k8s-pods",
+          "cpu": 0.25,
+          "memoryGb": 0.5,
+          "nodeType": "m5.large",
+          "os": "Linux",
+          "autoscaled": true,
+          "allocatable": {
+            "cpu": 1.93,
+            "memoryGb": 6.886
+          },
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "strategyCounts: the base first, then the weights",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "FARGATE",
+            "base": 1,
+            "weight": 1
+          },
+          {
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 3
+          }
+        ],
+        "desired": 5
+      },
+      "output": {
+        "FARGATE": 2,
+        "FARGATE_SPOT": 3
+      }
+    },
+    {
+      "name": "strategyCounts: equal weights over an odd count: the largest remainder, the first provider on a tie",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "FARGATE",
+            "weight": 1
+          },
+          {
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 1
+          }
+        ],
+        "desired": 3
+      },
+      "output": {
+        "FARGATE": 2,
+        "FARGATE_SPOT": 1
+      }
+    },
+    {
+      "name": "strategyCounts: a base larger than the count",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "FARGATE",
+            "base": 5,
+            "weight": 1
+          },
+          {
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 1
+          }
+        ],
+        "desired": 2
+      },
+      "output": {
+        "FARGATE": 2,
+        "FARGATE_SPOT": 0
+      }
+    },
+    {
+      "name": "strategyCounts: no weight: the base's provider takes the rest",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "FARGATE",
+            "base": 1,
+            "weight": 0
+          },
+          {
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 0
+          }
+        ],
+        "desired": 3
+      },
+      "output": {
+        "FARGATE": 3,
+        "FARGATE_SPOT": 0
+      }
+    },
+    {
+      "name": "strategyCounts: an EC2 capacity provider and Fargate Spot",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "app-asg",
+            "weight": 1
+          },
+          {
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 1
+          }
+        ],
+        "desired": 4
+      },
+      "output": {
+        "app-asg": 2,
+        "FARGATE_SPOT": 2
+      }
+    },
+    {
+      "name": "strategyCounts: three providers, weights 1, 1, 1 over 5",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "FARGATE",
+            "weight": 1
+          },
+          {
+            "capacityProvider": "FARGATE_SPOT",
+            "weight": 1
+          },
+          {
+            "capacityProvider": "app-asg",
+            "weight": 1
+          }
+        ],
+        "desired": 5
+      },
+      "output": {
+        "FARGATE": 2,
+        "FARGATE_SPOT": 2,
+        "app-asg": 1
+      }
+    },
+    {
+      "name": "strategyCounts: a desired count of 0",
+      "input": {
+        "function": "strategyCounts",
+        "strategy": [
+          {
+            "capacityProvider": "FARGATE",
+            "weight": 1
+          }
+        ],
+        "desired": 0
+      },
+      "output": {
+        "FARGATE": 0
+      }
+    }
+  ]
+}

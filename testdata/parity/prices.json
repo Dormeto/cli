@@ -1,0 +1,2257 @@
+{
+  "manager": "0.10.0",
+  "router": "0.29.0",
+  "commit": "2ce6feeaa4efa73727ab939c3502d347776ec907",
+  "cases": [
+    {
+      "name": "hourly: EC2 by type, region and OS, times the count; asked once, then from the book",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "t3.medium"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"instanceType\":\"t3.medium\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0456000000\"}}}}}}}"]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.0912, 0.0456],
+        "cache": {
+          "eu-west-1#ec2#t3.medium#Linux": {
+            "usd": 0.0456,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: Fargate by vCPU and GB hours, x86 or ARM, times the count",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.5,
+              "memoryGb": 1,
+              "count": 2,
+              "arch": "x86_64",
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "fargate",
+              "vcpu": 1,
+              "memoryGb": 2,
+              "count": 1,
+              "arch": "arm64",
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-vCPU-Hours:perCPU"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-vCPU-Hours:perCPU\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0404800000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-GB-Hours"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-GB-Hours\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0044450000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-ARM-vCPU-Hours:perCPU"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-ARM-vCPU-Hours:perCPU\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0323800000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-ARM-GB-Hours"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-ARM-GB-Hours\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0035600000\"}}}}}}}"]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.049370000000000004, 0.0395],
+        "cache": {
+          "eu-west-1#fargate#Fargate-vcpu": {
+            "usd": 0.04048,
+            "days": 30
+          },
+          "eu-west-1#fargate#Fargate-gb": {
+            "usd": 0.004445,
+            "days": 30
+          },
+          "eu-west-1#fargate#Fargate-ARM-vcpu": {
+            "usd": 0.03238,
+            "days": 30
+          },
+          "eu-west-1#fargate#Fargate-ARM-gb": {
+            "usd": 0.00356,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: RDS by class, engine and deployment, Aurora Serverless v2 by ACU",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "rds",
+              "class": "db.t4g.micro",
+              "engine": "postgres",
+              "multiAz": false
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "rds",
+              "class": "db.t4g.micro",
+              "engine": "postgres",
+              "multiAz": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "aurora-serverless",
+              "engine": "aurora-mysql",
+              "acu": 0.5
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "db.t4g.micro"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "PostgreSQL"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "deploymentOption",
+                    "Value": "Single-AZ"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "InstanceUsage:"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0170000000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "db.t4g.micro"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "PostgreSQL"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "deploymentOption",
+                    "Value": "Multi-AZ"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Multi-AZUsage:"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0350000000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "Aurora MySQL"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Aurora:ServerlessV2Usage"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"ACU-Hr\",\"pricePerUnit\":{\"USD\":\"0.1400000000\"}}}}}}}"]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.017, 0.035, 0.07],
+        "cache": {
+          "eu-west-1#rds#db.t4g.micro#PostgreSQL#Single-AZ": {
+            "usd": 0.017,
+            "days": 30
+          },
+          "eu-west-1#rds#db.t4g.micro#PostgreSQL#Multi-AZ": {
+            "usd": 0.035,
+            "days": 30
+          },
+          "eu-west-1#aurora-serverless#Aurora MySQL": {
+            "usd": 0.14,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: nothing priced: another OS, Oracle, an unknown item, a type the API does not return (cached as such)",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "m5.large",
+              "count": 1,
+              "os": "Red Hat Enterprise Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "rds",
+              "class": "db.m5.large",
+              "engine": "oracle-ee",
+              "multiAz": false
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "unknown",
+              "backend": "ecs:x",
+              "reason": "denied"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "x9.huge",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "x9.huge",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "x9.huge"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": []
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [null, null, null, null, null],
+        "cache": {
+          "eu-west-1#ec2#x9.huge#Linux": {
+            "usd": null,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: a throttled API prices nothing for that item, without caching it",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "t3.medium"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "error": {
+                "name": "ThrottlingException",
+                "message": "Rate exceeded"
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [null],
+        "cache": {}
+      }
+    },
+    {
+      "name": "hourly: several products of different prices are no price; of one price, that price",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "rds",
+              "class": "db.r6g.large",
+              "engine": "aurora-postgresql",
+              "multiAz": false
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "db.r6g.large"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "Aurora PostgreSQL"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "deploymentOption",
+                    "Value": "Single-AZ"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "InstanceUsage:"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.2900000000\"}}}}}}}", "{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.3770000000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "t3.medium"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0456000000\"}}}}}}}", "{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0456000000\"}}}}}}}"]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [null, 0.0456],
+        "cache": {
+          "eu-west-1#rds#db.r6g.large#Aurora PostgreSQL#Single-AZ": {
+            "usd": null,
+            "days": 30
+          },
+          "eu-west-1#ec2#t3.medium#Linux": {
+            "usd": 0.0456,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: Multi-AZ RDS asked by its usage type",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "rds",
+              "class": "db.t4g.micro",
+              "engine": "postgres",
+              "multiAz": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "db.t4g.micro"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "PostgreSQL"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "deploymentOption",
+                    "Value": "Multi-AZ"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Multi-AZUsage:"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0350000000\"}}}}}}}"]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.035],
+        "cache": {
+          "eu-west-1#rds#db.t4g.micro#PostgreSQL#Multi-AZ": {
+            "usd": 0.035,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: Spot: the latest price of each zone averaged, times the count; cached a day",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "spot.history": [
+            {
+              "input": {
+                "region": "eu-west-1",
+                "input": {
+                  "InstanceTypes": ["t3.medium"],
+                  "ProductDescriptions": ["Linux/UNIX"],
+                  "StartTime": "2026-10-12T08:00:00.000Z"
+                }
+              },
+              "output": {
+                "SpotPriceHistory": [
+                  {
+                    "AvailabilityZone": "eu-west-1a",
+                    "SpotPrice": "0.020000",
+                    "Timestamp": "2026-10-12T07:00:00.000Z"
+                  },
+                  {
+                    "AvailabilityZone": "eu-west-1a",
+                    "SpotPrice": "0.030000",
+                    "Timestamp": "2026-10-12T05:00:00.000Z"
+                  },
+                  {
+                    "AvailabilityZone": "eu-west-1b",
+                    "SpotPrice": "0.018000",
+                    "Timestamp": "2026-10-12T06:00:00.000Z"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.038],
+        "cache": {
+          "eu-west-1#ec2-spot#t3.medium#Linux": {
+            "usd": 0.019,
+            "days": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: Spot: Windows asked as Windows; another OS, or no answer, is no Spot price (none cached a day)",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "m5.large",
+              "count": 1,
+              "os": "Windows",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "m5.large",
+              "count": 1,
+              "os": "Red Hat Enterprise Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "x9.huge",
+              "count": 1,
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "spot.history": [
+            {
+              "input": {
+                "region": "eu-west-1",
+                "input": {
+                  "InstanceTypes": ["m5.large"],
+                  "ProductDescriptions": ["Windows"],
+                  "StartTime": "2026-10-12T08:00:00.000Z"
+                }
+              },
+              "output": {
+                "SpotPriceHistory": [
+                  {
+                    "AvailabilityZone": "eu-west-1a",
+                    "SpotPrice": "0.050000",
+                    "Timestamp": "2026-10-12T08:00:00.000Z"
+                  }
+                ]
+              }
+            },
+            {
+              "input": {
+                "region": "eu-west-1",
+                "input": {
+                  "InstanceTypes": ["x9.huge"],
+                  "ProductDescriptions": ["Linux/UNIX"],
+                  "StartTime": "2026-10-12T08:00:00.000Z"
+                }
+              },
+              "output": {
+                "SpotPriceHistory": []
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.05, null, null],
+        "cache": {
+          "eu-west-1#ec2-spot#m5.large#Windows": {
+            "usd": 0.05,
+            "days": 1
+          },
+          "eu-west-1#ec2-spot#x9.huge#Linux": {
+            "usd": null,
+            "days": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: Spot in a region the account has not enabled: nothing priced, nothing cached",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "ap-east-2",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "ap-east-2",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "spot.history": [
+            {
+              "input": {
+                "region": "ap-east-2",
+                "input": {
+                  "InstanceTypes": ["t3.medium"],
+                  "ProductDescriptions": ["Linux/UNIX"],
+                  "StartTime": "2026-10-12T08:00:00.000Z"
+                }
+              },
+              "error": {
+                "name": "OptInRequired",
+                "message": "You are not subscribed to this service"
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [null, null],
+        "cache": {}
+      }
+    },
+    {
+      "name": "hourly: Fargate Spot at 30% of the on-demand price",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.5,
+              "memoryGb": 1,
+              "count": 2,
+              "arch": "x86_64",
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.5,
+              "memoryGb": 1,
+              "count": 2,
+              "arch": "x86_64",
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-vCPU-Hours:perCPU"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-vCPU-Hours:perCPU\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0404800000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-GB-Hours"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-GB-Hours\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0044450000\"}}}}}}}"]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.014811000000000001, 0.049370000000000004],
+        "cache": {
+          "eu-west-1#fargate#Fargate-vcpu": {
+            "usd": 0.04048,
+            "days": 30
+          },
+          "eu-west-1#fargate#Fargate-gb": {
+            "usd": 0.004445,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: discounts: compute off on-demand EC2 and Fargate, databases off RDS and Aurora, none off Spot",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.5,
+              "memoryGb": 1,
+              "count": 2,
+              "arch": "x86_64",
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "rds",
+              "class": "db.t4g.micro",
+              "engine": "postgres",
+              "multiAz": false
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "aurora-serverless",
+              "engine": "aurora-mysql",
+              "acu": 0.5
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "fargate",
+              "vcpu": 0.5,
+              "memoryGb": 1,
+              "count": 2,
+              "arch": "x86_64",
+              "os": "Linux",
+              "spot": true
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 30
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 2,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "t3.medium"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0456000000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-vCPU-Hours:perCPU"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-vCPU-Hours:perCPU\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0404800000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonECS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Fargate-GB-Hours"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{\"usagetype\":\"EU-Fargate-GB-Hours\"}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"hours\",\"pricePerUnit\":{\"USD\":\"0.0044450000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "db.t4g.micro"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "PostgreSQL"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "deploymentOption",
+                    "Value": "Single-AZ"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "InstanceUsage:"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.0170000000\"}}}}}}}"]
+              }
+            },
+            {
+              "input": {
+                "ServiceCode": "AmazonRDS",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "databaseEngine",
+                    "Value": "Aurora MySQL"
+                  },
+                  {
+                    "Type": "CONTAINS",
+                    "Field": "usagetype",
+                    "Value": "Aurora:ServerlessV2Usage"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.1400000000\"}}}}}}}"]
+              }
+            }
+          ],
+          "spot.history": [
+            {
+              "input": {
+                "region": "eu-west-1",
+                "input": {
+                  "InstanceTypes": ["t3.medium"],
+                  "ProductDescriptions": ["Linux/UNIX"],
+                  "StartTime": "2026-10-12T08:00:00.000Z"
+                }
+              },
+              "output": {
+                "SpotPriceHistory": [
+                  {
+                    "AvailabilityZone": "eu-west-1a",
+                    "SpotPrice": "0.019000",
+                    "Timestamp": "2026-10-12T08:00:00.000Z"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.07296000000000001, 0.039496, 0.0119, 0.049, 0.038, 0.014811000000000001, 0.07296000000000001, 0.0912],
+        "cache": {
+          "eu-west-1#ec2#t3.medium#Linux": {
+            "usd": 0.0456,
+            "days": 30
+          },
+          "eu-west-1#fargate#Fargate-vcpu": {
+            "usd": 0.04048,
+            "days": 30
+          },
+          "eu-west-1#fargate#Fargate-gb": {
+            "usd": 0.004445,
+            "days": 30
+          },
+          "eu-west-1#rds#db.t4g.micro#PostgreSQL#Single-AZ": {
+            "usd": 0.017,
+            "days": 30
+          },
+          "eu-west-1#aurora-serverless#Aurora MySQL": {
+            "usd": 0.14,
+            "days": 30
+          },
+          "eu-west-1#ec2-spot#t3.medium#Linux": {
+            "usd": 0.019,
+            "days": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: pods on nodes: their share of the node times its price and the pods; Spot pods at the Spot price",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.1,
+              "memoryGb": 4,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 3,
+              "memoryGb": 1,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              },
+              "spot": true
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 20,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "m5.large"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": ["{\"product\":{\"attributes\":{}},\"terms\":{\"OnDemand\":{\"X.JRTCKXETXF\":{\"priceDimensions\":{\"X.JRTCKXETXF.6YS6EN2CT7\":{\"unit\":\"Hrs\",\"pricePerUnit\":{\"USD\":\"0.1070000000\"}}}}}}}"]
+              }
+            }
+          ],
+          "spot.history": [
+            {
+              "input": {
+                "region": "eu-west-1",
+                "input": {
+                  "InstanceTypes": ["m5.large"],
+                  "ProductDescriptions": ["Linux/UNIX"],
+                  "StartTime": "2026-10-12T08:00:00.000Z"
+                }
+              },
+              "output": {
+                "SpotPriceHistory": [
+                  {
+                    "AvailabilityZone": "eu-west-1a",
+                    "SpotPrice": "0.040000",
+                    "Timestamp": "2026-10-12T08:00:00.000Z"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0.055440414507772026, 0.12431019459773451, 0.214, 0.020725388601036274, 0.044352331606217626],
+        "cache": {
+          "eu-west-1#ec2#m5.large#Linux": {
+            "usd": 0.107,
+            "days": 30
+          },
+          "eu-west-1#ec2-spot#m5.large#Linux": {
+            "usd": 0.04,
+            "days": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: pods on nodes no autoscaler removes save nothing; without the node's type or allocatable, no price",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {},
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": false,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": null,
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": "m5.large",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 0,
+                "memoryGb": 0
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "k8s-pods",
+              "count": 2,
+              "cpu": 0.5,
+              "memoryGb": 1,
+              "nodeType": "x9.huge",
+              "os": "Linux",
+              "autoscaled": true,
+              "allocatable": {
+                "cpu": 1.93,
+                "memoryGb": 6.886
+              }
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {
+          "pricing.getProducts": [
+            {
+              "input": {
+                "ServiceCode": "AmazonEC2",
+                "Filters": [
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "instanceType",
+                    "Value": "x9.huge"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "regionCode",
+                    "Value": "eu-west-1"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "locationType",
+                    "Value": "AWS Region"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "operatingSystem",
+                    "Value": "Linux"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "tenancy",
+                    "Value": "Shared"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "preInstalledSw",
+                    "Value": "NA"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "capacitystatus",
+                    "Value": "Used"
+                  },
+                  {
+                    "Type": "TERM_MATCH",
+                    "Field": "licenseModel",
+                    "Value": "No License required"
+                  }
+                ],
+                "MaxResults": 10
+              },
+              "output": {
+                "PriceList": []
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "prices": [0, null, null, null],
+        "cache": {
+          "eu-west-1#ec2#x9.huge#Linux": {
+            "usd": null,
+            "days": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "hourly: prices already in the cache, one of them none (null): read, never asked",
+      "input": {
+        "function": "hourly",
+        "now": "2026-10-12T08:00:00.000Z",
+        "cache": {
+          "eu-west-1#ec2#t3.medium#Linux": 0.0456,
+          "eu-west-1#ec2#m5.large#Linux": null
+        },
+        "lookups": [
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          },
+          {
+            "region": "eu-west-1",
+            "item": {
+              "kind": "ec2",
+              "type": "m5.large",
+              "count": 1,
+              "os": "Linux"
+            },
+            "discounts": {
+              "compute": 0,
+              "databases": 0
+            }
+          }
+        ],
+        "answers": {}
+      },
+      "output": {
+        "prices": [0.0456, null],
+        "cache": {}
+      }
+    },
+    {
+      "name": "baselineHours: always, every hour",
+      "input": {
+        "function": "baselineHours",
+        "from": "2026-10-08T00:00:00.000Z",
+        "to": "2026-10-08T10:00:00.000Z",
+        "baseline": {
+          "kind": "always"
+        }
+      },
+      "output": 10
+    },
+    {
+      "name": "baselineHours: business hours across a weekend in Paris",
+      "input": {
+        "function": "baselineHours",
+        "from": "2026-10-09T16:00:00.000Z",
+        "to": "2026-10-12T08:00:00.000Z",
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "Europe/Paris"
+        }
+      },
+      "output": 4
+    },
+    {
+      "name": "baselineHours: business hours after Paris goes back to UTC+1",
+      "input": {
+        "function": "baselineHours",
+        "from": "2026-10-26T06:30:00.000Z",
+        "to": "2026-10-26T07:30:00.000Z",
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "Europe/Paris"
+        }
+      },
+      "output": 0.5
+    },
+    {
+      "name": "baselineHours: business hours the Monday before, at UTC+2",
+      "input": {
+        "function": "baselineHours",
+        "from": "2026-10-19T06:30:00.000Z",
+        "to": "2026-10-19T07:30:00.000Z",
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "Europe/Paris"
+        }
+      },
+      "output": 1
+    },
+    {
+      "name": "baselineHours: business hours over 14 days in New York",
+      "input": {
+        "function": "baselineHours",
+        "from": "2026-09-28T08:00:00.000Z",
+        "to": "2026-10-12T08:00:00.000Z",
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "America/New_York"
+        }
+      },
+      "output": 120
+    },
+    {
+      "name": "baselineHours: an empty period",
+      "input": {
+        "function": "baselineHours",
+        "from": "2026-10-12T08:00:00.000Z",
+        "to": "2026-10-12T08:00:00.000Z",
+        "baseline": {
+          "kind": "always"
+        }
+      },
+      "output": 0
+    },
+    {
+      "name": "savingsOf: each asleep phase's hours by what it stopped, the items summed",
+      "input": {
+        "function": "savingsOf",
+        "baseline": {
+          "kind": "always"
+        },
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          },
+          {
+            "item": {
+              "kind": "rds",
+              "class": "db.t4g.micro",
+              "engine": "postgres",
+              "multiAz": false
+            },
+            "usd": 0.017
+          }
+        ],
+        "phases": [
+          {
+            "state": "AWAKE",
+            "from": "2026-10-08T00:00:00.000Z",
+            "to": "2026-10-08T02:00:00.000Z"
+          },
+          {
+            "state": "ASLEEP",
+            "from": "2026-10-08T02:00:00.000Z",
+            "to": "2026-10-08T12:00:00.000Z",
+            "stopped": [
+              {
+                "kind": "ec2",
+                "type": "t3.medium",
+                "count": 1,
+                "os": "Linux"
+              },
+              {
+                "kind": "rds",
+                "class": "db.t4g.micro",
+                "engine": "postgres",
+                "multiAz": false
+              }
+            ]
+          },
+          {
+            "state": "ASLEEP",
+            "from": "2026-10-08T14:00:00.000Z",
+            "to": "2026-10-08T16:00:00.000Z",
+            "stopped": [
+              {
+                "kind": "ec2",
+                "type": "t3.medium",
+                "count": 1,
+                "os": "Linux"
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "usd": 0.7172000000000001,
+        "hours": 12,
+        "items": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "hourly": 0.0456,
+            "hours": 12,
+            "usd": 0.5472
+          },
+          {
+            "item": {
+              "kind": "rds",
+              "class": "db.t4g.micro",
+              "engine": "postgres",
+              "multiAz": false
+            },
+            "hourly": 0.017,
+            "hours": 10,
+            "usd": 0.17
+          }
+        ],
+        "unpriced": []
+      }
+    },
+    {
+      "name": "savingsOf: what it could not price, never as nothing saved",
+      "input": {
+        "function": "savingsOf",
+        "baseline": {
+          "kind": "always"
+        },
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          },
+          {
+            "item": {
+              "kind": "unknown",
+              "backend": "ecs:web",
+              "reason": "denied"
+            },
+            "usd": null
+          }
+        ],
+        "phases": [
+          {
+            "state": "ASLEEP",
+            "from": "2026-10-08T00:00:00.000Z",
+            "to": "2026-10-08T05:00:00.000Z"
+          },
+          {
+            "state": "ASLEEP",
+            "from": "2026-10-08T06:00:00.000Z",
+            "to": "2026-10-08T08:00:00.000Z",
+            "stopped": [
+              {
+                "kind": "ec2",
+                "type": "t3.medium",
+                "count": 1,
+                "os": "Linux"
+              },
+              {
+                "kind": "unknown",
+                "backend": "ecs:web",
+                "reason": "denied"
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "usd": 0.0912,
+        "hours": 7,
+        "items": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "hourly": 0.0456,
+            "hours": 2,
+            "usd": 0.0912
+          }
+        ],
+        "unpriced": [
+          {
+            "reason": "not described (a router before 0.27.0)",
+            "hours": 5
+          },
+          {
+            "reason": "not priced",
+            "item": {
+              "kind": "unknown",
+              "backend": "ecs:web",
+              "reason": "denied"
+            },
+            "hours": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "savingsOf: only the baseline's hours",
+      "input": {
+        "function": "savingsOf",
+        "baseline": {
+          "kind": "business-hours",
+          "timeZone": "Europe/Paris"
+        },
+        "prices": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "usd": 0.0456
+          }
+        ],
+        "phases": [
+          {
+            "state": "ASLEEP",
+            "from": "2026-10-09T16:00:00.000Z",
+            "to": "2026-10-12T08:00:00.000Z",
+            "stopped": [
+              {
+                "kind": "ec2",
+                "type": "t3.medium",
+                "count": 1,
+                "os": "Linux"
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "usd": 0.1824,
+        "hours": 4,
+        "items": [
+          {
+            "item": {
+              "kind": "ec2",
+              "type": "t3.medium",
+              "count": 1,
+              "os": "Linux"
+            },
+            "hourly": 0.0456,
+            "hours": 4,
+            "usd": 0.1824
+          }
+        ],
+        "unpriced": []
+      }
+    },
+    {
+      "name": "DORMETO_COST: Dormeto's cost a month",
+      "input": {
+        "function": "DORMETO_COST"
+      },
+      "output": {
+        "manager": 5,
+        "router": 0.26,
+        "workload": 0.13
+      }
+    }
+  ]
+}

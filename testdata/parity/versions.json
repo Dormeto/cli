@@ -1,1 +1,5 @@
-{"manager": "", "router": "", "commit": ""}
+{
+  "manager": "0.10.0",
+  "router": "0.29.0",
+  "commit": "2ce6feeaa4efa73727ab939c3502d347776ec907"
+}
