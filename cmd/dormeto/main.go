@@ -1,0 +1,81 @@
+// Command dormeto is the Dormeto command line.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"runtime/debug"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	cli "github.com/Dormeto/cli"
+)
+
+// Set at link time: -ldflags "-X main.version=… -X main.commit=… -X main.date=…".
+var (
+	version = ""
+	commit  = ""
+	date    = ""
+)
+
+// build is what `dormeto version` reports.
+type build struct {
+	version, commit, date string
+	info                  *debug.BuildInfo // the module's build information, for a `go install` build
+	versions              []byte           // testdata/parity/versions.json
+}
+
+func main() {
+	info, _ := debug.ReadBuildInfo()
+	b := build{version: version, commit: commit, date: date, info: info, versions: cli.Versions}
+	if err := newRoot(b).Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func newRoot(b build) *cobra.Command {
+	root := &cobra.Command{Use: "dormeto", Short: "Dormeto command line", SilenceUsage: true}
+	root.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the version, commit and date, and the versions of the shared test cases",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, _ []string) {
+			fmt.Fprint(cmd.OutOrStdout(), b.describe())
+		},
+	})
+	return root
+}
+
+func orDefault(s, d string) string {
+	if s == "" {
+		return d
+	}
+	return s
+}
+
+// describe renders the version output. Link-time values win; without them
+// (a `go install` build) the version, commit and date come from the build information.
+func (b build) describe() string {
+	v, c, d := b.version, b.commit, b.date
+	if v == "" && b.info != nil {
+		v = strings.TrimPrefix(b.info.Main.Version, "v")
+		if v == "(devel)" {
+			v = ""
+		}
+		for _, s := range b.info.Settings {
+			switch {
+			case s.Key == "vcs.revision" && c == "":
+				c = s.Value
+			case s.Key == "vcs.time" && d == "":
+				d = s.Value
+			}
+		}
+	}
+	var cases struct{ Manager, Router string }
+	_ = json.Unmarshal(b.versions, &cases)
+	return fmt.Sprintf("dormeto %s\ncommit: %s\ndate: %s\nmanager: %s\nrouter: %s\n",
+		orDefault(v, "dev"), orDefault(c, "unknown"), orDefault(d, "unknown"),
+		orDefault(cases.Manager, "none"), orDefault(cases.Router, "none"))
+}
