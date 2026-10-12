@@ -2,6 +2,7 @@ package parity
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,5 +118,39 @@ func TestLoad(t *testing.T) {
 	c := topic.Cases[0]
 	if c.Name != "n" || string(c.Input) != `{"a":1}` || string(c.Output) != `[2]` {
 		t.Fatalf("case = %+v", c)
+	}
+}
+
+const errorAnswers = `{
+  "pricing.getProducts": [
+    {"input": {"a": 1}, "error": {"name": "ThrottlingException", "message": "Rate exceeded"}},
+    {"input": {"a": 2}, "error": {"name": "KubernetesError", "message": "forbidden", "status": 403, "reason": "Forbidden", "code": "E403"}},
+    {"input": {"a": 3}, "output": {"ok": true}}
+  ]
+}`
+
+func TestRecordedErrorIsReturnedAsTheCallsError(t *testing.T) {
+	a := Recorded(t, json.RawMessage(errorAnswers))
+	var out any
+	err := a.Call("pricing", "getProducts", map[string]any{"a": 1}, &out)
+	var re *RecordedError
+	if !errors.As(err, &re) {
+		t.Fatalf("err = %v (%T), want *RecordedError", err, err)
+	}
+	if re.Name != "ThrottlingException" || re.Message != "Rate exceeded" || re.Status != 0 || re.Reason != "" {
+		t.Fatalf("re = %+v", re)
+	}
+	if err.Error() != "Rate exceeded" {
+		t.Fatalf("Error() = %q", err.Error())
+	}
+
+	err = a.Call("pricing", "getProducts", map[string]any{"a": 2}, &out)
+	if !errors.As(err, &re) || re.Name != "KubernetesError" || re.Status != 403 || re.Reason != "Forbidden" || re.Code != "E403" {
+		t.Fatalf("err = %#v", err)
+	}
+
+	var ok struct{ Ok bool }
+	if err := a.Call("pricing", "getProducts", map[string]any{"a": 3}, &ok); err != nil || !ok.Ok {
+		t.Fatalf("output entry: %v %+v", err, ok)
 	}
 }

@@ -138,9 +138,25 @@ type Answers struct {
 type entry struct {
 	Input  any             `json:"input"`
 	Output json.RawMessage `json:"output"`
+	Error  *RecordedError  `json:"error"`
 }
 
-// Recorded reads a case's input.answers: {"<port>.<method>": [{"input", "output"}]}.
+// RecordedError is a failure the Node code saw from a port: the recorded
+// "error" of an answer entry, {"name", "message", "status"?, "reason"?, "code"?}.
+// Fakes return it as the port's error, so the Go code sees a failed call as
+// the Node code did.
+type RecordedError struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+	Status  int    `json:"status,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Code    string `json:"code,omitempty"`
+}
+
+// Error is the recorded message.
+func (e *RecordedError) Error() string { return e.Message }
+
+// Recorded reads a case's input.answers: {"<port>.<method>": [{"input", "output" or "error"}]}.
 func Recorded(t testing.TB, answers json.RawMessage) *Answers {
 	t.Helper()
 	a := &Answers{}
@@ -152,7 +168,8 @@ func Recorded(t testing.TB, answers json.RawMessage) *Answers {
 
 // Call answers port.method(input) with the first recorded entry whose input
 // equals input (JSON compared, key order ignored), decoded into out. A call
-// with no entry returns an error.
+// with no entry returns an error; an entry carrying "error" returns it as a
+// *RecordedError.
 func (a *Answers) Call(port, method string, input any, out any) error {
 	b, err := json.Marshal(input)
 	if err != nil {
@@ -164,6 +181,9 @@ func (a *Answers) Call(port, method string, input any, out any) error {
 	}
 	for _, e := range a.entries[port+"."+method] {
 		if _, same := diff("$", e.Input, in); same {
+			if e.Error != nil {
+				return e.Error
+			}
 			if len(bytes.TrimSpace(e.Output)) == 0 {
 				return nil
 			}
