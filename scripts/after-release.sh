@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The checks after a release: scripts/after-release.sh <version>. Run by release.sh; safe to run again.
-# The release's assets and checksums; brew; npx; install.sh; go install. Each waits a little for the
+# The release's assets and checksums; brew; install.sh; go install. Each waits a little for the
 # registries, then fails with what it saw.
 #
 # install.sh: https://dormeto.com/install.sh, or while it does not answer 200 (the website not deployed yet, Ruling
@@ -46,10 +46,6 @@ if brew list --cask dormeto >/dev/null 2>&1; then brew upgrade --cask dormeto/ta
 # Homebrew's own dormeto, linked in its prefix's bin/, not whichever is first on PATH (a go install build).
 brewed="$(brew --prefix)/bin/dormeto"
 [ "$("$brewed" version | head -n 1)" = "dormeto $version" ] || fail "brew gave '$("$brewed" version | head -n 1)' ($brewed), not 'dormeto $version'"
-
-echo "after-release: npx"
-check_npx() { [ "$(cd "$scratch" && npx -y "@dormeto/cli@$version" version | head -n 1)" = "dormeto $version" ]; }
-retry 10 check_npx || fail "npx @dormeto/cli@$version version did not give 'dormeto $version'"
 
 echo "after-release: install.sh"
 mkdir "$scratch/install"

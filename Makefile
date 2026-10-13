@@ -23,7 +23,7 @@ install: ## Install dormeto into $(go env GOPATH)/bin
 run: build ## Run it: make run ARGS="estimate --profile <profile> --uptime"
 	$(BIN) $(ARGS)
 
-test: ## go vet, the Go tests (shared cases and end-to-end included), the npm launcher's and release scripts' tests
+test: ## go vet, the Go tests (shared cases and end-to-end included), the release scripts' tests
 	go vet ./...
 	go test ./...
 	npm test
@@ -31,9 +31,8 @@ test: ## go vet, the Go tests (shared cases and end-to-end included), the npm la
 fmt: ## Format the Go sources
 	gofmt -w $$(git ls-files '*.go')
 
-snapshot: ## Build the release's archives, checksums, cask and npm packages into dist/, publishing nothing
+snapshot: ## Build the release's archives, checksums and cask into dist/, publishing nothing
 	goreleaser release --snapshot --clean
-	node npm/assemble.mjs
 
 parity: ## Export the shared cases again from the manager checkout (MANAGER=../manager)
 	cd $(MANAGER) && node scripts/parity/export.mjs --out $(CURDIR)/testdata/parity

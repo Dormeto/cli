@@ -80,9 +80,9 @@ func dependencies(ctx context.Context, out, errs io.Writer, b build) cli.Deps {
 	}
 }
 
-// interruptible is parent cancelled by the first SIGINT (Ctrl-C) or SIGTERM (a kill, the npm launcher passing one
-// on), and the signal that came (nil: none). Once one came, the next has its default effect: the process is killed
-// at once. stop releases the signals and the context.
+// interruptible is parent cancelled by the first SIGINT (Ctrl-C) or SIGTERM (a kill), and the signal that came (nil:
+// none). Once one came, the next has its default effect: the process is killed at once. stop releases the signals and
+// the context.
 func interruptible(parent context.Context) (ctx context.Context, signalled func() os.Signal, stop func()) {
 	ctx, cancel := context.WithCancel(parent)
 	signals := make(chan os.Signal, 1)

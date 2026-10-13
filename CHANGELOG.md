@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- npm is no longer a channel: 0.1.0's packages (`@dormeto/cli` and its platform packages) are deprecated, and later
+  versions are not published there. Install by Homebrew, `https://dormeto.com/install.sh`, `go install` or a release
+  archive (on Windows, the `.zip`).
+
 ## 0.1.0
 
 The first release of the Dormeto CLI: `dormeto estimate`, the savings estimate of the manager, as a single Go binary. It

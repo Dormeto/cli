@@ -20,7 +20,7 @@ function write(file, text, mode) {
 const installs = (path, version) => `printf '#!/bin/sh\\necho "dormeto %s"\\n' ${version} > ${path} && chmod 755 ${path}`;
 
 // A throwaway checkout of the cli with scripts/after-release.sh copied in and the website's beside it (../website),
-// stubs for curl (the web served from web/), brew, npx, go and sleep, and the release's six archives with their
+// stubs for curl (the web served from web/), brew, npx (a tripwire), go and sleep, and the release's six archives with their
 // checksums.txt. Options: served (https://dormeto.com/install.sh deployed), website (a website checkout beside the cli),
 // shadow (a dev build of dormeto first on PATH, as `go install` leaves one), installed (brew has the cask already).
 function fixture({ served = false, website = true, shadow = true, installed = false } = {}) {
@@ -98,7 +98,8 @@ case "$1" in
 esac
 echo "brew: unexpected $*" >&2; exit 1
 `, 0o755);
-  write(join(bin, 'npx'), `#!/bin/sh\necho "npx $*" >> "${log}"\nprintf 'dormeto %s\\n' "\${2#@dormeto/cli@}"\n`, 0o755);
+  // npm is not a channel (the user, 2026-10-13): an npx stub records any call, which the tests refuse.
+  write(join(bin, 'npx'), `#!/bin/sh\necho "npx $*" >> "${log}"\nexit 1\n`, 0o755);
   write(join(bin, 'go'), `#!/bin/sh\necho "go $*" >> "${log}"\nmkdir -p "$GOBIN" && ${installs('"$GOBIN/dormeto"', '"${2##*@v}"')}\n`, 0o755);
   write(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', 0o755);
   if (shadow) write(join(bin, 'dormeto'), '#!/bin/sh\necho "dormeto dev"\n', 0o755);
@@ -112,6 +113,23 @@ echo "brew: unexpected $*" >&2; exit 1
   const run = (extra = {}) => spawnSync('bash', [join(work, 'scripts', 'after-release.sh'), VERSION], { cwd: work, encoding: 'utf8', env: { ...env, ...extra } });
   return { root, work, prefix, log, run, calls: () => (existsSync(log) ? readFileSync(log, 'utf8') : ''), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
+
+// --- the channels: the archives, Homebrew, the install script and go install; npm is not one (the user, 2026-10-13) ---
+
+test('after-release.sh checks the archives, Homebrew, the install script and go install, and never npm', () => {
+  const f = fixture({ shadow: false });
+  try {
+    const out = f.run();
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    const calls = f.calls();
+    assert.doesNotMatch(calls, /^npx /m, 'npm is not a channel');
+    assert.doesNotMatch(out.stdout, /npx|npm/);
+    assert.match(calls, /^brew /m);
+    assert.match(calls, /^go install /m);
+    const steps = [...out.stdout.matchAll(/^after-release: (assets and checksums|brew|install\.sh|go install)$/gm)].map((m) => m[1]);
+    assert.deepEqual(steps, ['assets and checksums', 'brew', 'install.sh', 'go install']);
+  } finally { f.cleanup(); }
+});
 
 // --- install.sh before the website is deployed (Ruling P17) -------------------------------------------------------
 

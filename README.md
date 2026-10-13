@@ -30,13 +30,6 @@ Pick one channel. They all install the same binary, `dormeto`, with no runtime t
 brew install dormeto/tap/dormeto
 ```
 
-### npm
-
-```sh
-npx @dormeto/cli estimate --profile <profile> --uptime
-npm install -g @dormeto/cli
-```
-
 ### The script (macOS, Linux)
 
 ```sh
@@ -57,17 +50,19 @@ curl -fsSL https://dormeto.com/install.sh | DORMETO_VERSION=0.1.0 DORMETO_INSTAL
 go install github.com/Dormeto/cli/cmd/dormeto@latest
 ```
 
-### Release archives
+### Windows, and the release archives
 
 Each release has an archive per system (macOS, Linux and Windows, on Intel/AMD and ARM) and a `checksums.txt` on the
-[releases page](https://github.com/Dormeto/cli/releases). Unpack the archive and put `dormeto` in your `PATH`.
+[releases page](https://github.com/Dormeto/cli/releases). On Windows, download `dormeto_<version>_windows_amd64.zip`
+(`_arm64` on an ARM PC), unzip it and put `dormeto.exe` in a folder of your `PATH`. Elsewhere, unpack the archive and put
+`dormeto` in your `PATH`.
 
 An archive downloaded with a browser is blocked by the system the first time:
 
 - macOS: remove the quarantine mark, `xattr -d com.apple.quarantine ./dormeto`.
 - Windows: in SmartScreen's warning, choose "More info" and then "Run anyway".
 
-(`curl`, Homebrew, npm and `go install` do not need this.)
+(`curl`, Homebrew and `go install` do not need this.)
 
 Check the install with `dormeto version`.
 
@@ -215,14 +210,14 @@ There is no telemetry and no update check. What it reads stays in the cache and 
 
 ## Building from source
 
-Go 1.26 or later; Node.js for the npm scripts' tests; GoReleaser 2 for `make snapshot`. `make` lists the targets:
+Go 1.26 or later; Node.js for the release scripts' tests; GoReleaser 2 for `make snapshot`. `make` lists the targets:
 
 ```
 make build                                          # bin/dormeto, as a release builds it
 make run ARGS="estimate --profile <profile> --uptime"
-make test                                           # go vet, the Go tests (shared cases, end to end), npm test
+make test                                           # go vet, the Go tests (shared cases, end to end), the scripts' tests
 make install                                        # into $(go env GOPATH)/bin
-make snapshot                                       # dist/: the release's archives, checksums, cask, npm packages
+make snapshot                                       # dist/: the release's archives, checksums and cask
 make parity                                         # the shared cases exported again from ../manager
 make dry-run VERSION=0.1.0                          # a release's checks, nothing published
 ```
@@ -230,19 +225,15 @@ make dry-run VERSION=0.1.0                          # a release's checks, nothin
 ## Releasing
 
 For maintainers. `scripts/release.sh <version>` (for example `0.1.0`, without a `v`) checks the repository, tags,
-publishes the GitHub release and the Homebrew tap with GoReleaser, stages the npm packages, waits for you to approve
-them, and checks the result; `--dry-run` checks and builds without publishing, tagging or reading a token. The version
-needs a `## <version>` section in [CHANGELOG.md](CHANGELOG.md).
-
-npm packages go out through npm's staged publishing (npm 11.15.0 or later, `npm install -g npm@11`): the release stages
-the six platform packages, then `@dormeto/cli`, prints their npmjs.com pages and waits, up to 30 minutes, until you
-approve each one there (Staged Packages, Approve, with two-factor authentication), `@dormeto/cli` last. Your npm account
-needs two-factor authentication. Ctrl-C, or no approval in time, prints what is done and what finishes the release.
+publishes the GitHub release and the Homebrew tap with GoReleaser, and checks the result; `--dry-run` checks and builds
+without publishing, tagging or reading the token. The version needs a `## <version>` section in
+[CHANGELOG.md](CHANGELOG.md). npm is not a channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other
+version is published there.
 
 The checks after it, `scripts/after-release.sh <version>` (safe to run again), install the version through each channel
-and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is),
-`npx`, the install script and `go install`. The install script is `https://dormeto.com/install.sh`, or, while that does
-not answer (the website not deployed yet), the website checkout's `site/install.sh`: `DORMETO_WEBSITE_DIR`, by default
+and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is), the
+install script and `go install`. The install script is `https://dormeto.com/install.sh`, or, while that does not answer
+(the website not deployed yet), the website checkout's `site/install.sh`: `DORMETO_WEBSITE_DIR`, by default
 `../website` beside this repository.
 
 `scripts/test-brew-linux.sh [arm64] [amd64]` is an opt-in check of the Homebrew cask on Linux, with podman: it builds a
@@ -255,29 +246,20 @@ since Homebrew, the install script and `go install` download without a token: `D
 `Dormeto/homebrew-tap` (the name `brew` turns into `dormeto/tap`), created with a README so that GoReleaser adds the
 cask, `Casks/dormeto.rb`, to a `main` branch that exists.
 
-It reads two tokens from the macOS Keychain, items named for the account `$USER`: `npm-dormeto` and `github-dormeto`.
-They are never written to a repository, to `~/.npmrc` or to a log. Create each, then store it with `security`, which
-asks for the value (`-w` last, with no value) so it does not appear in a command line or the shell's history:
-
-- `npm-dormeto`: on npmjs.com, Access Tokens, Generate New Token, with Packages and scopes at "Read and write (stage
-  only)" on the `@dormeto` scope (npm ends direct publishing with a token in January 2027), Organizations at No access,
-  Allowed IP ranges empty (npm takes IPv4 ranges only, and a Mac reaching npm over IPv6 is always outside them), and an
-  expiration of 90 days; renew it every quarter. Staging never asks for two-factor authentication, so the token does not
-  need to bypass it.
-- `github-dormeto`: on GitHub, signed in as Dormeto, Settings, Developer settings, Personal access tokens,
-  Fine-grained tokens, Generate new token, with Dormeto as resource owner, "Only select repositories" `cli` and
-  `homebrew-tap`, the Contents repository permission at Read and write (Metadata, read-only, comes with it), and an
-  expiration of 90 days, renewed with the npm token.
+It reads one token from the macOS Keychain, the item `github-dormeto` for the account `$USER`. It is never written to
+a repository or to a log. Create it, then store it with `security`, which asks for the value (`-w` last, with no value)
+so it does not appear in a command line or the shell's history: on GitHub, signed in as Dormeto, Settings, Developer
+settings, Personal access tokens, Fine-grained tokens, Generate new token, with Dormeto as resource owner, "Only select
+repositories" `cli` and `homebrew-tap`, the Contents repository permission at Read and write (Metadata, read-only, comes
+with it), and an expiration of 90 days.
 
 ```sh
-security add-generic-password -U -a "$USER" -s npm-dormeto -w
 security add-generic-password -U -a "$USER" -s github-dormeto -w
 ```
 
-The release checks both tokens before it tags anything; an expired, revoked or IP-limited one stops it with a message,
-npm's own included. Those checks prove only that each token is valid (`npm whoami` answers any valid token, and both
-repositories are public): their write grants are proven by the staging and the publish themselves, and a refusal there
-stops the release with the state report, what was done and the commands that finish it.
+The release checks the token before it tags anything; an expired or revoked one stops it with a message. That check
+proves only that the token is valid (both repositories are public): its write grant is proven by the release itself,
+and a refusal there stops the release with the state report, what was done and the commands that finish it.
 
 ## License
 
