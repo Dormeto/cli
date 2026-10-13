@@ -206,6 +206,20 @@ delete the directory.
 `dormeto` sends nothing but its calls to AWS and to your EKS clusters' APIs, with your credentials, from your machine.
 There is no telemetry and no update check. What it reads stays in the cache and the reports you choose to share.
 
+## Building from source
+
+Go 1.26 or later; Node.js for the npm scripts' tests; GoReleaser 2 for `make snapshot`. `make` lists the targets:
+
+```
+make build                                          # bin/dormeto, as a release builds it
+make run ARGS="estimate --profile <profile> --uptime"
+make test                                           # go vet, the Go tests (shared cases, end to end), npm test
+make install                                        # into $(go env GOPATH)/bin
+make snapshot                                       # dist/: the release's archives, checksums, cask, npm packages
+make parity                                         # the shared cases exported again from ../manager
+make dry-run VERSION=0.1.0                          # a release's checks, nothing published
+```
+
 ## Releasing
 
 For maintainers. `scripts/release.sh <version>` (for example `0.1.0`, without a `v`) checks the repository, tags,
