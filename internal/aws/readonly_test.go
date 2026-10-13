@@ -36,6 +36,7 @@ var readOnly = []string{
 	"cloudwatch.GetMetricData",
 	"ec2.DescribeInstances",
 	"ec2.DescribeRegions",
+	"ec2.DescribeSecurityGroups",
 	"ec2.DescribeSpotPriceHistory",
 	"ecs.DescribeServices",
 	"ecs.DescribeTaskDefinition",
