@@ -60,3 +60,26 @@ func TestCompletionPrintsAScript(t *testing.T) {
 		t.Errorf("zsh script lacks #compdef: %q", got)
 	}
 }
+
+// F7: `dormeto --version` (and -v) print what `dormeto version` prints first: "dormeto <version>".
+func TestVersionFlagPrintsTheFirstLineOfVersion(t *testing.T) {
+	cases := []struct {
+		b    build
+		want string
+	}{
+		{build{version: "0.1.0", commit: "abc1234", versions: []byte(`{}`)}, "dormeto 0.1.0\n"},
+		{build{info: &debug.BuildInfo{Main: debug.Module{Version: "v0.2.0"}}, versions: []byte(`{}`)}, "dormeto 0.2.0\n"},
+		{build{info: &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, versions: []byte(`{}`)}, "dormeto dev\n"},
+	}
+	for _, c := range cases {
+		for _, flag := range []string{"--version", "-v"} {
+			got := run(t, c.b, flag)
+			if got != c.want {
+				t.Errorf("%s: %q, want %q", flag, got, c.want)
+			}
+			if first, _, _ := strings.Cut(run(t, c.b, "version"), "\n"); got != first+"\n" {
+				t.Errorf("%s: %q, not the first line of version %q", flag, got, first)
+			}
+		}
+	}
+}

@@ -34,7 +34,10 @@ func main() {
 }
 
 func newRoot(b build) *cobra.Command {
-	root := &cobra.Command{Use: "dormeto", Short: "Dormeto command line", SilenceUsage: true}
+	// --version (and -v) prints the first line of `dormeto version`.
+	first, _, _ := strings.Cut(b.describe(), "\n")
+	root := &cobra.Command{Use: "dormeto", Short: "Dormeto command line", SilenceUsage: true, Version: first}
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print the version, commit and date, and the versions of the shared test cases",
