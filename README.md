@@ -95,7 +95,8 @@ Usage: dormeto estimate --profile <profile>[,<profile>...] [--accounts 111111111
 ```
 
 An option bad or missing prints its message and the usage, and exits with code 2. Credentials that do not work exit
-with code 1 and AWS's message.
+with code 1 and AWS's message; an SSO session expired, invalid or never logged in adds the command that renews it,
+`aws sso login --profile <profile>`, for the profile that failed.
 
 - `--profile <profile>[,<profile>...]`: the AWS profile (required). The organization's active accounts when the profile
   may list them (the management account or a delegated administrator), else its own account only, and the report says

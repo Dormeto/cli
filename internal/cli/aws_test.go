@@ -179,34 +179,48 @@ region = eu-west-1
 const expiredToken = `{"startUrl": "` + startURL + `", "region": "eu-west-1", "accessToken": "token", "expiresAt": "2026-10-01T00:00:00Z"}`
 
 func TestCredentialsThatDoNotWorkThroughTheRealWiringAWSsWordsOnOneLineExitCode1NothingSent(t *testing.T) {
-	cases := []struct{ name, profiles, key, says string }{
-		{"an expired SSO session (a profile's own start URL)", "legacy", startURL, "Error: the SSO session has expired or is invalid"},
-		{"an expired SSO session (aws sso login --sso-session)", "session", "corp", "Error: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed"},
-		{"several profiles: the first failing named", "session,prd", "corp", "Error: session: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed"},
-		{"a profile never logged in: the token file missing", "session", "", "Error: failed to read cached SSO token file, open <home>/.aws/sso/cache/<sha1 of corp>.json: no such file or directory"},
-		{"a profile missing from the config", "nope", "", "Error: failed to get shared config profile, nope"},
-		{"a profile without credentials (the instance metadata service off)", "bare", "",
-			`Error: no EC2 IMDS role found, operation error ec2imds: GetMetadata, access disabled to EC2 IMDS via client option, or "AWS_EC2_METADATA_DISABLED" environment variable`},
-		{"a credential process that fails (aws-vault, granted, saml2aws)", "process", "", "Error: process provider error: error in credential_process: exit status 1"},
-		{"a credential process that prints no JSON", "garbled", "",
-			"Error: process provider error: parse failed of process output: not-json, error: invalid character 'o' in literal null (expecting 'u')"},
+	// F8: an SSO token error (expired, its cache file missing, invalid) is followed by the command that renews it, for
+	// the profile that failed.
+	cases := []struct {
+		name, profiles, key, token string
+		says                       []string
+	}{
+		{"an expired SSO session (a profile's own start URL)", "legacy", startURL, expiredToken,
+			[]string{"Error: the SSO session has expired or is invalid", "Run aws sso login --profile legacy and try again."}},
+		{"an expired SSO session (aws sso login --sso-session)", "session", "corp", expiredToken,
+			[]string{"Error: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed", "Run aws sso login --profile session and try again."}},
+		{"several profiles: the first failing named", "session,prd", "corp", expiredToken,
+			[]string{"Error: session: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed", "Run aws sso login --profile session and try again."}},
+		{"a profile never logged in: the token file missing", "session", "", "",
+			[]string{"Error: failed to read cached SSO token file, open <home>/.aws/sso/cache/<sha1 of corp>.json: no such file or directory", "Run aws sso login --profile session and try again."}},
+		{"a profile never logged in (its own start URL): the token file missing", "legacy", "", "",
+			[]string{"Error: the SSO session has expired or is invalid: failed to read cached SSO token file, open <home>/.aws/sso/cache/<sha1 of the start URL>.json: no such file or directory", "Run aws sso login --profile legacy and try again."}},
+		{"an invalid token file", "prd", "corp", "not json",
+			[]string{"Error: failed to parse cached SSO token file, invalid character 'o' in literal null (expecting 'u')", "Run aws sso login --profile prd and try again."}},
+		{"a profile missing from the config", "nope", "", "", []string{"Error: failed to get shared config profile, nope"}},
+		{"a profile without credentials (the instance metadata service off)", "bare", "", "",
+			[]string{`Error: no EC2 IMDS role found, operation error ec2imds: GetMetadata, access disabled to EC2 IMDS via client option, or "AWS_EC2_METADATA_DISABLED" environment variable`}},
+		{"a credential process that fails (aws-vault, granted, saml2aws)", "process", "", "", []string{"Error: process provider error: error in credential_process: exit status 1"}},
+		{"a credential process that prints no JSON", "garbled", "", "",
+			[]string{"Error: process provider error: parse failed of process output: not-json, error: invalid character 'o' in literal null (expecting 'u')"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			home, hits := isolate(t, ssoConfig)
 			if c.key != "" {
-				cacheToken(t, home, c.key, expiredToken)
+				cacheToken(t, home, c.key, c.token)
 			}
 			r := newRun(t, nil)
 			r.deps.AWS = AWSOf
 			code := Main([]string{"--profile", c.profiles, "--out", t.TempDir()}, r.deps)
 			errs := r.errors()
-			sum := sha1.Sum([]byte("corp"))
+			corp, start := sha1.Sum([]byte("corp")), sha1.Sum([]byte(startURL))
 			for i := range errs {
-				errs[i] = strings.ReplaceAll(errs[i], hex.EncodeToString(sum[:]), "<sha1 of corp>")
+				errs[i] = strings.ReplaceAll(errs[i], hex.EncodeToString(corp[:]), "<sha1 of corp>")
+				errs[i] = strings.ReplaceAll(errs[i], hex.EncodeToString(start[:]), "<sha1 of the start URL>")
 				errs[i] = strings.ReplaceAll(errs[i], home, "<home>")
 			}
-			if code != 1 || !slices.Equal(errs, []string{c.says}) {
+			if code != 1 || !slices.Equal(errs, c.says) {
 				t.Fatalf("exit code %d, errors %q", code, errs)
 			}
 			if hits.Load() != 0 {

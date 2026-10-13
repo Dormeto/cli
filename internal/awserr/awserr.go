@@ -12,7 +12,10 @@ package awserr
 
 import (
 	"errors"
+	"slices"
+	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/smithy-go"
 )
 
@@ -127,6 +130,50 @@ func sdkWrapper(err, next error) bool {
 		if said == w+below {
 			return true
 		}
+	}
+	return false
+}
+
+// Prefix is the prefix of a prefixed error (Prefixed), such as the profile that failed among several; "" for none.
+func Prefix(err error) string {
+	var p *prefixed
+	if errors.As(err, &p) {
+		return p.prefix
+	}
+	return ""
+}
+
+// ssoTokenWords start the SSO token provider's errors that `aws sso login` cures (an sso-session profile): an expired
+// token it cannot refresh, its cache file missing (never logged in) or not JSON. The provider says them in words only.
+var ssoTokenWords = []string{"refresh cached SSO token failed", "failed to read cached SSO token file", "failed to parse cached SSO token file"}
+
+// SSOToken says err is an SSO token error that `aws sso login` cures: the SSO session expired or invalid (the SDK's
+// ssocreds.InvalidTokenError, a profile with its own sso_start_url), or the SSO token provider's expired, missing or
+// unreadable token (an sso-session profile), wrapped or prefixed.
+func SSOToken(err error) bool {
+	var invalid *ssocreds.InvalidTokenError
+	if errors.As(err, &invalid) {
+		return true
+	}
+	return anyIn(err, func(e error) bool {
+		said := e.Error()
+		return slices.ContainsFunc(ssoTokenWords, func(w string) bool { return strings.HasPrefix(said, w) })
+	})
+}
+
+// anyIn says some error of err's tree (err, then what it wraps) satisfies ok.
+func anyIn(err error, ok func(error) bool) bool {
+	if err == nil {
+		return false
+	}
+	if ok(err) {
+		return true
+	}
+	switch u := err.(type) {
+	case interface{ Unwrap() error }:
+		return anyIn(u.Unwrap(), ok)
+	case interface{ Unwrap() []error }:
+		return slices.ContainsFunc(u.Unwrap(), func(e error) bool { return anyIn(e, ok) })
 	}
 	return false
 }

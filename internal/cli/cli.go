@@ -90,7 +90,8 @@ func plural(n int, word string) string {
 // Main runs the estimate command with its arguments (those after "estimate") and returns its exit code: 0; 2 with
 // the message and the usage for a bad option, or the message for accounts given that cannot be estimated (known once
 // AWS answered); 1 with `name: message` for anything else (credentials that do not work, an organization call AWS
-// refuses), on one line, AWS's words without the SDK's wrappers (awserr.Cause); Interrupted when the context is
+// refuses), on one line, AWS's words without the SDK's wrappers (awserr.Cause), and for an SSO token error a second
+// line, `Run aws sso login --profile <profile> and try again.`; Interrupted when the context is
 // cancelled. --help prints the usage (exit code 0). A panic is said as `Error: <its value>`, exit code 1, without a
 // goroutine dump (F6: Node says `TypeError: …` and exits 1); a worker's is its item's error (limit.Map).
 func Main(args []string, deps Deps) (code int) {
@@ -126,7 +127,26 @@ func Main(args []string, deps Deps) (code int) {
 		return 2
 	}
 	deps.Error(awserr.Said(awserr.Cause(err)))
+	if profile := ssoProfile(err, o.Profiles); profile != "" {
+		deps.Error("Run aws sso login --profile " + profile + " and try again.")
+	}
 	return 1
+}
+
+// ssoProfile is the profile whose SSO token failed when err is an SSO token error (expired, its cache file missing,
+// invalid: F8): the one named in the error among several (accounts.ReachProfiles prefixes it), else the only one; ""
+// when err is no SSO token error or the profile is not known.
+func ssoProfile(err error, profiles []string) string {
+	if !awserr.SSOToken(err) {
+		return ""
+	}
+	if p := awserr.Prefix(err); p != "" {
+		return p
+	}
+	if len(profiles) == 1 {
+		return profiles[0]
+	}
+	return ""
 }
 
 // filled gives the dependencies left out their defaults: no cancellation, the clock, nothing said.

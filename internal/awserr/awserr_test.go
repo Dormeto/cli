@@ -184,3 +184,43 @@ func TestTheCauseOfAnAWSErrorIsTheErrorItselfAPrefixIsKept(t *testing.T) {
 		t.Error("the cause of no error")
 	}
 }
+
+// F8: an SSO token that `aws sso login` renews (expired, invalid, its cache file missing or unreadable), as the SDK's
+// SSO credential and token providers say it, wrapped or prefixed; nothing else.
+func TestAnSSOTokenErrorIsToldFromAnyOther(t *testing.T) {
+	missing := &fs.PathError{Op: "open", Path: "/home/u/.aws/sso/cache/0a1b.json", Err: syscall.ENOENT}
+	for _, err := range []error{
+		ssoExpired(&ssocreds.InvalidTokenError{}),
+		ssoExpired(&ssocreds.InvalidTokenError{Err: fmt.Errorf("failed to read cached SSO token file, %w", missing)}),
+		ssoExpired(fmt.Errorf("refresh cached SSO token failed, %w", errors.New("cached SSO token is expired, or not present, and cannot be refreshed"))),
+		ssoExpired(fmt.Errorf("failed to read cached SSO token file, %w", missing)),
+		ssoExpired(fmt.Errorf("failed to parse cached SSO token file, %w", errors.New("invalid character 'o' in literal null (expecting 'u')"))),
+		awserr.Prefixed("prd", ssoExpired(&ssocreds.InvalidTokenError{})),
+		awserr.Cause(ssoExpired(&ssocreds.InvalidTokenError{})),
+	} {
+		if !awserr.SSOToken(err) {
+			t.Errorf("not an SSO token error: %v", err)
+		}
+	}
+	for _, err := range []error{
+		nil,
+		sdkError("ExpiredTokenException", "The security token included in the request is expired"),
+		ssoExpired(&processcreds.ProviderError{Err: errors.New("exit status 1")}),
+		errors.New("failed to get shared config profile, nope"),
+		ssoExpired(missing),
+	} {
+		if awserr.SSOToken(err) {
+			t.Errorf("an SSO token error: %v", err)
+		}
+	}
+}
+
+// The prefix of an error (Prefixed): the profile that failed among several.
+func TestThePrefixOfAnError(t *testing.T) {
+	if got := awserr.Prefix(awserr.Cause(awserr.Prefixed("prd", ssoExpired(&ssocreds.InvalidTokenError{})))); got != "prd" {
+		t.Errorf("prefix %q", got)
+	}
+	if got := awserr.Prefix(ssoExpired(&ssocreds.InvalidTokenError{})); got != "" {
+		t.Errorf("prefix %q", got)
+	}
+}
