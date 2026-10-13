@@ -5,8 +5,8 @@ import "testing"
 
 func TestNumbersAsATemplateLiteralWritesThem(t *testing.T) {
 	for v, want := range map[float64]string{0: "0", 5: "5", 0.26: "0.26", 0.13: "0.13", 20: "20", 2.5: "2.5", 1e-6: "0.000001", 123456789012: "123456789012"} {
-		if got := jsNumber(v); got != want {
-			t.Errorf("jsNumber(%v) = %q, want %q", v, got, want)
+		if got := JSNumber(v); got != want {
+			t.Errorf("JSNumber(%v) = %q, want %q", v, got, want)
 		}
 	}
 }

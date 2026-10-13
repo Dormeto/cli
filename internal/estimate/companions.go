@@ -59,7 +59,7 @@ func (s *state) attach(region discover.RegionDiscovery, chosen []*elected, ran *
 			leave(CodeStoppable, d.NotStoppable)
 		case o.MaxWakesRds != nil && owner.wakesPerDay > *o.MaxWakesRds:
 			leave(CodeWakes, fmt.Sprintf("its workload wakes %s times a day at its recommended window, more than --max-wakes-rds %s (a database takes minutes to start)",
-				toFixed1(owner.wakesPerDay), jsNumber(*o.MaxWakesRds)))
+				toFixed1(owner.wakesPerDay), JSNumber(*o.MaxWakesRds)))
 		case !measured && (d.Status == "stopped" || d.Status == "stopping") && unread == "":
 			leave(CodeStopped, "stopped when discovered (--rds-uptime estimates it from the hours it ran)")
 		case measured && len(periods) == 0:

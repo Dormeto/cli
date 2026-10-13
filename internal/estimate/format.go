@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// jsNumber is a number as a JavaScript template literal writes it: the shortest digits that read back the same, in
+// JSNumber is a number as a JavaScript template literal writes it: the shortest digits that read back the same, in
 // plain notation from 1e-6 to 1e21, else in exponent notation (1e+21, 1e-7).
-func jsNumber(v float64) string {
+func JSNumber(v float64) string {
 	switch {
 	case math.IsNaN(v):
 		return "NaN"
@@ -35,7 +35,7 @@ func jsNumber(v float64) string {
 // rounds the exact value too, but to even on a tie; a tie is exactly x = m/4 with m odd (0.25, 0.75, 1.25...).
 func toFixed1(x float64) string {
 	if math.IsNaN(x) || math.Abs(x) >= 1e21 {
-		return jsNumber(x)
+		return JSNumber(x)
 	}
 	sign := ""
 	if x < 0 {

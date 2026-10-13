@@ -26,7 +26,7 @@ func assumptionsOf(baseline prices.Baseline, o options.Options, kubernetes bool)
 		"Every request counts as activity and as a wake: no waker is installed yet to set scanners and other filtered requests apart, so the workloads stay awake longer here than they would (smaller savings).",
 		"A wake lasts 60 seconds in the replay; the visitors' wait is not estimated before install.",
 		"Databases are not attached to load balancers: they are not counted (an installed router naps the ones attached to a workload).",
-		"Prices: AWS's on-demand list prices, Spot prices for Spot capacity, less the discounts given (compute " + jsNumber(o.Discounts.Compute) + "%, databases " + jsNumber(o.Discounts.Databases) + "%); storage, load balancers and data transfer are not counted.",
+		"Prices: AWS's on-demand list prices, Spot prices for Spot capacity, less the discounts given (compute " + JSNumber(o.Discounts.Compute) + "%, databases " + JSNumber(o.Discounts.Databases) + "%); storage, load balancers and data transfer are not counted.",
 		"Savings counted within " + within + ".",
 		ec2,
 		ecs,
@@ -36,5 +36,5 @@ func assumptionsOf(baseline prices.Baseline, o options.Options, kubernetes bool)
 		out = append(out, "Kubernetes pods: their share of their nodes (the larger of CPU and memory over the node's allocatable) at the node's price, saved only where a node autoscaler removes the nodes they free; the EKS control plane and the nodes' DaemonSets keep running.")
 	}
 	cost := prices.DormetoCost
-	return append(out, "Dormeto's cost: about $"+jsNumber(cost.Manager)+" a month for the manager, $"+jsNumber(cost.Router)+" per account and region with workloads, $"+jsNumber(cost.Workload)+" per workload.")
+	return append(out, "Dormeto's cost: about $"+JSNumber(cost.Manager)+" a month for the manager, $"+JSNumber(cost.Router)+" per account and region with workloads, $"+JSNumber(cost.Workload)+" per workload.")
 }
