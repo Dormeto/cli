@@ -213,6 +213,12 @@ publishes the GitHub release and the Homebrew tap with GoReleaser, publishes the
 `--dry-run` checks and builds without publishing, tagging or reading a token. The version needs a `## <version>` section
 in [CHANGELOG.md](CHANGELOG.md).
 
+The checks after it, `scripts/after-release.sh <version>` (safe to run again), install the version through each channel
+and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is),
+`npx`, the install script and `go install`. The install script is `https://dormeto.com/install.sh`, or, while that does
+not answer (the website not deployed yet), the website checkout's `site/install.sh`: `DORMETO_WEBSITE_DIR`, by default
+`../website` beside this repository.
+
 It reads two tokens from the macOS Keychain, items named for the account `$USER`: `npm-dormeto` and `github-dormeto`.
 They are never written to a repository, to `~/.npmrc` or to a log. Create each, then store it with `security`, which
 asks for the value (`-w` last, with no value) so it does not appear in a command line or the shell's history:

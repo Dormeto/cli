@@ -2,9 +2,14 @@
 # The checks after a release: scripts/after-release.sh <version>. Run by release.sh; safe to run again.
 # The release's assets and checksums; brew; npx; install.sh; go install. Each waits a little for the
 # registries, then fails with what it saw.
+#
+# install.sh: https://dormeto.com/install.sh, or while it does not answer 200 (the website not deployed yet, Ruling
+# P17) the website checkout's site/install.sh, DORMETO_WEBSITE_DIR (default: ../website beside this repository).
 set -euo pipefail
 
 version="${1:?usage: scripts/after-release.sh <version>}"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+website="${DORMETO_WEBSITE_DIR:-$root/../website}"
 download="https://github.com/Dormeto/cli/releases/download/v$version"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/dormeto-after.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
@@ -36,8 +41,11 @@ done < "$scratch/checksums.txt"
 
 echo "after-release: brew"
 brew update --quiet
-if brew list --formula --cask 2>/dev/null | grep -qx dormeto; then brew upgrade dormeto/tap/dormeto; else brew install dormeto/tap/dormeto; fi
-[ "$(dormeto version | head -n 1)" = "dormeto $version" ] || fail "brew gave '$(dormeto version | head -n 1)', not 'dormeto $version'"
+# A cask (Homebrew refuses --formula with --cask): upgraded when installed, `brew install` would leave it as it is.
+if brew list --cask dormeto >/dev/null 2>&1; then brew upgrade --cask dormeto/tap/dormeto; else brew install --cask dormeto/tap/dormeto; fi
+# Homebrew's own dormeto, linked in its prefix's bin/, not whichever is first on PATH (a go install build).
+brewed="$(brew --prefix)/bin/dormeto"
+[ "$("$brewed" version | head -n 1)" = "dormeto $version" ] || fail "brew gave '$("$brewed" version | head -n 1)' ($brewed), not 'dormeto $version'"
 
 echo "after-release: npx"
 check_npx() { [ "$(cd "$scratch" && npx -y "@dormeto/cli@$version" version | head -n 1)" = "dormeto $version" ]; }
@@ -45,8 +53,17 @@ retry 10 check_npx || fail "npx @dormeto/cli@$version version did not give 'dorm
 
 echo "after-release: install.sh"
 mkdir "$scratch/install"
-curl -fsSL https://dormeto.com/install.sh | DORMETO_VERSION="$version" DORMETO_INSTALL_DIR="$scratch/install" sh
-[ "$("$scratch/install/dormeto" version | head -n 1)" = "dormeto $version" ] || fail "install.sh did not install $version"
+served="$(curl -sSL -o "$scratch/install.sh" -w '%{http_code}' https://dormeto.com/install.sh || true)"
+if [ "$served" = 200 ]; then
+  installer="$scratch/install.sh"
+  echo "after-release: install.sh from https://dormeto.com/install.sh"
+else
+  installer="$website/site/install.sh"
+  [ -f "$installer" ] || fail "https://dormeto.com/install.sh does not answer 200 (${served:-no answer}) and there is no website checkout's copy at $installer (set DORMETO_WEBSITE_DIR)"
+  echo "after-release: https://dormeto.com/install.sh answers ${served:-nothing}, not 200 (the website not deployed yet): install.sh from the website checkout, $installer"
+fi
+DORMETO_VERSION="$version" DORMETO_INSTALL_DIR="$scratch/install" sh "$installer" || fail "install.sh ($installer) failed"
+[ "$("$scratch/install/dormeto" version | head -n 1)" = "dormeto $version" ] || fail "install.sh ($installer) did not install $version"
 
 echo "after-release: go install"
 mkdir "$scratch/gobin" "$scratch/gowork"
