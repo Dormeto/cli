@@ -5,12 +5,15 @@ package parity
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/aws/smithy-go"
 )
 
 // Topic is one file of shared cases.
@@ -155,6 +158,19 @@ type RecordedError struct {
 
 // Error is the recorded message.
 func (e *RecordedError) Error() string { return e.Message }
+
+// AWSError is err as the AWS SDK returns a failed call: a recorded error
+// becomes a *smithy.GenericAPIError (its code the name, its message the
+// message), so the code under test reads it as it reads AWS's (awserr); any
+// other error is returned as it is. The fakes of the AWS ports return
+// AWSError(answers.Call(…)); Kubernetes ones keep their *kubernetes.Error.
+func AWSError(err error) error {
+	var rec *RecordedError
+	if !errors.As(err, &rec) {
+		return err
+	}
+	return &smithy.GenericAPIError{Code: rec.Name, Message: rec.Message}
+}
 
 // Recorded reads a case's input.answers: {"<port>.<method>": [{"input", "output" or "error"}]}.
 func Recorded(t testing.TB, answers json.RawMessage) *Answers {

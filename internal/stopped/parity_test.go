@@ -16,7 +16,7 @@ type recordedEC2 struct{ a *parity.Answers }
 func (r recordedEC2) DescribeInstances(_ context.Context, in DescribeInstancesInput) (DescribeInstancesOutput, error) {
 	var out DescribeInstancesOutput
 	err := r.a.Call("ec2", "describeInstances", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedECS struct{ a *parity.Answers }
@@ -24,13 +24,13 @@ type recordedECS struct{ a *parity.Answers }
 func (r recordedECS) DescribeServices(_ context.Context, in DescribeServicesInput) (DescribeServicesOutput, error) {
 	var out DescribeServicesOutput
 	err := r.a.Call("ecs", "describeServices", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedECS) DescribeTaskDefinition(_ context.Context, in DescribeTaskDefinitionInput) (DescribeTaskDefinitionOutput, error) {
 	var out DescribeTaskDefinitionOutput
 	err := r.a.Call("ecs", "describeTaskDefinition", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedRDS struct{ a *parity.Answers }
@@ -38,13 +38,13 @@ type recordedRDS struct{ a *parity.Answers }
 func (r recordedRDS) DescribeDBInstances(_ context.Context, in DescribeDBInstancesInput) (DescribeDBInstancesOutput, error) {
 	var out DescribeDBInstancesOutput
 	err := r.a.Call("rds", "describeDBInstances", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedRDS) DescribeDBClusters(_ context.Context, in DescribeDBClustersInput) (DescribeDBClustersOutput, error) {
 	var out DescribeDBClustersOutput
 	err := r.a.Call("rds", "describeDBClusters", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func recordedPorts(t *testing.T, answers json.RawMessage) Ports {

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aws/smithy-go"
 )
 
 // spy records the failures Equal reports, instead of failing the test.
@@ -152,5 +154,22 @@ func TestRecordedErrorIsReturnedAsTheCallsError(t *testing.T) {
 	var ok struct{ Ok bool }
 	if err := a.Call("pricing", "getProducts", map[string]any{"a": 3}, &ok); err != nil || !ok.Ok {
 		t.Fatalf("output entry: %v %+v", err, ok)
+	}
+}
+
+func TestAWSErrorMakesARecordedErrorWhatTheSDKReturns(t *testing.T) {
+	a := Recorded(t, json.RawMessage(errorAnswers))
+	var out any
+	err := AWSError(a.Call("pricing", "getProducts", map[string]any{"a": 1}, &out))
+	var api *smithy.GenericAPIError
+	if !errors.As(err, &api) || *api != (smithy.GenericAPIError{Code: "ThrottlingException", Message: "Rate exceeded"}) {
+		t.Fatalf("err = %#v, want a *smithy.GenericAPIError", err)
+	}
+	missing := a.Call("pricing", "getProducts", map[string]any{"a": 9}, &out)
+	if got := AWSError(missing); got != missing {
+		t.Fatalf("another error is returned as it is: %#v", got)
+	}
+	if AWSError(nil) != nil {
+		t.Fatal("no error is no error")
 	}
 }

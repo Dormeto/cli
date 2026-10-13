@@ -8,6 +8,11 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/aws/smithy-go"
+
+	"github.com/Dormeto/cli/internal/awserr"
+	"github.com/Dormeto/cli/internal/kubernetes"
 )
 
 var (
@@ -165,3 +170,42 @@ func (refusing) DescribeLoadBalancers(context.Context, DescribeLoadBalancersInpu
 type deniedError struct{}
 
 func (deniedError) Error() string { return "denied" }
+
+// emptyELB is a region without load balancers.
+type emptyELB struct{ ELBv2Port }
+
+func (emptyELB) DescribeLoadBalancers(context.Context, DescribeLoadBalancersInput) (DescribeLoadBalancersOutput, error) {
+	return DescribeLoadBalancersOutput{}, nil
+}
+
+func (emptyELB) DescribeTargetGroups(context.Context, DescribeTargetGroupsInput) (DescribeTargetGroupsOutput, error) {
+	return DescribeTargetGroupsOutput{}, nil
+}
+
+type failingEKS struct{ err error }
+
+func (f failingEKS) ListClusters(context.Context, kubernetes.ListClustersInput) (kubernetes.ListClustersOutput, error) {
+	return kubernetes.ListClustersOutput{}, f.err
+}
+
+func (f failingEKS) DescribeCluster(context.Context, kubernetes.DescribeClusterInput) (kubernetes.DescribeClusterOutput, error) {
+	return kubernetes.DescribeClusterOutput{}, f.err
+}
+
+// sdkError is a failed call as the AWS SDK returns it.
+func sdkError(code, message string) error {
+	return &smithy.OperationError{ServiceID: "EKS", OperationName: "ListClusters", Err: &smithy.GenericAPIError{Code: code, Message: message}}
+}
+
+func TestScanRegionWithoutEKSRightsByTheAWSErrorsCodeScansTheRegionAsBefore(t *testing.T) {
+	k := &kubernetes.Ports{EKS: failingEKS{sdkError("AccessDeniedException", "User: arn:aws:sts::111122223333:assumed-role/x/y may not list clusters")}}
+	res, err := ScanRegion(context.Background(), ScanPorts{ELBv2: emptyELB{}, Kubernetes: k}, scanWhere, scanNow)
+	if err != nil || len(res.Clusters) != 0 {
+		t.Fatalf("%v %+v", err, res)
+	}
+	k.EKS = failingEKS{sdkError("ThrottlingException", "Rate exceeded")}
+	_, err = ScanRegion(context.Background(), ScanPorts{ELBv2: emptyELB{}, Kubernetes: k}, scanWhere, scanNow)
+	if awserr.Said(err) != "ThrottlingException: Rate exceeded" {
+		t.Fatalf("another EKS failure fails the scan: %v", err)
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/smithy-go"
+
 	"github.com/Dormeto/cli/internal/kubernetes"
 )
 
@@ -66,13 +68,14 @@ func TestARecordedKubernetesErrorArrivesAsAKubernetesError(t *testing.T) {
 	}
 }
 
-func TestAnotherRecordedErrorStaysItselfAndACallWithoutAnAnswerFails(t *testing.T) {
+func TestAnotherRecordedErrorIsTheSDKsAndACallWithoutAnAnswerFails(t *testing.T) {
 	ctx := context.Background()
 	p := RecordedPortsJSON(t, json.RawMessage(answers))
 	_, err := p.EKS.ListClusters(ctx, kubernetes.ListClustersInput{NextToken: "t"})
 	var e *kubernetes.Error
-	if err == nil || errors.As(err, &e) || err.Error() != "not authorized" {
-		t.Fatalf("an AWS error is not a Kubernetes one: %#v", err)
+	var api *smithy.GenericAPIError
+	if errors.As(err, &e) || !errors.As(err, &api) || *api != (smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized"}) {
+		t.Fatalf("an AWS error is the SDK's, not a Kubernetes one: %#v", err)
 	}
 	if _, err := p.Of(ctx, "unknown"); err == nil || !strings.Contains(err.Error(), "no recorded answer") {
 		t.Fatalf("%v", err)

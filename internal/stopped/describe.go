@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/Dormeto/cli/internal/awserr"
 )
 
 const itemsMax = 50
@@ -29,9 +31,10 @@ func osOf(platform string) string {
 }
 
 // unknown is the item for a backend that could not be described; the reason
-// is the first 200 characters (UTF-16 units, as Node's slice) of the message.
+// is the first 200 characters (UTF-16 units, as Node's slice) of the message
+// (Node's err.message: awserr.Message).
 func unknown(backend string, err error) Item {
-	units := utf16.Encode([]rune(err.Error()))
+	units := utf16.Encode([]rune(awserr.Message(err)))
 	if len(units) > 200 {
 		units = units[:200]
 	}

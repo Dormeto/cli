@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/smithy-go"
+
+	"github.com/Dormeto/cli/internal/awserr"
 	"github.com/Dormeto/cli/internal/kubernetes/kubernetestest"
 	"github.com/Dormeto/cli/internal/parity"
 )
@@ -20,37 +23,37 @@ type recordedELB struct{ a *parity.Answers }
 func (r recordedELB) DescribeLoadBalancers(_ context.Context, in DescribeLoadBalancersInput) (DescribeLoadBalancersOutput, error) {
 	var out DescribeLoadBalancersOutput
 	err := r.a.Call("elbv2", "describeLoadBalancers", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedELB) DescribeListeners(_ context.Context, in DescribeListenersInput) (DescribeListenersOutput, error) {
 	var out DescribeListenersOutput
 	err := r.a.Call("elbv2", "describeListeners", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedELB) DescribeRules(_ context.Context, in DescribeRulesInput) (DescribeRulesOutput, error) {
 	var out DescribeRulesOutput
 	err := r.a.Call("elbv2", "describeRules", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedELB) DescribeTags(_ context.Context, in DescribeTagsInput) (DescribeTagsOutput, error) {
 	var out DescribeTagsOutput
 	err := r.a.Call("elbv2", "describeTags", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedELB) DescribeTargetGroups(_ context.Context, in DescribeTargetGroupsInput) (DescribeTargetGroupsOutput, error) {
 	var out DescribeTargetGroupsOutput
 	err := r.a.Call("elbv2", "describeTargetGroups", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedELB) DescribeTargetHealth(_ context.Context, in DescribeTargetHealthInput) (DescribeTargetHealthOutput, error) {
 	var out DescribeTargetHealthOutput
 	err := r.a.Call("elbv2", "describeTargetHealth", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedASG struct{ a *parity.Answers }
@@ -58,7 +61,7 @@ type recordedASG struct{ a *parity.Answers }
 func (r recordedASG) DescribeAutoScalingGroups(_ context.Context, in DescribeAutoScalingGroupsInput) (DescribeAutoScalingGroupsOutput, error) {
 	var out DescribeAutoScalingGroupsOutput
 	err := r.a.Call("autoscaling", "describeAutoScalingGroups", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedEC2 struct{ a *parity.Answers }
@@ -66,7 +69,7 @@ type recordedEC2 struct{ a *parity.Answers }
 func (r recordedEC2) DescribeInstances(_ context.Context, in DescribeInstancesInput) (DescribeInstancesOutput, error) {
 	var out DescribeInstancesOutput
 	err := r.a.Call("ec2", "describeInstances", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedECS struct{ a *parity.Answers }
@@ -74,19 +77,19 @@ type recordedECS struct{ a *parity.Answers }
 func (r recordedECS) ListClusters(_ context.Context, in ListClustersInput) (ListClustersOutput, error) {
 	var out ListClustersOutput
 	err := r.a.Call("ecs", "listClusters", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedECS) ListServices(_ context.Context, in ListServicesInput) (ListServicesOutput, error) {
 	var out ListServicesOutput
 	err := r.a.Call("ecs", "listServices", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedECS) DescribeServices(_ context.Context, in DescribeServicesInput) (DescribeServicesOutput, error) {
 	var out DescribeServicesOutput
 	err := r.a.Call("ecs", "describeServices", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedCW struct{ a *parity.Answers }
@@ -94,7 +97,7 @@ type recordedCW struct{ a *parity.Answers }
 func (r recordedCW) GetMetricData(_ context.Context, in GetMetricDataInput) (GetMetricDataOutput, error) {
 	var out GetMetricDataOutput
 	err := r.a.Call("cloudwatch", "getMetricData", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func recordedScanPorts(t *testing.T, names []string, answers json.RawMessage, reader string) ScanPorts {
@@ -148,11 +151,11 @@ func TestSharedCasesOfScanRegion(t *testing.T) {
 			res, err := ScanRegion(context.Background(), recordedScanPorts(t, in.Ports, in.Answers, in.Reader), in.Where, now)
 			var got any = res
 			if err != nil {
-				var rec *parity.RecordedError
-				if !errors.As(err, &rec) {
+				var api smithy.APIError
+				if !errors.As(err, &api) {
 					t.Fatalf("an error that is not a recorded one: %v", err)
 				}
-				got = map[string]any{"error": map[string]string{"name": rec.Name, "message": rec.Message}}
+				got = map[string]any{"error": map[string]string{"name": awserr.Name(err), "message": awserr.Message(err)}}
 			}
 			b, err := json.Marshal(got)
 			if err != nil {

@@ -18,7 +18,7 @@ type recordedPricing struct{ a *parity.Answers }
 func (r recordedPricing) GetProducts(_ context.Context, in GetProductsInput) (GetProductsOutput, error) {
 	var out GetProductsOutput
 	err := r.a.Call("pricing", "getProducts", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type recordedSpot struct{ a *parity.Answers }
@@ -26,7 +26,7 @@ type recordedSpot struct{ a *parity.Answers }
 func (r recordedSpot) History(_ context.Context, region string, in SpotHistoryInput) (SpotHistoryOutput, error) {
 	var out SpotHistoryOutput
 	err := r.a.Call("spot", "history", map[string]any{"region": region, "input": in}, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 type putCall struct {

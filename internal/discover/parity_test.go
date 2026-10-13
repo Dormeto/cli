@@ -16,25 +16,25 @@ type recordedOrg struct{ a *parity.Answers }
 func (r recordedOrg) ListRoots(_ context.Context, in ListRootsInput) (ListRootsOutput, error) {
 	var out ListRootsOutput
 	err := r.a.Call("organizations", "listRoots", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedOrg) ListOrganizationalUnitsForParent(_ context.Context, in ListOrganizationalUnitsForParentInput) (ListOrganizationalUnitsForParentOutput, error) {
 	var out ListOrganizationalUnitsForParentOutput
 	err := r.a.Call("organizations", "listOrganizationalUnitsForParent", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedOrg) ListAccountsForParent(_ context.Context, in ListAccountsForParentInput) (ListAccountsForParentOutput, error) {
 	var out ListAccountsForParentOutput
 	err := r.a.Call("organizations", "listAccountsForParent", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func (r recordedOrg) ListTagsForResource(_ context.Context, in ListTagsForResourceInput) (ListTagsForResourceOutput, error) {
 	var out ListTagsForResourceOutput
 	err := r.a.Call("organizations", "listTagsForResource", in, &out)
-	return out, err
+	return out, parity.AWSError(err)
 }
 
 func TestSharedCasesOfTheFiltersAndTheInventory(t *testing.T) {

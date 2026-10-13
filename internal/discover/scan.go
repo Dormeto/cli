@@ -12,7 +12,6 @@ package discover
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -22,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dormeto/cli/internal/awserr"
 	"github.com/Dormeto/cli/internal/kubernetes"
 )
 
@@ -106,15 +106,6 @@ func tagsOf(ctx context.Context, elbv2 ELBv2Port, arns []string) (map[string]map
 
 var accessDenied = regexp.MustCompile(`(?i)AccessDenied|not authorized`)
 
-// errorName is an AWS error's code (smithy's ErrorCode), when it has one.
-func errorName(err error) string {
-	var coded interface{ ErrorCode() string }
-	if errors.As(err, &coded) {
-		return coded.ErrorCode()
-	}
-	return ""
-}
-
 // ScanRegion scans an account and region. now gives the end of the idle window
 // (the hour before it). A call that fails fails the scan, except the clusters'
 // listing when the role lacks EKS rights (the region is scanned as before).
@@ -197,7 +188,7 @@ func ScanRegion(ctx context.Context, ports ScanPorts, where Where, now time.Time
 	if ports.Kubernetes != nil {
 		got, err := kubernetes.ClustersOf(ctx, *ports.Kubernetes)
 		if err != nil {
-			if !accessDenied.MatchString(errorName(err) + " " + err.Error()) {
+			if !accessDenied.MatchString(awserr.Name(err) + " " + awserr.Message(err)) {
 				return ScanResult{}, err
 			}
 			got = nil

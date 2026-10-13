@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Dormeto/cli/internal/awserr"
 )
 
 // Autoscaler is the node autoscaler of a cluster: karpenter, cluster-autoscaler
@@ -212,9 +214,9 @@ func ClustersOf(ctx context.Context, ports Ports) ([]Cluster, error) {
 		}
 		if err := read(ctx, ports, &c); err != nil {
 			if s := statusOf(err); s == 401 || s == 403 {
-				c.Reason = fmt.Sprintf("the cluster does not let %s read it (an access entry with AmazonEKSViewPolicy): %s", reader, err.Error())
+				c.Reason = fmt.Sprintf("the cluster does not let %s read it (an access entry with AmazonEKSViewPolicy): %s", reader, awserr.Message(err))
 			} else {
-				c.Reason = "the cluster cannot be read: " + err.Error()
+				c.Reason = "the cluster cannot be read: " + awserr.Message(err)
 			}
 			c.Client, c.Pods, c.Autoscaler, c.lists = nil, nil, "", nil
 		}
@@ -396,7 +398,7 @@ func Backend(ctx context.Context, clusters []Cluster, g Group) Result {
 	}
 	b, reason, err := ownerBackend(ctx, cluster, g)
 	if err != nil {
-		return Result{Reason: fmt.Sprintf("cluster %s: %s", cluster.Name, err.Error())}
+		return Result{Reason: fmt.Sprintf("cluster %s: %s", cluster.Name, awserr.Message(err))}
 	}
 	return Result{Backend: b, Reason: reason}
 }

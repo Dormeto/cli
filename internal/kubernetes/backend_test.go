@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/aws/smithy-go"
 )
 
 // Ports manager packages/discovery/test/kubernetes.test.ts (the "Kubernetes
@@ -193,6 +195,17 @@ func TestAClusterThatFailsForAnotherReasonCannotBeRead(t *testing.T) {
 	c, err := ClustersOf(context.Background(), p)
 	if err != nil || !strings.HasPrefix(c[0].Reason, "the cluster does not let DmtDiscoveryRole read it") {
 		t.Fatalf("%v %+v", err, c)
+	}
+}
+
+func TestAnAWSErrorReadingAClusterIsSaidByItsMessageNotTheSDKsText(t *testing.T) {
+	p := one(demo(false, nil)).ports()
+	p.Of = func(context.Context, string) (Client, error) {
+		return nil, &smithy.OperationError{ServiceID: "EKS", OperationName: "DescribeCluster", Err: &smithy.GenericAPIError{Code: "ResourceNotFoundException", Message: "No cluster found for name: eks-demo."}}
+	}
+	c, err := ClustersOf(context.Background(), p)
+	if err != nil || c[0].Reason != "the cluster cannot be read: No cluster found for name: eks-demo." {
+		t.Fatalf("%v %q", err, c[0].Reason)
 	}
 }
 

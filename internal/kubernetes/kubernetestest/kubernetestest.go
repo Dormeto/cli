@@ -28,8 +28,9 @@ type recorded struct {
 // RecordedPorts answers the Kubernetes calls of a case from its recorded
 // answers: eks.listClusters, eks.describeCluster, kubernetes.of, kubernetes.get
 // and kubernetes.list. A recorded Kubernetes error arrives as a
-// *kubernetes.Error (status, reason, message); a call with no recorded answer
-// fails with the parity error. Reader is left empty.
+// *kubernetes.Error (status, reason, message), any other as the AWS SDK's
+// (*smithy.GenericAPIError); a call with no recorded answer fails with the
+// parity error. Reader is left empty.
 func RecordedPorts(t testing.TB, answers *parity.Answers, opts ...Option) kubernetes.Ports {
 	r := &recorded{t: t, answers: answers, wrap: func(in any) any { return in }}
 	for _, o := range opts {
@@ -54,14 +55,15 @@ func Client(t testing.TB, answers *parity.Answers, cluster string, opts ...Optio
 }
 
 // failure maps a recorded Kubernetes error to the *kubernetes.Error the client
-// returns; any other error is returned as it is.
+// returns, and any other recorded error to the AWS SDK's (parity.AWSError); a
+// call without an answer keeps its error.
 func failure(err error) error {
 	var rec *parity.RecordedError
 	if !errors.As(err, &rec) {
 		return err
 	}
 	if rec.Name != "KubernetesError" && rec.Status == 0 {
-		return err
+		return parity.AWSError(err)
 	}
 	reason := rec.Reason
 	if reason == "" {

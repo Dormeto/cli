@@ -40,6 +40,10 @@ type Error struct {
 // Error is the message.
 func (e *Error) Error() string { return e.Message }
 
+// ErrorName is the error's name as the router's KubernetesError has it
+// (awserr.Name reads it).
+func (e *Error) ErrorName() string { return "KubernetesError" }
+
 // Client reads one cluster's API (GET only).
 type Client interface {
 	// Get returns the object at path (nil for an empty answer).
