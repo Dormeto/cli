@@ -138,7 +138,8 @@ func cacheToken(t *testing.T, home, key, body string) {
 
 const startURL = "https://example.awsapps.com/start"
 
-// ssoConfig: a profile with its own sso_start_url (legacy), two of an SSO session (corp), one without credentials.
+// ssoConfig: a profile with its own sso_start_url (legacy), two of an SSO session (corp), one without credentials, two
+// whose credential process fails or prints no JSON.
 const ssoConfig = `[profile legacy]
 sso_start_url = ` + startURL + `
 sso_region = eu-west-1
@@ -165,6 +166,14 @@ sso_registration_scopes = sso:account:access
 
 [profile bare]
 region = eu-west-1
+
+[profile process]
+credential_process = false
+region = eu-west-1
+
+[profile garbled]
+credential_process = printf not-json
+region = eu-west-1
 `
 
 const expiredToken = `{"startUrl": "` + startURL + `", "region": "eu-west-1", "accessToken": "token", "expiresAt": "2026-10-01T00:00:00Z"}`
@@ -172,12 +181,15 @@ const expiredToken = `{"startUrl": "` + startURL + `", "region": "eu-west-1", "a
 func TestCredentialsThatDoNotWorkThroughTheRealWiringAWSsWordsOnOneLineExitCode1NothingSent(t *testing.T) {
 	cases := []struct{ name, profiles, key, says string }{
 		{"an expired SSO session (a profile's own start URL)", "legacy", startURL, "Error: the SSO session has expired or is invalid"},
-		{"an expired SSO session (aws sso login --sso-session)", "session", "corp", "Error: cached SSO token is expired, or not present, and cannot be refreshed"},
-		{"several profiles: the first failing named", "session,prd", "corp", "Error: session: cached SSO token is expired, or not present, and cannot be refreshed"},
+		{"an expired SSO session (aws sso login --sso-session)", "session", "corp", "Error: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed"},
+		{"several profiles: the first failing named", "session,prd", "corp", "Error: session: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed"},
 		{"a profile never logged in: the token file missing", "session", "", "Error: failed to read cached SSO token file, open <home>/.aws/sso/cache/<sha1 of corp>.json: no such file or directory"},
 		{"a profile missing from the config", "nope", "", "Error: failed to get shared config profile, nope"},
 		{"a profile without credentials (the instance metadata service off)", "bare", "",
 			`Error: no EC2 IMDS role found, operation error ec2imds: GetMetadata, access disabled to EC2 IMDS via client option, or "AWS_EC2_METADATA_DISABLED" environment variable`},
+		{"a credential process that fails (aws-vault, granted, saml2aws)", "process", "", "Error: process provider error: error in credential_process: exit status 1"},
+		{"a credential process that prints no JSON", "garbled", "",
+			"Error: process provider error: parse failed of process output: not-json, error: invalid character 'o' in literal null (expecting 'u')"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

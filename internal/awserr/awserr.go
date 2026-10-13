@@ -12,11 +12,6 @@ package awserr
 
 import (
 	"errors"
-	"io/fs"
-	"net"
-	"net/url"
-	"os"
-	"syscall"
 
 	"github.com/aws/smithy-go"
 )
@@ -90,13 +85,13 @@ func Prefixed(prefix string, err error) error {
 	return &prefixed{prefix: prefix, err: err}
 }
 
-// Cause is err without the AWS SDK for Go's wrappers of a failed operation or credential lookup ("operation error
-// STS: GetCallerIdentity, get identity: get credentials: failed to refresh cached credentials, …"): its innermost
-// error that still says something alone, as Node's err.message gives the credential provider's words (an expired SSO
-// session: "the SSO session has expired or is invalid"). An OS or network error says too little alone (no such file
-// or directory), an inner operation's error too little of what it was for (the instance metadata service's, for a
-// profile without credentials): the error above it, which names the file, the request or what was looked for, is the
-// cause. An AWS API error, which Name and Message read already, is returned as it is; a prefix (Prefixed) is kept.
+// Cause is err without the wrappers the AWS SDK for Go puts around a credential provider's error: the failed
+// operation's ("operation error STS: GetCallerIdentity, "), the signer's ("get identity: ", "get credentials: ") and
+// the credential cache's ("failed to refresh cached credentials, "). What remains is the provider's own error with
+// everything below it, as Node's err.message gives the provider's words: an expired SSO session, "the SSO session has
+// expired or is invalid"; a credential_process that fails, "process provider error: error in credential_process: exit
+// status 1"; a call that failed after its retries, "exceeded maximum number of attempts, 3, …". Anything else is kept
+// whole: an AWS API error, which Name and Message read already, is returned as it is; a prefix (Prefixed) is kept.
 func Cause(err error) error {
 	if err == nil {
 		return nil
@@ -109,20 +104,29 @@ func Cause(err error) error {
 	if errors.As(err, &api) {
 		return err
 	}
+	// The operation the command asked for: implied (an operation below, such as the instance metadata service's, is kept).
+	if op, ok := err.(*smithy.OperationError); ok && op.Err != nil {
+		err = op.Err
+	}
 	for {
 		next := errors.Unwrap(err)
-		if _, inner := next.(*smithy.OperationError); next == nil || inner || system(next) {
+		if next == nil || !sdkWrapper(err, next) {
 			return err
 		}
 		err = next
 	}
 }
 
-// system says err is the operating system's or the network's.
-func system(err error) bool {
-	switch err.(type) {
-	case *fs.PathError, *os.LinkError, *os.SyscallError, syscall.Errno, *url.Error, *net.OpError, *net.DNSError, *net.AddrError:
-		return true
+// sdkWrappers are the prefixes the SDK's signer and credential cache put before the error they wrap.
+var sdkWrappers = []string{"get identity: ", "get credentials: ", "failed to refresh cached credentials, "}
+
+// sdkWrapper says err only puts one of the SDK's prefixes before next.
+func sdkWrapper(err, next error) bool {
+	said, below := err.Error(), next.Error()
+	for _, w := range sdkWrappers {
+		if said == w+below {
+			return true
+		}
 	}
 	return false
 }

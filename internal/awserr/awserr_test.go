@@ -1,16 +1,21 @@
 package awserr_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -105,10 +110,36 @@ func TestTheCauseOfAnExpiredSSOSessionIsTheSDKsWordsAboutTheSessionOnOneLine(t *
 	if got := awserr.Said(awserr.Cause(err)); got != "Error: the SSO session has expired or is invalid" {
 		t.Errorf("said %q (the SDK's text: %q)", got, err.Error())
 	}
-	// An SSO session whose token cannot be refreshed: the innermost words.
+	// An SSO session whose token cannot be refreshed: the SSO token provider's words, and all below them.
 	err = ssoExpired(fmt.Errorf("refresh cached SSO token failed, %w", errors.New("cached SSO token is expired, or not present, and cannot be refreshed")))
-	if got := awserr.Said(awserr.Cause(err)); got != "Error: cached SSO token is expired, or not present, and cannot be refreshed" {
+	if got := awserr.Said(awserr.Cause(err)); got != "Error: refresh cached SSO token failed, cached SSO token is expired, or not present, and cannot be refreshed" {
 		t.Errorf("said %q", got)
+	}
+}
+
+func TestTheCauseIsTheCredentialProvidersOwnErrorWithEverythingBelowIt(t *testing.T) {
+	// A credential_process profile (aws-vault, granted, saml2aws): the process failed, timed out, or printed no JSON.
+	for leaf, says := range map[error]string{
+		fmt.Errorf("error in credential_process: %w", errors.New("exit status 1")):               "Error: process provider error: error in credential_process: exit status 1",
+		fmt.Errorf("credential process timed out: %w", context.DeadlineExceeded):                 "Error: process provider error: credential process timed out: context deadline exceeded",
+		fmt.Errorf("parse failed of process output: %s, error: %w", "oops", io.ErrUnexpectedEOF): "Error: process provider error: parse failed of process output: oops, error: unexpected EOF",
+	} {
+		if got := awserr.Said(awserr.Cause(ssoExpired(&processcreds.ProviderError{Err: leaf}))); got != says {
+			t.Errorf("said %q, want %q", got, says)
+		}
+	}
+}
+
+func TestTheCauseOfACallThatFailedAfterItsRetriesSaysTheAttempts(t *testing.T) {
+	below := &retry.MaxAttemptsError{Attempt: 3, Err: &awshttp.ResponseError{
+		ResponseError: &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 0}},
+			Err:      &smithyhttp.RequestSendError{Err: &url.Error{Op: "Post", URL: "https://sts.us-east-1.amazonaws.com/", Err: syscall.ECONNREFUSED}},
+		},
+	}}
+	err := &smithy.OperationError{ServiceID: "STS", OperationName: "GetCallerIdentity", Err: below}
+	if got, want := awserr.Said(awserr.Cause(err)), "Error: "+below.Error(); got != want || !strings.Contains(got, "exceeded maximum number of attempts, 3") {
+		t.Errorf("said %q, want %q", got, want)
 	}
 }
 
