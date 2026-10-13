@@ -63,7 +63,7 @@ type fake struct {
 	rulesOf   func(arns []string) ([]Rule, error)
 	service   func(cluster, service string) (*ServiceInfo, error)
 	ingress   map[string][]string
-	rds       DatabasesPort
+	rds       stopped.RDSPort
 	k8s       func(ctx context.Context, cluster string) (kubernetes.Client, error)
 	delay     func() // called inside every ECS call
 }
@@ -80,81 +80,101 @@ func newFake(rules ...ScannedRule) *fake {
 }
 
 func (f *fake) ports() RegionPorts {
-	return RegionPorts{
+	p := RegionPorts{
 		Scan: func(context.Context) (ScanResult, error) {
 			return ScanResult{Rules: f.rules, Clusters: f.clusters}, nil
 		},
-		AutoScaling: f, ELBv2: f, EC2: f, ECS: f, RDS: f.rds,
+		AutoScaling: f, ELBv2: f, EC2: f,
 		Stopped: stopped.Ports{EC2: f, ECS: f, KubernetesOf: f.k8s},
 	}
+	if f.rds != nil {
+		p.Stopped.RDS = f.rds
+	}
+	return p
 }
 
-func (f *fake) Group(_ context.Context, name string) (*Group, error) {
-	return &Group{Desired: f.desired, Instances: []string{"i-1", "i-2"}}, nil
+func (f *fake) DescribeAutoScalingGroups(_ context.Context, in DescribeAutoScalingGroupsInput) (DescribeAutoScalingGroupsOutput, error) {
+	var out DescribeAutoScalingGroupsOutput
+	for _, n := range in.AutoScalingGroupNames {
+		out.AutoScalingGroups = append(out.AutoScalingGroups, AutoScalingGroup{AutoScalingGroupName: n, DesiredCapacity: f.desired, Instances: []ASGInstance{{InstanceId: "i-1"}, {InstanceId: "i-2"}}})
+	}
+	return out, nil
 }
 
-func (f *fake) DescribeRules(_ context.Context, arns []string) ([]Rule, error) {
+func (f *fake) DescribeRules(_ context.Context, in DescribeRulesInput) (DescribeRulesOutput, error) {
 	f.mu.Lock()
-	f.askedRule = append(f.askedRule, arns)
+	f.askedRule = append(f.askedRule, in.RuleArns)
 	f.mu.Unlock()
 	if f.rulesOf != nil {
-		return f.rulesOf(arns)
+		rules, err := f.rulesOf(in.RuleArns)
+		return DescribeRulesOutput{Rules: rules}, err
 	}
-	return nil, nil
+	return DescribeRulesOutput{}, nil
 }
 
-func (f *fake) Instances(_ context.Context, ids []string) ([]InstanceInfo, error) {
-	var out []InstanceInfo
-	for _, id := range ids {
-		_, state, groups := f.instance(id)
-		out = append(out, InstanceInfo{ID: id, State: state, SecurityGroups: groups})
+func (f *fake) DescribeSecurityGroups(_ context.Context, in DescribeSecurityGroupsInput) (DescribeSecurityGroupsOutput, error) {
+	f.mu.Lock()
+	f.askedSG = append(f.askedSG, in.GroupIds)
+	f.mu.Unlock()
+	var out DescribeSecurityGroupsOutput
+	for _, id := range in.GroupIds {
+		sg := SecurityGroup{GroupId: id}
+		for _, from := range f.ingress[id] {
+			sg.IpPermissions = append(sg.IpPermissions, IpPermission{UserIdGroupPairs: []UserIdGroupPair{{GroupId: from}}})
+		}
+		// A rule naming no security group (an address range).
+		sg.IpPermissions = append(sg.IpPermissions, IpPermission{})
+		out.SecurityGroups = append(out.SecurityGroups, sg)
 	}
 	return out, nil
-}
-
-func (f *fake) SecurityGroups(_ context.Context, ids []string) ([]SecurityGroup, error) {
-	f.mu.Lock()
-	f.askedSG = append(f.askedSG, ids)
-	f.mu.Unlock()
-	var out []SecurityGroup
-	for _, id := range ids {
-		out = append(out, SecurityGroup{ID: id, AllowedFrom: f.ingress[id]})
-	}
-	return out, nil
-}
-
-func (f *fake) Service(_ context.Context, cluster, service string) (*ServiceInfo, error) {
-	f.mu.Lock()
-	f.askedSvc = append(f.askedSvc, cluster+"|"+service)
-	f.mu.Unlock()
-	if f.delay != nil {
-		f.delay()
-	}
-	if f.service != nil {
-		return f.service(cluster, service)
-	}
-	return &ServiceInfo{DesiredCount: f.ecsDesired}, nil
 }
 
 // The ports of what a nap stops.
 func (f *fake) DescribeInstances(_ context.Context, in stopped.DescribeInstancesInput) (stopped.DescribeInstancesOutput, error) {
 	var res stopped.Reservation
 	for _, id := range in.InstanceIds {
-		typ, _, _ := f.instance(id)
-		res.Instances = append(res.Instances, stopped.Instance{InstanceID: id, InstanceType: typ, PlatformDetails: "Linux/UNIX"})
+		typ, state, groups := f.instance(id)
+		i := stopped.Instance{InstanceID: id, InstanceType: typ, PlatformDetails: "Linux/UNIX"}
+		if state != "" {
+			i.State = &stopped.InstanceState{Name: state}
+		}
+		for _, g := range groups {
+			i.SecurityGroups = append(i.SecurityGroups, stopped.GroupIdentifier{GroupId: g})
+		}
+		res.Instances = append(res.Instances, i)
 	}
 	return stopped.DescribeInstancesOutput{Reservations: []stopped.Reservation{res}}, nil
 }
 
 func (f *fake) DescribeServices(_ context.Context, in stopped.DescribeServicesInput) (stopped.DescribeServicesOutput, error) {
+	f.mu.Lock()
+	f.askedSvc = append(f.askedSvc, in.Cluster+"|"+in.Services[0])
+	f.mu.Unlock()
 	if f.delay != nil {
 		f.delay()
 	}
-	return stopped.DescribeServicesOutput{Services: []stopped.Service{{ServiceArn: in.Services[0], LaunchType: "FARGATE", TaskDefinition: "api:7"}}}, nil
+	info := &ServiceInfo{DesiredCount: f.ecsDesired}
+	if f.service != nil {
+		var err error
+		if info, err = f.service(in.Cluster, in.Services[0]); err != nil {
+			return stopped.DescribeServicesOutput{}, err
+		}
+	}
+	s := stopped.Service{ServiceArn: in.Services[0], LaunchType: "FARGATE", TaskDefinition: "api:7", DesiredCount: info.DesiredCount}
+	if len(info.SecurityGroups) > 0 {
+		s.NetworkConfiguration = &stopped.NetworkConfiguration{AwsvpcConfiguration: &stopped.AwsvpcConfiguration{SecurityGroups: info.SecurityGroups}}
+	}
+	return stopped.DescribeServicesOutput{Services: []stopped.Service{s}}, nil
 }
 
 func (f *fake) DescribeTaskDefinition(context.Context, stopped.DescribeTaskDefinitionInput) (stopped.DescribeTaskDefinitionOutput, error) {
 	return stopped.DescribeTaskDefinitionOutput{TaskDefinition: &stopped.TaskDefinition{CPU: "256", Memory: "512", RuntimePlatform: &stopped.RuntimePlatform{CPUArchitecture: "ARM64", OperatingSystemFamily: "LINUX"}}}, nil
+}
+
+// ServiceInfo is what a test says of an ECS service: its desired count and awsvpc groups.
+type ServiceInfo struct {
+	DesiredCount   int
+	SecurityGroups []string
 }
 
 func discoverNow(t *testing.T, f *fake) RegionDiscovery {
@@ -391,34 +411,34 @@ func TestAManagedWorkloadWithoutAWakerForwardIsManagedAllTheSame(t *testing.T) {
 
 // Companion databases: an RDS instance or an Aurora provisioned cluster whose security group lets a workload's in.
 type fakeRDS struct {
-	instances []DBInstance
-	clusters  []DBCluster
+	instances []stopped.DBInstance
+	clusters  []stopped.DBCluster
 	failing   error
 }
 
-func (r fakeRDS) DescribeDBInstances(_ context.Context, marker string) ([]DBInstance, string, error) {
+func (r fakeRDS) DescribeDBInstances(_ context.Context, in stopped.DescribeDBInstancesInput) (stopped.DescribeDBInstancesOutput, error) {
 	if r.failing != nil {
-		return nil, "", r.failing
+		return stopped.DescribeDBInstancesOutput{}, r.failing
 	}
-	if marker != "" {
-		return r.instances[6:], "", nil
+	if in.Marker != "" {
+		return stopped.DescribeDBInstancesOutput{DBInstances: r.instances[6:]}, nil
 	}
-	return r.instances[:6], "next", nil
+	return stopped.DescribeDBInstancesOutput{DBInstances: r.instances[:6], Marker: "next"}, nil
 }
 
-func (r fakeRDS) DescribeDBClusters(context.Context, string) ([]DBCluster, string, error) {
-	return r.clusters, "", nil
+func (r fakeRDS) DescribeDBClusters(context.Context, stopped.DescribeDBClustersInput) (stopped.DescribeDBClustersOutput, error) {
+	return stopped.DescribeDBClustersOutput{DBClusters: r.clusters}, nil
 }
 
-func db(id string, over ...func(*DBInstance)) DBInstance {
-	d := DBInstance{DBInstanceIdentifier: id, DBInstanceStatus: "available", Engine: "mysql", DBInstanceClass: "db.t3.medium", VpcSecurityGroups: []VpcSecurityGroup{{"sg-db", "active"}}}
+func db(id string, over ...func(*stopped.DBInstance)) stopped.DBInstance {
+	d := stopped.DBInstance{DBInstanceIdentifier: id, DBInstanceStatus: "available", Engine: "mysql", DBInstanceClass: "db.t3.medium", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-db", "active")}}
 	for _, o := range over {
 		o(&d)
 	}
 	return d
 }
 
-func databasesWorld(rds DatabasesPort) *fake {
+func databasesWorld(rds stopped.RDSPort) *fake {
 	service := serviceArn("api")
 	f := newFake(wl("web"), ecsRule("api", service), wl("admin", func(r *ScannedRule) { r.Backend = &Backend{Kind: "instance", ID: "i-9"} }))
 	sgOf := map[string]string{"i-9": "sg-app", "i-1": "sg-web", "i-2": "sg-web"}
@@ -438,27 +458,29 @@ func databasesWorld(rds DatabasesPort) *fake {
 }
 
 func TestEachWorkloadsSecurityGroupsAndTheDatabasesWhoseSecurityGroupLetsOneIn(t *testing.T) {
-	aurora := func(d *DBInstance) {
+	aurora := func(d *stopped.DBInstance) {
 		d.DBClusterIdentifier, d.Engine, d.DBInstanceClass = "aurora", "aurora-postgresql", "db.r6g.large"
 	}
-	instances := []DBInstance{
-		db("shop-db", func(d *DBInstance) { d.TagList = []Tag{{"env", "dev"}} }),
-		db("replica", func(d *DBInstance) { d.ReadReplicaSourceDBInstanceIdentifier = "shop-db" }),
-		db("with-replicas", func(d *DBInstance) {
+	instances := []stopped.DBInstance{
+		db("shop-db", func(d *stopped.DBInstance) { d.TagList = []stopped.Tag{tag("env", "dev")} }),
+		db("replica", func(d *stopped.DBInstance) { d.ReadReplicaSourceDBInstanceIdentifier = "shop-db" }),
+		db("with-replicas", func(d *stopped.DBInstance) {
 			d.ReadReplicaDBInstanceIdentifiers = []string{"far"}
-			d.VpcSecurityGroups = []VpcSecurityGroup{{"sg-db2", "active"}}
+			d.VpcSecurityGroups = []stopped.VpcSecurityGroup{vsg("sg-db2", "active")}
 		}),
-		db("other-db", func(d *DBInstance) { d.VpcSecurityGroups = []VpcSecurityGroup{{"sg-other", "active"}} }),
-		db("night-db", func(d *DBInstance) { d.DBInstanceStatus = "stopped" }),
-		db("new-db", func(d *DBInstance) { d.DBInstanceStatus = "creating" }),
+		db("other-db", func(d *stopped.DBInstance) {
+			d.VpcSecurityGroups = []stopped.VpcSecurityGroup{vsg("sg-other", "active")}
+		}),
+		db("night-db", func(d *stopped.DBInstance) { d.DBInstanceStatus = "stopped" }),
+		db("new-db", func(d *stopped.DBInstance) { d.DBInstanceStatus = "creating" }),
 		db("aur-1", aurora), db("aur-2", aurora),
-		db("sls-1", func(d *DBInstance) {
+		db("sls-1", func(d *stopped.DBInstance) {
 			d.DBClusterIdentifier, d.Engine, d.DBInstanceClass = "aurora-sls", "aurora-postgresql", "db.serverless"
 		}),
 	}
-	clusters := []DBCluster{
-		{DBClusterIdentifier: "aurora", Status: "available", Engine: "aurora-postgresql", EngineMode: "provisioned", VpcSecurityGroups: []VpcSecurityGroup{{"sg-aur", "active"}}, TagList: []Tag{{"team", "shop"}}},
-		{DBClusterIdentifier: "aurora-sls", Status: "available", Engine: "aurora-postgresql", EngineMode: "provisioned", VpcSecurityGroups: []VpcSecurityGroup{{"sg-aur", "active"}}},
+	clusters := []stopped.DBCluster{
+		{DBClusterIdentifier: "aurora", Status: "available", Engine: "aurora-postgresql", EngineMode: "provisioned", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-aur", "active")}, TagList: []stopped.Tag{tag("team", "shop")}},
+		{DBClusterIdentifier: "aurora-sls", Status: "available", Engine: "aurora-postgresql", EngineMode: "provisioned", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-aur", "active")}},
 	}
 	f := databasesWorld(fakeRDS{instances: instances, clusters: clusters})
 	found := discoverNow(t, f)
@@ -499,18 +521,20 @@ func TestWithoutRDSRightsTheDatabasesAreNotReadSaidWithoutAnRDSPortNone(t *testi
 
 // The other rules of the databases the Node tests leave to the shared cases.
 func TestTheRestOfTheDatabasesRules(t *testing.T) {
-	instances := []DBInstance{
-		db("sqlserver-az", func(d *DBInstance) { d.Engine, d.MultiAZ = "sqlserver-se", true }),
-		db("inactive", func(d *DBInstance) { d.VpcSecurityGroups = []VpcSecurityGroup{{"sg-db", "inactive"}} }),
-		db("member", func(d *DBInstance) { d.DBClusterIdentifier, d.Engine = "multi", "postgres" }),
-		db("lonely-member", func(d *DBInstance) { d.DBClusterIdentifier = "other" }),
+	instances := []stopped.DBInstance{
+		db("sqlserver-az", func(d *stopped.DBInstance) { d.Engine, d.MultiAZ = "sqlserver-se", true }),
+		db("inactive", func(d *stopped.DBInstance) {
+			d.VpcSecurityGroups = []stopped.VpcSecurityGroup{vsg("sg-db", "inactive")}
+		}),
+		db("member", func(d *stopped.DBInstance) { d.DBClusterIdentifier, d.Engine = "multi", "postgres" }),
+		db("lonely-member", func(d *stopped.DBInstance) { d.DBClusterIdentifier = "other" }),
 		db("a"), db("b"),
 	}
-	clusters := []DBCluster{
-		{DBClusterIdentifier: "multi", Status: "available", Engine: "postgres", VpcSecurityGroups: []VpcSecurityGroup{{"sg-db", "active"}}},
-		{DBClusterIdentifier: "empty", Status: "available", Engine: "aurora-mysql", VpcSecurityGroups: []VpcSecurityGroup{{"sg-db", "active"}}},
-		{DBClusterIdentifier: "creating", Status: "creating", Engine: "aurora-mysql", VpcSecurityGroups: []VpcSecurityGroup{{"sg-db", "active"}}},
-		{DBClusterIdentifier: "classic", Status: "available", Engine: "aurora-mysql", EngineMode: "serverless", VpcSecurityGroups: []VpcSecurityGroup{{"sg-db", "active"}}},
+	clusters := []stopped.DBCluster{
+		{DBClusterIdentifier: "multi", Status: "available", Engine: "postgres", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-db", "active")}},
+		{DBClusterIdentifier: "empty", Status: "available", Engine: "aurora-mysql", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-db", "active")}},
+		{DBClusterIdentifier: "creating", Status: "creating", Engine: "aurora-mysql", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-db", "active")}},
+		{DBClusterIdentifier: "classic", Status: "available", Engine: "aurora-mysql", EngineMode: "serverless", VpcSecurityGroups: []stopped.VpcSecurityGroup{vsg("sg-db", "active")}},
 	}
 	found := discoverNow(t, databasesWorld(fakeRDS{instances: instances, clusters: clusters}))
 	got := map[string]string{}
@@ -533,10 +557,10 @@ func TestTheRestOfTheDatabasesRules(t *testing.T) {
 }
 
 func TestTheDatabasesSecurityGroupsAreAskedOfEC2BatchesOfOneHundred(t *testing.T) {
-	var instances []DBInstance
+	var instances []stopped.DBInstance
 	for i := range 250 {
 		id := fmt.Sprintf("sg-%03d", i)
-		instances = append(instances, db(fmt.Sprintf("db-%d", i), func(d *DBInstance) { d.VpcSecurityGroups = []VpcSecurityGroup{{id, "active"}} }))
+		instances = append(instances, db(fmt.Sprintf("db-%d", i), func(d *stopped.DBInstance) { d.VpcSecurityGroups = []stopped.VpcSecurityGroup{vsg(id, "active")} }))
 	}
 	f := databasesWorld(pagedRDS{instances})
 	discoverNow(t, f)
@@ -549,13 +573,13 @@ func TestTheDatabasesSecurityGroupsAreAskedOfEC2BatchesOfOneHundred(t *testing.T
 	}
 }
 
-type pagedRDS struct{ instances []DBInstance }
+type pagedRDS struct{ instances []stopped.DBInstance }
 
-func (p pagedRDS) DescribeDBInstances(context.Context, string) ([]DBInstance, string, error) {
-	return p.instances, "", nil
+func (p pagedRDS) DescribeDBInstances(context.Context, stopped.DescribeDBInstancesInput) (stopped.DescribeDBInstancesOutput, error) {
+	return stopped.DescribeDBInstancesOutput{DBInstances: p.instances}, nil
 }
-func (p pagedRDS) DescribeDBClusters(context.Context, string) ([]DBCluster, string, error) {
-	return nil, "", nil
+func (p pagedRDS) DescribeDBClusters(context.Context, stopped.DescribeDBClustersInput) (stopped.DescribeDBClustersOutput, error) {
+	return stopped.DescribeDBClustersOutput{}, nil
 }
 
 func TestAFailureOfAWorkloadsDescriptionIsAnUnknownItemNeverGuessed(t *testing.T) {
@@ -649,3 +673,9 @@ func TestItListsTheClustersTheProfileCannotReadWithTheReason(t *testing.T) {
 	found := discoverNow(t, f)
 	same(t, "clusters", found.Clusters, fmt.Sprintf(`[{"name":"eks-prod","reason":%q}]`, reason))
 }
+
+func vsg(id, status string) stopped.VpcSecurityGroup {
+	return stopped.VpcSecurityGroup{VpcSecurityGroupId: id, Status: status}
+}
+
+func tag(key, value string) stopped.Tag { return stopped.Tag{Key: key, Value: value} }

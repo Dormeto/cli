@@ -179,25 +179,30 @@ func routerBackend(ctx context.Context, ports RegionPorts, backend Backend, mana
 		}
 		return backendNow{running: &stopped.Backend{Kind: stopped.BackendK8s, ID: backend.ID, Cluster: k.Cluster, Namespace: k.Namespace, Owner: k.Owner, Autoscaler: k.Autoscaler}}, nil
 	case KindASG:
-		group, err := ports.AutoScaling.Group(ctx, backend.ID)
+		out, err := ports.AutoScaling.DescribeAutoScalingGroups(ctx, DescribeAutoScalingGroupsInput{AutoScalingGroupNames: []string{backend.ID}})
 		if err != nil {
 			return backendNow{}, err
 		}
 		b := stopped.Backend{Kind: stopped.BackendASG, Name: backend.ID, Instances: []string{}}
-		if group != nil {
-			b.Desired = group.Desired
-			b.Instances = append(b.Instances, unique(group.Instances)...)
+		if len(out.AutoScalingGroups) > 0 {
+			group := out.AutoScalingGroups[0]
+			b.Desired = group.DesiredCapacity
+			for _, i := range group.Instances {
+				if i.InstanceId != "" {
+					b.Instances = append(b.Instances, i.InstanceId)
+				}
+			}
 		}
 		return backendNow{running: &b}, nil
 	case KindECS:
 		cluster := ClusterOf(backend.ID)
-		service, err := ports.ECS.Service(ctx, cluster, backend.ID)
+		out, err := ports.Stopped.ECS.DescribeServices(ctx, stopped.DescribeServicesInput{Cluster: cluster, Services: []string{backend.ID}})
 		if err != nil {
 			return backendNow{}, err
 		}
 		desired := 0
-		if service != nil {
-			desired = service.DesiredCount
+		if len(out.Services) > 0 {
+			desired = out.Services[0].DesiredCount
 		}
 		if managed {
 			return backendNow{running: &stopped.Backend{Kind: stopped.BackendECS, ID: backend.ID, Cluster: cluster, Desired: desired}}, nil
@@ -211,13 +216,13 @@ func routerBackend(ctx context.Context, ports RegionPorts, backend Backend, mana
 	if managed {
 		return backendNow{running: &stopped.Backend{Kind: stopped.BackendInstance, ID: backend.ID}}, nil
 	}
-	found, err := ports.EC2.Instances(ctx, []string{backend.ID})
+	found, err := ports.EC2.DescribeInstances(ctx, stopped.DescribeInstancesInput{InstanceIds: []string{backend.ID}})
 	if err != nil {
 		return backendNow{}, err
 	}
 	state := ""
-	if len(found) > 0 {
-		state = found[0].State
+	if instances := instancesOf(found); len(instances) > 0 && instances[0].State != nil {
+		state = instances[0].State.Name
 	}
 	if state == "" {
 		state = "running"
@@ -226,6 +231,15 @@ func routerBackend(ctx context.Context, ports RegionPorts, backend Backend, mana
 		return backendNow{instanceState: state}, nil
 	}
 	return backendNow{running: &stopped.Backend{Kind: stopped.BackendInstance, ID: backend.ID}, instanceState: state}, nil
+}
+
+// instancesOf flattens the reservations' instances in order.
+func instancesOf(out stopped.DescribeInstancesOutput) []stopped.Instance {
+	var all []stopped.Instance
+	for _, r := range out.Reservations {
+		all = append(all, r.Instances...)
+	}
+	return all
 }
 
 // wakerOf is a managed workload's waker target group: the other target group of
@@ -245,10 +259,11 @@ func wakerOf(ctx context.Context, ports RegionPorts, rule ScannedRule) (string, 
 	if ref == nil {
 		return "", nil
 	}
-	rules, err := ports.ELBv2.DescribeRules(ctx, []string{ref.ID})
+	out, err := ports.ELBv2.DescribeRules(ctx, DescribeRulesInput{RuleArns: []string{ref.ID}})
 	if err != nil {
 		return "", err
 	}
+	rules := out.Rules
 	if len(rules) == 0 {
 		return "", nil
 	}
@@ -293,26 +308,31 @@ func securityGroupsOf(ctx context.Context, ports RegionPorts, backend Backend, r
 		if len(ids) == 0 {
 			return []string{}
 		}
-		instances, err := ports.EC2.Instances(ctx, ids)
+		out, err := ports.EC2.DescribeInstances(ctx, stopped.DescribeInstancesInput{InstanceIds: ids})
 		if err != nil {
 			return []string{} // Not read: the workload gets no companion.
 		}
 		var groups []string
-		for _, i := range instances {
-			groups = append(groups, i.SecurityGroups...)
+		for _, i := range instancesOf(out) {
+			for _, g := range i.SecurityGroups {
+				groups = append(groups, g.GroupId)
+			}
 		}
 		return unique(groups)
 	case KindECS:
-		service, err := ports.ECS.Service(ctx, ClusterOf(backend.ID), backend.ID)
-		if err != nil || service == nil {
+		out, err := ports.Stopped.ECS.DescribeServices(ctx, stopped.DescribeServicesInput{Cluster: ClusterOf(backend.ID), Services: []string{backend.ID}})
+		if err != nil || len(out.Services) == 0 {
 			return []string{}
 		}
-		return unique(service.SecurityGroups)
+		if n := out.Services[0].NetworkConfiguration; n != nil && n.AwsvpcConfiguration != nil {
+			return unique(n.AwsvpcConfiguration.SecurityGroups)
+		}
+		return []string{}
 	}
 	return []string{}
 }
 
-func tagsOfList(list []Tag) map[string][]string {
+func tagsOfList(list []stopped.Tag) map[string][]string {
 	tags := map[string][]string{}
 	for _, t := range list {
 		if t.Key != "" {
@@ -324,7 +344,7 @@ func tagsOfList(list []Tag) map[string][]string {
 
 // dbItem is what a nap of the database would stop, as the router describes it
 // (router lambda/src/lib/stopped.mjs).
-func dbItem(db DBInstance) stopped.Item {
+func dbItem(db stopped.DBInstance) stopped.Item {
 	return stopped.Item{Kind: stopped.KindRDS, Class: db.DBInstanceClass, Engine: db.Engine, MultiAZ: db.MultiAZ}
 }
 
@@ -332,7 +352,7 @@ func dbItem(db DBInstance) stopped.Item {
 // schedule may start it again: its uptime says when).
 var nappable = []string{"available", "stopped", "stopping", "starting"}
 
-func activeGroups(groups []VpcSecurityGroup) []string {
+func activeGroups(groups []stopped.VpcSecurityGroup) []string {
 	var ids []string
 	for _, g := range groups {
 		if g.Status != "inactive" {
@@ -347,7 +367,7 @@ func activeGroups(groups []VpcSecurityGroup) []string {
 // as Node says it (name: message), the databases then none.
 func databasesOf(ctx context.Context, ports RegionPorts, groups []string) (databases []Database, failure string) {
 	databases = []Database{}
-	if ports.RDS == nil || len(groups) == 0 {
+	if ports.Stopped.RDS == nil || len(groups) == 0 {
 		return databases, ""
 	}
 	type found struct {
@@ -355,11 +375,18 @@ func databasesOf(ctx context.Context, ports RegionPorts, groups []string) (datab
 		groups []string
 	}
 	read := func() ([]Database, error) {
-		instances, err := pages(func(m string) ([]DBInstance, string, error) { return ports.RDS.DescribeDBInstances(ctx, m) })
+		rds := ports.Stopped.RDS
+		instances, err := pages(func(m string) ([]stopped.DBInstance, string, error) {
+			out, err := rds.DescribeDBInstances(ctx, stopped.DescribeDBInstancesInput{Marker: m})
+			return out.DBInstances, out.Marker, err
+		})
 		if err != nil {
 			return nil, err
 		}
-		clusters, err := pages(func(m string) ([]DBCluster, string, error) { return ports.RDS.DescribeDBClusters(ctx, m) })
+		clusters, err := pages(func(m string) ([]stopped.DBCluster, string, error) {
+			out, err := rds.DescribeDBClusters(ctx, stopped.DescribeDBClustersInput{Marker: m})
+			return out.DBClusters, out.Marker, err
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -386,7 +413,7 @@ func databasesOf(ctx context.Context, ports RegionPorts, groups []string) (datab
 			all = append(all, d)
 		}
 		for _, cluster := range clusters {
-			var members []DBInstance
+			var members []stopped.DBInstance
 			serverless := cluster.EngineMode == "serverless"
 			for _, i := range instances {
 				if i.DBClusterIdentifier == cluster.DBClusterIdentifier {
@@ -422,12 +449,18 @@ func databasesOf(ctx context.Context, ports RegionPorts, groups []string) (datab
 		asked := unique(own)
 		ingress := map[string][]string{}
 		for first := 0; first < len(asked); first += 100 {
-			found, err := ports.EC2.SecurityGroups(ctx, asked[first:min(first+100, len(asked))])
+			out, err := ports.EC2.DescribeSecurityGroups(ctx, DescribeSecurityGroupsInput{GroupIds: asked[first:min(first+100, len(asked))]})
 			if err != nil {
 				return nil, err
 			}
-			for _, sg := range found {
-				ingress[sg.ID] = unique(sg.AllowedFrom)
+			for _, sg := range out.SecurityGroups {
+				var from []string
+				for _, p := range sg.IpPermissions {
+					for _, pair := range p.UserIdGroupPairs {
+						from = append(from, pair.GroupId)
+					}
+				}
+				ingress[sg.GroupId] = unique(from)
 			}
 		}
 		var out []Database
@@ -568,5 +601,10 @@ func Region(ctx context.Context, ports RegionPorts, where Where) (RegionDiscover
 		}
 	}
 	found.Databases, found.DatabasesError = databasesOf(ctx, ports, unique(groups))
+	// A done context (Ctrl-C) leaves partial answers (a databases error, unknown
+	// items): the region is not a result, and never cached.
+	if err := ctx.Err(); err != nil {
+		return RegionDiscovery{}, err
+	}
 	return found, nil
 }

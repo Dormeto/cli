@@ -87,15 +87,12 @@ func adaptive(n int) awssdk.Retryer {
 type Region struct {
 	elbv2       elbv2Port
 	autoscaling autoScalingPort
-	ec2         interface {
-		ec2API
-		regionEC2API
-	}
-	ecs        ecsAPI
-	cloudwatch cloudWatchPort
-	rds        rdsPort
-	eks        eksPort
-	kubernetes *kubernetes.Ports
+	ec2         ec2API
+	ecs         ecsAPI
+	cloudwatch  cloudWatchPort
+	rds         rdsPort
+	eks         eksPort
+	kubernetes  *kubernetes.Ports
 }
 
 // NewRegion makes an account's clients in a region (cfg: the account's, from

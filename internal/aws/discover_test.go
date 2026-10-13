@@ -27,6 +27,7 @@ import (
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 
 	"github.com/Dormeto/cli/internal/discover"
+	"github.com/Dormeto/cli/internal/stopped"
 )
 
 type fakeDatabases struct{ asked []any }
@@ -54,62 +55,54 @@ func (f *fakeDatabases) DescribeDBClusters(_ context.Context, in *rds.DescribeDB
 	}}}, nil
 }
 
-func TestTheDatabasesAdapterPagesByMarkerAndMapsTheFieldsDiscoveryReads(t *testing.T) {
+func TestTheRDSAdapterPagesByMarkerAndMapsTheFieldsDiscoveryReads(t *testing.T) {
 	f := &fakeDatabases{}
-	p := databasesPort{f}
+	p := rdsPort{f}
 	ctx := context.Background()
-	first, next, err := p.DescribeDBInstances(ctx, "")
-	if err != nil || next != "m2" {
-		t.Fatalf("%v %q", err, next)
+	first, err := p.DescribeDBInstances(ctx, stopped.DescribeDBInstancesInput{})
+	if err != nil || first.Marker != "m2" {
+		t.Fatalf("%v %q", err, first.Marker)
 	}
-	second, next, _ := p.DescribeDBInstances(ctx, "m2")
-	clusters, next2, _ := p.DescribeDBClusters(ctx, "")
-	if next != "" || next2 != "" {
-		t.Errorf("next markers %q %q", next, next2)
-	}
-	eqJSON(t, "first", first, `[{"DBInstanceIdentifier":"shop-db","DBInstanceStatus":"available","Engine":"mysql","DBInstanceClass":"db.t3.medium","MultiAZ":true,"DBClusterIdentifier":"","ReadReplicaSourceDBInstanceIdentifier":"src","ReadReplicaDBInstanceIdentifiers":["r1"],"VpcSecurityGroups":[{"VpcSecurityGroupId":"sg-db","Status":"active"}],"TagList":[{"Key":"env","Value":"dev"}]}]`)
-	if second[0].DBClusterIdentifier != "aurora" {
+	second, _ := p.DescribeDBInstances(ctx, stopped.DescribeDBInstancesInput{Marker: "m2"})
+	clusters, _ := p.DescribeDBClusters(ctx, stopped.DescribeDBClustersInput{})
+	eqJSON(t, "first", first, `{"DBInstances":[{"DBInstanceIdentifier":"shop-db","DBInstanceClass":"db.t3.medium","Engine":"mysql","MultiAZ":true,"DBInstanceStatus":"available","ReadReplicaSourceDBInstanceIdentifier":"src","ReadReplicaDBInstanceIdentifiers":["r1"],"VpcSecurityGroups":[{"VpcSecurityGroupId":"sg-db","Status":"active"}],"TagList":[{"Key":"env","Value":"dev"}]}],"Marker":"m2"}`)
+	if second.DBInstances[0].DBClusterIdentifier != "aurora" || second.Marker != "" {
 		t.Errorf("second %+v", second)
 	}
-	eqJSON(t, "clusters", clusters, `[{"DBClusterIdentifier":"aurora","Status":"available","Engine":"aurora-postgresql","EngineMode":"provisioned","VpcSecurityGroups":[{"VpcSecurityGroupId":"sg-aur","Status":"inactive"}],"TagList":[{"Key":"team","Value":"shop"}]}]`)
+	eqJSON(t, "clusters", clusters, `{"DBClusters":[{"DBClusterIdentifier":"aurora","Engine":"aurora-postgresql","Status":"available","EngineMode":"provisioned","VpcSecurityGroups":[{"VpcSecurityGroupId":"sg-aur","Status":"inactive"}],"TagList":[{"Key":"team","Value":"shop"}]}]}`)
 	want := []any{&rds.DescribeDBInstancesInput{}, &rds.DescribeDBInstancesInput{Marker: awssdk.String("m2")}, &rds.DescribeDBClustersInput{}}
 	if !reflect.DeepEqual(f.asked, want) {
 		t.Errorf("asked %+v", f.asked)
 	}
 }
 
-type fakeRegionEC2 struct{ asked []any }
+type fakeRegionEC2 struct {
+	*fakeEC2
+	out []ec2types.Reservation
+}
 
 func (f *fakeRegionEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	f.asked = append(f.asked, in)
-	return &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{
+	return &ec2.DescribeInstancesOutput{Reservations: f.out}, nil
+}
+
+func TestTheEC2AdapterGivesInstancesTheirStateAndGroupsAndSecurityGroupsTheirIngress(t *testing.T) {
+	f := &fakeRegionEC2{fakeEC2: &fakeEC2{}, out: []ec2types.Reservation{
 		{Instances: []ec2types.Instance{{InstanceId: awssdk.String("i-1"), State: &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}, SecurityGroups: []ec2types.GroupIdentifier{{GroupId: awssdk.String("sg-a")}, {GroupId: awssdk.String("sg-b")}}}}},
 		{Instances: []ec2types.Instance{{InstanceId: awssdk.String("i-2")}}},
-	}}, nil
-}
-
-func (f *fakeRegionEC2) DescribeSecurityGroups(_ context.Context, in *ec2.DescribeSecurityGroupsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
-	f.asked = append(f.asked, in)
-	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: []ec2types.SecurityGroup{{GroupId: awssdk.String("sg-db"), IpPermissions: []ec2types.IpPermission{
-		{UserIdGroupPairs: []ec2types.UserIdGroupPair{{GroupId: awssdk.String("sg-web")}, {GroupId: awssdk.String("sg-app")}}},
-		{IpRanges: []ec2types.IpRange{{CidrIp: awssdk.String("10.0.0.0/16")}}},
-	}}}}, nil
-}
-
-func TestTheRegionEC2AdapterGivesInstancesTheirStateAndGroupsAndSecurityGroupsWhoTheyLetIn(t *testing.T) {
-	f := &fakeRegionEC2{}
-	p := regionEC2{f}
+	}}
+	p := stoppedEC2{f}
 	ctx := context.Background()
-	instances, err := p.Instances(ctx, []string{"i-1", "i-2"})
+	instances, err := p.DescribeInstances(ctx, stopped.DescribeInstancesInput{InstanceIds: []string{"i-1", "i-2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eqJSON(t, "instances", instances, `[{"ID":"i-1","State":"stopped","SecurityGroups":["sg-a","sg-b"]},{"ID":"i-2","State":"","SecurityGroups":null}]`)
-	groups, err := p.SecurityGroups(ctx, []string{"sg-db"})
+	eqJSON(t, "instances", instances, `{"Reservations":[{"Instances":[{"InstanceId":"i-1","State":{"Name":"stopped"},"SecurityGroups":[{"GroupId":"sg-a"},{"GroupId":"sg-b"}]}]},{"Instances":[{"InstanceId":"i-2"}]}]}`)
+	groups, err := p.DescribeSecurityGroups(ctx, discover.DescribeSecurityGroupsInput{GroupIds: []string{"sg-db"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eqJSON(t, "groups", groups, `[{"ID":"sg-db","AllowedFrom":["sg-web","sg-app"]}]`)
+	eqJSON(t, "groups", groups, `{"SecurityGroups":[{"GroupId":"sg-db","IpPermissions":[{"UserIdGroupPairs":[{"GroupId":"sg-web"},{"GroupId":"sg-app"}]},{}]}]}`)
 	want := []any{&ec2.DescribeInstancesInput{InstanceIds: []string{"i-1", "i-2"}}, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{"sg-db"}}}
 	if !reflect.DeepEqual(f.asked, want) {
 		t.Errorf("asked %+v", f.asked)
@@ -127,25 +120,15 @@ func (f *fakeRegionECS) DescribeServices(_ context.Context, in *ecs.DescribeServ
 	return &ecs.DescribeServicesOutput{Services: f.out}, nil
 }
 
-func TestTheRegionECSAdapterGivesAServicesDesiredCountAndAwsvpcSecurityGroups(t *testing.T) {
-	f := &fakeRegionECS{out: []ecstypes.Service{{DesiredCount: 3, NetworkConfiguration: &ecstypes.NetworkConfiguration{AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{SecurityGroups: []string{"sg-api"}}}}}}
-	p := regionECS{f}
-	service, err := p.Service(context.Background(), "prod", "arn:svc")
+func TestTheECSAdapterGivesAServicesDesiredCountAndAwsvpcSecurityGroups(t *testing.T) {
+	f := &fakeRegionECS{out: []ecstypes.Service{{ServiceArn: awssdk.String("arn:svc"), DesiredCount: 3, NetworkConfiguration: &ecstypes.NetworkConfiguration{AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{SecurityGroups: []string{"sg-api"}}}}, {ServiceArn: awssdk.String("arn:bare")}}}
+	out, err := stoppedECS{f}.DescribeServices(context.Background(), stopped.DescribeServicesInput{Cluster: "prod", Services: []string{"arn:svc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eqJSON(t, "service", service, `{"DesiredCount":3,"SecurityGroups":["sg-api"]}`)
+	eqJSON(t, "services", out, `{"services":[{"serviceArn":"arn:svc","desiredCount":3,"networkConfiguration":{"awsvpcConfiguration":{"securityGroups":["sg-api"]}}},{"serviceArn":"arn:bare"}]}`)
 	if !reflect.DeepEqual(f.asked, []*ecs.DescribeServicesInput{{Cluster: awssdk.String("prod"), Services: []string{"arn:svc"}}}) {
 		t.Errorf("asked %+v", f.asked)
-	}
-	// No such service (no network configuration, or none at all): nil, and 0.
-	f.out = nil
-	if none, err := p.Service(context.Background(), "prod", "arn:svc"); err != nil || none != nil {
-		t.Errorf("%v %v", none, err)
-	}
-	f.out = []ecstypes.Service{{}}
-	if bare, _ := p.Service(context.Background(), "prod", "arn:svc"); bare == nil || bare.DesiredCount != 0 || len(bare.SecurityGroups) != 0 {
-		t.Errorf("%+v", bare)
 	}
 }
 
@@ -155,23 +138,16 @@ type fakeGroup struct {
 
 func (f *fakeGroup) DescribeAutoScalingGroups(_ context.Context, in *autoscaling.DescribeAutoScalingGroupsInput, _ ...func(*autoscaling.Options)) (*autoscaling.DescribeAutoScalingGroupsOutput, error) {
 	f.asked = append(f.asked, in)
-	if len(in.AutoScalingGroupNames) == 0 || in.AutoScalingGroupNames[0] != "web-asg" {
-		return &autoscaling.DescribeAutoScalingGroupsOutput{}, nil
-	}
-	return &autoscaling.DescribeAutoScalingGroupsOutput{AutoScalingGroups: []asgtypes.AutoScalingGroup{{DesiredCapacity: awssdk.Int32(2), Instances: []asgtypes.Instance{{InstanceId: awssdk.String("i-1")}, {InstanceId: awssdk.String("i-2")}}}}}, nil
+	return &autoscaling.DescribeAutoScalingGroupsOutput{AutoScalingGroups: []asgtypes.AutoScalingGroup{{AutoScalingGroupName: awssdk.String("web-asg"), DesiredCapacity: awssdk.Int32(2), Instances: []asgtypes.Instance{{InstanceId: awssdk.String("i-1")}, {InstanceId: awssdk.String("i-2")}}}}}, nil
 }
 
-func TestTheRegionAutoScalingAdapterGivesAGroupsDesiredCapacityAndInstances(t *testing.T) {
+func TestTheAutoScalingAdapterAsksGroupsByNameAndGivesDesiredCapacityAndInstances(t *testing.T) {
 	f := &fakeGroup{}
-	p := regionAutoScaling{f}
-	group, err := p.Group(context.Background(), "web-asg")
+	out, err := autoScalingPort{f}.DescribeAutoScalingGroups(context.Background(), discover.DescribeAutoScalingGroupsInput{AutoScalingGroupNames: []string{"web-asg"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eqJSON(t, "group", group, `{"Desired":2,"Instances":["i-1","i-2"]}`)
-	if none, _ := p.Group(context.Background(), "gone"); none != nil {
-		t.Errorf("%+v", none)
-	}
+	eqJSON(t, "groups", out, `{"AutoScalingGroups":[{"AutoScalingGroupName":"web-asg","DesiredCapacity":2,"Instances":[{"InstanceId":"i-1"},{"InstanceId":"i-2"}]}]}`)
 	if !reflect.DeepEqual(f.asked[0], &autoscaling.DescribeAutoScalingGroupsInput{AutoScalingGroupNames: []string{"web-asg"}}) {
 		t.Errorf("asked %+v", f.asked[0])
 	}
@@ -199,7 +175,8 @@ func TestAThrottledELBCallIsRetriedByTheAdaptersRetryer(t *testing.T) {
 	cfg := awssdk.Config{Region: "eu-west-3", Credentials: credentials.NewStaticCredentialsProvider("AKID", "secret", ""), BaseEndpoint: awssdk.String(srv.URL)}
 	ports := NewRegion(cfg, "eu-west-1", "").Discover(discover.Where{Account: "111111111111", Region: "eu-west-1"}, time.Now)
 	started := time.Now()
-	rules, err := ports.ELBv2.DescribeRules(context.Background(), []string{"arn:rule/1"})
+	out, err := ports.ELBv2.DescribeRules(context.Background(), discover.DescribeRulesInput{RuleArns: []string{"arn:rule/1"}})
+	rules := out.Rules
 	if err != nil {
 		t.Fatalf("the throttled call was not retried: %v", err)
 	}
@@ -214,7 +191,7 @@ func TestAThrottledELBCallIsRetriedByTheAdaptersRetryer(t *testing.T) {
 func TestTheRegionDiscoveryPortsAreTheRegionsClients(t *testing.T) {
 	cfg := awssdk.Config{Region: "eu-west-3", Credentials: credentials.NewStaticCredentialsProvider("AKID", "secret", "")}
 	ports := NewRegion(cfg, "eu-west-1", "").Discover(discover.Where{Account: "111111111111", Region: "eu-west-1"}, time.Now)
-	if ports.Scan == nil || ports.AutoScaling == nil || ports.ELBv2 == nil || ports.EC2 == nil || ports.ECS == nil || ports.RDS == nil ||
+	if ports.Scan == nil || ports.AutoScaling == nil || ports.ELBv2 == nil || ports.EC2 == nil ||
 		ports.Stopped.EC2 == nil || ports.Stopped.ECS == nil || ports.Stopped.RDS == nil || ports.Stopped.KubernetesOf == nil {
 		t.Errorf("%+v", ports)
 	}

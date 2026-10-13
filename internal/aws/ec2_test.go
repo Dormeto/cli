@@ -57,3 +57,11 @@ func TestTheEnabledRegionsAreThoseEC2Names(t *testing.T) {
 		t.Errorf("asked %+v", f.asked)
 	}
 }
+
+func (f *fakeEC2) DescribeSecurityGroups(_ context.Context, in *ec2.DescribeSecurityGroupsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+	f.asked = append(f.asked, in)
+	return &ec2.DescribeSecurityGroupsOutput{SecurityGroups: []ec2types.SecurityGroup{{GroupId: awssdk.String("sg-db"), IpPermissions: []ec2types.IpPermission{
+		{UserIdGroupPairs: []ec2types.UserIdGroupPair{{GroupId: awssdk.String("sg-web")}, {GroupId: awssdk.String("sg-app")}}},
+		{IpRanges: []ec2types.IpRange{{CidrIp: awssdk.String("10.0.0.0/16")}}},
+	}}}}, nil
+}

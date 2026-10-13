@@ -18,6 +18,7 @@ import (
 type ec2API interface {
 	DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 	DescribeRegions(context.Context, *ec2.DescribeRegionsInput, ...func(*ec2.Options)) (*ec2.DescribeRegionsOutput, error)
+	DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error)
 }
 
 // scanEC2 is discover.EC2Port: the instances with their tags.
@@ -55,12 +56,41 @@ func (p stoppedEC2) DescribeInstances(ctx context.Context, in stopped.DescribeIn
 	for _, r := range out.Reservations {
 		var reservation stopped.Reservation
 		for _, i := range r.Instances {
-			reservation.Instances = append(reservation.Instances, stopped.Instance{
+			instance := stopped.Instance{
 				InstanceID: awssdk.ToString(i.InstanceId), InstanceType: string(i.InstanceType),
 				PlatformDetails: awssdk.ToString(i.PlatformDetails), InstanceLifecycle: string(i.InstanceLifecycle),
-			})
+			}
+			if i.State != nil {
+				instance.State = &stopped.InstanceState{Name: string(i.State.Name)}
+			}
+			for _, g := range i.SecurityGroups {
+				instance.SecurityGroups = append(instance.SecurityGroups, stopped.GroupIdentifier{GroupId: awssdk.ToString(g.GroupId)})
+			}
+			reservation.Instances = append(reservation.Instances, instance)
 		}
 		res.Reservations = append(res.Reservations, reservation)
+	}
+	return res, nil
+}
+
+// DescribeSecurityGroups is discover.RegionEC2Port's: the groups and the groups
+// their rules name.
+func (p stoppedEC2) DescribeSecurityGroups(ctx context.Context, in discover.DescribeSecurityGroupsInput) (discover.DescribeSecurityGroupsOutput, error) {
+	out, err := p.client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: in.GroupIds})
+	if err != nil {
+		return discover.DescribeSecurityGroupsOutput{}, err
+	}
+	var res discover.DescribeSecurityGroupsOutput
+	for _, sg := range out.SecurityGroups {
+		group := discover.SecurityGroup{GroupId: awssdk.ToString(sg.GroupId)}
+		for _, perm := range sg.IpPermissions {
+			var p discover.IpPermission
+			for _, pair := range perm.UserIdGroupPairs {
+				p.UserIdGroupPairs = append(p.UserIdGroupPairs, discover.UserIdGroupPair{GroupId: awssdk.ToString(pair.GroupId)})
+			}
+			group.IpPermissions = append(group.IpPermissions, p)
+		}
+		res.SecurityGroups = append(res.SecurityGroups, group)
 	}
 	return res, nil
 }

@@ -69,7 +69,10 @@ func (p stoppedECS) DescribeServices(ctx context.Context, in stopped.DescribeSer
 	for _, s := range out.Services {
 		service := stopped.Service{
 			ServiceArn: awssdk.ToString(s.ServiceArn), ClusterArn: awssdk.ToString(s.ClusterArn),
-			TaskDefinition: awssdk.ToString(s.TaskDefinition), LaunchType: string(s.LaunchType),
+			TaskDefinition: awssdk.ToString(s.TaskDefinition), LaunchType: string(s.LaunchType), DesiredCount: int(s.DesiredCount),
+		}
+		if n := s.NetworkConfiguration; n != nil && n.AwsvpcConfiguration != nil {
+			service.NetworkConfiguration = &stopped.NetworkConfiguration{AwsvpcConfiguration: &stopped.AwsvpcConfiguration{SecurityGroups: n.AwsvpcConfiguration.SecurityGroups}}
 		}
 		for _, c := range s.CapacityProviderStrategy {
 			service.CapacityProviderStrategy = append(service.CapacityProviderStrategy, stopped.CapacityProviderStrategyItem{

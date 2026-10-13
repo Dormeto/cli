@@ -65,7 +65,7 @@ func (p elbv2Port) DescribeListeners(ctx context.Context, in discover.DescribeLi
 }
 
 func (p elbv2Port) DescribeRules(ctx context.Context, in discover.DescribeRulesInput) (discover.DescribeRulesOutput, error) {
-	out, err := p.client.DescribeRules(ctx, &elb.DescribeRulesInput{ListenerArn: optional(in.ListenerArn), Marker: optional(in.Marker)})
+	out, err := p.client.DescribeRules(ctx, &elb.DescribeRulesInput{ListenerArn: optional(in.ListenerArn), Marker: optional(in.Marker), RuleArns: in.RuleArns})
 	if err != nil {
 		return discover.DescribeRulesOutput{}, err
 	}

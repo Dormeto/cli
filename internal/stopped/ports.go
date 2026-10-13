@@ -32,6 +32,19 @@ type Instance struct {
 	InstanceType      string `json:"InstanceType,omitempty"`
 	PlatformDetails   string `json:"PlatformDetails,omitempty"`
 	InstanceLifecycle string `json:"InstanceLifecycle,omitempty"`
+	// State and SecurityGroups: what discovery reads of an instance.
+	State          *InstanceState    `json:"State,omitempty"`
+	SecurityGroups []GroupIdentifier `json:"SecurityGroups,omitempty"`
+}
+
+// InstanceState is an instance's state.
+type InstanceState struct {
+	Name string `json:"Name,omitempty"`
+}
+
+// GroupIdentifier is a security group an instance is in.
+type GroupIdentifier struct {
+	GroupId string `json:"GroupId,omitempty"`
 }
 
 // EC2Port is EC2 (DescribeInstances).
@@ -63,7 +76,19 @@ type Service struct {
 	ClusterArn               string                         `json:"clusterArn,omitempty"`
 	TaskDefinition           string                         `json:"taskDefinition,omitempty"`
 	LaunchType               string                         `json:"launchType,omitempty"`
+	DesiredCount             int                            `json:"desiredCount,omitempty"`
+	NetworkConfiguration     *NetworkConfiguration          `json:"networkConfiguration,omitempty"`
 	CapacityProviderStrategy []CapacityProviderStrategyItem `json:"capacityProviderStrategy,omitempty"`
+}
+
+// NetworkConfiguration is a service's network (awsvpc).
+type NetworkConfiguration struct {
+	AwsvpcConfiguration *AwsvpcConfiguration `json:"awsvpcConfiguration,omitempty"`
+}
+
+// AwsvpcConfiguration holds the security groups of an awsvpc service.
+type AwsvpcConfiguration struct {
+	SecurityGroups []string `json:"securityGroups,omitempty"`
 }
 
 // DescribeTaskDefinitionInput is ECS DescribeTaskDefinition's input.
@@ -107,6 +132,19 @@ type Filter struct {
 type DescribeDBInstancesInput struct {
 	DBInstanceIdentifier string   `json:"DBInstanceIdentifier,omitempty"`
 	Filters              []Filter `json:"Filters,omitempty"`
+	Marker               string   `json:"Marker,omitempty"` // the page after it (discovery's databases)
+}
+
+// VpcSecurityGroup is a database's security group and its status.
+type VpcSecurityGroup struct {
+	VpcSecurityGroupId string `json:"VpcSecurityGroupId,omitempty"`
+	Status             string `json:"Status,omitempty"`
+}
+
+// Tag is a resource tag.
+type Tag struct {
+	Key   string `json:"Key,omitempty"`
+	Value string `json:"Value,omitempty"`
 }
 
 // DBInstance is the part of an RDS instance Describe reads.
@@ -116,16 +154,24 @@ type DBInstance struct {
 	Engine               string `json:"Engine,omitempty"`
 	MultiAZ              bool   `json:"MultiAZ,omitempty"`
 	DBClusterIdentifier  string `json:"DBClusterIdentifier,omitempty"`
+	// What discovery's databases read.
+	DBInstanceStatus                      string             `json:"DBInstanceStatus,omitempty"`
+	ReadReplicaSourceDBInstanceIdentifier string             `json:"ReadReplicaSourceDBInstanceIdentifier,omitempty"`
+	ReadReplicaDBInstanceIdentifiers      []string           `json:"ReadReplicaDBInstanceIdentifiers,omitempty"`
+	VpcSecurityGroups                     []VpcSecurityGroup `json:"VpcSecurityGroups,omitempty"`
+	TagList                               []Tag              `json:"TagList,omitempty"`
 }
 
 // DescribeDBInstancesOutput is its answer.
 type DescribeDBInstancesOutput struct {
 	DBInstances []DBInstance `json:"DBInstances,omitempty"`
+	Marker      string       `json:"Marker,omitempty"`
 }
 
 // DescribeDBClustersInput is RDS DescribeDBClusters' input.
 type DescribeDBClustersInput struct {
-	DBClusterIdentifier string `json:"DBClusterIdentifier"`
+	DBClusterIdentifier string `json:"DBClusterIdentifier,omitempty"`
+	Marker              string `json:"Marker,omitempty"`
 }
 
 // ServerlessV2Scaling is an Aurora Serverless v2 cluster's scaling range.
@@ -139,11 +185,17 @@ type DBCluster struct {
 	DBClusterIdentifier              string               `json:"DBClusterIdentifier,omitempty"`
 	Engine                           string               `json:"Engine,omitempty"`
 	ServerlessV2ScalingConfiguration *ServerlessV2Scaling `json:"ServerlessV2ScalingConfiguration,omitempty"`
+	// What discovery's databases read.
+	Status            string             `json:"Status,omitempty"`
+	EngineMode        string             `json:"EngineMode,omitempty"`
+	VpcSecurityGroups []VpcSecurityGroup `json:"VpcSecurityGroups,omitempty"`
+	TagList           []Tag              `json:"TagList,omitempty"`
 }
 
 // DescribeDBClustersOutput is its answer.
 type DescribeDBClustersOutput struct {
 	DBClusters []DBCluster `json:"DBClusters,omitempty"`
+	Marker     string      `json:"Marker,omitempty"`
 }
 
 // RDSPort is RDS (DescribeDBInstances, DescribeDBClusters).

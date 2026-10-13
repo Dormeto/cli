@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Dormeto/cli/internal/kubernetes"
+	"github.com/Dormeto/cli/internal/stopped"
 )
 
 // Tag is an AWS tag.
@@ -144,8 +145,9 @@ type DescribeListenersOutput struct {
 
 // DescribeRulesInput is a page of a listener's rules.
 type DescribeRulesInput struct {
-	ListenerArn string `json:"ListenerArn"`
-	Marker      string `json:"Marker,omitempty"`
+	ListenerArn string   `json:"ListenerArn,omitempty"`
+	Marker      string   `json:"Marker,omitempty"`
+	RuleArns    []string `json:"RuleArns,omitempty"` // rules by ARN (a managed workload's waker)
 }
 
 // DescribeRulesOutput is its answer.
@@ -214,15 +216,23 @@ type ELBv2Port interface {
 
 // DescribeAutoScalingGroupsInput is a page of Auto Scaling groups.
 type DescribeAutoScalingGroupsInput struct {
-	NextToken string `json:"NextToken,omitempty"`
+	NextToken             string   `json:"NextToken,omitempty"`
+	AutoScalingGroupNames []string `json:"AutoScalingGroupNames,omitempty"`
+}
+
+// ASGInstance is an instance of an Auto Scaling group.
+type ASGInstance struct {
+	InstanceId string `json:"InstanceId,omitempty"`
 }
 
 // AutoScalingGroup is the part of a group the scan reads.
 type AutoScalingGroup struct {
-	AutoScalingGroupName string   `json:"AutoScalingGroupName,omitempty"`
-	AutoScalingGroupARN  string   `json:"AutoScalingGroupARN,omitempty"`
-	TargetGroupARNs      []string `json:"TargetGroupARNs,omitempty"`
-	Tags                 []Tag    `json:"Tags,omitempty"`
+	AutoScalingGroupName string        `json:"AutoScalingGroupName,omitempty"`
+	AutoScalingGroupARN  string        `json:"AutoScalingGroupARN,omitempty"`
+	TargetGroupARNs      []string      `json:"TargetGroupARNs,omitempty"`
+	Tags                 []Tag         `json:"Tags,omitempty"`
+	DesiredCapacity      int           `json:"DesiredCapacity,omitempty"`
+	Instances            []ASGInstance `json:"Instances,omitempty"`
 }
 
 // DescribeAutoScalingGroupsOutput is its answer.
@@ -260,6 +270,59 @@ type DescribeInstancesOutput struct {
 // EC2Port is read only where the region has EKS clusters (their nodes).
 type EC2Port interface {
 	DescribeInstances(ctx context.Context, in DescribeInstancesInput) (DescribeInstancesOutput, error)
+}
+
+// DescribeSecurityGroupsInput asks security groups by id.
+type DescribeSecurityGroupsInput struct {
+	GroupIds []string `json:"GroupIds"`
+}
+
+// UserIdGroupPair is a security group a rule names.
+type UserIdGroupPair struct {
+	GroupId string `json:"GroupId,omitempty"`
+}
+
+// IpPermission is an ingress rule.
+type IpPermission struct {
+	UserIdGroupPairs []UserIdGroupPair `json:"UserIdGroupPairs,omitempty"`
+}
+
+// SecurityGroup is a security group and its ingress rules.
+type SecurityGroup struct {
+	GroupId       string         `json:"GroupId,omitempty"`
+	IpPermissions []IpPermission `json:"IpPermissions,omitempty"`
+}
+
+// DescribeSecurityGroupsOutput is its answer.
+type DescribeSecurityGroupsOutput struct {
+	SecurityGroups []SecurityGroup `json:"SecurityGroups,omitempty"`
+}
+
+// RegionEC2Port is what a region's discovery reads of EC2: instances (with
+// their state and security groups) and security groups.
+type RegionEC2Port interface {
+	stopped.EC2Port
+	DescribeSecurityGroups(ctx context.Context, in DescribeSecurityGroupsInput) (DescribeSecurityGroupsOutput, error)
+}
+
+// RulesPort is the ELBv2 call discovery makes beyond the scan: rules by ARN.
+type RulesPort interface {
+	DescribeRules(ctx context.Context, in DescribeRulesInput) (DescribeRulesOutput, error)
+}
+
+// RegionPorts are what one region's discovery reads (Node's RegionPorts, which
+// extends StoppedPorts): the scan, the Auto Scaling groups, a rule by ARN, EC2
+// (instances, security groups) and what a nap stops (ECS services, RDS
+// instances and clusters, the clusters' clients). Stopped.RDS nil: the
+// databases are not read. Stopped.EC2 and EC2 are the same client.
+type RegionPorts struct {
+	// Scan is discovery's scan of the region (ScanRegion with the region's
+	// ports); its clusters the profile could not read are listed by Region.
+	Scan        func(ctx context.Context) (ScanResult, error)
+	AutoScaling AutoScalingPort
+	ELBv2       RulesPort
+	EC2         RegionEC2Port
+	Stopped     stopped.Ports
 }
 
 // ListClustersInput is a page of ECS clusters.

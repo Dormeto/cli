@@ -19,7 +19,7 @@ type autoScalingAPI interface {
 type autoScalingPort struct{ client autoScalingAPI }
 
 func (p autoScalingPort) DescribeAutoScalingGroups(ctx context.Context, in discover.DescribeAutoScalingGroupsInput) (discover.DescribeAutoScalingGroupsOutput, error) {
-	out, err := p.client.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{NextToken: optional(in.NextToken)})
+	out, err := p.client.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{NextToken: optional(in.NextToken), AutoScalingGroupNames: in.AutoScalingGroupNames})
 	if err != nil {
 		return discover.DescribeAutoScalingGroupsOutput{}, err
 	}
@@ -27,6 +27,10 @@ func (p autoScalingPort) DescribeAutoScalingGroups(ctx context.Context, in disco
 	for _, g := range out.AutoScalingGroups {
 		group := discover.AutoScalingGroup{
 			AutoScalingGroupName: awssdk.ToString(g.AutoScalingGroupName), AutoScalingGroupARN: awssdk.ToString(g.AutoScalingGroupARN), TargetGroupARNs: g.TargetGroupARNs,
+			DesiredCapacity: int(awssdk.ToInt32(g.DesiredCapacity)),
+		}
+		for _, i := range g.Instances {
+			group.Instances = append(group.Instances, discover.ASGInstance{InstanceId: awssdk.ToString(i.InstanceId)})
 		}
 		for _, t := range g.Tags {
 			group.Tags = append(group.Tags, discover.Tag{Key: awssdk.ToString(t.Key), Value: awssdk.ToString(t.Value)})
