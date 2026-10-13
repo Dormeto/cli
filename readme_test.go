@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Dormeto/cli/internal/aws"
 	"github.com/Dormeto/cli/internal/options"
 )
 
@@ -83,5 +84,35 @@ func TestReadmeSections(t *testing.T) {
 	text := readme(t)
 	for _, title := range []string{"Install", "First run", "Options", "Permissions", "Report", "Cache", "Privacy", "Releasing", "License"} {
 		section(t, text, title)
+	}
+}
+
+// Every operation the adapters call appears in the Permissions section as service:Operation, so a user granting the
+// list literally has what the estimate needs. elasticloadbalancing:Describe* covers the load balancer operations.
+func TestReadmePermissionsCoverTheAdaptersOperations(t *testing.T) {
+	text := section(t, readme(t), "Permissions")
+	service := map[string]string{"elasticloadbalancingv2": "elasticloadbalancing"}
+	for _, op := range aws.ReadOnlyOperations {
+		svc, name, _ := strings.Cut(op, ".")
+		if s, ok := service[svc]; ok {
+			svc = s
+		}
+		var ok bool
+		for _, line := range strings.Split(text, "\n") {
+			rest, found := strings.CutPrefix(strings.TrimSpace(line), "- `"+svc+":")
+			if !found {
+				continue
+			}
+			rest, _, _ = strings.Cut(rest, " (")
+			for _, item := range strings.Split(rest, ",") {
+				item = strings.Trim(strings.TrimSpace(item), "`")
+				if item == name || (strings.HasSuffix(item, "*") && strings.HasPrefix(name, strings.TrimSuffix(item, "*"))) {
+					ok = true
+				}
+			}
+		}
+		if !ok {
+			t.Errorf("the Permissions section does not list %s:%s", svc, name)
+		}
 	}
 }

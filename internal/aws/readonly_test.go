@@ -30,37 +30,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-// readOnly are the operations the adapters call, by service.
-var readOnly = []string{
-	"autoscaling.DescribeAutoScalingGroups",
-	"cloudwatch.GetMetricData",
-	"ec2.DescribeInstances",
-	"ec2.DescribeRegions",
-	"ec2.DescribeSecurityGroups",
-	"ec2.DescribeSpotPriceHistory",
-	"ecs.DescribeServices",
-	"ecs.DescribeTaskDefinition",
-	"ecs.ListClusters",
-	"ecs.ListServices",
-	"eks.DescribeCluster",
-	"eks.ListClusters",
-	"elasticloadbalancingv2.DescribeListeners",
-	"elasticloadbalancingv2.DescribeLoadBalancers",
-	"elasticloadbalancingv2.DescribeRules",
-	"elasticloadbalancingv2.DescribeTags",
-	"elasticloadbalancingv2.DescribeTargetGroups",
-	"elasticloadbalancingv2.DescribeTargetHealth",
-	"organizations.DescribeOrganization",
-	"organizations.ListAccountsForParent",
-	"organizations.ListOrganizationalUnitsForParent",
-	"organizations.ListRoots",
-	"organizations.ListTagsForResource",
-	"pricing.GetProducts",
-	"rds.DescribeDBClusters",
-	"rds.DescribeDBInstances",
-	"sts.AssumeRole",
-	"sts.GetCallerIdentity",
-}
+// readOnly are the operations the adapters call (ReadOnlyOperations, which the README test also reads).
+var readOnly = ReadOnlyOperations
 
 func allowed(op string) bool {
 	return strings.HasPrefix(op, "Describe") || strings.HasPrefix(op, "List") || strings.HasPrefix(op, "Get") || op == "AssumeRole"

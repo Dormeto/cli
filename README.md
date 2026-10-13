@@ -167,8 +167,8 @@ prints a line per account and region.
 Read-only: the estimate calls `Describe*`, `List*` and `Get*` operations, plus `sts:AssumeRole` to reach member
 accounts, and Kubernetes `GET`s. It changes nothing.
 
-- `sts:GetCallerIdentity`, `sts:AssumeRole`
-- `organizations:DescribeOrganization`, `ListRoots`, `ListOrganizationalUnitsForParent`, `ListAccountsForParent`
+- `sts:GetCallerIdentity`, `AssumeRole`
+- `organizations:DescribeOrganization`, `ListRoots`, `ListOrganizationalUnitsForParent`, `ListAccountsForParent`, `ListTagsForResource`
 - `ec2:DescribeRegions`, `DescribeInstances`, `DescribeSpotPriceHistory`, `DescribeSecurityGroups`
 - `elasticloadbalancing:Describe*`
 - `autoscaling:DescribeAutoScalingGroups`
