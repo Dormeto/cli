@@ -2,8 +2,8 @@ package discover
 
 // How idle a target group was over the last 7 days.
 //
-// Ports manager packages/discovery/src/scan.ts (idleHours, lbDimension,
-// tgDimension).
+// Ports manager packages/discovery/src/scan.ts (idleHours, LBDimension,
+// TGDimension).
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 
 const idleWindowHours = 168
 
-// lbDimension is the CloudWatch LoadBalancer dimension of a load balancer ARN.
-func lbDimension(arn string) string {
+// LBDimension is the CloudWatch LoadBalancer dimension of a load balancer ARN.
+func LBDimension(arn string) string {
 	if _, after, ok := strings.Cut(arn, ":loadbalancer/"); ok {
 		// split(':loadbalancer/')[1] stops at a second occurrence
 		after, _, _ = strings.Cut(after, ":loadbalancer/")
@@ -25,8 +25,8 @@ func lbDimension(arn string) string {
 	return arn
 }
 
-// tgDimension is the CloudWatch TargetGroup dimension of a target group ARN.
-func tgDimension(arn string) string {
+// TGDimension is the CloudWatch TargetGroup dimension of a target group ARN.
+func TGDimension(arn string) string {
 	return arn[strings.LastIndex(arn, ":")+1:]
 }
 
@@ -50,7 +50,7 @@ func idleHours(ctx context.Context, cw CloudWatchPort, pairs []pair, now time.Ti
 					Metric: Metric{
 						Namespace:  "AWS/ApplicationELB",
 						MetricName: "RequestCount",
-						Dimensions: []Dimension{{"LoadBalancer", lbDimension(p.lb)}, {"TargetGroup", tgDimension(p.tg)}},
+						Dimensions: []Dimension{{"LoadBalancer", LBDimension(p.lb)}, {"TargetGroup", TGDimension(p.tg)}},
 					},
 					Period: 3600,
 					Stat:   "Sum",

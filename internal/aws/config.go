@@ -32,6 +32,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/kubernetes"
+	"github.com/Dormeto/cli/internal/metrics"
 	"github.com/Dormeto/cli/internal/stopped"
 )
 
@@ -125,6 +126,11 @@ func NewRegion(cfg awssdk.Config, region, reader string) *Region {
 	r.kubernetes = kubernetesPorts(r.eks, cfg.Credentials, region, reader, time.Now)
 	return r
 }
+
+// Metrics is the region's CloudWatch for the estimate's requests and uptime
+// (metrics.RequestsAll, metrics.UptimeAll): the scan's adapter, in the
+// estimate's port.
+func (r *Region) Metrics() metrics.CloudWatchPort { return metricsPort{r.cloudwatch} }
 
 // Scan is the ports of the region's scan (discover.ScanRegion): ELB, Auto
 // Scaling, EC2, ECS, CloudWatch and the EKS clusters.
