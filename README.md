@@ -163,6 +163,13 @@ call), and the estimate (Dormeto's replay priced with the product's price book, 
 recommended window, net of Dormeto's cost). In a terminal, each phase shows one progress line; piped or redirected, it
 prints a line per account and region.
 
+Where Dormeto is already installed, the estimate finds the workloads it manages (marked "managed by Dormeto"), asleep
+ones included. Dormeto's cost then starts from the installation as it is now (the manager, a router per account and
+region with onboarded workloads, each onboarded workload) and adds a signed "New recommendation" line: the workloads to
+onboard, less the onboarded ones that `--exclude-tags`, `--max-wakes` or `--min-saving` leave, with the routers added
+or removed. The total is what Dormeto costs once the recommendation is applied. An onboarded workload asleep when
+discovered stays in that cost, but its saving is not counted (nothing is running to measure).
+
 ## Permissions
 
 Read-only: the estimate calls `Describe*`, `List*` and `Get*` operations, plus `sts:AssumeRole` to reach member

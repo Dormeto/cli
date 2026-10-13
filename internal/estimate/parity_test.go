@@ -1,7 +1,8 @@
 // Go only: the estimate of the shared `estimate` topic's first case (the world: every account and region, --uptime,
 // --exclude-tags env=dev), made from what the Node estimate read in that case and kept in its cache
-// (testdata/parity/cache: the discoveries, the requests, the uptime, the prices): the report, but its run time, is
-// Node's, numbers to 1e-9. The end-to-end case (the command over the recorded answers) is the command's test.
+// (testdata/parity/cache: the discoveries, the requests, the uptime, the prices): the report, but its run time and
+// Dormeto's cost by part (Go's, with Dormeto installed: the same total), is Node's, numbers to 1e-9. The end-to-end
+// case (the command over the recorded answers) is the command's test.
 package estimate
 
 import (
@@ -181,6 +182,22 @@ func TestTheWorldsEstimateAsNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(fields, "generatedAt") // the report's run times are removed
+	// Go only (the user, 2026-10-13): Dormeto installed, its cost is the installation now (portal, the world's one
+	// onboarded workload, estimated) and the recommendation's change: the same total as Node's.
+	var node DormetoCost
+	if err := json.Unmarshal(output.Report["dormeto"], &node); err != nil {
+		t.Fatal(err)
+	}
+	portal := find(t, e.Workloads, "portal").Workload
+	if !portal.Managed || node.Workloads.Count < 2 || node.Routers.Count < 1 {
+		t.Fatalf("portal %+v, Node's cost %+v", portal, node)
+	}
+	parts(t, e, []Where{{portal.Account, portal.Region}}, 1)
+	changed(t, e, Change{Onboard: node.Workloads.Count - 1, RoutersAdded: node.Routers.Count - 1,
+		USDMonth: float64(node.Workloads.Count-1)*cost.Workload + float64(node.Routers.Count-1)*cost.Router})
+	closeTo(t, "dormeto.usdMonth", e.Dormeto.USDMonth, node.USDMonth, 9)
+	delete(fields, "dormeto")
+	delete(output.Report, "dormeto")
 	got, _ = json.Marshal(fields)
 	want, _ := json.Marshal(output.Report)
 	parity.Equal(t, want, got)

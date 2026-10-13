@@ -159,12 +159,31 @@ type Routers struct {
 	Where []Where `json:"where"`
 }
 
-// DormetoCost is Dormeto's cost by part.
+// DormetoCost is Dormeto's cost by part. Dormeto already installed (workloads onboarded in the accounts and regions
+// estimated): the parts are the installation now and Change what the recommendation changes in it; else the parts are
+// the recommendation's and Change is nil. USDMonth: the parts and the change, the totals' DormetoMonth.
 type DormetoCost struct {
 	Manager   CostPart `json:"manager"`
 	Routers   Routers  `json:"routers"`
 	Workloads CostPart `json:"workloads"`
+	Change    *Change  `json:"change,omitempty"`
 	USDMonth  float64  `json:"usdMonth"`
+}
+
+// Change is what the recommendation changes in an installation (the user, 2026-10-13): the workloads estimated and not
+// onboarded join it (Onboard); the onboarded ones the filters leave go (excluded by tags, waking more than --max-wakes,
+// saving less than --min-saving), the others stay, estimated or not (asleep, nothing running to stop); the routers of
+// the accounts and regions joining it or left without workloads; the manager when no workload stays. USDMonth: what it
+// adds a month, negative when it removes.
+type Change struct {
+	Onboard        int     `json:"onboard"`
+	Excluded       int     `json:"excluded"`
+	Busy           int     `json:"busy"`
+	Small          int     `json:"small"`
+	RoutersAdded   int     `json:"routersAdded"`
+	RoutersRemoved int     `json:"routersRemoved"`
+	ManagerRemoved bool    `json:"managerRemoved"`
+	USDMonth       float64 `json:"usdMonth"`
 }
 
 // DatabasesUnread is a region whose databases could not be read.

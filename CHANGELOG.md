@@ -11,3 +11,6 @@ Node estimate (pinned to the product's code by shared test cases), with nothing 
 - Install by Homebrew (`dormeto/tap/dormeto`), npm (`@dormeto/cli`), `https://dormeto.com/install.sh`, `go install` or a
   release archive for macOS, Linux and Windows (Intel/AMD and ARM).
 - `dormeto version` and shell completion.
+- Where Dormeto is already installed: the workloads it manages, asleep ones included, are found and marked; Dormeto's
+  cost is the installation's now plus a signed "New recommendation" line (workloads to onboard, onboarded ones the
+  filters leave, routers added or removed), so its total is the cost once the recommendation is applied.

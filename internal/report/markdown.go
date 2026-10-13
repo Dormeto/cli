@@ -26,6 +26,14 @@ func uptimeCell(u *estimate.Uptime) string {
 	return "100% assumed (uptime unreadable: undefined)"
 }
 
+// managedMark marks a workload Dormeto already manages.
+func managedMark(w discover.Workload) string {
+	if w.Managed {
+		return " (managed by Dormeto)"
+	}
+	return ""
+}
+
 func backendCell(w discover.Workload) string {
 	return w.Backend.Kind + " " + cell(lastSegment(w.Backend.ID))
 }
@@ -132,9 +140,7 @@ func Markdown(e estimate.Estimate) string {
 		if x.Quiet {
 			hosts += " (no request in 14 days)"
 		}
-		if w.Managed {
-			hosts += " (managed by Dormeto)"
-		}
+		hosts += managedMark(w)
 		databases := ""
 		for _, d := range x.Databases {
 			databases += " + " + d.Kind + " " + d.ID
@@ -147,7 +153,7 @@ func Markdown(e estimate.Estimate) string {
 	if len(e.LeftOut) > 0 {
 		out = append(out, "| Account | Region | Load balancer | Target group | Why |", "|---|---|---|---|---|")
 		for _, l := range e.LeftOut {
-			out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %s |", l.Workload.Account, l.Workload.Region, cell(l.Workload.LoadBalancer), cell(l.Workload.TargetGroup), cell(l.Reason)))
+			out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %s |", l.Workload.Account, l.Workload.Region, cell(l.Workload.LoadBalancer), cell(l.Workload.TargetGroup+managedMark(l.Workload)), cell(l.Reason)))
 		}
 	} else {
 		out = append(out, "None.")
@@ -159,7 +165,7 @@ func Markdown(e estimate.Estimate) string {
 			"| Account | Region | Load balancer | Hosts | Backend | Recommended | Wakes a day | Saving left out |", "|---|---|---|---|---|---|---|---|")
 		for _, b := range e.Busy {
 			out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %s | %d min | %s | %s |", b.Workload.Account, b.Workload.Region, cell(b.Workload.LoadBalancer),
-				cell(hostsOr(b.Workload.Hosts, b.Workload.TargetGroup)), backendCell(b.Workload), b.Minutes, day(b.WakesPerDay), usd(b.USDMonth)))
+				cell(hostsOr(b.Workload.Hosts, b.Workload.TargetGroup)+managedMark(b.Workload)), backendCell(b.Workload), b.Minutes, day(b.WakesPerDay), usd(b.USDMonth)))
 		}
 		out = append(out, "")
 	}
@@ -173,7 +179,7 @@ func Markdown(e estimate.Estimate) string {
 			"| Account | Region | Load balancer | Hosts | Backend | Recommended | Saving left out |", "|---|---|---|---|---|---|---|")
 		for _, x := range e.Small {
 			out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %s | %d min | %s |", x.Workload.Account, x.Workload.Region, cell(x.Workload.LoadBalancer),
-				cell(hostsOr(x.Workload.Hosts, x.Workload.TargetGroup)), backendCell(x.Workload), x.Minutes, usd(x.USDMonth)))
+				cell(hostsOr(x.Workload.Hosts, x.Workload.TargetGroup)+managedMark(x.Workload)), backendCell(x.Workload), x.Minutes, usd(x.USDMonth)))
 		}
 		out = append(out, "")
 	}
@@ -184,7 +190,7 @@ func Markdown(e estimate.Estimate) string {
 			out = append(out, "| Account | Region | Load balancer | Target group | Hosts | Tags matched |", "|---|---|---|---|---|---|")
 			for _, x := range e.Excluded {
 				out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", x.Workload.Account, x.Workload.Region, cell(x.Workload.LoadBalancer),
-					cell(x.Workload.TargetGroup), cell(strings.Join(x.Workload.Hosts, ", ")), cell(x.Criterion)))
+					cell(x.Workload.TargetGroup), cell(strings.Join(x.Workload.Hosts, ", ")+managedMark(x.Workload)), cell(x.Criterion)))
 			}
 		} else {
 			out = append(out, "None.")

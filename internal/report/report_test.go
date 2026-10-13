@@ -716,3 +716,88 @@ func TestANaNTotalGivesNodesOutputAndNoPanic(t *testing.T) {
 	e.Totals.ActualMonth, e.Totals.WithDormetoMonth = 10, math.Inf(1)
 	_ = Summary(e)
 }
+
+// installed: the fixture with Dormeto installed, napping (estimated) and two more onboarded, not estimated; the
+// recommendation's change and the totals with it.
+func installed(change estimate.Change, total float64) estimate.Estimate {
+	e := fixture()
+	e.Dormeto = estimate.DormetoCost{
+		Manager: estimate.CostPart{Count: 1, UnitMonth: 5, USDMonth: 5},
+		Routers: estimate.Routers{CostPart: estimate.CostPart{Count: 1, UnitMonth: 0.26, USDMonth: 0.26},
+			Where: []estimate.Where{{Account: A, Region: "eu-west-1"}}},
+		Workloads: estimate.CostPart{Count: 3, UnitMonth: 0.13, USDMonth: 0.39},
+		Change:    &change, USDMonth: total,
+	}
+	e.Totals = totalsOf(total, 400-180.5+total)
+	return e
+}
+
+// Dormeto already installed (the user, 2026-10-13): the parts are the installation now, then the recommendation's
+// change, signed, so that Dormeto's cost is the installation's once the recommendation is applied.
+func TestDormetosCostOfAnInstallationAndTheRecommendationsChange(t *testing.T) {
+	e := installed(estimate.Change{Onboard: 11, Busy: 1, RoutersAdded: 1, USDMonth: 1.56}, 7.21)
+	contains(t, Markdown(e), strings.Join([]string{
+		"| Part | Computation | A month |",
+		"|---|---|---|",
+		"| Manager | 1 × $5.00: one per installation, whatever the number of accounts and workloads | $5.00 |",
+		"| Routers | 1 × $0.26: one per account and region with workloads onboarded now (111111111111 eu-west-1) | $0.26 |",
+		"| Workloads | 3 × $0.13: each workload onboarded now: its naps, wakes and idle checks (2 of them not estimated) | $0.39 |",
+		"| New recommendation | +11 × $0.13 to onboard, -1 × $0.13 left by --max-wakes, +1 × $0.26 router added | +$1.56 |",
+		"| **Dormeto's cost** | | **$7.21** |",
+		"| Actual cost | what naps would stop in the 12 workloads, running 24/7 | $400.00 |",
+		"| Savings | at a 1-hour idle window | -$180.50 |",
+		"| **Cost with Dormeto applied** | $400.00 - $180.50 + $7.21 | **$226.71** |",
+	}, "\n"))
+	contains(t, Markdown(installed(estimate.Change{}, 5.65)),
+		"| New recommendation | 0 to onboard, 0 left by the filters, no router more or less | $0.00 |")
+	contains(t, Markdown(installed(estimate.Change{Excluded: 1, Small: 1, RoutersRemoved: 2, USDMonth: -0.78}, 4.87)),
+		"| New recommendation | -1 × $0.13 left by --exclude-tags, -1 × $0.13 left by --min-saving, -2 × $0.26 routers removed | -$0.78 |")
+	lone := installed(estimate.Change{Onboard: 2, RoutersAdded: 2, USDMonth: 0.78}, 6.43)
+	lone.Dormeto.Workloads = estimate.CostPart{Count: 1, UnitMonth: 0.13, USDMonth: 0.13}
+	contains(t, Markdown(lone), "| Workloads | 1 × $0.13: each workload onboarded now: its naps, wakes and idle checks | $0.13 |")
+	contains(t, Markdown(lone), "| New recommendation | +2 × $0.13 to onboard, +2 × $0.26 routers added | +$0.78 |")
+	// Nothing left to manage: the manager goes, and the accounts' note no longer counts it.
+	empty := installed(estimate.Change{Excluded: 3, RoutersRemoved: 1, ManagerRemoved: true, USDMonth: -5.65}, 0)
+	md := Markdown(empty)
+	contains(t, md, "| New recommendation | -3 × $0.13 left by --exclude-tags, -1 × $0.26 router removed, -1 × $5.00 manager removed (no workload left) | -$5.65 |")
+	contains(t, md, "Cost with Dormeto enabled: at a 1-hour idle window, Dormeto's cost included.")
+	lacks(t, md, "the total includes the manager")
+	// The terminal's table is the same.
+	text := strings.Join(Summary(e), "\n")
+	contains(t, text, "│ New recommendation        │ +11 × $0.13 to onboard, -1 × $0.13 left by --max-wakes, +1 × $0.26 router added")
+	contains(t, text, " +$1.56 │")
+}
+
+// Installed with no workload estimated (all asleep, say): the terminal still shows Dormeto's cost.
+func TestTheTerminalShowsAnInstallationsCostWithNoWorkloadEstimated(t *testing.T) {
+	e := installed(estimate.Change{}, 5.65)
+	e.Workloads, e.Totals = []estimate.WorkloadEstimate{}, estimate.Totals{Excluded: 3, DormetoMonth: 5.65, WithDormetoMonth: 5.65}
+	if !slices.Contains(Summary(e), "Dormeto's cost:") {
+		t.Errorf("no cost table: %q", Summary(e))
+	}
+	none := fixture()
+	none.Workloads, none.Totals, none.Dormeto = []estimate.WorkloadEstimate{}, estimate.Totals{}, estimate.DormetoCost{}
+	if slices.Contains(Summary(none), "Dormeto's cost:") {
+		t.Errorf("a cost table with nothing estimated nor installed: %q", Summary(none))
+	}
+}
+
+// The workloads Dormeto already manages that are not estimated are marked as the estimated ones are.
+func TestTheOnboardedWorkloadsNotEstimatedAreMarked(t *testing.T) {
+	e := fixture()
+	managed := func(name string) discover.Workload {
+		w := workloadOf(name)
+		w.Managed = true
+		return w
+	}
+	e.LeftOut = []estimate.LeftOut{{Workload: managed("batch"), Reason: "nothing running to stop"}}
+	e.Busy = []estimate.Busy{{Workload: managed("busy"), WakesPerDay: 5.93, USDMonth: 12.3, Minutes: 120}}
+	e.Small = []estimate.Small{{Workload: managed("pico"), USDMonth: 0.42, Minutes: 120}}
+	e.Options.ExcludeTags = []discover.TagWants{{{Key: "env", Values: []string{"dev"}}}}
+	e.Excluded = []estimate.Excluded{{Workload: managed("legacy"), Criterion: "env=dev"}}
+	md := Markdown(e)
+	contains(t, md, "| 111111111111 | eu-west-1 | web | batch (managed by Dormeto) | nothing running to stop |")
+	contains(t, md, "| 111111111111 | eu-west-1 | web | busy.example.com (managed by Dormeto) | asg busy-asg | 120 min | 5.9 | $12.30 |")
+	contains(t, md, "| 111111111111 | eu-west-1 | web | pico.example.com (managed by Dormeto) | asg pico-asg | 120 min | $0.42 |")
+	contains(t, md, "| 111111111111 | eu-west-1 | web | legacy | legacy.example.com (managed by Dormeto) | env=dev |")
+}

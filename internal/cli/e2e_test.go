@@ -5,11 +5,13 @@ package cli
 // estimate (scripts/parity/cases/estimate.mjs, as bin.ts): the exit code, the reports written (the JSON without its
 // run time and tool, the Markdown without its time line), the lines logged and the errors are Node's. Once with an
 // empty cache, once with the cache the Node estimate wrote for the first case (testdata/parity/cache): the same exit
-// code, reports and errors (the log then says what came from the cache).
+// code, reports and errors (the log then says what came from the cache). Go only: with Dormeto installed, Dormeto's cost
+// by part (installedAsDesigned).
 
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -378,6 +380,83 @@ func sameReports(t *testing.T, want, got estimateOutput) {
 	}
 }
 
+// Go only (the user, 2026-10-13): with Dormeto installed (an onboarded workload discovered), Dormeto's cost by part is
+// the installation now and the recommendation's change, its total Node's. installedAsDesigned checks that much and
+// leaves the parts out of both outputs (the JSON's, the Markdown's and the terminal's table rows), the rest to compare
+// with Node's; false when Go's report has no change (nothing onboarded).
+func installedAsDesigned(t *testing.T, want, got *estimateOutput) bool {
+	t.Helper()
+	var g, w map[string]json.RawMessage
+	if json.Unmarshal(got.Report, &g) != nil || json.Unmarshal(want.Report, &w) != nil {
+		return false
+	}
+	var gc, wc struct {
+		Change   json.RawMessage `json:"change"`
+		USDMonth float64         `json:"usdMonth"`
+	}
+	if json.Unmarshal(g["dormeto"], &gc) != nil || gc.Change == nil {
+		return false
+	}
+	if err := json.Unmarshal(w["dormeto"], &wc); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(gc.USDMonth-wc.USDMonth) >= 1e-9 {
+		t.Errorf("Dormeto's cost %v, Node's %v", gc.USDMonth, wc.USDMonth)
+	}
+	delete(g, "dormeto")
+	delete(w, "dormeto")
+	got.Report, _ = json.Marshal(g)
+	want.Report, _ = json.Marshal(w)
+	part := regexp.MustCompile(`^(\| |  │ )(Manager|Routers|Workloads|New recommendation) +[|│]`)
+	if got.Markdown != nil && want.Markdown != nil {
+		if !strings.Contains(*got.Markdown, "\n| New recommendation | ") {
+			t.Errorf("no recommendation's change in the Markdown")
+		}
+		without := func(md string) *string {
+			var kept []string
+			for _, l := range strings.Split(md, "\n") {
+				if !part.MatchString(l) {
+					kept = append(kept, l)
+				}
+			}
+			joined := strings.Join(kept, "\n")
+			return &joined
+		}
+		got.Markdown, want.Markdown = without(*got.Markdown), without(*want.Markdown)
+	}
+	// The terminal's cost table as its cells, the parts left out (its rules and padding follow the widest cell).
+	cells := func(log []string) []string {
+		out := []string{}
+		table := false
+		for _, l := range log {
+			switch {
+			case l == "Dormeto's cost:":
+				table = true
+			case table && regexp.MustCompile(`^  [┌├└]`).MatchString(l):
+				continue
+			case table && strings.HasPrefix(l, "  │"):
+				if part.MatchString(l) {
+					continue
+				}
+				row := strings.Split(l, "│")
+				for i := range row {
+					row[i] = strings.TrimSpace(row[i])
+				}
+				l = strings.Join(row, "|")
+			default:
+				table = false
+			}
+			out = append(out, l)
+		}
+		return out
+	}
+	if !slices.ContainsFunc(got.Log, func(l string) bool { return strings.HasPrefix(l, "  │ New recommendation ") }) {
+		t.Errorf("no recommendation's change in the terminal")
+	}
+	got.Log, want.Log = cells(got.Log), cells(want.Log)
+	return true
+}
+
 // firstDifference is the first line two texts differ at, and both lines.
 func firstDifference(want, got string) (int, string) {
 	w, g := strings.Split(want, "\n"), strings.Split(got, "\n")
@@ -398,15 +477,23 @@ func firstDifference(want, got string) (int, string) {
 
 func TestTheSharedEstimateCasesThroughTheCommandWithAnEmptyCacheGiveNodesReportsLogAndErrors(t *testing.T) {
 	cases, ins, outs := estimateCases(t)
+	installed := 0
 	for i, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			got := runCase(t, ins[i], t.TempDir())
-			sameReports(t, outs[i], got)
-			if !slices.Equal(got.Log, outs[i].Log) {
-				n, lines := firstDifference(strings.Join(outs[i].Log, "\n"), strings.Join(got.Log, "\n"))
+			got, want := runCase(t, ins[i], t.TempDir()), outs[i]
+			if installedAsDesigned(t, &want, &got) {
+				installed++
+			}
+			sameReports(t, want, got)
+			if !slices.Equal(got.Log, want.Log) {
+				n, lines := firstDifference(strings.Join(want.Log, "\n"), strings.Join(got.Log, "\n"))
 				t.Errorf("log differs from line %d:\n%s", n, lines)
 			}
 		})
+	}
+	// The two worlds have an onboarded workload (portal), the other cases none.
+	if installed != 2 {
+		t.Errorf("%d cases with Dormeto installed, want 2", installed)
 	}
 }
 
@@ -424,8 +511,9 @@ func TestTheSharedEstimateCasesThroughTheCommandWithTheCacheNodeWroteGiveNodesRe
 	cases, ins, outs := estimateCases(t)
 	for i, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			got := runCase(t, ins[i], nodeCache(t))
-			sameReports(t, outs[i], got)
+			got, want := runCase(t, ins[i], nodeCache(t)), outs[i]
+			installedAsDesigned(t, &want, &got)
+			sameReports(t, want, got)
 		})
 	}
 }
@@ -434,8 +522,11 @@ func TestTheSharedEstimateCasesThroughTheCommandWithTheCacheNodeWroteGiveNodesRe
 // accounts, and the role of the account refusing it (never cached); the region that failed is scanned again.
 func TestTheFirstCaseFromTheCacheNodeWroteSaysWhatCameFromTheCache(t *testing.T) {
 	_, ins, outs := estimateCases(t)
-	got := runCase(t, ins[0], nodeCache(t))
-	sameReports(t, outs[0], got)
+	got, want := runCase(t, ins[0], nodeCache(t)), outs[0]
+	if !installedAsDesigned(t, &want, &got) {
+		t.Error("the world without Dormeto installed")
+	}
+	sameReports(t, want, got)
 	for _, want := range []string{"  requests 111111111111 eu-west-1: 13 workloads (cache)", "  uptime 222222222222 eu-west-1: 2 workloads (cache)"} {
 		if !slices.Contains(got.Log, want) {
 			t.Errorf("log without %q: %q", want, got.Log)

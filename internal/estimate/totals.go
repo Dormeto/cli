@@ -1,5 +1,6 @@
 // The totals, with Dormeto's cost: a router per account and region with workloads, each workload, the manager once;
 // each account's and region's workloads not estimated, whatever the reason; the estimate as the reports read it.
+// Dormeto already installed (Go only, the user, 2026-10-13): its cost now and what the recommendation changes in it.
 //
 // Ports manager packages/estimate/src/estimate.ts (estimateAll: its totals and its result).
 package estimate
@@ -108,7 +109,22 @@ func (s *state) estimate() Estimate {
 			t.Excluded += 1
 		}
 	}
-	if len(s.workloads) > 0 {
+	// The onboarded workloads staying though not estimated: in Dormeto's cost of their account and region, not in the
+	// savings.
+	installed := s.installation()
+	for _, w := range installed.staying {
+		where := w.Account + "#" + w.Region
+		router := cost.Router
+		if seen[where] {
+			router = 0
+		} else {
+			seen[where] = true
+		}
+		for _, t := range []*Totals{totals, byAccount.of(w.Account), byRegion.of(w.Region)} {
+			t.DormetoMonth += router + cost.Workload
+		}
+	}
+	if len(s.workloads) > 0 || len(installed.staying) > 0 {
 		totals.DormetoMonth += cost.Manager
 	}
 	for _, t := range append(append([]*Totals{totals}, byAccount.each()...), byRegion.each()...) {
@@ -127,7 +143,97 @@ func (s *state) estimate() Estimate {
 		Workloads: part(len(s.workloads), cost.Workload),
 		USDMonth:  totals.DormetoMonth,
 	}
+	if len(installed.now) > 0 {
+		// The installation now, then the recommendation's change: the routers of the accounts and regions with workloads
+		// once it is applied (seen) against those with workloads onboarded now.
+		now := []Where{}
+		onboardedIn := map[string]bool{}
+		for _, w := range installed.now {
+			if where := w.Account + "#" + w.Region; !onboardedIn[where] {
+				onboardedIn[where] = true
+				now = append(now, Where{Account: w.Account, Region: w.Region})
+			}
+		}
+		c := Change{Excluded: installed.excluded, Busy: installed.busy, Small: installed.small}
+		for _, x := range s.workloads {
+			if !x.Workload.Managed {
+				c.Onboard++
+			}
+		}
+		for where := range seen {
+			if !onboardedIn[where] {
+				c.RoutersAdded++
+			}
+		}
+		for where := range onboardedIn {
+			if !seen[where] {
+				c.RoutersRemoved++
+			}
+		}
+		c.ManagerRemoved = len(s.workloads) == 0 && len(installed.staying) == 0
+		c.USDMonth = float64(c.Onboard-c.Excluded-c.Busy-c.Small)*cost.Workload + float64(c.RoutersAdded-c.RoutersRemoved)*cost.Router
+		if c.ManagerRemoved {
+			c.USDMonth -= cost.Manager
+		}
+		dormeto.Manager = part(1, cost.Manager)
+		dormeto.Routers = Routers{CostPart: part(len(now), cost.Router), Where: now}
+		dormeto.Workloads = part(len(installed.now), cost.Workload)
+		dormeto.Change = &c
+	}
 	return s.result(*totals, dormeto, byAccount.ordered(), byRegion.ordered())
+}
+
+// installation is Dormeto already installed: the workloads onboarded now in the accounts and regions estimated (those
+// excluded by tags too), how many of them each filter leaves, and those staying though not estimated (left out: asleep,
+// nothing running to stop, requests unreadable...).
+type installation struct {
+	now                   []discover.Workload
+	excluded, busy, small int
+	staying               []discover.Workload
+}
+
+func (s *state) installation() installation {
+	var in installation
+	key := func(w discover.Workload) string { return w.Account + "#" + w.Region + "#" + w.TargetGroupArn }
+	gone := map[string]bool{}
+	for _, x := range s.in.Excluded {
+		if x.Workload.Managed {
+			in.excluded++
+			gone[key(x.Workload)] = true
+		}
+	}
+	for _, x := range s.busy {
+		if x.Workload.Managed {
+			in.busy++
+			gone[key(x.Workload)] = true
+		}
+	}
+	for _, x := range s.small {
+		if x.Workload.Managed {
+			in.small++
+			gone[key(x.Workload)] = true
+		}
+	}
+	for _, x := range s.workloads {
+		gone[key(x.Workload)] = true // estimated: in the recommendation's figures already
+	}
+	for _, region := range s.in.Regions {
+		for _, w := range region.Workloads {
+			if !w.Managed {
+				continue
+			}
+			in.now = append(in.now, w)
+			if !gone[key(w)] {
+				in.staying = append(in.staying, w)
+			}
+		}
+	}
+	for _, x := range s.in.Excluded {
+		if x.Workload.Managed {
+			in.now = append(in.now, x.Workload)
+		}
+	}
+	return in
 }
 
 // result is the estimate with what the reached accounts and the regions say.
