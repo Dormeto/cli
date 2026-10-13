@@ -699,3 +699,36 @@ func TestAReportThatCannotBeEncodedIsSaidExitCode1NothingWritten(t *testing.T) {
 		t.Errorf("written: %v", entries)
 	}
 }
+
+// F6: a panic is said as any error, `Error: <its value>` on one line and exit code 1, never a goroutine dump: in the
+// command's own goroutine and in a worker (a region's requests read by limit.Map).
+func TestAPanicIsSaidAsAnErrorExitCode1(t *testing.T) {
+	e, _ := fakeAWS(fakeOptions{whoami: func(context.Context) (string, error) {
+		var accounts map[string]int
+		accounts["111111111111"]++
+		return acctA, nil
+	}})
+	r := newRun(t, e)
+	if code := Main([]string{"--profile", "p", "--out", t.TempDir()}, r.deps); code != 1 {
+		t.Errorf("exit code %d", code)
+	}
+	if errs := r.errors(); !slices.Equal(errs, []string{"Error: assignment to entry in nil map"}) {
+		t.Errorf("errors %q", errs)
+	}
+
+	e, _ = fakeAWS(fakeOptions{})
+	e.CloudWatchOf = func(context.Context, string, string, *aws.Credentials) (metrics.CloudWatchPort, error) {
+		panic("boom")
+	}
+	r = newRun(t, e)
+	out := t.TempDir()
+	if code := Main([]string{"--profile", "p", "--out", out}, r.deps); code != 1 {
+		t.Errorf("exit code %d", code)
+	}
+	if errs := r.errors(); !slices.Equal(errs, []string{"Error: boom"}) {
+		t.Errorf("errors %q", errs)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Errorf("written: %v", entries)
+	}
+}

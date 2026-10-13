@@ -91,9 +91,16 @@ func plural(n int, word string) string {
 // the message and the usage for a bad option, or the message for accounts given that cannot be estimated (known once
 // AWS answered); 1 with `name: message` for anything else (credentials that do not work, an organization call AWS
 // refuses), on one line, AWS's words without the SDK's wrappers (awserr.Cause); Interrupted when the context is
-// cancelled. --help prints the usage (exit code 0).
-func Main(args []string, deps Deps) int {
+// cancelled. --help prints the usage (exit code 0). A panic is said as `Error: <its value>`, exit code 1, without a
+// goroutine dump (F6: Node says `TypeError: …` and exits 1); a worker's is its item's error (limit.Map).
+func Main(args []string, deps Deps) (code int) {
 	deps = deps.filled()
+	defer func() {
+		if v := recover(); v != nil {
+			deps.Error(fmt.Sprintf("Error: %v", v))
+			code = 1
+		}
+	}()
 	o, err := options.Parse(args)
 	if errors.Is(err, options.ErrHelp) {
 		deps.Log(options.Usage)

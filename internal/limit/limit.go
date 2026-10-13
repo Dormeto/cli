@@ -5,6 +5,7 @@ package limit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -14,7 +15,9 @@ import (
 // The first error fails Map, as Node's Promise.all rejects with the first
 // rejection; no further item is started after it (Node's workers go on to the
 // end, their results thrown away) and the context the calls in flight receive
-// is cancelled. A cancelled ctx stops Map the same way and is its error.
+// is cancelled. A cancelled ctx stops Map the same way and is its error. A call
+// that panics is that item's error, a *Panic with the panic's value (F6: as a
+// Node worker's throw rejects the Promise.all, never a crash of the process).
 func Map[T, R any](ctx context.Context, items []T, n int, fn func(context.Context, T) (R, error)) ([]R, error) {
 	out := make([]R, len(items))
 	n = max(1, min(n, len(items)))
@@ -53,7 +56,7 @@ func Map[T, R any](ctx context.Context, items []T, n int, fn func(context.Contex
 		go func() {
 			defer workers.Done()
 			for i, ok := take(); ok; i, ok = take() {
-				r, err := fn(ctx, items[i])
+				r, err := call(ctx, fn, items[i])
 				if err != nil {
 					fail(err)
 					return
@@ -67,4 +70,26 @@ func Map[T, R any](ctx context.Context, items []T, n int, fn func(context.Contex
 		return nil, first
 	}
 	return out, nil
+}
+
+// call is fn(ctx, item), a panic its error (*Panic).
+func call[T, R any](ctx context.Context, fn func(context.Context, T) (R, error), item T) (r R, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = &Panic{Value: v}
+		}
+	}()
+	return fn(ctx, item)
+}
+
+// Panic is a call that panicked: Value is what it panicked with.
+type Panic struct{ Value any }
+
+// Error is the panic's value, as fmt prints it (an error's message).
+func (p *Panic) Error() string { return fmt.Sprint(p.Value) }
+
+// Unwrap is the value when it is an error.
+func (p *Panic) Unwrap() error {
+	err, _ := p.Value.(error)
+	return err
 }
