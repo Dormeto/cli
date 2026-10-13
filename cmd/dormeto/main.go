@@ -30,9 +30,7 @@ type build struct {
 func main() {
 	info, _ := debug.ReadBuildInfo()
 	b := build{version: version, commit: commit, date: date, info: info, versions: cli.Versions}
-	if err := newRoot(b).Execute(); err != nil {
-		os.Exit(1)
-	}
+	os.Exit(execute(newRoot(b)))
 }
 
 func newRoot(b build) *cobra.Command {
@@ -45,6 +43,7 @@ func newRoot(b build) *cobra.Command {
 			fmt.Fprint(cmd.OutOrStdout(), b.describe())
 		},
 	})
+	root.AddCommand(newEstimate(b))
 	return root
 }
 
@@ -55,10 +54,10 @@ func orDefault(s, d string) string {
 	return s
 }
 
-// describe renders the version output. Link-time values win; without them
-// (a `go install` build) the version, commit and date come from the build information.
-func (b build) describe() string {
-	v, c, d := b.version, b.commit, b.date
+// resolve is the version, commit and date: link-time values win; without them
+// (a `go install` build) they come from the build information ("" when unknown).
+func (b build) resolve() (v, c, d string) {
+	v, c, d = b.version, b.commit, b.date
 	if v == "" && b.info != nil {
 		v = strings.TrimPrefix(b.info.Main.Version, "v")
 		if v == "(devel)" {
@@ -73,6 +72,12 @@ func (b build) describe() string {
 			}
 		}
 	}
+	return v, c, d
+}
+
+// describe renders the version output.
+func (b build) describe() string {
+	v, c, d := b.resolve()
 	var cases struct{ Manager, Router string }
 	_ = json.Unmarshal(b.versions, &cases)
 	return fmt.Sprintf("dormeto %s\ncommit: %s\ndate: %s\nmanager: %s\nrouter: %s\n",
