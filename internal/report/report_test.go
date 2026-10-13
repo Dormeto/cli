@@ -359,10 +359,31 @@ func TestTheVisualWhenDormetoWouldCostMoreThanItSaves(t *testing.T) {
 	}
 }
 
+// mustJSON is the JSON report, the test failed if it cannot be encoded.
+func mustJSON(t *testing.T, e estimate.Estimate, version string) []byte {
+	t.Helper()
+	b, err := JSON(e, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// F5: a value no JSON can hold (none of the estimate's does) is an error, never an empty report.
+func TestAValueNoJSONCanHoldIsAnErrorNeverAnEmptyReport(t *testing.T) {
+	b, err := stringify(struct {
+		Total float64  `json:"total"`
+		Odd   chan int `json:"odd"`
+	}{math.NaN(), make(chan int)})
+	if err == nil || !strings.Contains(err.Error(), "json: unsupported type: chan int") || b != nil {
+		t.Fatalf("%q, %v", b, err)
+	}
+}
+
 func TestTheJSONParsesBackToTheEstimate(t *testing.T) {
 	e := fixture()
 	var back estimate.Estimate
-	if err := json.Unmarshal(JSON(e, "1.2.3"), &back); err != nil {
+	if err := json.Unmarshal(mustJSON(t, e, "1.2.3"), &back); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := json.Marshal(e)
@@ -373,7 +394,7 @@ func TestTheJSONParsesBackToTheEstimate(t *testing.T) {
 }
 
 func TestTheJSONToolAndLayout(t *testing.T) {
-	out := string(JSON(fixture(), "1.2.3"))
+	out := string(mustJSON(t, fixture(), "1.2.3"))
 	if !strings.HasPrefix(out, "{\n  \"tool\": {\n    \"name\": \"dormeto\",\n    \"version\": \"1.2.3\"\n  },\n  \"generatedAt\": \"2026-10-10T12:00:30.000Z\",\n  \"organization\": \"o-abc123\",\n  \"why\": null,\n") {
 		t.Errorf("start of the JSON:\n%.300s", out)
 	}
@@ -385,7 +406,7 @@ func TestTheJSONToolAndLayout(t *testing.T) {
 	// Not HTML-escaped, as JSON.stringify.
 	e := fixture()
 	e.Why = sp("a<b & c>d" + string(rune(0x2028)) + string(rune(8)))
-	got := string(JSON(e, "v"))
+	got := string(mustJSON(t, e, "v"))
 	// Written as JSON.stringify does: the line separator as it is, the backspace as \b.
 	contains(t, got, `"why": "a<b & c>d`+string(rune(0x2028))+`\b"`)
 }
@@ -605,7 +626,7 @@ func TestTheJSONWritesNonFiniteNumbersAsNull(t *testing.T) {
 	e.Workloads[1].Databases = []estimate.Companion{{Kind: "rds-instance", ID: "db", USDMonth: math.Inf(-1), RecommendedUSDMonth: 3, Uptime: &estimate.Uptime{HoursPerDay: fp(math.NaN())}}}
 	e.ByAccount = ordered[estimate.Totals](A, e.Totals)
 	e.Options.MaxWakes = fp(math.NaN())
-	out := JSON(e, "1.2.3")
+	out := mustJSON(t, e, "1.2.3")
 	if len(out) == 0 {
 		t.Fatal("no report")
 	}

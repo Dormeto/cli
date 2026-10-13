@@ -287,10 +287,15 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 	if write == nil {
 		write = save
 	}
+	// Encoded first: a report no JSON can hold writes neither file.
+	encoded, err := jsonReport(e, deps.Version)
+	if err != nil {
+		return err
+	}
 	if err := write(md, report.Markdown(e)); err != nil {
 		return err
 	}
-	if err := write(json, string(report.JSON(e, deps.Version))); err != nil {
+	if err := write(json, string(encoded)); err != nil {
 		return err
 	}
 	for _, line := range report.Summary(e) {
@@ -299,6 +304,9 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 	deps.Log(fmt.Sprintf("Reports: %s and %s", md, json))
 	return nil
 }
+
+// jsonReport is report.JSON (the tests make it fail).
+var jsonReport = report.JSON
 
 // unreachable says whether an account was listed apart as refusing its role.
 func unreachable(reached accounts.Reached, account string) bool {

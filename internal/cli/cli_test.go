@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/Dormeto/cli/internal/discover"
+	"github.com/Dormeto/cli/internal/estimate"
 	"github.com/Dormeto/cli/internal/metrics"
 	"github.com/Dormeto/cli/internal/options"
 	"github.com/Dormeto/cli/internal/prices"
@@ -675,5 +677,25 @@ func TestAMemberAccountsCredentialsAreAskedForEachRegionReadSoItsRoleIsRenewedIn
 	}
 	if !slices.Equal(given[acctA], []bool{false, false, false, false}) || !slices.Equal(given[acctB], []bool{true, true, true, true}) {
 		t.Fatalf("credentials given: %v", given)
+	}
+}
+
+// F5: a report no JSON can hold (report.JSON's error) is an error, exit code 1: nothing is written, neither report.
+func TestAReportThatCannotBeEncodedIsSaidExitCode1NothingWritten(t *testing.T) {
+	defer func(f func(estimate.Estimate, string) ([]byte, error)) { jsonReport = f }(jsonReport)
+	jsonReport = func(estimate.Estimate, string) ([]byte, error) {
+		return nil, &json.UnsupportedTypeError{Type: reflect.TypeFor[chan int]()}
+	}
+	e, _ := fakeAWS(fakeOptions{})
+	r := newRun(t, e)
+	out := t.TempDir()
+	if code := Main([]string{"--profile", "p", "--out", out}, r.deps); code != 1 {
+		t.Errorf("exit code %d", code)
+	}
+	if errs := r.errors(); !slices.Equal(errs, []string{"Error: json: unsupported type: chan int"}) {
+		t.Errorf("errors %q", errs)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Errorf("written: %v", entries)
 	}
 }

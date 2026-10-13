@@ -25,22 +25,27 @@ type withTool struct {
 }
 
 // JSON is the estimate as JSON.stringify(e, null, 2) writes it, a newline after, with "tool": {"name": "dormeto",
-// "version": version} first. A number JSON cannot hold (NaN, infinity) is null, as JavaScript writes it. It returns nil
-// only if the estimate holds a value no JSON can (a channel; none does).
-func JSON(e estimate.Estimate, version string) []byte {
-	report := withTool{Tool: tool{Name: "dormeto", Version: version}, Estimate: e}
-	b, err := encode(report)
+// "version": version} first. A number JSON cannot hold (NaN, infinity) is null, as JavaScript writes it. The error is
+// the encoder's when the estimate holds a value no JSON can (a channel; none does): the report is not written.
+func JSON(e estimate.Estimate, version string) ([]byte, error) {
+	return stringify(withTool{Tool: tool{Name: "dormeto", Version: version}, Estimate: e})
+}
+
+// stringify is v as JSON.stringify(v, null, 2) writes it, and a newline; nil and the encoder's error for a value no
+// JSON can hold.
+func stringify(v any) ([]byte, error) {
+	b, err := encode(v)
 	if err != nil {
 		// A number JSON cannot hold (NaN, infinity): null, as JSON.stringify writes it.
 		var tree any
-		if tree, err = treeOf(reflect.ValueOf(report)); err == nil {
+		if tree, err = treeOf(reflect.ValueOf(v)); err == nil {
 			b, err = encode(tree)
 		}
 	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return unescapeLineSeparators(b)
+	return unescapeLineSeparators(b), nil
 }
 
 func encode(v any) ([]byte, error) {
