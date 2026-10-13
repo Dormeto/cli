@@ -5,6 +5,8 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -594,4 +596,102 @@ func TestTheTableCountsUTF16UnitsAsNodesLength(t *testing.T) {
 // The Markdown of the shared estimate cases, from the JSON report the Node estimate wrote.
 func TestTheSharedEstimateCasesMarkdown(t *testing.T) {
 	sharedMarkdown(t)
+}
+
+func TestTheJSONWritesNonFiniteNumbersAsNull(t *testing.T) {
+	e := fixture()
+	e.Totals.ActualMonth = math.NaN()
+	e.Workloads[0].AtWindow.USDMonth = math.Inf(1)
+	e.Workloads[1].Databases = []estimate.Companion{{Kind: "rds-instance", ID: "db", USDMonth: math.Inf(-1), RecommendedUSDMonth: 3, Uptime: &estimate.Uptime{HoursPerDay: fp(math.NaN())}}}
+	e.ByAccount = ordered[estimate.Totals](A, e.Totals)
+	e.Options.MaxWakes = fp(math.NaN())
+	out := JSON(e, "1.2.3")
+	if len(out) == 0 {
+		t.Fatal("no report")
+	}
+	var back map[string]any
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if got := back["totals"].(map[string]any)["actualMonth"]; got != nil {
+		t.Errorf("totals.actualMonth %v, want null", got)
+	}
+	if got, ok := back["byAccount"].(map[string]any)[A].(map[string]any)["actualMonth"]; !ok || got != nil {
+		t.Errorf("byAccount actualMonth %v (present %v), want null", got, ok)
+	}
+	if got := back["options"].(map[string]any)["maxWakes"]; got != nil {
+		t.Errorf("maxWakes %v", got)
+	}
+	w0 := back["workloads"].([]any)[0].(map[string]any)
+	if got, ok := w0["atWindow"].(map[string]any)["usdMonth"]; !ok || got != nil {
+		t.Errorf("atWindow.usdMonth %v, want null", got)
+	}
+	db := back["workloads"].([]any)[1].(map[string]any)["databases"].([]any)[0].(map[string]any)
+	if db["usdMonth"] != nil || db["recommendedUsdMonth"] != 3.0 || db["uptime"].(map[string]any)["hoursPerDay"] != nil {
+		t.Errorf("companion %v", db)
+	}
+	// The rest is intact: the tool first, the same names, the finite numbers, the keys in order.
+	if !strings.HasPrefix(string(out), "{\n  \"tool\": {") || back["totals"].(map[string]any)["usdMonthWindow"] != 180.5 || len(back["workloads"].([]any)) != 12 {
+		t.Errorf("report damaged:\n%.400s", out)
+	}
+	if i, j := strings.Index(string(out), `"accountNames"`), strings.Index(string(out), `"totals"`); i < 0 || j < i {
+		t.Errorf("key order")
+	}
+}
+
+// The fallback writes what the encoder writes: the same bytes for an estimate with only finite numbers.
+func TestTheNullWritingTreeEqualsTheEncoderOnFiniteNumbers(t *testing.T) {
+	e := fixture()
+	e.Workloads[1].Databases = []estimate.Companion{{Kind: "rds-instance", ID: "db", USDMonth: 1, RecommendedUSDMonth: 3, Uptime: &estimate.Uptime{HoursPerDay: fp(2)}}}
+	e.Excluded = []estimate.Excluded{{Workload: workloadOf("legacy"), Criterion: "x"}}
+	e.Options.ExcludeTags = []discover.TagWants{{{Key: "env", Values: []string{"dev"}}}}
+	report := withTool{Tool: tool{Name: "dormeto", Version: "1"}, Estimate: e}
+	want, err := encode(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := treeOf(reflect.ValueOf(report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := encode(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("tree differs from the encoder's:\n%s\n---\n%s", got, want)
+	}
+}
+
+func TestANaNTotalGivesNodesOutputAndNoPanic(t *testing.T) {
+	// No actual cost to compare with (Node's !t.actualMonth): no visual, neither in the summary nor in the Markdown.
+	e := fixture()
+	e.Totals.ActualMonth = math.NaN()
+	lines := Summary(e)
+	if nth(t, lines, 1) == "" && strings.HasPrefix(nth(t, lines, 2), "Monthly cost") {
+		t.Errorf("a visual: %q", lines[:6])
+	}
+	lacks(t, strings.Join(lines, "\n"), "Monthly cost of the")
+	lacks(t, Markdown(e), "```text")
+	contains(t, Markdown(e), "$NaN")
+	// A NaN cost with Dormeto: the bars are empty ('█'.repeat(NaN) is ''), the figures read NaN.
+	e = fixture()
+	e.Totals.WithDormetoMonth = math.NaN()
+	lines = Summary(e)
+	for _, want := range []string{
+		"  Actual cost   " + strings.Repeat(" ", 40) + "  $400.00  100%",
+		"  With Dormeto  " + strings.Repeat(" ", 40) + "     $NaN  NaN%",
+		"  Dormeto would cost $NaN a month more than it saves, NaN% of the actual cost",
+	} {
+		if !slices.Contains(lines, want) {
+			t.Errorf("summary lacks %q", want)
+		}
+	}
+	// Infinite totals do not panic either.
+	e = fixture()
+	e.Totals.ActualMonth = math.Inf(1)
+	_ = Summary(e)
+	_ = Markdown(e)
+	e.Totals.ActualMonth, e.Totals.WithDormetoMonth = 10, math.Inf(1)
+	_ = Summary(e)
 }

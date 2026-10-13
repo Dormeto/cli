@@ -138,13 +138,20 @@ const bar = 40
 
 func costVisual(e estimate.Estimate) []string {
 	t := e.Totals
-	if t.ActualMonth == 0 {
+	// Node's !t.actualMonth: zero and NaN are both falsy.
+	if t.ActualMonth == 0 || math.IsNaN(t.ActualMonth) {
 		return nil
 	}
 	most := math.Max(t.ActualMonth, t.WithDormetoMonth)
 	eighthsOf := []rune("▏▎▍▌▋▊▉")
 	barOf := func(v float64) string {
-		eighths := int(jsRound((math.Max(0, v) / most) * bar * 8))
+		scaled := jsRound((math.Max(0, v) / most) * bar * 8)
+		// A non-finite scale (a NaN total) gives Node an empty bar ('█'.repeat(NaN) is ''); a negative one would throw
+		// there, and is an empty bar here.
+		if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled < 0 {
+			return padEnd("", bar)
+		}
+		eighths := int(scaled)
 		s := strings.Repeat("█", eighths/8)
 		if eighths%8 != 0 {
 			s += string(eighthsOf[eighths%8-1])

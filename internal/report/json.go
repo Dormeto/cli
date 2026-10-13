@@ -5,6 +5,10 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"math"
+	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/Dormeto/cli/internal/estimate"
 )
@@ -21,17 +25,31 @@ type withTool struct {
 }
 
 // JSON is the estimate as JSON.stringify(e, null, 2) writes it, a newline after, with "tool": {"name": "dormeto",
-// "version": version} first. It returns nil only for a number JSON cannot hold (NaN or infinity, which JavaScript writes
-// as null): the estimate's figures are finite.
+// "version": version} first. A number JSON cannot hold (NaN, infinity) is null, as JavaScript writes it. It returns nil
+// only if the estimate holds a value no JSON can (a channel; none does).
 func JSON(e estimate.Estimate, version string) []byte {
+	report := withTool{Tool: tool{Name: "dormeto", Version: version}, Estimate: e}
+	b, err := encode(report)
+	if err != nil {
+		// A number JSON cannot hold (NaN, infinity): null, as JSON.stringify writes it.
+		var tree any
+		if tree, err = treeOf(reflect.ValueOf(report)); err == nil {
+			b, err = encode(tree)
+		}
+	}
+	if err != nil {
+		return nil
+	}
+	return unescapeLineSeparators(b)
+}
+
+func encode(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(withTool{Tool: tool{Name: "dormeto", Version: version}, Estimate: e}); err != nil {
-		return nil
-	}
-	return unescapeLineSeparators(buf.Bytes())
+	err := enc.Encode(v)
+	return buf.Bytes(), err
 }
 
 // unescapeLineSeparators writes U+2028 and U+2029 as they are, as JSON.stringify does (Go escapes them as a backslash, "u" and
@@ -62,4 +80,138 @@ func unescapeLineSeparators(b []byte) []byte {
 		}
 	}
 	return out
+}
+
+// The estimate as a tree of JSON values, when the encoder refuses it: a non-finite number is null there, as
+// JSON.stringify writes it. Same names, order and omitempty as the encoder's; Ordered objects keep their keys' order;
+// a type with its own MarshalJSON is encoded by it.
+type object struct {
+	keys   []string
+	values []any
+}
+
+func (o object) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		key, _ := json.Marshal(k)
+		value, err := json.Marshal(o.values[i])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(key)
+		buf.WriteByte(':')
+		buf.Write(value)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+var marshaler = reflect.TypeFor[json.Marshaler]()
+
+func treeOf(v reflect.Value) (any, error) {
+	switch v.Kind() {
+	case reflect.Invalid:
+		return nil, nil
+	case reflect.Pointer, reflect.Interface:
+		if v.IsNil() {
+			return nil, nil
+		}
+		if v.Type().Implements(marshaler) {
+			return rawOf(v)
+		}
+		return treeOf(v.Elem())
+	}
+	if strings.HasPrefix(v.Type().Name(), "Ordered[") {
+		var o object
+		for _, k := range v.MethodByName("Keys").Call(nil)[0].Interface().([]string) {
+			got := v.MethodByName("Get").Call([]reflect.Value{reflect.ValueOf(k)})[0]
+			value, err := treeOf(got)
+			if err != nil {
+				return nil, err
+			}
+			o.keys, o.values = append(o.keys, k), append(o.values, value)
+		}
+		return o, nil
+	}
+	if v.Type().Implements(marshaler) {
+		return rawOf(v)
+	}
+	switch v.Kind() {
+	case reflect.Float32, reflect.Float64:
+		if f := v.Float(); math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, nil
+		}
+		return v.Interface(), nil
+	case reflect.Struct:
+		var o object
+		return o, fieldsOf(v, &o)
+	case reflect.Slice:
+		if v.IsNil() {
+			return nil, nil
+		}
+		items := make([]any, v.Len())
+		for i := range items {
+			item, err := treeOf(v.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			items[i] = item
+		}
+		return items, nil
+	case reflect.Map:
+		if v.IsNil() {
+			return nil, nil
+		}
+		var o object
+		keys := v.MapKeys()
+		slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
+		for _, k := range keys {
+			value, err := treeOf(v.MapIndex(k))
+			if err != nil {
+				return nil, err
+			}
+			o.keys, o.values = append(o.keys, k.String()), append(o.values, value)
+		}
+		return o, nil
+	}
+	return v.Interface(), nil
+}
+
+func rawOf(v reflect.Value) (any, error) {
+	b, err := json.Marshal(v.Interface())
+	return json.RawMessage(b), err
+}
+
+// fieldsOf adds a struct's fields as the encoder names them: embedded structs inlined, "-" skipped, omitempty honoured.
+func fieldsOf(v reflect.Value, o *object) error {
+	for i := 0; i < v.NumField(); i++ {
+		f, fv := v.Type().Field(i), v.Field(i)
+		tag := f.Tag.Get("json")
+		name, opts, _ := strings.Cut(tag, ",")
+		if tag == "-" || (!f.IsExported() && !f.Anonymous) {
+			continue
+		}
+		if f.Anonymous && name == "" && fv.Kind() == reflect.Struct {
+			if err := fieldsOf(fv, o); err != nil {
+				return err
+			}
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		if strings.Contains(opts, "omitempty") && fv.IsZero() {
+			continue
+		}
+		value, err := treeOf(fv)
+		if err != nil {
+			return err
+		}
+		o.keys, o.values = append(o.keys, name), append(o.values, value)
+	}
+	return nil
 }
