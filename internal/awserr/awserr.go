@@ -12,6 +12,11 @@ package awserr
 
 import (
 	"errors"
+	"io/fs"
+	"net"
+	"net/url"
+	"os"
+	"syscall"
 
 	"github.com/aws/smithy-go"
 )
@@ -83,4 +88,41 @@ func Prefixed(prefix string, err error) error {
 		return nil
 	}
 	return &prefixed{prefix: prefix, err: err}
+}
+
+// Cause is err without the AWS SDK for Go's wrappers of a failed operation or credential lookup ("operation error
+// STS: GetCallerIdentity, get identity: get credentials: failed to refresh cached credentials, …"): its innermost
+// error that still says something alone, as Node's err.message gives the credential provider's words (an expired SSO
+// session: "the SSO session has expired or is invalid"). An OS or network error says too little alone (no such file
+// or directory), an inner operation's error too little of what it was for (the instance metadata service's, for a
+// profile without credentials): the error above it, which names the file, the request or what was looked for, is the
+// cause. An AWS API error, which Name and Message read already, is returned as it is; a prefix (Prefixed) is kept.
+func Cause(err error) error {
+	if err == nil {
+		return nil
+	}
+	var p *prefixed
+	if errors.As(err, &p) {
+		return &prefixed{prefix: p.prefix, err: Cause(p.err)}
+	}
+	var api smithy.APIError
+	if errors.As(err, &api) {
+		return err
+	}
+	for {
+		next := errors.Unwrap(err)
+		if _, inner := next.(*smithy.OperationError); next == nil || inner || system(next) {
+			return err
+		}
+		err = next
+	}
+}
+
+// system says err is the operating system's or the network's.
+func system(err error) bool {
+	switch err.(type) {
+	case *fs.PathError, *os.LinkError, *os.SyscallError, syscall.Errno, *url.Error, *net.OpError, *net.DNSError, *net.AddrError:
+		return true
+	}
+	return false
 }
