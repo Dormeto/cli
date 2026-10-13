@@ -245,15 +245,21 @@ snapshot, checks the cask's Linux entries against `checksums.txt`, serves `dist/
 container per architecture (by default the machine's own; Homebrew hangs under amd64 emulation on an ARM Mac) installs
 the generated cask from a local tap and runs `dormeto version`. It removes its containers and server on every exit.
 
+It publishes to two repositories of the Dormeto GitHub account (a personal account, not an organization), both public,
+since Homebrew, the install script and `go install` download without a token: `Dormeto/cli` and the tap,
+`Dormeto/homebrew-tap` (the name `brew` turns into `dormeto/tap`), created with a README so that GoReleaser adds the
+cask, `Casks/dormeto.rb`, to a `main` branch that exists.
+
 It reads two tokens from the macOS Keychain, items named for the account `$USER`: `npm-dormeto` and `github-dormeto`.
 They are never written to a repository, to `~/.npmrc` or to a log. Create each, then store it with `security`, which
 asks for the value (`-w` last, with no value) so it does not appear in a command line or the shell's history:
 
 - `npm-dormeto`: on npmjs.com, Access Tokens, Generate New Token, Granular Access Token, with Read and write on the
   `@dormeto` scope, "Bypass two-factor authentication" checked, and an expiration of 90 days; renew it every quarter.
-- `github-dormeto`: on GitHub, Settings, Developer settings, Fine-grained personal access tokens, with the Dormeto
-  organization as resource owner, limited to the `cli` and `homebrew-tap` repositories, and the Contents permission at
-  Read and write.
+- `github-dormeto`: on GitHub, signed in as Dormeto, Settings, Developer settings, Personal access tokens,
+  Fine-grained tokens, Generate new token, with Dormeto as resource owner, "Only select repositories" `cli` and
+  `homebrew-tap`, the Contents repository permission at Read and write (Metadata, read-only, comes with it), and an
+  expiration of 90 days, renewed with the npm token.
 
 ```sh
 security add-generic-password -U -a "$USER" -s npm-dormeto -w
