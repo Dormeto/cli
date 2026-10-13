@@ -46,10 +46,12 @@ function fixture({ manager = '0.10.0', latest = '0.10.0' } = {}) {
   git(work, 'add', '-A');
   git(work, 'commit', '-m', 'fixture');
   git(work, 'push', '-u', 'origin', 'main');
+  for (const r of ['cli', 'homebrew-tap']) write(join(root, 'api', 'repos', 'Dormeto', r), '{}');
   write(join(root, 'latest.json'), JSON.stringify({ version: latest, router: '0.29.0', published: '2026-10-12T00:00:00.000Z' }));
 
   // security: exits 1 for the items listed in MISSING; with -w it prints "token-<item>".
   write(join(bin, 'security'), `#!/bin/sh
+set +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set in the environment
 echo "security $*" >> "${log}"
 item=""; want=0
 while [ $# -gt 0 ]; do case "$1" in -s) item="$2"; shift;; -w) want=1;; esac; shift; done
@@ -59,7 +61,10 @@ exit 0
 `, 0o755);
   // goreleaser: records its arguments, the token and the notes; makes a dist/ as the real one does.
   write(join(bin, 'goreleaser'), `#!/bin/sh
+set +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set in the environment
 echo "goreleaser $* GITHUB_TOKEN=\${GITHUB_TOKEN:-}" >> "${log}"
+[ "$1" = check ] && exit 0
+[ -n "$GORELEASER_FAIL" ] && { echo "goreleaser: simulated failure" >&2; exit 1; }
 notes=""
 while [ $# -gt 0 ]; do case "$1" in --release-notes) notes="$2"; shift;; esac; shift; done
 cat "$notes" > "${root}/notes.copy"
@@ -77,9 +82,12 @@ printf ']' >> dist/artifacts.json
 `, 0o755);
   // npm: records "publish <dir> <userconfig>" and the userconfig's mode and text at that moment.
   write(join(bin, 'npm'), `#!/bin/sh
+set +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set in the environment
 cfg=""; prev=""
 for a in "$@"; do [ "$prev" = --userconfig ] && cfg="$a"; prev="$a"; done
 echo "npm $* | cwd=$(basename "$PWD")" >> "${log}"
+[ "$1" = whoami ] && { [ -n "$NPM_WHOAMI_FAIL" ] && { echo "npm ERR! 401" >&2; exit 1; }; echo someone; exit 0; }
+[ "$1" = view ] && { [ -n "$NPM_TAKEN" ] && echo "$NPM_TAKEN"; exit 0; }
 if [ -n "$cfg" ]; then
   echo "userconfig $cfg mode=$(stat -f %Lp "$cfg" 2>/dev/null || stat -c %a "$cfg") text=$(cat "$cfg")" >> "${log}"
 fi
@@ -94,6 +102,7 @@ exit 0
     DORMETO_GORELEASER: join(bin, 'goreleaser'),
     DORMETO_NPM: join(bin, 'npm'),
     DORMETO_AFTER: join(root, 'after.sh'),
+    DORMETO_GITHUB_API: `file://${join(root, 'api')}`,
     DORMETO_MANAGER_LATEST_URL: `file://${join(root, 'latest.json')}`,
     TMPDIR: join(root, 'tmp'),
     MISSING: '',
@@ -108,7 +117,7 @@ function refused(t, f, args, pattern) {
   const out = f.run(...args);
   assert.notEqual(out.status, 0, `expected a refusal, got:\n${out.stdout}${out.stderr}`);
   assert.match(out.stderr, pattern);
-  assert.equal(f.calls().includes('goreleaser'), false, 'no build after a refusal');
+  assert.equal(f.calls().includes('goreleaser release'), false, 'no build after a refusal');
   assert.equal(git(f.work, 'tag'), '', 'no tag after a refusal');
   assert.equal(git(f.origin, 'tag'), '', 'no pushed tag after a refusal');
   return out;
@@ -297,4 +306,94 @@ test('the script is executable-agnostic and has no token literal', () => {
   assert.match(text, /trap /);
   assert.doesNotMatch(text, /npm_[A-Za-z0-9]{20,}|ghp_|github_pat_/);
   assert.ok(statSync(join(repo, 'scripts', 'release.sh')).mode & 0o100, 'executable');
+});
+
+// --- tokens and failures before and after the tag ---------------------------------------------------
+
+test('release.sh refuses before the tag when npm refuses the token', () => {
+  const f = fixture();
+  try {
+    f.run.env = { NPM_WHOAMI_FAIL: '1' };
+    const out = refused(null, f, [VERSION], /npm token.*whoami|whoami/);
+    assert.equal(out.stderr.includes('token-'), false);
+  } finally { f.cleanup(); }
+});
+
+for (const repository of ['cli', 'homebrew-tap']) {
+  test(`release.sh refuses before the tag when the GitHub token cannot read ${repository}`, () => {
+    const f = fixture();
+    try {
+      rmSync(join(f.root, 'api', 'repos', 'Dormeto', repository));
+      const out = refused(null, f, [VERSION], new RegExp(`GitHub token.*Dormeto/${repository}`));
+      assert.equal(out.stderr.includes('token-'), false);
+    } finally { f.cleanup(); }
+  });
+}
+
+test('release.sh refuses before the tag when the npm version is taken', () => {
+  const f = fixture();
+  try {
+    f.run.env = { NPM_TAKEN: VERSION };
+    refused(null, f, [VERSION], /already published on npm/);
+  } finally { f.cleanup(); }
+});
+
+test('release.sh refuses before the tag when go.mod is untidy', () => {
+  const f = fixture();
+  try {
+    write(join(f.work, 'go.mod'), 'module example.com/fixture\n\ngo 1.22\n\nrequire github.com/spf13/cobra v1.8.0\n');
+    git(f.work, 'commit', '-am', 'untidy');
+    git(f.work, 'push', 'origin', 'main');
+    refused(null, f, [VERSION], /go mod tidy|go vet|go test/);
+  } finally { f.cleanup(); }
+});
+
+test('a failure after the tag prints what was done and the commands that finish (npm)', () => {
+  const f = fixture();
+  try {
+    f.run.env = { NPM_FAIL: 'cli-linux-x64' };
+    const out = f.run(VERSION);
+    assert.notEqual(out.status, 0);
+    assert.equal(git(f.origin, 'tag'), `v${VERSION}`);
+    assert.match(out.stderr, /only partly released/);
+    assert.match(out.stderr, /the tag v0\.2\.0 is pushed/);
+    assert.match(out.stderr, /GoReleaser finished/);
+    assert.match(out.stderr, /npm packages published: cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64\n/);
+    assert.match(out.stderr, /\(cd dist\/npm\/cli-linux-x64 && npm publish --access public --userconfig "\$npmrc"\)/);
+    assert.match(out.stderr, /\(cd dist\/npm\/cli && npm publish/);
+    assert.doesNotMatch(out.stderr, /cd dist\/npm\/cli-darwin-arm64/);
+    assert.match(out.stderr, /scripts\/after-release\.sh 0\.2\.0/);
+    assert.equal(out.stderr.includes('token-'), false);
+  } finally { f.cleanup(); }
+});
+
+test('a GoReleaser failure after the tag prints the state and the goreleaser command', () => {
+  const f = fixture();
+  try {
+    f.run.env = { GORELEASER_FAIL: '1' };
+    const out = f.run(VERSION);
+    assert.notEqual(out.status, 0);
+    assert.equal(git(f.origin, 'tag'), `v${VERSION}`);
+    assert.match(out.stderr, /GoReleaser did not finish/);
+    assert.match(out.stderr, /goreleaser release --clean --release-notes \.git\/release-notes-0\.2\.0\.md/);
+    assert.match(out.stderr, /npm packages published: none/);
+    assert.equal(existsSync(join(f.work, '.git', 'release-notes-0.2.0.md')), true, 'the notes survive for the re-run');
+    assert.equal(out.stderr.includes('token-'), false);
+  } finally { f.cleanup(); }
+});
+
+test('no token reaches stdout or stderr under shell tracing (SHELLOPTS=xtrace and bash -x)', () => {
+  const f = fixture();
+  try {
+    f.run.env = { SHELLOPTS: 'xtrace' };
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal((out.stdout + out.stderr).includes('token-'), false);
+    const f2 = fixture();
+    try {
+      const traced = spawnSync('bash', ['-x', join(f2.work, 'scripts', 'release.sh'), VERSION], { cwd: f2.work, encoding: 'utf8', env: f2.env });
+      assert.equal(traced.status, 0, traced.stderr);
+      assert.equal((traced.stdout + traced.stderr).includes('token-'), false);
+    } finally { f2.cleanup(); }
+  } finally { f.cleanup(); }
 });

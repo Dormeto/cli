@@ -111,3 +111,39 @@ test('the launcher names the platform it cannot serve', () => {
     assert.match(out.stderr, /freebsd/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// A binary as the real one behaves: the first SIGINT starts a graceful stop (exit code 3 a moment later),
+// the second has its default effect and kills it at once (signal.Stop in cmd/dormeto/estimate.go).
+const graceful = `
+process.once('SIGINT', () => { console.log('graceful stop'); setTimeout(() => process.exit(3), 400); });
+console.log('ready');
+setInterval(() => {}, 1000);
+`;
+
+test('on a terminal Ctrl-C reaches the group once: the binary stops gracefully and its code is the launcher\'s', { skip }, async () => {
+  const { root, script } = install(graceful);
+  try {
+    // detached: the launcher leads its own process group, as a foreground job does; the signal goes to the group.
+    const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env, DORMETO_LAUNCHER_TTY: '1' } });
+    let out = '';
+    const ready = new Promise((resolve) => child.stdout.on('data', (d) => { out += d; if (out.includes('ready')) resolve(); }));
+    const exited = new Promise((resolve) => child.on('exit', (c, s) => resolve({ code: c, signal: s })));
+    await ready;
+    process.kill(-child.pid, 'SIGINT');
+    assert.deepEqual(await exited, { code: 3, signal: null });
+    assert.match(out, /graceful stop/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('without a terminal SIGINT sent to the launcher alone is forwarded once', { skip }, async () => {
+  const { root, script } = install(graceful);
+  try {
+    const child = spawn(process.execPath, [script], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DORMETO_LAUNCHER_TTY: '0' } });
+    let out = '';
+    const ready = new Promise((resolve) => child.stdout.on('data', (d) => { out += d; if (out.includes('ready')) resolve(); }));
+    const exited = new Promise((resolve) => child.on('exit', (c, s) => resolve({ code: c, signal: s })));
+    await ready;
+    child.kill('SIGINT');
+    assert.deepEqual(await exited, { code: 3, signal: null });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -34,12 +34,30 @@ Install it with: npm install ${pkg}
 
 const child = spawn(binary, process.argv.slice(2), { stdio: 'inherit' });
 
-const forwarded = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+// Who gets which signal:
+// - On a terminal, Ctrl-C reaches the whole foreground process group, the binary included, so the launcher must
+//   not send SIGINT again: the binary stops gracefully on the first one and a second would kill it outright.
+//   Without a terminal (a script, CI, a supervisor signalling the launcher alone) nothing else would tell it.
+//   DORMETO_LAUNCHER_TTY=1|0 overrides the detection (for the tests).
+// - On Windows, child.kill is a TerminateProcess and Ctrl-C already reaches both from the console: forward
+//   nothing, and keep a listener so Node does not exit before the binary and ends with its exit code.
+// - SIGTERM and SIGHUP are sent by kill(1) and by a closing terminal to this process alone: always forwarded (POSIX).
+const override = process.env.DORMETO_LAUNCHER_TTY;
+const terminal = override === undefined
+  ? Boolean(process.stdin.isTTY || process.stdout.isTTY || process.stderr.isTTY)
+  : override === '1';
+const windows = process.platform === 'win32';
+const forwarded = windows ? [] : ['SIGTERM', 'SIGHUP'].concat(terminal ? [] : ['SIGINT']);
+const noop = () => {};
 const forwarders = forwarded.map((signal) => {
   const forward = () => { try { child.kill(signal); } catch { /* already gone */ } };
   process.on(signal, forward);
   return [signal, forward];
 });
+if (!forwarded.includes('SIGINT')) {
+  process.on('SIGINT', noop); // the binary has it (or Windows' console gave it): wait for the binary
+  forwarders.push(['SIGINT', noop]);
+}
 
 child.on('error', (err) => {
   console.error(`dormeto: cannot run ${binary}: ${err.message}`);

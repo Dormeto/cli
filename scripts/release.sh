@@ -13,14 +13,17 @@
 # no tag, no push, no token read.
 #
 # Overridable for the tests: DORMETO_SECURITY, DORMETO_GORELEASER, DORMETO_NPM, DORMETO_AFTER,
-# DORMETO_MANAGER_LATEST_URL.
+# DORMETO_MANAGER_LATEST_URL, DORMETO_GITHUB_API.
 set -euo pipefail
+# Tracing (bash -x, SHELLOPTS=xtrace) would print the tokens: off, and kept off.
+{ set +x; } 2>/dev/null
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 security="${DORMETO_SECURITY:-security}"
 goreleaser="${DORMETO_GORELEASER:-goreleaser}"
 npm="${DORMETO_NPM:-npm}"
 after="${DORMETO_AFTER:-$root/scripts/after-release.sh}"
+github_api="${DORMETO_GITHUB_API:-https://api.github.com}"
 latest_url="${DORMETO_MANAGER_LATEST_URL:-https://releases.dormeto.com/manager/latest.json}"
 
 fail() { echo "release: $*" >&2; exit 1; }
@@ -39,9 +42,44 @@ done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "the version '$version' must be x.y.z, without a leading v"
 tag="v$version"
 
-# Temporary files, removed on every exit (the npm configuration holds the token).
+# Temporary files, removed on every exit (the npm configuration holds the token). After the tag is pushed,
+# a failure also prints what was done and the commands that finish the release.
 scratch=""
-cleanup() { [ -z "$scratch" ] || rm -rf "$scratch"; }
+tag_made=0
+tag_pushed=0
+goreleaser_done=0
+published=()
+packages=(cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-win32-arm64 cli-win32-x64 cli)
+cleanup() {
+  local status=$?
+  [ -z "$scratch" ] || rm -rf "$scratch"
+  if [ "$status" -ne 0 ] && [ "$tag_made" = 1 ]; then report_state "$status" >&2; fi
+  return "$status"
+}
+report_state() {
+  local package done_list=" ${published[*]:-} "
+  echo
+  echo "release: $tag is only partly released (exit $1). What was done:"
+  if [ "$tag_pushed" = 1 ]; then echo "  - the tag $tag is pushed"; else echo "  - the tag $tag exists here only (not pushed)"; fi
+  if [ "$goreleaser_done" = 1 ]; then echo "  - GoReleaser finished: the GitHub release, the archives, checksums.txt and the Homebrew cask are published"; else echo "  - GoReleaser did not finish: check https://github.com/Dormeto/cli/releases/tag/$tag and the tap"; fi
+  echo "  - npm packages published: ${published[*]:-none}"
+  echo "To finish (each step is safe to run once it is not done; tokens come from the Keychain, never typed):"
+  if [ "$tag_pushed" = 0 ]; then echo "  git push origin $tag"; fi
+  if [ "$goreleaser_done" = 0 ]; then
+    echo "  GITHUB_TOKEN=\"\$(security find-generic-password -a \"\$USER\" -s github-dormeto -w)\" goreleaser release --clean --release-notes .git/release-notes-$version.md"
+  fi
+  local missing=0
+  for package in "${packages[@]}"; do case "$done_list" in *" $package "*) ;; *) missing=1;; esac; done
+  if [ "$missing" = 1 ]; then
+    echo "  node npm/assemble.mjs   # after GoReleaser, if dist/npm is missing"
+    echo "  npmrc=\$(mktemp) && printf '//registry.npmjs.org/:_authToken=%s\\n' \"\$(security find-generic-password -a \"\$USER\" -s npm-dormeto -w)\" > \"\$npmrc\""
+    for package in "${packages[@]}"; do
+      case "$done_list" in *" $package "*) ;; *) echo "  (cd dist/npm/$package && npm publish --access public --userconfig \"\$npmrc\")";; esac
+    done
+    echo "  rm -f \"\$npmrc\""
+  fi
+  echo "  scripts/after-release.sh $version"
+}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -96,6 +134,9 @@ for item in npm-dormeto github-dormeto; do
     || fail "the Keychain item '$item' does not exist (see the README: security add-generic-password -U -a \"\$USER\" -s $item -w)"
 done
 
+go mod tidy -diff || fail "go mod tidy would change go.mod or go.sum (GoReleaser's own hook refuses it): run go mod tidy and commit"
+"$goreleaser" check || fail "goreleaser check fails"
+
 echo "release: the checks pass"
 
 # --- dry run: a snapshot and the npm assembly, nothing published ---------------------------------
@@ -106,25 +147,48 @@ if [ "$dry_run" = 1 ]; then
   exit 0
 fi
 
+# --- tokens, checked before anything is public ------------------------------------------------------
+# Read once, held in variables and in mode-600 files of $scratch; never on a command line.
+user="${USER:-$(id -un)}"
+github_token="$("$security" find-generic-password -a "$user" -s github-dormeto -w)" || fail "cannot read the Keychain item github-dormeto"
+npm_token="$("$security" find-generic-password -a "$user" -s npm-dormeto -w)" || fail "cannot read the Keychain item npm-dormeto"
+[ -n "$github_token" ] || fail "the Keychain item github-dormeto is empty"
+[ -n "$npm_token" ] || fail "the Keychain item npm-dormeto is empty"
+
+npmrc="$scratch/npmrc"
+githubheader="$scratch/github-header"
+( umask 077; : > "$npmrc"; : > "$githubheader" )
+printf '//registry.npmjs.org/:_authToken=%s\n' "$npm_token" > "$npmrc"
+printf 'Authorization: Bearer %s\n' "$github_token" > "$githubheader"
+unset npm_token
+
+"$npm" whoami --userconfig "$npmrc" >/dev/null 2>&1 || fail "the npm token (Keychain item npm-dormeto) is refused by npm whoami: expired (they last 90 days) or revoked"
+for repository in cli homebrew-tap; do
+  curl -fsS --max-time 30 -H "@$githubheader" -o /dev/null "$github_api/repos/Dormeto/$repository" \
+    || fail "the GitHub token (Keychain item github-dormeto) cannot read Dormeto/$repository: expired, revoked or not granted to it"
+done
+taken="$("$npm" view "@dormeto/cli@$version" version --userconfig "$npmrc" 2>/dev/null || true)"
+[ -z "$taken" ] || fail "@dormeto/cli@$version is already published on npm: npm versions cannot be reused"
+
+saved_notes="$(git rev-parse --git-dir)/release-notes-$version.md" # outside dist/, which --clean empties
+cp "$notes" "$saved_notes"
+
 # --- 2. the tag ---------------------------------------------------------------------------------
+tag_made=1
 git tag -a "$tag" -m "dormeto $version"
 git push origin "$tag"
+tag_pushed=1
 
 # --- 3. GoReleaser ------------------------------------------------------------------------------
-github_token="$("$security" find-generic-password -a "${USER:-$(id -un)}" -s github-dormeto -w)"
-GITHUB_TOKEN="$github_token" "$goreleaser" release --clean --release-notes "$notes"
+GITHUB_TOKEN="$github_token" "$goreleaser" release --clean --release-notes "$saved_notes"
 unset github_token
+goreleaser_done=1
 
 # --- 4. npm -------------------------------------------------------------------------------------
 node npm/assemble.mjs
-npmrc="$scratch/npmrc"
-( umask 077; : > "$npmrc" )
-chmod 600 "$npmrc"
-npm_token="$("$security" find-generic-password -a "${USER:-$(id -un)}" -s npm-dormeto -w)"
-printf '//registry.npmjs.org/:_authToken=%s\n' "$npm_token" > "$npmrc"
-unset npm_token
-for package in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-win32-arm64 cli-win32-x64 cli; do
+for package in "${packages[@]}"; do
   ( cd "dist/npm/$package" && "$npm" publish --access public --userconfig "$npmrc" )
+  published+=("$package")
 done
 rm -f "$npmrc"
 
