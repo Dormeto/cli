@@ -2,18 +2,21 @@
 # Releases Dormeto/cli from the Mac: scripts/release.sh <version> [--dry-run]
 #
 #   1. the checks (main, clean, up to date with origin, no such tag, the CHANGELOG section,
-#      go vet and go test, the shared cases against the manager's latest release, both Keychain items)
+#      go vet and go test, the shared cases against the manager's latest release, both Keychain items, npm 11.15.0 or
+#      later)
 #   2. the annotated tag v<version>, pushed
 #   3. GoReleaser: archives, checksums, GitHub release, Homebrew tap (GITHUB_TOKEN from the Keychain)
-#   4. npm: the seven packages assembled in dist/npm/, the six platform packages first, then @dormeto/cli
-#      (the token from the Keychain in a temporary user configuration, removed on every exit)
+#   4. npm: the seven packages assembled in dist/npm/ and staged (npm stage publish: the token is stage-only), the six
+#      platform packages first, then @dormeto/cli (the token from the Keychain in a temporary user configuration,
+#      removed on every exit); then the wait for the maintainer's approvals on npmjs.com (two-factor authentication)
 #   5. scripts/after-release.sh: the checks after
 #
 # --dry-run runs the checks, a GoReleaser snapshot and the npm assembly, and publishes nothing:
 # no tag, no push, no token read.
 #
 # Overridable for the tests: DORMETO_SECURITY, DORMETO_GORELEASER, DORMETO_NPM, DORMETO_AFTER,
-# DORMETO_MANAGER_LATEST_URL, DORMETO_GITHUB_API.
+# DORMETO_MANAGER_LATEST_URL, DORMETO_GITHUB_API; the wait for the approvals, DORMETO_APPROVAL_WAIT (seconds, 1800) and
+# DORMETO_POLL (seconds between two looks at the registry, 15).
 set -euo pipefail
 # Tracing (bash -x, SHELLOPTS=xtrace) would print the tokens: off, and kept off.
 { set +x; } 2>/dev/null
@@ -25,6 +28,9 @@ npm="${DORMETO_NPM:-npm}"
 after="${DORMETO_AFTER:-$root/scripts/after-release.sh}"
 github_api="${DORMETO_GITHUB_API:-https://api.github.com}"
 latest_url="${DORMETO_MANAGER_LATEST_URL:-https://releases.dormeto.com/manager/latest.json}"
+approval_wait="${DORMETO_APPROVAL_WAIT:-1800}"
+poll="${DORMETO_POLL:-15}"
+npm_floor=11.15.0 # the first npm with npm stage
 
 fail() { echo "release: $*" >&2; exit 1; }
 usage() { echo "usage: scripts/release.sh <version> [--dry-run]" >&2; exit 2; }
@@ -48,7 +54,8 @@ scratch=""
 tag_made=0
 tag_pushed=0
 goreleaser_done=0
-published=()
+staged=()
+approved=0
 packages=(cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-win32-arm64 cli-win32-x64 cli)
 cleanup() {
   local status=$?
@@ -57,12 +64,13 @@ cleanup() {
   return "$status"
 }
 report_state() {
-  local package done_list=" ${published[*]:-} "
+  local package done_list=" ${staged[*]:-} "
   echo
   echo "release: $tag is only partly released (exit $1). What was done:"
   if [ "$tag_pushed" = 1 ]; then echo "  - the tag $tag is pushed"; else echo "  - the tag $tag exists here only (not pushed)"; fi
   if [ "$goreleaser_done" = 1 ]; then echo "  - GoReleaser finished: the GitHub release, the archives, checksums.txt and the Homebrew cask are published"; else echo "  - GoReleaser did not finish: check https://github.com/Dormeto/cli/releases/tag/$tag and the tap"; fi
-  echo "  - npm packages published: ${published[*]:-none}"
+  echo "  - npm packages staged: ${staged[*]:-none}"
+  if [ "$approved" = 1 ]; then echo "  - npm packages approved: all ${#packages[@]}"; else echo "  - npm packages not approved yet"; fi
   echo "To finish (each step is safe to run once it is not done; tokens come from the Keychain, never typed):"
   if [ "$tag_pushed" = 0 ]; then echo "  git push origin $tag"; fi
   if [ "$goreleaser_done" = 0 ]; then
@@ -74,9 +82,13 @@ report_state() {
     echo "  node npm/assemble.mjs   # after GoReleaser, if dist/npm is missing"
     echo "  npmrc=\$(mktemp) && printf '//registry.npmjs.org/:_authToken=%s\\n' \"\$(security find-generic-password -a \"\$USER\" -s npm-dormeto -w)\" > \"\$npmrc\""
     for package in "${packages[@]}"; do
-      case "$done_list" in *" $package "*) ;; *) echo "  (cd dist/npm/$package && npm publish --access public --userconfig \"\$npmrc\")";; esac
+      case "$done_list" in *" $package "*) ;; *) echo "  (cd dist/npm/$package && npm stage publish --access public --userconfig \"\$npmrc\")";; esac
     done
     echo "  rm -f \"\$npmrc\""
+  fi
+  if [ "$approved" = 0 ]; then
+    echo "  approve each staged package on npmjs.com (Staged Packages, Approve, two-factor authentication), @dormeto/cli last:"
+    for package in "${packages[@]}"; do echo "    https://www.npmjs.com/package/@dormeto/$package"; done
   fi
   echo "  scripts/after-release.sh $version"
 }
@@ -134,6 +146,14 @@ for item in npm-dormeto github-dormeto; do
     || fail "the Keychain item '$item' does not exist (see the README: security add-generic-password -U -a \"\$USER\" -s $item -w)"
 done
 
+npm_version="$("$npm" --version)" || fail "cannot run npm"
+too_old="$(node -e '
+  const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number));
+  for (let i = 0; i < 3; i += 1) { if (a[i] !== b[i]) { process.stdout.write(a[i] < b[i] ? "yes" : "no"); process.exit(0); } }
+  process.stdout.write("no");
+' "$npm_version" "$npm_floor")"
+[ "$too_old" = no ] || fail "npm $npm_version cannot stage packages (npm stage, the only way a stage-only token publishes, needs $npm_floor or later): npm install -g npm@11"
+
 go mod tidy -diff || fail "go mod tidy would change go.mod or go.sum (GoReleaser's own hook refuses it): run go mod tidy and commit"
 "$goreleaser" check || fail "goreleaser check fails"
 
@@ -164,7 +184,8 @@ unset npm_token
 
 # These prove the tokens valid, not their write grants: npm whoami answers any valid token, and the repositories are
 # public. The publish itself proves the grants; a refusal there stops the release with the state report.
-"$npm" whoami --userconfig "$npmrc" >/dev/null 2>&1 || fail "the npm token (Keychain item npm-dormeto) is refused by npm whoami: expired or revoked (it lasts 90 days)"
+whoami="$("$npm" whoami --userconfig "$npmrc" 2>&1 >/dev/null)" || fail "the npm token (Keychain item npm-dormeto) is refused by npm whoami: expired or revoked (it lasts 90 days), or limited to Allowed IP ranges that exclude this address (npm takes IPv4 ranges only: a Mac reaching npm over IPv6 is always outside them). npm said:
+$(printf '%s\n' "$whoami" | sed 's/^/  /')"
 for repository in cli homebrew-tap; do
   curl -fsS --max-time 30 -H "@$githubheader" -o /dev/null "$github_api/repos/Dormeto/$repository" \
     || fail "the GitHub token (Keychain item github-dormeto) is refused reading Dormeto/$repository: expired or revoked"
@@ -186,12 +207,34 @@ GITHUB_TOKEN="$github_token" "$goreleaser" release --clean --release-notes "$sav
 unset github_token
 goreleaser_done=1
 
-# --- 4. npm -------------------------------------------------------------------------------------
+# --- 4. npm: staged, then approved on npmjs.com -------------------------------------------------
 node npm/assemble.mjs
 for package in "${packages[@]}"; do
-  ( cd "dist/npm/$package" && "$npm" publish --access public --userconfig "$npmrc" )
-  published+=("$package")
+  ( cd "dist/npm/$package" && "$npm" stage publish --access public --userconfig "$npmrc" )
+  staged+=("$package")
 done
+echo
+echo "release: the ${#packages[@]} npm packages are staged. Approve each on npmjs.com (Staged Packages, Approve, with two-factor"
+echo "authentication), @dormeto/cli last so that it never points at a platform package not yet published:"
+for package in "${packages[@]}"; do echo "  https://www.npmjs.com/package/@dormeto/$package"; done
+echo "release: waiting for the approvals (up to $((approval_wait / 60)) minutes; Ctrl-C prints what finishes the release)"
+pending=("${packages[@]}")
+deadline=$((SECONDS + approval_wait))
+while :; do
+  left=()
+  for package in "${pending[@]}"; do
+    # --prefer-online: npm's cache would still hold the package as it was before the approval.
+    [ "$("$npm" view "@dormeto/$package@$version" version --prefer-online --userconfig "$npmrc" 2>/dev/null || true)" = "$version" ] \
+      || left+=("$package")
+  done
+  if [ "${#left[@]}" -eq 0 ]; then break; fi
+  if [ "${#left[@]}" -ne "${#pending[@]}" ]; then echo "release: $(( ${#packages[@]} - ${#left[@]} )) of ${#packages[@]} approved"; fi
+  pending=("${left[@]}")
+  [ "$SECONDS" -lt "$deadline" ] || fail "npm packages not approved after $((approval_wait / 60)) minutes: ${pending[*]}"
+  sleep "$poll"
+done
+approved=1
+echo "release: all ${#packages[@]} npm packages approved"
 rm -f "$npmrc"
 
 # --- 5. the checks after --------------------------------------------------------------------------

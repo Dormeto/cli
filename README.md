@@ -230,9 +230,14 @@ make dry-run VERSION=0.1.0                          # a release's checks, nothin
 ## Releasing
 
 For maintainers. `scripts/release.sh <version>` (for example `0.1.0`, without a `v`) checks the repository, tags,
-publishes the GitHub release and the Homebrew tap with GoReleaser, publishes the npm packages and checks the result;
-`--dry-run` checks and builds without publishing, tagging or reading a token. The version needs a `## <version>` section
-in [CHANGELOG.md](CHANGELOG.md).
+publishes the GitHub release and the Homebrew tap with GoReleaser, stages the npm packages, waits for you to approve
+them, and checks the result; `--dry-run` checks and builds without publishing, tagging or reading a token. The version
+needs a `## <version>` section in [CHANGELOG.md](CHANGELOG.md).
+
+npm packages go out through npm's staged publishing (npm 11.15.0 or later, `npm install -g npm@11`): the release stages
+the six platform packages, then `@dormeto/cli`, prints their npmjs.com pages and waits, up to 30 minutes, until you
+approve each one there (Staged Packages, Approve, with two-factor authentication), `@dormeto/cli` last. Your npm account
+needs two-factor authentication. Ctrl-C, or no approval in time, prints what is done and what finishes the release.
 
 The checks after it, `scripts/after-release.sh <version>` (safe to run again), install the version through each channel
 and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is),
@@ -254,8 +259,11 @@ It reads two tokens from the macOS Keychain, items named for the account `$USER`
 They are never written to a repository, to `~/.npmrc` or to a log. Create each, then store it with `security`, which
 asks for the value (`-w` last, with no value) so it does not appear in a command line or the shell's history:
 
-- `npm-dormeto`: on npmjs.com, Access Tokens, Generate New Token, Granular Access Token, with Read and write on the
-  `@dormeto` scope, "Bypass two-factor authentication" checked, and an expiration of 90 days; renew it every quarter.
+- `npm-dormeto`: on npmjs.com, Access Tokens, Generate New Token, with Packages and scopes at "Read and write (stage
+  only)" on the `@dormeto` scope (npm ends direct publishing with a token in January 2027), Organizations at No access,
+  Allowed IP ranges empty (npm takes IPv4 ranges only, and a Mac reaching npm over IPv6 is always outside them), and an
+  expiration of 90 days; renew it every quarter. Staging never asks for two-factor authentication, so the token does not
+  need to bypass it.
 - `github-dormeto`: on GitHub, signed in as Dormeto, Settings, Developer settings, Personal access tokens,
   Fine-grained tokens, Generate new token, with Dormeto as resource owner, "Only select repositories" `cli` and
   `homebrew-tap`, the Contents repository permission at Read and write (Metadata, read-only, comes with it), and an
@@ -266,10 +274,10 @@ security add-generic-password -U -a "$USER" -s npm-dormeto -w
 security add-generic-password -U -a "$USER" -s github-dormeto -w
 ```
 
-The release checks both tokens before it tags anything; an expired or revoked one stops it with a message. Those
-checks prove only that each token is valid (`npm whoami` answers any valid token, and both repositories are public):
-their write grants are proven by the publish itself, and a refusal there stops the release with the state report, what
-was done and the commands that finish it.
+The release checks both tokens before it tags anything; an expired, revoked or IP-limited one stops it with a message,
+npm's own included. Those checks prove only that each token is valid (`npm whoami` answers any valid token, and both
+repositories are public): their write grants are proven by the staging and the publish themselves, and a refusal there
+stops the release with the state report, what was done and the commands that finish it.
 
 ## License
 

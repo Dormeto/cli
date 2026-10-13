@@ -80,18 +80,26 @@ for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/arm64 windows
 done
 printf ']' >> dist/artifacts.json
 `, 0o755);
-  // npm: records "publish <dir> <userconfig>" and the userconfig's mode and text at that moment.
+  // npm: records "stage publish <dir> <userconfig>" and the userconfig's mode and text at that moment. A staged package
+  // counts as published (npm view gives its version) once NPM_APPROVE is set: the maintainer's approval on npmjs.com.
   write(join(bin, 'npm'), `#!/bin/sh
 set +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set in the environment
 cfg=""; prev=""
 for a in "$@"; do [ "$prev" = --userconfig ] && cfg="$a"; prev="$a"; done
 echo "npm $* | cwd=$(basename "$PWD")" >> "${log}"
+[ "$1" = --version ] && { echo "\${NPM_VERSION:-11.21.0}"; exit 0; }
 [ "$1" = whoami ] && { [ -n "$NPM_WHOAMI_FAIL" ] && { echo "npm ERR! 401" >&2; exit 1; }; echo someone; exit 0; }
-[ "$1" = view ] && { [ -n "$NPM_TAKEN" ] && echo "$NPM_TAKEN"; exit 0; }
+if [ "$1" = view ]; then
+  [ -n "$NPM_TAKEN" ] && { echo "$NPM_TAKEN"; exit 0; }
+  p=\${2#@dormeto/}; p=\${p%@*}
+  [ -n "$NPM_APPROVE" ] && [ -f "${root}/staged/$p" ] && echo "${VERSION}"
+  exit 0
+fi
 if [ -n "$cfg" ]; then
   echo "userconfig $cfg mode=$(stat -f %Lp "$cfg" 2>/dev/null || stat -c %a "$cfg") text=$(cat "$cfg")" >> "${log}"
 fi
 [ "$NPM_FAIL" = "$(basename "$PWD")" ] && { echo "npm ERR! simulated failure" >&2; exit 1; }
+[ "$1 $2" = "stage publish" ] && { mkdir -p "${root}/staged"; : > "${root}/staged/$(basename "$PWD")"; }
 exit 0
 `, 0o755);
   write(join(root, 'after.sh'), `#!/bin/sh\necho "after $*" >> "${log}"\n`, 0o755);
@@ -106,6 +114,8 @@ exit 0
     DORMETO_MANAGER_LATEST_URL: `file://${join(root, 'latest.json')}`,
     TMPDIR: join(root, 'tmp'),
     MISSING: '',
+    NPM_APPROVE: '1',
+    DORMETO_POLL: '1',
   };
   mkdirSync(env.HOME);
   mkdirSync(env.TMPDIR);
@@ -237,7 +247,7 @@ test('release.sh --dry-run builds a snapshot and the npm packages and publishes 
     assert.equal(out.status, 0, out.stdout + out.stderr);
     const calls = f.calls();
     assert.match(calls, /goreleaser release --snapshot --clean --release-notes \S+/);
-    assert.doesNotMatch(calls, /^npm /m);
+    assert.doesNotMatch(calls, /^npm (?!--version )/m, 'npm only asked its version');
     assert.doesNotMatch(calls, /^after /m);
     assert.doesNotMatch(calls, / -w/, 'no token read');
     assert.doesNotMatch(calls, /token-/);
@@ -251,7 +261,7 @@ test('release.sh --dry-run builds a snapshot and the npm packages and publishes 
   } finally { f.cleanup(); }
 });
 
-test('release.sh tags, releases, publishes the six platform packages before the main one, then checks', () => {
+test('release.sh tags, releases, stages the six platform packages before the main one, waits for their approval, then checks', () => {
   const f = fixture();
   try {
     const out = f.run(VERSION);
@@ -260,11 +270,17 @@ test('release.sh tags, releases, publishes the six platform packages before the 
     assert.equal(git(f.origin, 'cat-file', '-t', `v${VERSION}`), 'tag', 'annotated');
     const calls = f.calls();
     assert.match(calls, /^goreleaser release --clean --release-notes \S+ GITHUB_TOKEN=token-github-dormeto$/m);
-    const published = [...calls.matchAll(/^npm publish .*\| cwd=(\S+)$/gm)].map((m) => m[1]);
-    assert.equal(published.length, 7);
-    assert.equal(published[6], 'cli');
-    assert.deepEqual(published.slice(0, 6).sort(), ['cli-darwin-arm64', 'cli-darwin-x64', 'cli-linux-arm64', 'cli-linux-x64', 'cli-win32-arm64', 'cli-win32-x64']);
-    assert.match(calls, /^npm publish --access public --userconfig \S+ \| cwd=cli$/m);
+    const staged = [...calls.matchAll(/^npm stage publish .*\| cwd=(\S+)$/gm)].map((m) => m[1]);
+    assert.equal(staged.length, 7);
+    assert.equal(staged[6], 'cli');
+    assert.deepEqual(staged.slice(0, 6).sort(), ['cli-darwin-arm64', 'cli-darwin-x64', 'cli-linux-arm64', 'cli-linux-x64', 'cli-win32-arm64', 'cli-win32-x64']);
+    assert.match(calls, /^npm stage publish --access public --userconfig \S+ \| cwd=cli$/m);
+    assert.doesNotMatch(calls, /^npm publish/m, 'a stage-only token cannot publish directly');
+    // The approval: the links, the platform packages before @dormeto/cli, then each version seen on the registry.
+    assert.match(out.stdout, /approve/i);
+    assert.ok(out.stdout.indexOf('https://www.npmjs.com/package/@dormeto/cli-darwin-arm64') < out.stdout.indexOf('https://www.npmjs.com/package/@dormeto/cli\n'));
+    for (const p of staged) assert.match(calls, new RegExp(`^npm view @dormeto/${p}@0\\.2\\.0 version --prefer-online --userconfig \\S+ \\| cwd=work$`, 'm'));
+    assert.ok(calls.lastIndexOf('npm view') < calls.indexOf('after '), 'the checks after the approvals');
     const configs = [...calls.matchAll(/^userconfig (\S+) mode=(\d+) text=(.*)$/gm)];
     assert.equal(configs.length, 7);
     for (const [, file, mode, text] of configs) {
@@ -273,7 +289,7 @@ test('release.sh tags, releases, publishes the six platform packages before the 
       assert.equal(existsSync(file), false, 'userconfig removed');
     }
     assert.match(calls, new RegExp(`^after ${VERSION.replaceAll('.', '\\.')}$`, 'm'));
-    assert.ok(calls.indexOf('goreleaser') < calls.indexOf('npm publish'));
+    assert.ok(calls.indexOf('goreleaser') < calls.indexOf('npm stage publish'));
     assert.equal(readdirSync(f.env.TMPDIR).length, 0, 'temporary files removed');
     assert.equal(existsSync(join(f.env.HOME, '.npmrc')), false);
     assert.equal(out.stdout.includes('token-'), false, 'no token in the output');
@@ -281,7 +297,7 @@ test('release.sh tags, releases, publishes the six platform packages before the 
   } finally { f.cleanup(); }
 });
 
-test('release.sh removes the npm token file when a publish fails, and stops', () => {
+test('release.sh removes the npm token file when a staging fails, and stops', () => {
   const f = fixture();
   try {
     f.run.env = { NPM_FAIL: 'cli-linux-x64' };
@@ -318,6 +334,8 @@ test('release.sh refuses before the tag when npm refuses the token: expired or r
     f.run.env = { NPM_WHOAMI_FAIL: '1' };
     const out = refused(null, f, [VERSION], /npm token.*whoami.*expired or revoked/);
     assert.doesNotMatch(out.stderr, /grant/);
+    assert.match(out.stderr, /npm ERR! 401/, "npm's own message");
+    assert.match(out.stderr, /Allowed IP ranges.*IPv4.*IPv6/s);
     assert.equal(out.stderr.includes('token-'), false);
   } finally { f.cleanup(); }
 });
@@ -362,9 +380,10 @@ test('a failure after the tag prints what was done and the commands that finish 
     assert.match(out.stderr, /only partly released/);
     assert.match(out.stderr, /the tag v0\.2\.0 is pushed/);
     assert.match(out.stderr, /GoReleaser finished/);
-    assert.match(out.stderr, /npm packages published: cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64\n/);
-    assert.match(out.stderr, /\(cd dist\/npm\/cli-linux-x64 && npm publish --access public --userconfig "\$npmrc"\)/);
-    assert.match(out.stderr, /\(cd dist\/npm\/cli && npm publish/);
+    assert.match(out.stderr, /npm packages staged: cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64\n/);
+    assert.match(out.stderr, /\(cd dist\/npm\/cli-linux-x64 && npm stage publish --access public --userconfig "\$npmrc"\)/);
+    assert.match(out.stderr, /\(cd dist\/npm\/cli && npm stage publish/);
+    assert.match(out.stderr, /approve/i);
     assert.doesNotMatch(out.stderr, /cd dist\/npm\/cli-darwin-arm64/);
     assert.match(out.stderr, /scripts\/after-release\.sh 0\.2\.0/);
     assert.equal(out.stderr.includes('token-'), false);
@@ -380,8 +399,45 @@ test('a GoReleaser failure after the tag prints the state and the goreleaser com
     assert.equal(git(f.origin, 'tag'), `v${VERSION}`);
     assert.match(out.stderr, /GoReleaser did not finish/);
     assert.match(out.stderr, /goreleaser release --clean --release-notes \.git\/release-notes-0\.2\.0\.md/);
-    assert.match(out.stderr, /npm packages published: none/);
+    assert.match(out.stderr, /npm packages staged: none/);
     assert.equal(existsSync(join(f.work, '.git', 'release-notes-0.2.0.md')), true, 'the notes survive for the re-run');
+    assert.equal(out.stderr.includes('token-'), false);
+  } finally { f.cleanup(); }
+});
+
+test('release.sh refuses an npm older than 11.15.0, the first with npm stage (versions compared as numbers)', () => {
+  for (const version of ['11.10.1', '11.9.0', '10.9.2']) {
+    const f = fixture();
+    try {
+      f.run.env = { NPM_VERSION: version };
+      refused(null, f, [VERSION, '--dry-run'], new RegExp(`npm ${version.replaceAll('.', '\\.')}.*11\\.15\\.0`));
+    } finally { f.cleanup(); }
+  }
+  for (const version of ['11.15.0', '11.21.0', '12.2.0']) {
+    const f = fixture();
+    try {
+      f.run.env = { NPM_VERSION: version };
+      const out = f.run(VERSION, '--dry-run');
+      assert.equal(out.status, 0, `${version}: ${out.stderr}`);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('release.sh waits for the approvals; when they do not come, it prints the state and what finishes the release', () => {
+  const f = fixture();
+  try {
+    f.run.env = { NPM_APPROVE: '', DORMETO_APPROVAL_WAIT: '2' };
+    const out = f.run(VERSION);
+    assert.notEqual(out.status, 0);
+    assert.equal(git(f.origin, 'tag'), `v${VERSION}`);
+    assert.doesNotMatch(f.calls(), /^after /m);
+    assert.match(out.stderr, /only partly released/);
+    assert.match(out.stderr, /npm packages staged: cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-win32-arm64 cli-win32-x64 cli\n/);
+    assert.match(out.stderr, /not approved/i);
+    assert.match(out.stderr, /https:\/\/www\.npmjs\.com\/package\/@dormeto\/cli-darwin-arm64/);
+    assert.doesNotMatch(out.stderr, /npm stage publish --access/, 'nothing left to stage');
+    assert.match(out.stderr, /scripts\/after-release\.sh 0\.2\.0/);
+    assert.equal(readdirSync(f.env.TMPDIR).length, 0, 'temporary files removed');
     assert.equal(out.stderr.includes('token-'), false);
   } finally { f.cleanup(); }
 });
