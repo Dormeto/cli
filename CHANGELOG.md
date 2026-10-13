@@ -2,6 +2,12 @@
 
 ## 0.1.0
 
-Unreleased.
+The first release of the Dormeto CLI: `dormeto estimate`, the savings estimate of the manager, as a single Go binary. It
+reads an AWS account or organization with read-only access and gives the same figures, reports and cache as the manager's
+Node estimate (pinned to the product's code by shared test cases), with nothing to install but the binary.
 
+- `dormeto estimate`: discovery of the workloads behind Application Load Balancers (EC2, Auto Scaling, ECS, EKS, RDS),
+  their requests and uptime, and the estimate; the terminal summary and `estimate-<date>.md` and `.json` in `--out`.
+- Install by Homebrew (`dormeto/tap/dormeto`), npm (`@dormeto/cli`), `https://dormeto.com/install.sh`, `go install` or a
+  release archive for macOS, Linux and Windows (Intel/AMD and ARM).
 - `dormeto version` and shell completion.
