@@ -162,10 +162,12 @@ printf '//registry.npmjs.org/:_authToken=%s\n' "$npm_token" > "$npmrc"
 printf 'Authorization: Bearer %s\n' "$github_token" > "$githubheader"
 unset npm_token
 
-"$npm" whoami --userconfig "$npmrc" >/dev/null 2>&1 || fail "the npm token (Keychain item npm-dormeto) is refused by npm whoami: expired (they last 90 days) or revoked"
+# These prove the tokens valid, not their write grants: npm whoami answers any valid token, and the repositories are
+# public. The publish itself proves the grants; a refusal there stops the release with the state report.
+"$npm" whoami --userconfig "$npmrc" >/dev/null 2>&1 || fail "the npm token (Keychain item npm-dormeto) is refused by npm whoami: expired or revoked (it lasts 90 days)"
 for repository in cli homebrew-tap; do
   curl -fsS --max-time 30 -H "@$githubheader" -o /dev/null "$github_api/repos/Dormeto/$repository" \
-    || fail "the GitHub token (Keychain item github-dormeto) cannot read Dormeto/$repository: expired, revoked or not granted to it"
+    || fail "the GitHub token (Keychain item github-dormeto) is refused reading Dormeto/$repository: expired or revoked"
 done
 taken="$("$npm" view "@dormeto/cli@$version" version --userconfig "$npmrc" 2>/dev/null || true)"
 [ -z "$taken" ] || fail "@dormeto/cli@$version is already published on npm: npm versions cannot be reused"

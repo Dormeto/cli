@@ -234,7 +234,10 @@ security add-generic-password -U -a "$USER" -s npm-dormeto -w
 security add-generic-password -U -a "$USER" -s github-dormeto -w
 ```
 
-The release checks both tokens before it tags anything; an expired one stops it with a message.
+The release checks both tokens before it tags anything; an expired or revoked one stops it with a message. Those
+checks prove only that each token is valid (`npm whoami` answers any valid token, and both repositories are public):
+their write grants are proven by the publish itself, and a refusal there stops the release with the state report, what
+was done and the commands that finish it.
 
 ## License
 

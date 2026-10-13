@@ -310,21 +310,25 @@ test('the script is executable-agnostic and has no token literal', () => {
 
 // --- tokens and failures before and after the tag ---------------------------------------------------
 
-test('release.sh refuses before the tag when npm refuses the token', () => {
+// F9: npm whoami proves only that the npm token is valid, and reading the public repositories only that the GitHub
+// token is: a refusal says the token is expired or revoked, never that a grant is missing (the publish proves those).
+test('release.sh refuses before the tag when npm refuses the token: expired or revoked', () => {
   const f = fixture();
   try {
     f.run.env = { NPM_WHOAMI_FAIL: '1' };
-    const out = refused(null, f, [VERSION], /npm token.*whoami|whoami/);
+    const out = refused(null, f, [VERSION], /npm token.*whoami.*expired or revoked/);
+    assert.doesNotMatch(out.stderr, /grant/);
     assert.equal(out.stderr.includes('token-'), false);
   } finally { f.cleanup(); }
 });
 
 for (const repository of ['cli', 'homebrew-tap']) {
-  test(`release.sh refuses before the tag when the GitHub token cannot read ${repository}`, () => {
+  test(`release.sh refuses before the tag when the GitHub token cannot read ${repository}: expired or revoked`, () => {
     const f = fixture();
     try {
       rmSync(join(f.root, 'api', 'repos', 'Dormeto', repository));
-      const out = refused(null, f, [VERSION], new RegExp(`GitHub token.*Dormeto/${repository}`));
+      const out = refused(null, f, [VERSION], new RegExp(`GitHub token.*Dormeto/${repository}.*expired or revoked`));
+      assert.doesNotMatch(out.stderr, /grant/);
       assert.equal(out.stderr.includes('token-'), false);
     } finally { f.cleanup(); }
   });
