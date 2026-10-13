@@ -11,13 +11,18 @@ import (
 	"testing"
 )
 
-func TestATerminalsLineIsRewrittenInPlaceAsNodeWritesIt(t *testing.T) {
+// Ruling P18: autowrap is off while the line is drawn (\x1b[?7l, then \x1b[?7h), so a line wider than the terminal
+// is clipped, never wrapped: \x1b[2K erases one row, a wrapped line would leave its first rows behind at each redraw.
+func TestATerminalsLineIsRewrittenInPlaceClippedNeverWrapped(t *testing.T) {
 	var out bytes.Buffer
 	s := Terminal(&out)
 	s.Update("  Discovery 1")
 	s.Update("  Discovery 2")
 	s.End("  Discovery 3")
-	if want := "\r\x1b[2K  Discovery 1\r\x1b[2K  Discovery 2\r\x1b[2K  Discovery 3\n"; out.String() != want {
+	want := "\r\x1b[2K\x1b[?7l  Discovery 1\x1b[?7h" +
+		"\r\x1b[2K\x1b[?7l  Discovery 2\x1b[?7h" +
+		"\r\x1b[2K\x1b[?7l  Discovery 3\x1b[?7h\n"
+	if out.String() != want {
 		t.Fatalf("%q, want %q", out.String(), want)
 	}
 }
@@ -68,9 +73,9 @@ func TestARunOnATerminalRewritesEachPhasesLineAndLeavesItsLastOne(t *testing.T) 
 		t.Fatalf("exit code %d: %q", code, r.errors())
 	}
 	for _, last := range []string{
-		"\r\x1b[2K  Discovery [████████████████████] 100% · 1/1 account · 1 region · 1 workload · 0:00\n",
-		"\r\x1b[2K  Requests [████████████████████] 100% · 1/1 region · 1 workload · 0:00\n",
-		"\r\x1b[2K  Uptime [████████████████████] 100% · 1/1 region · 1 workload · 0:00\n",
+		"\r\x1b[2K\x1b[?7l  Discovery [████████████████████] 100% · 1/1 account · 1 region · 1 workload · 0:00\x1b[?7h\n",
+		"\r\x1b[2K\x1b[?7l  Requests [████████████████████] 100% · 1/1 region · 1 workload · 0:00\x1b[?7h\n",
+		"\r\x1b[2K\x1b[?7l  Uptime [████████████████████] 100% · 1/1 region · 1 workload · 0:00\x1b[?7h\n",
 	} {
 		if !strings.Contains(screen.String(), last) {
 			t.Errorf("no %q in %q", last, screen.String())

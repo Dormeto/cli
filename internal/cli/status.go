@@ -18,14 +18,23 @@ import (
 // terminal writes a Status to a terminal.
 type terminal struct{ w io.Writer }
 
-// Update rewrites the line: back to its start, the line erased, the new one.
-func (t terminal) Update(line string) { _, _ = io.WriteString(t.w, "\r\x1b[2K"+line) }
+// Ruling P18: the line is drawn with autowrap off (DECAWM reset, then set again), so a line wider than the terminal
+// is clipped at its last column, never wrapped: "\x1b[2K" erases the cursor's row only, and a wrapped line would leave
+// its first rows behind at each redraw.
+const (
+	rewrite = "\r\x1b[2K\x1b[?7l" // back to the line's start, the line erased, autowrap off
+	drawn   = "\x1b[?7h"          // autowrap on again
+)
+
+// Update rewrites the line: back to its start, the line erased, the new one, clipped to the terminal's width.
+func (t terminal) Update(line string) { _, _ = io.WriteString(t.w, rewrite+line+drawn) }
 
 // End rewrites the line a last time and leaves it.
-func (t terminal) End(line string) { _, _ = io.WriteString(t.w, "\r\x1b[2K"+line+"\n") }
+func (t terminal) End(line string) { _, _ = io.WriteString(t.w, rewrite+line+drawn+"\n") }
 
-// Terminal is the Status of a terminal written to w, with Node's sequence: Update writes "\r\x1b[2K" and the line,
-// End the same and a newline. It only writes: it never calls back into the view that calls it.
+// Terminal is the Status of a terminal written to w: Update writes "\r\x1b[2K\x1b[?7l", the line and "\x1b[?7h"
+// (Node's sequence, autowrap off while the line is drawn: Ruling P18), End the same and a newline. It only writes: it
+// never calls back into the view that calls it.
 func Terminal(w io.Writer) progress.Status { return terminal{w} }
 
 // isTerminal says a file of that mode is a terminal the line can be rewritten on: a character device (as
