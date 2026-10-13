@@ -1,0 +1,73 @@
+# GoReleaser 2. Run by scripts/release.sh (never by hand with a token in the
+# environment); `goreleaser release --snapshot --clean` publishes nothing.
+version: 2
+project_name: dormeto
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: dormeto
+    main: ./cmd/dormeto
+    binary: dormeto
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: dormeto
+    ids: [dormeto]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "dormeto_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: Dormeto
+    name: cli
+  name_template: "{{ .Tag }}"
+
+# A cask, not the deprecated `brews` formula (deprecated since GoReleaser 2.10);
+# Homebrew installs a cask whose `binary` is a plain executable on Linux too
+# as long as it does not depend on macOS.
+homebrew_casks:
+  - name: dormeto
+    ids: [dormeto]
+    binaries: [dormeto]
+    homepage: https://dormeto.com
+    description: Dormeto command line, the savings estimate for AWS
+    repository:
+      owner: Dormeto
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Casks
+    commit_author:
+      name: Fabrice Daugan
+      email: fabrice.daugan@gmail.com
+    commit_msg_template: "chore: dormeto {{ .Tag }}"
+    # The binaries are unsigned: macOS would block the first run of a download.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/dormeto"]
+          end

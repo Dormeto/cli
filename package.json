@@ -1,0 +1,8 @@
+{
+  "name": "dormeto-cli-release-tooling",
+  "private": true,
+  "description": "Test entry for the release tooling (the launcher, assemble.mjs, release.sh); not published.",
+  "scripts": {
+    "test": "node --test npm/*.test.mjs scripts/*.test.mjs"
+  }
+}
