@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/prices"
 )
 
@@ -27,7 +28,7 @@ func s(v string) *string   { return &v }
 func TestProfileAlone(t *testing.T) {
 	cwd, _ := os.Getwd()
 	want := Options{
-		Profiles: []string{"prospect"}, ExcludeTags: []map[string][]string{}, Role: "OrganizationAccountAccessRole",
+		Profiles: []string{"prospect"}, ExcludeTags: []discover.TagWants{}, Role: "OrganizationAccountAccessRole",
 		Baseline: prices.Baseline{Kind: "always"}, Out: cwd, Window: 60, MaxWakes: f(3), MinSaving: f(1), Parallel: 5, MaxWakesRds: f(2),
 	}
 	if got := must(t, "--profile", "prospect"); !reflect.DeepEqual(got, want) {
@@ -42,7 +43,7 @@ func TestEveryOptionGiven(t *testing.T) {
 		"--window", "30", "--max-wakes", "5", "--min-saving", "2.5", "--parallel", "2", "--max-wakes-rds", "1.5")
 	want := Options{
 		Profiles: []string{"prospect"}, Accounts: []string{"222222222222", "333333333333"}, Regions: []string{"eu-west-1", "eu-west-3"},
-		ExcludeTags: []map[string][]string{{"env": {"dev", "test"}, "team": {"web"}}, {"dormeto:ignore": {}}},
+		ExcludeTags: []discover.TagWants{{{Key: "env", Values: []string{"dev", "test"}}, {Key: "team", Values: []string{"web"}}}, {{Key: "dormeto:ignore", Values: []string{}}}},
 		Ec2Uptime:   true, Role: "ReadOnlyAudit", Baseline: prices.Baseline{Kind: "business-hours", TimeZone: "Europe/Paris"},
 		Discounts: prices.Discounts{Compute: 20, Databases: 30}, Refresh: s("metrics"), Out: "/tmp/reports", Window: 30,
 		MaxWakes: f(5), MinSaving: f(2.5), Parallel: 2, MaxWakesRds: f(1.5),
@@ -198,5 +199,12 @@ func TestReportJSON(t *testing.T) {
 		`"baseline":{"kind":"always"},"discounts":{"compute":0,"databases":0},"refresh":null,"window":60,"maxWakes":3,"minSaving":1,"parallel":5,"maxWakesRds":2}`
 	if string(b) != want {
 		t.Fatalf("got %s", b)
+	}
+	// --exclude-tags: each criterion an object {"key": [values]}, its keys in the order given (Node's insertion order,
+	// which describeTags writes).
+	o = must(t, "--profile", "p", "--exclude-tags", "team=web, env=dev|test", "--exclude-tags", "dormeto:ignore")
+	b, _ = json.Marshal(o.ExcludeTags)
+	if want := `[{"team":["web"],"env":["dev","test"]},{"dormeto:ignore":[]}]`; string(b) != want {
+		t.Fatalf("excludeTags %s, want %s", b, want)
 	}
 }

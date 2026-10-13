@@ -13,6 +13,7 @@ import (
 	"time"
 	_ "time/tzdata" // zones known on a machine without a zone database (Windows)
 
+	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/prices"
 )
 
@@ -25,14 +26,14 @@ type Options struct {
 	Accounts []string `json:"accounts"`
 	Regions  []string `json:"regions"`
 	// Workloads left out by their tags (--exclude-tags, repeated): any criterion excludes; in one, every key (and), each
-	// with one of its values (empty: any value). Never nil.
-	ExcludeTags []map[string][]string `json:"excludeTags"`
-	Ec2Uptime   bool                  `json:"ec2Uptime"`
-	EcsUptime   bool                  `json:"ecsUptime"`
-	RdsUptime   bool                  `json:"rdsUptime"`
-	Role        string                `json:"role"`
-	Baseline    prices.Baseline       `json:"baseline"`
-	Discounts   prices.Discounts      `json:"discounts"`
+	// with one of its values (empty: any value), its keys in the order given (as describeTags writes them). Never nil.
+	ExcludeTags []discover.TagWants `json:"excludeTags"`
+	Ec2Uptime   bool                `json:"ec2Uptime"`
+	EcsUptime   bool                `json:"ecsUptime"`
+	RdsUptime   bool                `json:"rdsUptime"`
+	Role        string              `json:"role"`
+	Baseline    prices.Baseline     `json:"baseline"`
+	Discounts   prices.Discounts    `json:"discounts"`
 	// "discovery", "metrics" or nil.
 	Refresh *string `json:"refresh"`
 	Out     string  `json:"-"`
@@ -121,13 +122,13 @@ func trimmedSplit(value, sep string) []string {
 	return parts
 }
 
-// tagCriterion is one --exclude-tags: key=value|value or key alone, comma-separated.
-func tagCriterion(value string) (map[string][]string, error) {
+// tagCriterion is one --exclude-tags: key=value|value or key alone, comma-separated, its keys in the order given.
+func tagCriterion(value string) (discover.TagWants, error) {
 	terms := splitList(value)
 	if len(terms) == 0 {
 		return nil, usageErr("--exclude-tags: one tag or more, such as env=dev|test,team=web")
 	}
-	criterion := map[string][]string{}
+	criterion := discover.TagWants{}
 	for _, term := range terms {
 		at := strings.Index(term, "=")
 		key := term
@@ -139,14 +140,14 @@ func tagCriterion(value string) (map[string][]string, error) {
 			return nil, usageErr("--exclude-tags: a tag without its key: " + term)
 		}
 		rest := term[at+1:] // at = -1: the whole term, as JS slice(0)
-		if previous, twice := criterion[key]; twice {
+		if i := slices.IndexFunc(criterion, func(w discover.TagWant) bool { return w.Key == key }); i >= 0 {
 			both := trimmedSplit(rest, "|")
-			return nil, usageErr("--exclude-tags: " + key + " twice in one criterion: " + key + "=" + strings.Join(append(slices.Clone(previous), both...), "|") + " for either")
+			return nil, usageErr("--exclude-tags: " + key + " twice in one criterion: " + key + "=" + strings.Join(append(slices.Clone(criterion[i].Values), both...), "|") + " for either")
 		}
 		if at < 0 {
-			criterion[key] = []string{}
+			criterion = append(criterion, discover.TagWant{Key: key, Values: []string{}})
 		} else {
-			criterion[key] = trimmedSplit(rest, "|")
+			criterion = append(criterion, discover.TagWant{Key: key, Values: trimmedSplit(rest, "|")})
 		}
 	}
 	return criterion, nil
@@ -176,7 +177,7 @@ func optionalNumber(value, message string) (*float64, error) {
 // Parse parses the arguments after "estimate", which cobra passes unparsed. --help or -h gives ErrHelp.
 func Parse(args []string) (Options, error) {
 	given := map[string]string{}
-	var excludeTags []map[string][]string
+	var excludeTags []discover.TagWants
 	flags := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -305,7 +306,7 @@ func Parse(args []string) (Options, error) {
 		baseline.TimeZone = timeZone
 	}
 	if excludeTags == nil {
-		excludeTags = []map[string][]string{}
+		excludeTags = []discover.TagWants{}
 	}
 	all := flags["uptime"]
 	return Options{
