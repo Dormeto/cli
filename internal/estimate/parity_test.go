@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +185,8 @@ func TestTheWorldsEstimateAsNodes(t *testing.T) {
 	delete(fields, "generatedAt") // the report's run times are removed
 	fields["options"] = withoutGoOnlyOptions(t, fields["options"])
 	delete(fields, "period") // Go only (the user, 2026-10-14)
+	// Go only (the user, 2026-10-15): the ECS assumption says the tasks counted.
+	fields["assumptions"] = json.RawMessage(strings.Replace(string(fields["assumptions"]), ", and how many tasks they had (CloudWatch LiveTaskCount, every minute), the count they are priced at; a service without it, at its desired count when discovered", ", at their desired count when discovered", 1))
 	// Go only (the user, 2026-10-13): Dormeto installed, its cost is the installation now (portal, the world's one
 	// onboarded workload, estimated) and the recommendation's change: the same total as Node's.
 	var node DormetoCost

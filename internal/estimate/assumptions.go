@@ -23,7 +23,7 @@ func assumptionsOf(baseline prices.Baseline, o options.Options, kubernetes bool)
 	}
 	ecs := "ECS services are assumed to run all the time at their desired count when discovered (--ecs-uptime measures when they had a task): one scaled to 0 at night by a schedule saves less than estimated here."
 	if o.EcsUptime {
-		ecs = "ECS services: their uptime measured over the " + days + " (CloudWatch CPUUtilization of the service, published every minute while it has a task); their actual cost counts the hours they had a task, their savings only the hours Dormeto would nap them then, at their desired count when discovered (one task for a service found at 0). Services Dormeto already manages are assumed to run all the time."
+		ecs = "ECS services: their uptime measured over the " + days + " (CloudWatch CPUUtilization of the service, published every minute while it has a task); their actual cost counts the hours they had a task, their savings only the hours Dormeto would nap them then, and how many tasks they had (CloudWatch LiveTaskCount, every minute), the count they are priced at; a service without it, at its desired count when discovered (one task for a service found at 0). Services Dormeto already manages are assumed to run all the time."
 	}
 	out := []string{
 		"Every request counts as activity and as a wake: no waker is installed yet to set scanners and other filtered requests apart, so the workloads stay awake longer here than they would (smaller savings).",

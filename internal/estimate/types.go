@@ -20,6 +20,9 @@ import (
 type Uptime struct {
 	HoursPerDay *float64 `json:"hoursPerDay,omitempty"`
 	Unreadable  *string  `json:"unreadable,omitempty"`
+	// Go only: an ECS service's average number of tasks while it ran (its LiveTaskCount), the count it is priced at;
+	// none, its count when discovered (one task found at 0).
+	Tasks *float64 `json:"tasks,omitempty"`
 }
 
 // AtWindow is a workload's figures at the report's window: --window (options.Window), else its recommended window.

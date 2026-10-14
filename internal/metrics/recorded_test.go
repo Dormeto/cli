@@ -26,6 +26,11 @@ type recordedCW struct {
 
 func (r recordedCW) GetMetricData(_ context.Context, in GetMetricDataInput) (out GetMetricDataOutput, err error) {
 	r.t.Helper()
+	if liveTasksOnly(in) {
+		// Node never read the tasks (Go only, the user, 2026-10-15): CloudWatch's answer for a service without the
+		// metric, so the uptime is priced as Node's.
+		return empty(in, 0)
+	}
 	return out, parity.AWSError(r.a.Call("cloudwatch", "getMetricData", map[string]any{"account": r.account, "region": r.region, "input": in}, &out))
 }
 
@@ -94,7 +99,21 @@ func TestTheRequestsAndTheUptimeDrivenByTheEstimateCasesRecordedAnswersAreThoseN
 	}
 	for i, name := range []string{"111111111111-eu-west-1", "222222222222-eu-west-1"} {
 		want := kept[json.RawMessage](t, "uptime", name)
+		if !uptime[i].Counted || len(uptime[i].Tasks) != 0 {
+			t.Fatalf("counted %v, tasks %v", uptime[i].Counted, uptime[i].Tasks)
+		}
+		uptime[i].Counted = false // Go only
 		got, _ := json.Marshal(uptime[i])
 		parity.Equal(t, want, got)
 	}
+}
+
+// liveTasksOnly says whether a call asks only for services' LiveTaskCount (Go only).
+func liveTasksOnly(in GetMetricDataInput) bool {
+	for _, q := range in.MetricDataQueries {
+		if q.MetricStat.Metric.MetricName != "LiveTaskCount" {
+			return false
+		}
+	}
+	return len(in.MetricDataQueries) > 0
 }

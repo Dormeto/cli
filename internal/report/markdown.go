@@ -5,6 +5,7 @@ package report
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,12 @@ func uptimeCell(u *estimate.Uptime) string {
 	switch {
 	case u == nil:
 		return "100% assumed"
+	case u.HoursPerDay != nil && u.Tasks != nil:
+		tasks := strconv.FormatFloat(math.Round(*u.Tasks*10)/10, 'f', -1, 64)
+		if tasks == "1" {
+			return percentOf((*u.HoursPerDay/24)*100) + ", 1 task"
+		}
+		return percentOf((*u.HoursPerDay/24)*100) + ", " + tasks + " tasks"
 	case u.HoursPerDay != nil:
 		return percentOf((*u.HoursPerDay / 24) * 100)
 	case u.Unreadable != nil:
@@ -266,7 +273,7 @@ func optionLines(o options.Options) []string {
 	}
 	ecs := "at the desired count when discovered, all the time (--ecs-uptime measures it)"
 	if o.EcsUptime {
-		ecs = "measured over the " + days + " (--ecs-uptime)"
+		ecs = "measured over the " + days + ", with the tasks counted (--ecs-uptime)"
 	}
 	rds := "companion databases available all the time assumed, one stopped left out (--rds-uptime measures it)"
 	if o.RdsUptime {

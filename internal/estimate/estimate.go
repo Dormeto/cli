@@ -70,8 +70,10 @@ type elected struct {
 	quiet    bool
 	days     float64
 	// When it ran (measured), else its requests' period: its actual cost's.
-	running     []replay.Period
-	measured    *Uptime
+	running  []replay.Period
+	measured *Uptime
+	// scale is its hourly price's factor: its tasks counted over the count priced (1: its count when discovered).
+	scale       float64
 	advice      replay.Result
 	wakesPerDay float64
 	companions  []discover.Database
@@ -158,9 +160,10 @@ func (s *state) elect(region discover.RegionDiscovery, i int, group []int, read 
 		s.leave(w, nothing)
 		return nil, nil
 	}
-	// Measured: its running periods; unreadable, 24/7 (nil).
+	// Measured: its running periods; unreadable, 24/7 (nil). An ECS service's tasks counted: its price scaled.
 	var running []replay.Period
 	var measured *Uptime
+	scale, average := 1.0, 0.0
 	if measure {
 		var periods [][2]int
 		has := false
@@ -182,6 +185,10 @@ func (s *state) elect(region discover.RegionDiscovery, i int, group []int, read 
 			}
 			running = periodsFrom(from, periods)
 			measured = hoursPerDay(periods, float64(to.UnixMilli()-from.UnixMilli())/dayMs)
+			if tasks, counted := ran.Tasks[w.Backend.ID]; counted && w.Backend.Kind == discover.KindECS {
+				scale, average = tasksScale(tasks, periods, w.Stopped)
+				measured.Tasks = &average
+			}
 		} else {
 			why := "not read"
 			if u, ok := unreadableOf(ran, w.Backend.ID); ok {
@@ -222,7 +229,7 @@ func (s *state) elect(region discover.RegionDiscovery, i int, group []int, read 
 		s.leave(w, "its backend could not be described ("+reason+")")
 		return nil, nil
 	}
-	advice, err := s.replay(w, read, minutes, w.Stopped, running)
+	advice, err := s.replay(w, read, minutes, w.Stopped, running, scale)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +267,7 @@ func (s *state) elect(region discover.RegionDiscovery, i int, group []int, read 
 	}
 	return &elected{
 		index: i, workload: w, read: read, minutes: minutes, quiet: len(minutes) == 0, days: float64(to.UnixMilli()-from.UnixMilli()) / dayMs,
-		running: running, measured: measured, advice: advice, wakesPerDay: best.WakesPerDay,
+		running: running, measured: measured, scale: scale, advice: advice, wakesPerDay: best.WakesPerDay,
 	}, nil
 }
 
@@ -274,27 +281,46 @@ func unreadableOf(ran *metrics.RegionUptime, id string) (string, bool) {
 }
 
 // replay is the product's advice for a workload's requests, with what a nap stops and when it ran (nil: all the time).
-func (s *state) replay(w discover.Workload, read *metrics.RegionRequests, minutes [][2]int, items []stopped.Item, running []replay.Period) (replay.Result, error) {
+// scale is the hourly price's factor (an ECS service's tasks counted; 1 otherwise).
+func (s *state) replay(w discover.Workload, read *metrics.RegionRequests, minutes [][2]int, items []stopped.Item, running []replay.Period, scale float64) (replay.Result, error) {
 	wake := float64(wakeMs)
 	return replay.Advice(replay.Input{
 		Ctx: s.ctx, Requests: replay.RequestMinutes{From: read.From, To: read.To, Minutes: minutes}, Current: s.in.Options.ReplayWindow(), CheckMinutes: 5,
-		WakeMs: &wake, StartAsleep: false, ActualWakes: 0, ActualFrom: nil, Stopped: items, Hourly: s.priceOf(w.Region), Baseline: s.in.Baseline,
+		WakeMs: &wake, StartAsleep: false, ActualWakes: 0, ActualFrom: nil, Stopped: items, Hourly: s.priceOf(w.Region, scale), Baseline: s.in.Baseline,
 		WakerTargetGroup: false, Now: s.in.Now, Running: running,
 	})
 }
 
-// priceOf is the price book in a region: a lookup that fails is no price.
-func (s *state) priceOf(region string) func(context.Context, stopped.Item) (*float64, error) {
+// priceOf is the price book in a region, times scale: a lookup that fails is no price.
+func (s *state) priceOf(region string, scale float64) func(context.Context, stopped.Item) (*float64, error) {
 	return func(ctx context.Context, item stopped.Item) (*float64, error) {
 		if s.in.Hourly == nil {
 			return nil, nil
 		}
 		usd, err := s.in.Hourly(ctx, region, item)
-		if err != nil {
+		if err != nil || usd == nil {
 			return nil, nil
 		}
-		return usd, nil
+		v := *usd * scale
+		return &v, nil
 	}
+}
+
+// tasksScale is an ECS service's price factor and average tasks: its task-minutes over the minutes it ran, against
+// the tasks it is priced at when discovered (its items' count, one task for a service found at 0).
+func tasksScale(taskMinutes float64, periods [][2]int, items []stopped.Item) (scale, average float64) {
+	ran, priced := 0, 0
+	for _, p := range periods {
+		ran += p[1] - p[0]
+	}
+	for _, item := range items {
+		priced += item.Count
+	}
+	if ran == 0 || priced == 0 {
+		return 1, 0
+	}
+	average = taskMinutes / float64(ran)
+	return average / float64(priced), average
 }
 
 // merge adds up the target groups' requests minute by minute, sorted by minute. A count is only asked whether it is

@@ -115,11 +115,12 @@ with code 1 and AWS's message; an SSO session expired, invalid or never logged i
   less). An instance found stopped is estimated from the hours it ran (without the option, it is left out). Instances
   Dormeto already manages and Auto Scaling groups are not measured.
 - `--ecs-uptime`: measures when each ECS service had a task over the days read (its `CPUUtilization`, which ECS publishes
-  every minute while the service has a task): its actual cost and its savings count only those hours, at its desired
-  count when discovered (a service scaled to 0 at night saves less). A service found at 0 tasks is estimated as one
-  task from the hours it ran (without the option, it is left out). When it had a task is measured, not how many: a
-  service scaled from 4 tasks to 1 at night stays priced at its count when discovered. Services Dormeto already manages
-  are not measured.
+  every minute while the service has a task), and how many tasks it had (its `LiveTaskCount`, the most in each 5
+  minutes): its actual cost and its savings count only those hours, at its average number of tasks then, whatever its
+  count when discovered (a service found at 0 at night, or autoscaled). The report's Uptime column gives both, such as
+  "36%, 2.4 tasks". A service without `LiveTaskCount` is priced at its desired count when discovered, one task when
+  found at 0. Without the option, a service found at 0 tasks is left out. Services Dormeto already manages are not
+  measured.
 - `--rds-uptime`: measures when each companion database was available (its `CPUUtilization`): its saving and cost count
   only those hours. A database stopped when discovered (a schedule may start it) is estimated from them, else left out.
 - `--role <name>`: the role assumed in each member account (`OrganizationAccountAccessRole` by default: accounts

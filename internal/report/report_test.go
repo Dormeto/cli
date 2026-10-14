@@ -309,7 +309,14 @@ func TestECSUptime(t *testing.T) {
 	e.Workloads = []estimate.WorkloadEstimate{service}
 	md := Markdown(e)
 	contains(t, md, "| ecs api | 40% |")
-	contains(t, md, "- ECS uptime: measured over the 14 days (--ecs-uptime)")
+	contains(t, md, "- ECS uptime: measured over the 14 days, with the tasks counted (--ecs-uptime)")
+	// Its tasks counted (the user, 2026-10-15): the average while it ran, the count it is priced at.
+	service.Uptime = &estimate.Uptime{HoursPerDay: fp(9.5), Tasks: fp(2.4)}
+	e.Workloads = []estimate.WorkloadEstimate{service}
+	contains(t, Markdown(e), "| ecs api | 40%, 2.4 tasks |")
+	service.Uptime = &estimate.Uptime{HoursPerDay: fp(9.5), Tasks: fp(1)}
+	e.Workloads = []estimate.WorkloadEstimate{service}
+	contains(t, Markdown(e), "| ecs api | 40%, 1 task |")
 	r := fixture()
 	r.Options.RdsUptime = true
 	contains(t, Markdown(r), "- RDS uptime: companion databases measured over the 14 days (--rds-uptime)")

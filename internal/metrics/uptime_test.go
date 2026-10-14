@@ -158,6 +158,9 @@ func TestEachServicesRunningPeriodsFromItsCPUUtilizationByClusterAndServiceAnOld
 		"AWS/ECS ClusterName=prod,ServiceName=api",
 		"AWS/ECS ClusterName=default,ServiceName=legacy",
 		"AWS/EC2 InstanceId=i-web",
+		// Then the services' tasks.
+		"AWS/ECS ClusterName=prod,ServiceName=api",
+		"AWS/ECS ClusterName=default,ServiceName=legacy",
 	})
 }
 
@@ -266,9 +269,10 @@ func TestECSUptimeMeasuresTheECSServicesDormetoDoesNotManageEC2UptimeTheInstance
 		}
 		return asked
 	}
-	eq(t, "ecs", measured(UptimeKinds{ECS: true}), []string{"prod/api"})
+	// A service twice: its CPUUtilization, then its tasks.
+	eq(t, "ecs", measured(UptimeKinds{ECS: true}), []string{"prod/api", "prod/api"})
 	eq(t, "ec2", measured(UptimeKinds{EC2: true}), []string{"i-web", "i-night"})
-	eq(t, "both", measured(UptimeKinds{EC2: true, ECS: true}), []string{"i-web", "i-night", "prod/api"})
+	eq(t, "both", measured(UptimeKinds{EC2: true, ECS: true}), []string{"i-web", "i-night", "prod/api", "prod/api"})
 }
 
 func TestRDSUptimeMeasuresTheRegionsCompanionDatabasesThatANapCouldStopStoppedOnesIncluded(t *testing.T) {
@@ -366,5 +370,82 @@ func TestARegionWhoseUptimeCannotBeReadAtAllItsInstancesUnreadableWithAWSsReason
 	eq(t, "unreadable", out[0].Unreadable, map[string]string{"i-web": why, "i-night": why})
 	if out[0].Running == nil || len(out[0].Running) != 0 {
 		t.Errorf("running %#v", out[0].Running)
+	}
+}
+
+// --ecs-uptime counts the tasks too (the user, 2026-10-15: services found at 0 at night were priced as one task, and
+// autoscaled ones at their count when discovered): after the CPUUtilization calls, unchanged, each service's
+// LiveTaskCount (published every minute while it has a task), its maximum by 5 minutes times 5, its task-minutes over
+// the period as its running time counts them (a period's Sum or Average undercounts the minutes a task starts or
+// drains: 0.90 and 0.94 for a service of one task, the maximum 0.98). An instance or a database has none; a service
+// without the metric, no count.
+func TestEachServicesTaskMinutesFromItsLiveTaskCountAfterTheCPUCalls(t *testing.T) {
+	api := "arn:aws:ecs:" + reg + ":" + acct + ":service/prod/api"
+	web := "arn:aws:ecs:" + reg + ":" + acct + ":service/prod/web"
+	var calls [][]string
+	f := &fakeCW{fn: func(in GetMetricDataInput, _ int) (GetMetricDataOutput, error) {
+		var out GetMetricDataOutput
+		var asked []string
+		for _, q := range in.MetricDataQueries {
+			m := q.MetricStat.Metric
+			who := dim(q, "ServiceName") + dim(q, "InstanceId")
+			asked = append(asked, fmt.Sprintf("%s %s %d %s", m.MetricName, q.MetricStat.Stat, q.MetricStat.Period, who))
+			r := MetricDataResult{ID: q.ID, StatusCode: "Complete"}
+			switch {
+			case m.MetricName == "CPUUtilization":
+				r.Timestamps, r.Values = every5(0, 60), ones(12, 5)
+			case m.MetricName == "LiveTaskCount" && who == "api":
+				// Three tasks: 15 task-minutes every 5 minutes.
+				r.Timestamps, r.Values = every5(0, 60), ones(12, 3)
+			}
+			out.MetricDataResults = append(out.MetricDataResults, r)
+		}
+		calls = append(calls, asked)
+		return out, nil
+	}}
+	read, err := Uptime(context.Background(), f, []string{api, web, "i-web"}, fromS, toS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "running", read.Running, map[string][][2]int{api: {{0, 60}}, web: {{0, 60}}, "i-web": {{0, 60}}})
+	eq(t, "tasks", read.Tasks, map[string]float64{api: 180})
+	eq(t, "calls", calls, [][]string{
+		{"CPUUtilization SampleCount 300 api", "CPUUtilization SampleCount 300 web", "CPUUtilization SampleCount 300 i-web"},
+		{"LiveTaskCount Maximum 300 api", "LiveTaskCount Maximum 300 web"},
+	})
+	// No service: no task call.
+	calls = nil
+	if _, err := Uptime(context.Background(), f, []string{"i-web"}, fromS, toS); err != nil || len(calls) != 1 {
+		t.Fatalf("calls %q, %v", calls, err)
+	}
+}
+
+// An uptime kept from before the tasks were counted is read again; one that counted them is kept.
+func TestAnUptimeKeptWithoutTheTasksCountedIsReadAgain(t *testing.T) {
+	api := "arn:aws:ecs:" + reg + ":" + acct + ":service/prod/api"
+	regions := []discover.RegionDiscovery{{Account: acct, Region: reg, Workloads: []discover.Workload{
+		w("api", func(x *discover.Workload) {
+			x.Backend, x.InstanceState = discover.WorkloadBackend{Kind: "ecs", ID: api}, ""
+		})}}}
+	c := newCache(t, fixed(now))
+	requests := periods(regions...)
+	old := RegionUptime{Account: acct, Region: reg, From: requests[0].From, To: requests[0].To, Running: map[string][][2]int{api: {{0, 60}}}, Unreadable: map[string]string{}}
+	if err := c.Put(fmt.Sprintf("uptime/%s-%s.json", acct, reg), old); err != nil {
+		t.Fatal(err)
+	}
+	cw := &fakeCW{fn: empty}
+	run := func() RegionUptime {
+		out, err := UptimeAll(context.Background(), UptimeOptions{Regions: regions, Requests: requests, CloudWatchOf: of(cw), Cache: c, Now: fixed(now), Kinds: &UptimeKinds{ECS: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out[0]
+	}
+	if r := run(); cw.count() != 2 || !r.Counted {
+		t.Fatalf("calls %d, counted %v: the kept uptime without the tasks read again", cw.count(), r.Counted)
+	}
+	run()
+	if cw.count() != 2 {
+		t.Fatalf("calls %d: the uptime with the tasks kept", cw.count())
 	}
 }

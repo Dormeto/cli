@@ -98,7 +98,7 @@ func (s *state) price(e *elected, ran *metrics.RegionUptime) error {
 	}
 	// Its cost now: asleep never (while it ran, measured), priced as the savings are (the same baseline, prices and
 	// month).
-	actual, err := s.cost(w.Region, e.running, w.Stopped)
+	actual, err := s.cost(w.Region, e.running, w.Stopped, e.scale)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (s *state) price(e *elected, ran *metrics.RegionUptime) error {
 		if measured {
 			available = periodsFrom(readFrom, periods)
 		}
-		own, err := s.replay(w, e.read, e.minutes, d.Stopped, available)
+		own, err := s.replay(w, e.read, e.minutes, d.Stopped, available, 1)
 		if err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ func (s *state) price(e *elected, ran *metrics.RegionUptime) error {
 		if available == nil {
 			available = []replay.Period{{From: e.read.From, To: e.read.To}}
 		}
-		c, err := s.cost(w.Region, available, d.Stopped)
+		c, err := s.cost(w.Region, available, d.Stopped, 1)
 		if err != nil {
 			return err
 		}
@@ -170,12 +170,12 @@ func (s *state) price(e *elected, ran *metrics.RegionUptime) error {
 	return nil
 }
 
-// cost is what the items cost while running over the periods (all asleep), priced as the savings are.
-func (s *state) cost(region string, periods []replay.Period, items []stopped.Item) (float64, error) {
+// cost is what the items cost while running over the periods (all asleep), priced as the savings are (times scale).
+func (s *state) cost(region string, periods []replay.Period, items []stopped.Item, scale float64) (float64, error) {
 	phases := make([]prices.Phase, len(periods))
 	for i, p := range periods {
 		phases[i] = prices.Phase{State: "ASLEEP", From: p.From, To: p.To, Stopped: items}
 	}
-	savings, err := prices.SavingsOf(s.ctx, phases, s.priceOf(region), s.in.Baseline)
+	savings, err := prices.SavingsOf(s.ctx, phases, s.priceOf(region, scale), s.in.Baseline)
 	return savings.USD, err
 }

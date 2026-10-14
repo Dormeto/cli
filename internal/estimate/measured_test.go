@@ -204,6 +204,10 @@ func TestTheAssumptionsSayHowECSServicesRan(t *testing.T) {
 	if !strings.Contains(said(e.Assumptions), "ECS services: their uptime measured over the 14 days") {
 		t.Fatal("not said measured")
 	}
+	// Their tasks counted (the user, 2026-10-15).
+	if !strings.Contains(said(e.Assumptions), "and how many tasks they had (CloudWatch LiveTaskCount, every minute), the count they are priced at; a service without it, at its desired count when discovered (one task for a service found at 0)") {
+		t.Fatalf("not said counted: %s", said(e.Assumptions))
+	}
 }
 
 // The days said are the days read (--days, the user, 2026-10-14): the reason a measured workload is left out and the
@@ -222,4 +226,39 @@ func TestTheDaysSaidAreTheDaysRead(t *testing.T) {
 		!strings.Contains(all, "ECS services: their uptime measured over the 7 days") {
 		t.Fatalf("assumptions %s", all)
 	}
+}
+
+// Its tasks counted (the user, 2026-10-15): a service measured at an average of 2.5 tasks while it ran is priced at 2.5
+// tasks, its actual cost and its savings, whatever its count when discovered (0 at night: one task); its uptime says
+// the tasks. A service found at 3 tasks and measured at 1.5 is priced at 1.5. Without a count, its count when
+// discovered.
+func TestECSPricedAtItsTasksCountedWhileItRan(t *testing.T) {
+	running := 0
+	for _, p := range half() {
+		running += p[1] - p[0]
+	}
+	counted := func(name string, tasks float64) []metrics.RegionUptime {
+		up := uptimeOf(map[string][][2]int{serviceArn(name): half()}, nil)
+		up[0].Tasks, up[0].Counted = map[string]float64{serviceArn(name): tasks * float64(running)}, true
+		return up
+	}
+	night := service("night", func(x *discover.Workload) { zero := 0; x.EcsDesired = &zero })
+	base := nth(t, measuredServices(t, uptimeOf(map[string][][2]int{serviceArn("night"): half()}, nil), nil, night).Workloads, 0)
+	x := nth(t, measuredServices(t, counted("night", 2.5), nil, night).Workloads, 0)
+	if base.Uptime.Tasks != nil || x.Uptime.Tasks == nil || *x.Uptime.Tasks != 2.5 || *x.Uptime.HoursPerDay != 12 {
+		t.Fatalf("uptime %+v, without the count %+v", x.Uptime, base.Uptime)
+	}
+	if x.Recommended.Minutes != base.Recommended.Minutes {
+		t.Fatalf("recommended %d, without the count %d", x.Recommended.Minutes, base.Recommended.Minutes)
+	}
+	closeTo(t, "actual", x.ActualMonth, 2.5*base.ActualMonth, 9)
+	closeTo(t, "at the window", x.AtWindow.USDMonth, 2.5*base.AtWindow.USDMonth, 9)
+	closeTo(t, "recommended", x.Recommended.USDMonth, 2.5*base.Recommended.USDMonth, 9)
+
+	three := FARGATE
+	three.Count = 3
+	busy := service("busy", func(x *discover.Workload) { n := 3; x.EcsDesired, x.Stopped = &n, []stopped.Item{three} })
+	at3 := nth(t, measuredServices(t, uptimeOf(map[string][][2]int{serviceArn("busy"): half()}, nil), nil, busy).Workloads, 0)
+	y := nth(t, measuredServices(t, counted("busy", 1.5), nil, busy).Workloads, 0)
+	closeTo(t, "actual at 1.5 of 3", y.ActualMonth, at3.ActualMonth/2, 9)
 }

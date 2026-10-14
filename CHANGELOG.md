@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `--ecs-uptime` counts each ECS service's tasks (CloudWatch `LiveTaskCount`) and prices the service at its average
+  number of tasks while it ran, instead of its desired count when discovered: a service stopped at night by a schedule
+  (found at 0, priced as one task before) or autoscaled is priced as it ran. The Uptime column and the JSON
+  (`uptime.tasks`) give the count. A service without the metric keeps its count when discovered. An uptime kept in the
+  cache from before is read again.
 - The figures are at each workload's recommended idle window by default: the savings, the cost with Dormeto and the
   tables by account and region. `--window <minutes>` sets one window for every workload instead (a what-if); the
   recommended windows' savings are then given too. The JSON's `options.window` is `null` without it.

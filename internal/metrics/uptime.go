@@ -10,7 +10,11 @@ package metrics
 // call (4,032 values each over 14 days, under the 100,800 a call returns),
 // every page. A metric CloudWatch could not read is unreadable, never a stop.
 // What Dormeto manages is not measured: its uptime is already its naps. Kept
-// per account and region the same UTC day.
+// per account and region the same UTC day. An ECS service's tasks are counted
+// too (the user, 2026-10-15): its LiveTaskCount, published every minute while
+// it has a task, its maximum by 5 minutes times 5 (a period's Sum or Average
+// undercounts the minutes a task starts or drains), in calls after the
+// CPUUtilization ones.
 //
 // Ports manager packages/estimate/src/uptime.ts.
 
@@ -45,6 +49,10 @@ type RegionUptime struct {
 	To         string              `json:"to"`
 	Running    map[string][][2]int `json:"running"`
 	Unreadable map[string]string   `json:"unreadable"`
+	// Go only: each ECS service's task-minutes over the period (its LiveTaskCount); none when CloudWatch has none.
+	// Counted: the tasks were read (an uptime kept from before is read again).
+	Tasks   map[string]float64 `json:"tasks,omitempty"`
+	Counted bool               `json:"counted,omitempty"`
 }
 
 // UptimeKinds says what each option measures: EC2 instances without an Auto
@@ -73,7 +81,7 @@ func metricOf(id string) Metric {
 	case strings.HasPrefix(id, rdsClusterPre):
 		return Metric{Namespace: "AWS/RDS", MetricName: "CPUUtilization", Dimensions: []Dimension{{Name: "DBClusterIdentifier", Value: strings.TrimPrefix(id, rdsClusterPre)}}}
 	}
-	if parts := strings.Split(id, ":"); strings.HasPrefix(id, "arn:") && len(parts) > 2 && parts[2] == "ecs" {
+	if isService(id) {
 		return Metric{Namespace: "AWS/ECS", MetricName: "CPUUtilization", Dimensions: []Dimension{
 			{Name: "ClusterName", Value: discover.ClusterOf(id)},
 			{Name: "ServiceName", Value: id[strings.LastIndex(id, "/")+1:]},
@@ -82,10 +90,24 @@ func metricOf(id string) Metric {
 	return Metric{Namespace: "AWS/EC2", MetricName: "CPUUtilization", Dimensions: []Dimension{{Name: "InstanceId", Value: id}}}
 }
 
-// UptimeRead is what Uptime reads of a list of ids.
+// UptimeRead is what Uptime reads of a list of ids: when each ran, and each ECS service's task-minutes.
 type UptimeRead struct {
 	Running    map[string][][2]int
 	Unreadable map[string]string
+	Tasks      map[string]float64
+}
+
+// isService says whether the id is an ECS service's ARN.
+func isService(id string) bool {
+	parts := strings.Split(id, ":")
+	return strings.HasPrefix(id, "arn:") && len(parts) > 2 && parts[2] == "ecs"
+}
+
+// liveTasksOf is an ECS service's LiveTaskCount: its tasks starting, running or draining, every minute.
+func liveTasksOf(id string) Metric {
+	m := metricOf(id)
+	m.MetricName = "LiveTaskCount"
+	return m
 }
 
 // Uptime reads the running periods of the ids over [from, to] (ISO strings,
@@ -152,7 +174,49 @@ func Uptime(ctx context.Context, cw CloudWatchPort, ids []string, from, to strin
 		}
 		running[id] = periods
 	}
-	return UptimeRead{Running: running, Unreadable: unreadable}, nil
+	tasks, err := taskMinutes(ctx, cw, ids, startT, endT)
+	if err != nil {
+		return UptimeRead{}, err
+	}
+	return UptimeRead{Running: running, Unreadable: unreadable, Tasks: tasks}, nil
+}
+
+// taskMinutes is each ECS service's task-minutes over [start, end], as its running time counts them: its LiveTaskCount's
+// maximum by 5 minutes, times 5, added up.
+// A service without the metric, or whose metric CloudWatch could not read, has none (its count when discovered then).
+func taskMinutes(ctx context.Context, cw CloudWatchPort, ids []string, startT, endT time.Time) (map[string]float64, error) {
+	var services []string
+	for _, id := range ids {
+		if isService(id) {
+			services = append(services, id)
+		}
+	}
+	tasks := map[string]float64{}
+	for first := 0; first < len(services); first += uptimePerCall {
+		batch := services[first:min(first+uptimePerCall, len(services))]
+		queries := make([]MetricDataQuery, len(batch))
+		for k, id := range batch {
+			queries[k] = MetricDataQuery{ID: "t" + strconv.Itoa(k), ReturnData: true, MetricStat: MetricStat{Metric: liveTasksOf(id), Period: periodMinutes * 60, Stat: "Maximum"}}
+		}
+		err := pages(ctx, cw, startT, endT, queries, func(result MetricDataResult) {
+			k, ok := queryIndex(result.ID, len(batch))
+			if !ok {
+				return
+			}
+			if _, bad := unreadableWhy(result); bad {
+				return
+			}
+			for j := range result.Timestamps {
+				if j < len(result.Values) {
+					tasks[batch[k]] += result.Values[j] * periodMinutes
+				}
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return tasks, nil
 }
 
 // UptimeOptions are the inputs of UptimeAll.
@@ -235,8 +299,8 @@ func regionUptime(ctx context.Context, j uptimeJob, o UptimeOptions, say *events
 		if err != nil {
 			return RegionUptime{}, err
 		}
-		// Kept while it measures the same period and every instance.
-		if ok && kept.From == j.period.From && keptAll(j.ids, kept) {
+		// Kept while it measures the same period and every instance, its services' tasks counted.
+		if ok && kept.From == j.period.From && keptAll(j.ids, kept) && (kept.Counted || !slices.ContainsFunc(j.ids, isService)) {
 			say.Progress(discover.ProgressEvent{Phase: PhaseUptime, Account: account, Region: region, From: discover.FromCache, Workloads: len(j.ids)})
 			return kept, nil
 		}
@@ -250,7 +314,7 @@ func regionUptime(ctx context.Context, j uptimeJob, o UptimeOptions, say *events
 		if err != nil {
 			return RegionUptime{}, err
 		}
-		read := RegionUptime{Account: account, Region: region, From: j.period.From, To: j.period.To, Running: r.Running, Unreadable: r.Unreadable}
+		read := RegionUptime{Account: account, Region: region, From: j.period.From, To: j.period.To, Running: r.Running, Unreadable: r.Unreadable, Tasks: r.Tasks, Counted: true}
 		return read, o.Cache.Put(path, read)
 	}()
 	if err != nil {

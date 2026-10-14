@@ -136,6 +136,15 @@ func (s rds) DescribeDBClusters(_ context.Context, in stopped.DescribeDBClusters
 	return call[stopped.DescribeDBClustersOutput](scope(s), "rds", "describeDBClusters", in)
 }
 func (s metricsCW) GetMetricData(_ context.Context, in metrics.GetMetricDataInput) (metrics.GetMetricDataOutput, error) {
+	// Node never read the tasks (the user, 2026-10-15): CloudWatch's answer for services without LiveTaskCount, so
+	// they are priced at their count when discovered, as Node's.
+	if len(in.MetricDataQueries) > 0 && !slices.ContainsFunc(in.MetricDataQueries, func(q metrics.MetricDataQuery) bool { return q.MetricStat.Metric.MetricName != "LiveTaskCount" }) {
+		out := metrics.GetMetricDataOutput{}
+		for _, q := range in.MetricDataQueries {
+			out.MetricDataResults = append(out.MetricDataResults, metrics.MetricDataResult{ID: q.ID, StatusCode: "Complete"})
+		}
+		return out, nil
+	}
 	return call[metrics.GetMetricDataOutput](scope(s), "cloudwatch", "getMetricData", in)
 }
 func (s pricing) GetProducts(_ context.Context, in prices.GetProductsInput) (prices.GetProductsOutput, error) {
@@ -360,6 +369,10 @@ func asNode(t *testing.T, got *estimateOutput) {
 	}
 	if got.Markdown != nil {
 		md := strings.Replace(goOnlyDate.ReplaceAllString(*got.Markdown, "$1."), "- Requests: the last 14 days (--days)\n", "", 1)
+		// An ECS service's tasks counted (the user, 2026-10-15): the recorded world has no LiveTaskCount, so the
+		// services are priced at their count when discovered, as Node's; only the words differ.
+		md = strings.Replace(md, ", with the tasks counted (--ecs-uptime)", " (--ecs-uptime)", 1)
+		md = strings.Replace(md, ", and how many tasks they had (CloudWatch LiveTaskCount, every minute), the count they are priced at; a service without it, at its desired count when discovered", ", at their desired count when discovered", 1)
 		got.Markdown = &md
 	}
 	var fields map[string]json.RawMessage
@@ -367,6 +380,7 @@ func asNode(t *testing.T, got *estimateOutput) {
 		return
 	}
 	delete(fields, "period")
+	fields["assumptions"] = json.RawMessage(strings.Replace(string(fields["assumptions"]), ", and how many tasks they had (CloudWatch LiveTaskCount, every minute), the count they are priced at; a service without it, at its desired count when discovered", ", at their desired count when discovered", 1))
 	var o map[string]json.RawMessage
 	if err := json.Unmarshal(fields["options"], &o); err != nil {
 		t.Fatal(err)
