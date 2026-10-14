@@ -221,7 +221,8 @@ Go 1.26 or later; Node.js for the release scripts' tests; GoReleaser 2 for `make
 make build                                          # bin/dormeto, as a release builds it
 make run ARGS="estimate --profile <profile> --uptime"
 make test                                           # go vet, the Go tests (shared cases, end to end), the scripts' tests
-make install                                        # into $(go env GOPATH)/bin
+make install                                        # into ~/.local/bin (INSTALL_DIR), then which dormeto runs
+make uninstall                                      # removes it
 make snapshot                                       # dist/: the release's archives, checksums and cask
 make parity                                         # the shared cases exported again from ../manager
 make dry-run VERSION=0.1.0                          # a release's checks, nothing published
