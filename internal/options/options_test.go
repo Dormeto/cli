@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -24,12 +25,13 @@ func must(t *testing.T, args ...string) Options {
 
 func f(v float64) *float64 { return &v }
 func s(v string) *string   { return &v }
+func i(v int) *int         { return &v }
 
 func TestProfileAlone(t *testing.T) {
 	cwd, _ := os.Getwd()
 	want := Options{
 		Profiles: []string{"prospect"}, ExcludeTags: []discover.TagWants{}, Role: "OrganizationAccountAccessRole",
-		Baseline: prices.Baseline{Kind: "always"}, Out: cwd, Window: 60, MaxWakes: f(3), MinSaving: f(1), Parallel: 5, MaxWakesRds: f(2),
+		Baseline: prices.Baseline{Kind: "always"}, Out: cwd, Window: nil, Days: 14, MaxWakes: f(3), MinSaving: f(1), Parallel: 5, MaxWakesRds: f(2),
 	}
 	if got := must(t, "--profile", "prospect"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -40,12 +42,12 @@ func TestEveryOptionGiven(t *testing.T) {
 	got := must(t, "--profile", "prospect", "--accounts", "222222222222, 333333333333,222222222222", "--regions", "eu-west-1,eu-west-3",
 		"--exclude-tags", "env=dev|test, team=web", "--exclude-tags", "dormeto:ignore", "--ec2-uptime", "--role", "ReadOnlyAudit", "--baseline", "business-hours",
 		"--timezone", "Europe/Paris", "--discount-compute", "20", "--discount-databases", "30", "--refresh", "metrics", "--out", "/tmp/reports",
-		"--window", "30", "--max-wakes", "5", "--min-saving", "2.5", "--parallel", "2", "--max-wakes-rds", "1.5")
+		"--window", "30", "--days", "7", "--max-wakes", "5", "--min-saving", "2.5", "--parallel", "2", "--max-wakes-rds", "1.5")
 	want := Options{
 		Profiles: []string{"prospect"}, Accounts: []string{"222222222222", "333333333333"}, Regions: []string{"eu-west-1", "eu-west-3"},
 		ExcludeTags: []discover.TagWants{{{Key: "env", Values: []string{"dev", "test"}}, {Key: "team", Values: []string{"web"}}}, {{Key: "dormeto:ignore", Values: []string{}}}},
 		Ec2Uptime:   true, Role: "ReadOnlyAudit", Baseline: prices.Baseline{Kind: "business-hours", TimeZone: "Europe/Paris"},
-		Discounts: prices.Discounts{Compute: 20, Databases: 30}, Refresh: s("metrics"), Out: "/tmp/reports", Window: 30,
+		Discounts: prices.Discounts{Compute: 20, Databases: 30}, Refresh: s("metrics"), Out: "/tmp/reports", Window: i(30), Days: 7,
 		MaxWakes: f(5), MinSaving: f(2.5), Parallel: 2, MaxWakesRds: f(1.5),
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -170,6 +172,9 @@ func TestRefuses(t *testing.T) {
 		{[]string{"--profile", "p", "--ec2-uptime", "yes"}, "unknown option: yes"},
 		{[]string{"--profile", "p", "--window", "4"}, "--window: whole minutes from 5 to 1440"},
 		{[]string{"--profile", "p", "--window", "90.5"}, "--window: whole minutes from 5 to 1440"},
+		{[]string{"--profile", "p", "--days", "0"}, "--days: whole days from 1 to 15 (CloudWatch keeps the requests by the minute 15 days)"},
+		{[]string{"--profile", "p", "--days", "16"}, "--days: whole days from 1 to 15 (CloudWatch keeps the requests by the minute 15 days)"},
+		{[]string{"--profile", "p", "--days", "7.5"}, "--days: whole days from 1 to 15 (CloudWatch keeps the requests by the minute 15 days)"},
 		{[]string{"--profile", "p", "--verbose"}, "unknown option: --verbose"},
 	}
 	for _, r := range refused {
@@ -177,6 +182,30 @@ func TestRefuses(t *testing.T) {
 		var ue *UsageError
 		if !errors.As(err, &ue) || err.Error() != r.message {
 			t.Errorf("%q: got %v, want exactly %q", r.args, err, r.message)
+		}
+	}
+}
+
+// Without --window, the figures are at each workload's recommended window (Window nil); the replay still compares the
+// windows against the product's default, 60 minutes, so the recommendations do not move. --window sets both.
+func TestWindowOfTheFiguresAndOfTheReplay(t *testing.T) {
+	o := must(t, "--profile", "p")
+	if o.Window != nil || o.ReplayWindow() != 60 {
+		t.Fatalf("window %v, replay %d", o.Window, o.ReplayWindow())
+	}
+	o = must(t, "--profile", "p", "--window", "15")
+	if o.Window == nil || *o.Window != 15 || o.ReplayWindow() != 15 {
+		t.Fatalf("window %v, replay %d", o.Window, o.ReplayWindow())
+	}
+	if !strings.Contains(Usage, "[--days 14]") || !strings.Contains(Usage, "[--window <minutes>]") {
+		t.Fatal(Usage)
+	}
+}
+
+func TestDays(t *testing.T) {
+	for _, d := range []string{"1", "7", "15"} {
+		if got := must(t, "--profile", "p", "--days", d).Days; strconv.Itoa(got) != d {
+			t.Errorf("--days %s: %d", d, got)
 		}
 	}
 }
@@ -196,7 +225,7 @@ func TestReportJSON(t *testing.T) {
 	o := must(t, "--profile", "p")
 	b, _ := json.Marshal(o)
 	want := `{"accounts":null,"regions":null,"excludeTags":[],"ec2Uptime":false,"ecsUptime":false,"rdsUptime":false,"role":"OrganizationAccountAccessRole",` +
-		`"baseline":{"kind":"always"},"discounts":{"compute":0,"databases":0},"refresh":null,"window":60,"maxWakes":3,"minSaving":1,"parallel":5,"maxWakesRds":2}`
+		`"baseline":{"kind":"always"},"discounts":{"compute":0,"databases":0},"refresh":null,"window":null,"days":14,"maxWakes":3,"minSaving":1,"parallel":5,"maxWakesRds":2}`
 	if string(b) != want {
 		t.Fatalf("got %s", b)
 	}

@@ -169,7 +169,7 @@ func (s *state) elect(region discover.RegionDiscovery, i int, group []int, read 
 		}
 		if has {
 			if len(periods) == 0 {
-				s.leave(w, "it did not run in the last 14 days (its measured uptime)")
+				s.leave(w, fmt.Sprintf("it did not run in the last %d days (its measured uptime)", s.in.Options.DaysRead()))
 				return nil, nil
 			}
 			from, err := parseISO(ran.From)
@@ -277,7 +277,7 @@ func unreadableOf(ran *metrics.RegionUptime, id string) (string, bool) {
 func (s *state) replay(w discover.Workload, read *metrics.RegionRequests, minutes [][2]int, items []stopped.Item, running []replay.Period) (replay.Result, error) {
 	wake := float64(wakeMs)
 	return replay.Advice(replay.Input{
-		Ctx: s.ctx, Requests: replay.RequestMinutes{From: read.From, To: read.To, Minutes: minutes}, Current: s.in.Options.Window, CheckMinutes: 5,
+		Ctx: s.ctx, Requests: replay.RequestMinutes{From: read.From, To: read.To, Minutes: minutes}, Current: s.in.Options.ReplayWindow(), CheckMinutes: 5,
 		WakeMs: &wake, StartAsleep: false, ActualWakes: 0, ActualFrom: nil, Stopped: items, Hourly: s.priceOf(w.Region), Baseline: s.in.Baseline,
 		WakerTargetGroup: false, Now: s.in.Now, Running: running,
 	})

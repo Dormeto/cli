@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Dormeto/cli/internal/estimate"
+	"github.com/Dormeto/cli/internal/options"
 )
 
 // usd is v.toLocaleString('en-US', {style: 'currency', currency: 'USD'}): two decimals, thousands separated by commas,
@@ -123,6 +124,32 @@ func windowAdjective(m int) string {
 		return num(m/60) + "-hour"
 	}
 	return num(m) + "-minute"
+}
+
+// figuresWindow is the window of the report's figures, after "at": --window (a 1-hour idle window), else each
+// workload's recommended one (the user, 2026-10-14).
+func figuresWindow(o options.Options) string {
+	if o.Window == nil {
+		return "each workload's recommended idle window"
+	}
+	return "a " + windowAdjective(*o.Window) + " idle window"
+}
+
+// daysOf is the days of requests read: the estimate's period, else its options' (an estimate written before --days).
+func daysOf(e estimate.Estimate) int {
+	if e.Period.Days > 0 {
+		return e.Period.Days
+	}
+	return e.Options.DaysRead()
+}
+
+// periodDates is the period's dates, "2026-10-03 12:00 to 2026-10-10 12:00 UTC", or "" when it has none.
+func periodDates(p estimate.Period) string {
+	if len(p.From) < 16 || len(p.To) < 16 {
+		return ""
+	}
+	minute := func(iso string) string { return strings.Replace(iso[:16], "T", " ", 1) }
+	return minute(p.From) + " to " + minute(p.To) + " UTC"
 }
 
 func windowWords(m int) string {

@@ -72,7 +72,8 @@ func TestEstimateAProfileMissingFromTheConfigAWSsMessageExitCode1NothingSent(t *
 		t.Fatal(err)
 	}
 	out, errs, code := executed(t, build{}, "estimate", "--profile", "nope", "--out", t.TempDir())
-	if code != 1 || out != "" || errs != "Error: failed to get shared config profile, nope\n" {
+	// What it was reading, then AWS's message.
+	if code != 1 || out != "Reading the profile nope: its account and its organization\n" || errs != "Error: failed to get shared config profile, nope\n" {
 		t.Fatalf("exit code %d, out %q, errors %q", code, out, errs)
 	}
 	if hits.Load() != 0 {

@@ -35,7 +35,7 @@ const (
 	PhaseUptime   = "uptime"
 )
 
-// Days is the period the estimate reads (CloudWatch keeps one-minute data 15 days).
+// Days is the period the estimate reads by default (--days; CloudWatch keeps one-minute data 15 days).
 const Days = 14
 
 const (
@@ -216,6 +216,8 @@ type RequestsOptions struct {
 	// OnPlan says how many regions are read; OnStart says when each starts.
 	OnPlan  func(count int)
 	OnStart func(account, region string)
+	// Days is the days of requests read before the run (--days; Days when < 1).
+	Days int
 }
 
 // events serializes the callbacks of a phase.
@@ -273,14 +275,18 @@ func concurrencyOf(n int) int {
 func regionRequests(ctx context.Context, region discover.RegionDiscovery, o RequestsOptions, say *events) (RegionRequests, error) {
 	path := fmt.Sprintf("requests/%s-%s.json", region.Account, region.Region)
 	now := o.Now()
+	days := o.Days
+	if days < 1 {
+		days = Days
+	}
 	if o.Refresh == "" {
 		var kept RegionRequests
 		ok, err := o.Cache.Get(path, cache.FreshRequests(now), &kept)
 		if err != nil {
 			return RegionRequests{}, err
 		}
-		// Kept only while it covers every workload discovery found (a new one since: read again).
-		if ok && coversAll(region.Workloads, kept) {
+		// Kept only while it covers the days asked and every workload discovery found (a new one since: read again).
+		if ok && spans(kept, days) && coversAll(region.Workloads, kept) {
 			say.Progress(discover.ProgressEvent{Phase: PhaseRequests, Account: region.Account, Region: region.Region, From: discover.FromCache, Workloads: len(region.Workloads)})
 			return kept, nil
 		}
@@ -290,7 +296,7 @@ func regionRequests(ctx context.Context, region discover.RegionDiscovery, o Requ
 		if err != nil {
 			return RegionRequests{}, err
 		}
-		read, err := Requests(ctx, cw, region.Workloads, Days, now)
+		read, err := Requests(ctx, cw, region.Workloads, days, now)
 		if err != nil {
 			return RegionRequests{}, err
 		}
@@ -305,7 +311,7 @@ func regionRequests(ctx context.Context, region discover.RegionDiscovery, o Requ
 		// nothing is kept, and the run goes on.
 		why := awserr.Said(err)
 		to := now.UTC().Truncate(time.Minute)
-		read = RegionRequests{Account: region.Account, Region: region.Region, From: iso(to.Add(-Days * 24 * time.Hour)), To: iso(to), Minutes: map[string][][2]float64{}, Unreadable: map[string]string{}}
+		read = RegionRequests{Account: region.Account, Region: region.Region, From: iso(to.Add(-time.Duration(days) * 24 * time.Hour)), To: iso(to), Minutes: map[string][][2]float64{}, Unreadable: map[string]string{}}
 		for _, w := range region.Workloads {
 			read.Unreadable[w.TargetGroupArn] = why
 		}
@@ -314,6 +320,13 @@ func regionRequests(ctx context.Context, region discover.RegionDiscovery, o Requ
 	}
 	say.Progress(discover.ProgressEvent{Phase: PhaseRequests, Account: region.Account, Region: region.Region, From: discover.FromAWS, Workloads: len(region.Workloads)})
 	return read, nil
+}
+
+// spans says whether a kept read is of that many days.
+func spans(kept RegionRequests, days int) bool {
+	from, err1 := time.Parse(time.RFC3339, kept.From)
+	to, err2 := time.Parse(time.RFC3339, kept.To)
+	return err1 == nil && err2 == nil && to.Sub(from) == time.Duration(days)*24*time.Hour
 }
 
 func coversAll(workloads []discover.Workload, kept RegionRequests) bool {

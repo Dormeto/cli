@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -51,6 +52,8 @@ type fake struct {
 	invErr       error
 	refuse       map[string]bool
 	expiration   func() time.Time
+	walk         []discover.InventoryProgress // what the inventory says as it goes
+	ous          map[string]discover.OU
 
 	mu      sync.Mutex
 	assumed [][2]string
@@ -68,11 +71,20 @@ func (f *fake) Whoami(context.Context) (string, error) { return f.self, f.whoErr
 
 func (f *fake) Organization(context.Context) (string, error) { return f.organization, f.orgErr }
 
-func (f *fake) Inventory(context.Context) (discover.OrgInventory, error) {
+func (f *fake) Inventory(_ context.Context, progress func(discover.InventoryProgress)) (discover.OrgInventory, error) {
+	for _, p := range f.walk {
+		if progress != nil {
+			progress(p)
+		}
+	}
 	if f.invErr != nil {
 		return discover.OrgInventory{}, f.invErr
 	}
-	return discover.OrgInventory{Accounts: f.inventory, OUs: map[string]discover.OU{}}, nil
+	ous := f.ous
+	if ous == nil {
+		ous = map[string]discover.OU{}
+	}
+	return discover.OrgInventory{Accounts: f.inventory, OUs: ous}, nil
 }
 
 func (f *fake) Assume(_ context.Context, account, role string) (aws.Credentials, error) {
@@ -420,4 +432,40 @@ func TestReachedWritesNodesNames(t *testing.T) {
 	if string(b) != want {
 		t.Errorf("got  %s\nwant %s", b, want)
 	}
+}
+
+// What reaching the accounts says, before any estimate (the user, 2026-10-14: a large organization took a while
+// without a word): the profile read, the organization's accounts listed (its walk passed on), then how many and how
+// long.
+func TestItSaysWhatItReadsWhileReachingTheAccounts(t *testing.T) {
+	p := ports()
+	p.walk = []discover.InventoryProgress{{Read: 1, Found: 3, Accounts: 1}, {Read: 3, Found: 3, Accounts: 3}}
+	p.ous = map[string]discover.OU{"r-root": {Name: "Root"}, "ou-a": {Name: "a"}, "ou-b": {Name: "b"}}
+	start := time.Date(2026, 10, 14, 8, 0, 0, 0, time.UTC)
+	calls := 0
+	now := func() time.Time { calls++; return start.Add(time.Duration(calls-1) * 37 * time.Second) }
+	var said []string
+	var walked []discover.InventoryProgress
+	mustReach(t, p, Options{Profile: "prospect", Now: now, Say: func(l string) { said = append(said, l) },
+		Listing: func(x discover.InventoryProgress) { walked = append(walked, x) }})
+	want := []string{
+		"Reading the profile prospect: its account and its organization",
+		"Profile prospect: account 111111111111 in the organization o-abc123; listing the organization's accounts",
+		"Listed 3 active accounts in 3 organizational units (0:37)",
+	}
+	if !reflect.DeepEqual(said, want) {
+		t.Fatalf("said %q, want %q", said, want)
+	}
+	if !reflect.DeepEqual(walked, p.walk) {
+		t.Fatalf("walked %+v", walked)
+	}
+	// Several profiles: each named; nothing to say, nothing said.
+	said = nil
+	if _, err := ReachProfiles(context.Background(), []Profile{{"a", ports()}, {"b", cannotList("444444444444")}}, Options{Say: func(l string) { said = append(said, l) }}); err != nil {
+		t.Fatal(err)
+	}
+	if len(said) < 3 || said[0] != "Reading the profile a: its account and its organization" || !slices.Contains(said, "Reading the profile b: its account and its organization") {
+		t.Fatalf("said %q", said)
+	}
+	mustReach(t, ports(), Options{})
 }

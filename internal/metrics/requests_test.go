@@ -276,6 +276,38 @@ func TestRequestsKeptPerAccountAndRegionTheSameUTCDayReadAgainTheNextDayOrWhenRe
 	}
 }
 
+// --days (the user, 2026-10-14): the requests of that many days before the run, 14 when unset; a kept read of another
+// period is read again, even the same day.
+func TestTheRequestsOfTheDaysAskedFourteenByDefaultAKeptReadOfAnotherPeriodReadAgain(t *testing.T) {
+	cw := &fakeCW{fn: empty}
+	c := newCache(t, fixed(now))
+	to := now.UTC().Truncate(time.Minute)
+	run := func(days int) RegionRequests {
+		out, err := RequestsAll(context.Background(), RequestsOptions{Regions: []discover.RegionDiscovery{region([]discover.Workload{workload(0)})}, CloudWatchOf: of(cw), Cache: c, Now: fixed(now), Days: days})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out[0]
+	}
+	if r := run(0); r.From != iso(to.Add(-14*24*time.Hour)) || r.To != iso(to) {
+		t.Fatalf("by default %s to %s", r.From, r.To)
+	}
+	run(14)
+	if cw.count() != 1 {
+		t.Fatalf("reads %d: the 14 days kept", cw.count())
+	}
+	if r := run(7); r.From != iso(to.Add(-7*24*time.Hour)) || cw.count() != 2 {
+		t.Fatalf("7 days: from %s, reads %d", r.From, cw.count())
+	}
+	if last := cw.calls[len(cw.calls)-1]; !last.StartTime.Equal(to.Add(-7*24*time.Hour)) || !last.EndTime.Equal(to) {
+		t.Fatalf("asked %s to %s", last.StartTime, last.EndTime)
+	}
+	run(7)
+	if cw.count() != 2 {
+		t.Fatalf("reads %d: the 7 days kept", cw.count())
+	}
+}
+
 func TestARegionWhoseRequestsCannotBeReadAtAllItsWorkloadsUnreadableWithAWSsReasonTheOthersReadNothingKept(t *testing.T) {
 	c := newCache(t, fixed(now))
 	cw := &fakeCW{fn: empty}

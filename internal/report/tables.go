@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Dormeto/cli/internal/estimate"
+	"github.com/Dormeto/cli/internal/options"
 )
 
 // The workloads, then by backend: Auto Scaling groups, EC2 instances, ECS services, Kubernetes owners on EKS.
@@ -57,7 +58,7 @@ func accountsTable(e estimate.Estimate, limit int) (t table, more int) {
 		rows = append(rows, row{cells: slices.Concat([]string{account, name(account)}, counts(a), []string{usd(a.ActualMonth), usd(a.WithDormetoMonth), saved(a)})})
 	}
 	tot := e.Totals
-	note := fmt.Sprintf("Cost with Dormeto enabled: at a %s idle window, Dormeto's cost included%s.", windowAdjective(e.Options.Window), manager)
+	note := fmt.Sprintf("Cost with Dormeto enabled: at %s, Dormeto's cost included%s.", figuresWindow(e.Options), manager)
 	return table{
 		head:    []string{"Account", "Name", "Workloads", "ASG", "EC2", "ECS", "EKS", "RDS", "Excluded", "Actual monthly cost", "Cost with Dormeto enabled", "Savings"},
 		figures: []bool{false, false, true, true, true, true, true, true, true, true, true, true},
@@ -122,7 +123,7 @@ func costTable(e estimate.Estimate) table {
 			{{cells: []string{"Dormeto's cost", "", usd(e.Dormeto.USDMonth)}, strong: true}},
 			{
 				{cells: []string{"Actual cost", fmt.Sprintf("what naps would stop in the %s, running %s", n(t.Workloads, "workload"), running), usd(t.ActualMonth)}},
-				{cells: []string{"Savings", "at a " + windowAdjective(e.Options.Window) + " idle window", usd(-t.USDMonthWindow)}},
+				{cells: []string{"Savings", savingsAt(e.Options), usd(-t.USDMonthWindow)}},
 			},
 			{{cells: []string{"Cost with Dormeto applied", fmt.Sprintf("%s - %s + %s", usd(t.ActualMonth), usd(t.USDMonthWindow), usd(t.DormetoMonth)), usd(t.WithDormetoMonth)}, strong: true}},
 		},
@@ -165,4 +166,12 @@ func signed(v float64) string {
 		return "+" + usd(v)
 	}
 	return usd(v)
+}
+
+// savingsAt is the Savings row's computation: at --window, else at the recommended windows.
+func savingsAt(o options.Options) string {
+	if o.Window == nil {
+		return "at the recommended idle windows"
+	}
+	return "at a " + windowAdjective(*o.Window) + " idle window"
 }

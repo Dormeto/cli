@@ -23,6 +23,7 @@ const A = "111111111111"
 
 func sp(s string) *string   { return &s }
 func fp(f float64) *float64 { return &f }
+func ip(i int) *int         { return &i }
 
 func workloadOf(name string) discover.Workload {
 	return discover.Workload{
@@ -74,7 +75,7 @@ func fixture() estimate.Estimate {
 		GeneratedAt: "2026-10-10T12:00:30.000Z", Organization: sp("o-abc123"),
 		Options: options.Options{
 			Regions: []string{"eu-west-1"}, ExcludeTags: []discover.TagWants{}, Role: "OrganizationAccountAccessRole",
-			Baseline: prices.Baseline{Kind: "always"}, Discounts: prices.Discounts{Compute: 20, Databases: 0}, Window: 60,
+			Baseline: prices.Baseline{Kind: "always"}, Discounts: prices.Discounts{Compute: 20, Databases: 0}, Window: ip(60), Days: 14,
 			MaxWakes: fp(3), MinSaving: fp(1), Parallel: 5, MaxWakesRds: fp(2),
 		},
 		Accounts: 2, AccountsListed: 2,
@@ -336,10 +337,11 @@ var visual = []string{
 func TestTheVisualInTheReportAndInTheTerminal(t *testing.T) {
 	contains(t, Markdown(fixture()), strings.Join(append(append([]string{"```text"}, visual...), "```"), "\n"))
 	lines := Summary(fixture())
-	if len(lines) < 2+len(visual) {
+	if len(lines) < 3+len(visual) {
 		t.Fatalf("summary too short: %q", lines)
 	}
-	if got, want := lines[1:2+len(visual)], append([]string{""}, visual...); !slices.Equal(got, want) {
+	// After the totals and the period.
+	if got, want := lines[2:3+len(visual)], append([]string{""}, visual...); !slices.Equal(got, want) {
 		t.Errorf("visual\n got %q\nwant %q", got, want)
 	}
 }
@@ -567,6 +569,53 @@ func TestTheTerminalsSummaryTheTotalsTheTenWorkloadsWhatWasLeftOut(t *testing.T)
 	contains(t, joined, "Regions that failed: 111111111111/eu-west-3")
 	// A line of the top: the figure right-aligned on ten characters.
 	contains(t, joined, "\n      $21.00  app11.example.com (web, eu-west-1, 111111111111); recommended 30 min: $20.00")
+}
+
+// Without --window (the user, 2026-10-14), the figures are at each workload's recommended window, and every report
+// says so: the totals then hold the recommended windows' savings (as Run gives them).
+func TestWithoutAWindowTheReportsSayTheRecommendedWindows(t *testing.T) {
+	e := fixture()
+	e.Options.Window = nil
+	e.Totals.USDMonthWindow = e.Totals.USDMonthRecommended
+	lines := Summary(e)
+	if want := "About $168.50 a month at each workload's recommended idle window for 12 workloads in 2 accounts; Dormeto costs about $7.08 a month: net about $161.42."; nth(t, lines, 0) != want {
+		t.Errorf("first line %q", nth(t, lines, 0))
+	}
+	joined := strings.Join(lines, "\n")
+	lacks(t, joined, "1-hour")
+	contains(t, joined, "Monthly cost of the 12 workloads estimated, at each workload's recommended idle window:")
+	contains(t, joined, "Cost with Dormeto enabled: at each workload's recommended idle window, Dormeto's cost included")
+	contains(t, joined, "│ Savings                   │ at the recommended idle windows ")
+	contains(t, joined, "app11.example.com (web, eu-west-1, 111111111111); at its recommended 30-minute window")
+	md := Markdown(e)
+	contains(t, md, "Dormeto would save about **$168.50 a month** at each workload's recommended idle window, for 12 workloads. Dormeto itself")
+	contains(t, md, "Cost with Dormeto enabled: at each workload's recommended idle window, Dormeto's cost included")
+	contains(t, md, "| Savings | at the recommended idle windows | -$168.50 |")
+	contains(t, md, "- Idle window of the figures: each workload's recommended window (--window sets one for every workload)")
+	lacks(t, md, "1-hour")
+}
+
+// The period of the requests read (--days, the user, 2026-10-14): said with its dates in the terminal and the report.
+func TestThePeriodOfTheRequestsIsSaid(t *testing.T) {
+	e := fixture()
+	e.Options.Days, e.Options.Ec2Uptime = 7, true
+	e.Period = estimate.Period{Days: 7, From: "2026-10-03T12:00:00.000Z", To: "2026-10-10T12:00:00.000Z"}
+	lines := Summary(e)
+	if want := "From the requests of the last 7 days: 2026-10-03 12:00 to 2026-10-10 12:00 UTC (--days)."; nth(t, lines, 1) != want {
+		t.Errorf("second line %q", nth(t, lines, 1))
+	}
+	contains(t, strings.Join(lines, "\n"), "docs.example.com (web, eu-west-1, 111111111111), no request in 7 days")
+	md := Markdown(e)
+	contains(t, md, "estimated 2026-10-10 12:00 UTC from the last 7 days of requests (2026-10-03 12:00 to 2026-10-10 12:00 UTC).")
+	contains(t, md, "docs.example.com (no request in 7 days)")
+	contains(t, md, "- Requests: the last 7 days (--days)")
+	contains(t, md, "- EC2 uptime: measured over the 7 days (--ec2-uptime)")
+	lacks(t, md, "14 days")
+	// An estimate without its period (written before --days): the options' days, no dates.
+	e = fixture()
+	if want := "From the requests of the last 14 days."; nth(t, Summary(e), 1) != want {
+		t.Errorf("second line %q", nth(t, Summary(e), 1))
+	}
 }
 
 func TestUSDAsIntlWritesIt(t *testing.T) {

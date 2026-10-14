@@ -85,7 +85,7 @@ organization. A second run reads the [cache](#cache). `dormeto estimate --help` 
 Usage: dormeto estimate --profile <profile>[,<profile>...] [--accounts 111111111111,222222222222]
   [--regions eu-west-1,eu-west-3] [--exclude-tags 'env=dev|test,team=web' ...] [--uptime | --ec2-uptime | --ecs-uptime | --rds-uptime] [--role <name>]
   [--baseline always|business-hours] [--timezone Europe/Paris] [--discount-compute 0-90] [--discount-databases 0-90]
-  [--refresh discovery|metrics] [--window 60] [--max-wakes 3|none]
+  [--refresh discovery|metrics] [--days 14] [--window <minutes>] [--max-wakes 3|none]
   [--min-saving 1|none] [--max-wakes-rds 2|none] [--parallel 5] [--out <dir>]
 ```
 
@@ -109,12 +109,12 @@ with code 1 and AWS's message; an SSO session expired, invalid or never logged i
   `--exclude-tags 'env=dev|test,team=web' --exclude-tags dormeto:ignore`. They are left out before their requests are
   read and listed apart in the report, with the criterion that matched.
 - `--uptime`: sets `--ec2-uptime`, `--ecs-uptime` and `--rds-uptime`.
-- `--ec2-uptime`: measures when each EC2 instance without an Auto Scaling group ran over the 14 days (its
+- `--ec2-uptime`: measures when each EC2 instance without an Auto Scaling group ran over the days read (its
   `CPUUtilization`, which EC2 publishes every 5 minutes while an instance runs): its actual cost counts the hours it
   ran, its savings only the hours Dormeto would nap it while it ran (an instance stopped at night by a schedule saves
   less). An instance found stopped is estimated from the hours it ran (without the option, it is left out). Instances
   Dormeto already manages and Auto Scaling groups are not measured.
-- `--ecs-uptime`: measures when each ECS service had a task over the 14 days (its `CPUUtilization`, which ECS publishes
+- `--ecs-uptime`: measures when each ECS service had a task over the days read (its `CPUUtilization`, which ECS publishes
   every minute while the service has a task): its actual cost and its savings count only those hours, at its desired
   count when discovered (a service scaled to 0 at night saves less). A service found at 0 tasks is estimated as one
   task from the hours it ran (without the option, it is left out). When it had a task is measured, not how many: a
@@ -133,8 +133,11 @@ with code 1 and AWS's message; an SSO session expired, invalid or never logged i
 - `--discount-databases <0-90>`: your discount on databases (RDS) in percent, such as a reserved instance's.
 - `--refresh discovery|metrics`: read again what the [cache](#cache) holds. `discovery` reads discovery and the requests
   again, `metrics` the requests only.
-- `--window <minutes>`: the idle window the report's figures use (60 by default, 5 to 1440). The report also gives each
-  workload's recommended window, the one a customer would set.
+- `--days <n>`: the days of requests read before the run (14 by default, 1 to 15: CloudWatch keeps the requests by the
+  minute for 15 days). The terminal and the report give the period read, with its dates.
+- `--window <minutes>`: one idle window, 5 to 1440, for every workload's figures (a what-if); the report then also gives
+  the savings at each workload's recommended window. Without it, every figure (the savings, the cost with Dormeto, by
+  account and region) is at each workload's recommended window, the one a customer would set.
 - `--max-wakes <n>|none`: leave out a workload that would wake more than `n` times a day (3 by default; its visitors
   would wait more than it saves). It is listed apart in the report with its window, wakes a day and the saving left
   out. `none` keeps them all.
@@ -153,10 +156,12 @@ with code 1 and AWS's message; an SSO session expired, invalid or never logged i
 The estimate is conservative: every request counts as activity and as a wake (there is no waker yet to set scanners
 apart), a wake lasts 60 seconds, there is no visitor's wait, and databases not attached to a load balancer are not
 counted. It runs in three phases: discovery (what each eligible workload's backend would stop, as the router
-describes it), requests (each workload's `RequestCount` per minute over 14 days, five metrics per `GetMetricData`
-call), and the estimate (Dormeto's replay priced with the product's price book, at `--window` and at each workload's
-recommended window, net of Dormeto's cost). In a terminal, each phase shows one progress line; piped or redirected, it
-prints a line per account and region.
+describes it), requests (each workload's `RequestCount` per minute over the days read, `--days`, five metrics per
+`GetMetricData` call), and the estimate (Dormeto's replay priced with the product's price book, at each workload's
+recommended window, or at `--window`, net of Dormeto's cost). Before them, it says what it reads to reach the accounts:
+the profile's account and organization, then the organization's accounts, listed one organizational unit at a time (a
+large organization takes a while). In a terminal, each phase shows one progress line; piped or redirected, it prints a
+line per account and region.
 
 Where Dormeto is already installed, the estimate finds the workloads it manages (marked "managed by Dormeto"), asleep
 ones included. Dormeto's cost then starts from the installation as it is now (the manager, a router per account and
@@ -198,7 +203,7 @@ workloads table gives each one's uptime (measured, else 100% assumed), its recom
 ## Cache
 
 `~/.cache/dormeto/estimate/<organization or account>/`, under `$XDG_CACHE_HOME` when it is set. It holds discovery and
-each account's regions for a day, the requests while their 14 days end on the same UTC day, and the prices. An
+each account's regions for a day, the requests while their days (`--days`) end on the same UTC day, and the prices. An
 interrupted run resumes where it stopped; a cache file that cannot be read is read again, never an error.
 `--refresh discovery` reads discovery and the requests again, `--refresh metrics` the requests only. To start over,
 delete the directory.

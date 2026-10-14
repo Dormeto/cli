@@ -42,7 +42,7 @@ func FreshDiscovery(now time.Time) func(time.Time) bool {
 	return func(w time.Time) bool { return now.Sub(w) < day }
 }
 
-// FreshRequests: requests (and uptime) are fresh while their 14 days end on the run's UTC day.
+// FreshRequests: requests (and uptime) are fresh while their days (--days) end on the run's UTC day.
 func FreshRequests(now time.Time) func(time.Time) bool {
 	return func(w time.Time) bool { return w.UTC().Format("2006-01-02") == now.UTC().Format("2006-01-02") }
 }

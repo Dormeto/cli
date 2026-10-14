@@ -119,7 +119,7 @@ type failingAccounts struct{ err error }
 
 func (f failingAccounts) Whoami(context.Context) (string, error)       { return "", f.err }
 func (f failingAccounts) Organization(context.Context) (string, error) { return "", f.err }
-func (f failingAccounts) Inventory(context.Context) (discover.OrgInventory, error) {
+func (f failingAccounts) Inventory(context.Context, func(discover.InventoryProgress)) (discover.OrgInventory, error) {
 	return discover.OrgInventory{}, f.err
 }
 func (f failingAccounts) Assume(context.Context, string, string) (aws.Credentials, error) {

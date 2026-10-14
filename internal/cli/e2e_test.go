@@ -173,8 +173,8 @@ func (s sts) Organization(context.Context) (string, error) {
 	out, err := call[struct{ Organization struct{ Id string } }](scope(s), "organizations", "describeOrganization", map[string]any{})
 	return out.Organization.Id, err
 }
-func (s sts) Inventory(ctx context.Context) (discover.OrgInventory, error) {
-	return discover.LoadInventory(ctx, org(s), false)
+func (s sts) Inventory(ctx context.Context, progress func(discover.InventoryProgress)) (discover.OrgInventory, error) {
+	return discover.LoadInventoryProgress(ctx, org(s), false, progress)
 }
 func (s sts) Assume(_ context.Context, account, role string) (aws.Credentials, error) {
 	out, err := call[struct {
@@ -300,7 +300,7 @@ func runCase(t *testing.T, in estimateCase, cacheRoot string) estimateOutput {
 	got := estimateOutput{Written: []string{}, Log: []string{}, Errors: []string{}}
 	written := map[string]string{}
 	local := func(l string) string { return strings.ReplaceAll(l, cacheRoot, "<cacheRoot>") }
-	got.ExitCode = Main(in.Argv, Deps{
+	got.ExitCode = Main(append([]string{"--window", "60"}, in.Argv...), Deps{
 		Now: func() time.Time { return in.Now }, CacheRoot: cacheRoot, AWS: w.aws, Version: "0.0.0-test",
 		Log:   func(l string) { mu.Lock(); got.Log = append(got.Log, local(l)); mu.Unlock() },
 		Error: func(l string) { mu.Lock(); got.Errors = append(got.Errors, local(l)); mu.Unlock() },
@@ -333,7 +333,50 @@ func runCase(t *testing.T, in estimateCase, cacheRoot string) estimateOutput {
 			got.Markdown = &md
 		}
 	}
+	asNode(t, &got)
 	return got
+}
+
+// Go's by design, set apart to compare with Node's (the user, 2026-10-14). Node's figures were at a 60-minute window
+// without --window (Go's at each workload's recommended one): runCase gives --window 60 first (a case's own, later,
+// wins). Go's own lines and fields are removed: what it reads before the estimate, the days of requests (--days, 14
+// as Node's), the period and its dates; its usage names --days and --window without a default.
+var (
+	goOnlyLog  = regexp.MustCompile(`^(Reading the profile .*: its account and its organization|Profile .*; listing the organization's accounts|Listed \d+ active accounts? in \d+ organizational units? \(\d+:\d\d\)|From the requests of the last 14 days(: .* UTC \(--days\))?\.)$`)
+	goOnlyDate = regexp.MustCompile(`(from the last 14 days of requests) \([^)]* UTC\)\.`)
+)
+
+func asNode(t *testing.T, got *estimateOutput) {
+	t.Helper()
+	log := []string{}
+	for _, l := range got.Log {
+		if !goOnlyLog.MatchString(l) {
+			log = append(log, strings.Replace(l, " from the last 14 days of requests; cache ", "; cache ", 1))
+		}
+	}
+	got.Log = log
+	for i, e := range got.Errors {
+		got.Errors[i] = strings.Replace(e, "[--days 14] [--window <minutes>]", "[--window 60]", 1)
+	}
+	if got.Markdown != nil {
+		md := strings.Replace(goOnlyDate.ReplaceAllString(*got.Markdown, "$1."), "- Requests: the last 14 days (--days)\n", "", 1)
+		got.Markdown = &md
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(got.Report, &fields); err != nil || fields == nil {
+		return
+	}
+	delete(fields, "period")
+	var o map[string]json.RawMessage
+	if err := json.Unmarshal(fields["options"], &o); err != nil {
+		t.Fatal(err)
+	}
+	if string(o["days"]) != "14" {
+		t.Errorf("options.days %s, want 14 (Node's)", o["days"])
+	}
+	delete(o, "days")
+	fields["options"], _ = json.Marshal(o)
+	got.Report, _ = json.Marshal(fields)
 }
 
 func estimateCases(t *testing.T) ([]parity.Case, []estimateCase, []estimateOutput) {

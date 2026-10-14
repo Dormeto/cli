@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +39,8 @@ import (
 type Ports interface {
 	Whoami(ctx context.Context) (string, error)
 	Organization(ctx context.Context) (string, error)
-	Inventory(ctx context.Context) (discover.OrgInventory, error)
+	// Inventory walks the organization, saying how far it is (progress nil: silent).
+	Inventory(ctx context.Context, progress func(discover.InventoryProgress)) (discover.OrgInventory, error)
 	Assume(ctx context.Context, account, role string) (aws.Credentials, error)
 }
 
@@ -108,6 +110,11 @@ type Options struct {
 	Only        []string
 	Now         func() time.Time
 	Unreachable *Unreachables
+	// Profile names the profile in what is said; Say says each step (nil: nothing); Listing passes the organization's
+	// walk on as it goes (nil: nothing). The user, 2026-10-14: a large organization took a while without a word.
+	Profile string
+	Say     func(line string)
+	Listing func(discover.InventoryProgress)
 }
 
 // Profile is a profile and its ports.
@@ -208,6 +215,9 @@ func defaults(o Options) Options {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	if o.Say == nil {
+		o.Say = func(string) {}
+	}
 	if o.Unreachable == nil {
 		o.Unreachable = &Unreachables{}
 	}
@@ -217,6 +227,11 @@ func defaults(o Options) Options {
 // Reach gives the accounts a profile reaches (Node's reachAccounts).
 func Reach(ctx context.Context, ports Ports, o Options) (Reached, error) {
 	o = defaults(o)
+	profile := o.Profile
+	if profile == "" {
+		profile = "given"
+	}
+	o.Say(fmt.Sprintf("Reading the profile %s: its account and its organization", profile))
 	self, err := ports.Whoami(ctx)
 	if err != nil {
 		return Reached{}, err
@@ -237,7 +252,12 @@ func Reach(ctx context.Context, ports Ports, o Options) (Reached, error) {
 		}
 		return alone(nil, fmt.Sprintf("this profile cannot describe its organization (%s): only its account %s is estimated", awserr.Said(err), self), "this profile cannot describe its organization", every)
 	}
-	inventory, err := ports.Inventory(ctx)
+	o.Say(fmt.Sprintf("Profile %s: account %s in the organization %s; listing the organization's accounts", profile, self, organization))
+	start := o.Now()
+	inventory, err := ports.Inventory(ctx, o.Listing)
+	if err == nil {
+		o.Say(fmt.Sprintf("Listed %s in %s (%s)", count(len(inventory.Accounts), "active account"), count(len(inventory.OUs), "organizational unit"), clock(o.Now().Sub(start))))
+	}
 	if err != nil {
 		return alone(&organization, fmt.Sprintf("this profile cannot list the organization's accounts (%s): only its account %s is estimated; %s", awserr.Said(err), self, every), "this profile cannot list the organization's accounts", every)
 	}
@@ -264,6 +284,20 @@ func Reach(ctx context.Context, ports Ports, o Options) (Reached, error) {
 	})
 }
 
+// count is "1 active account", "3 active accounts".
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// clock is a duration as minutes and seconds, "0:37" (the progress lines' format).
+func clock(d time.Duration) string {
+	s := max(int(d/time.Second), 0)
+	return fmt.Sprintf("%d:%02d", s/60, s%60)
+}
+
 func tag(accounts []ReachedAccount, profile string) []ReachedAccount {
 	out := make([]ReachedAccount, len(accounts))
 	for i, a := range accounts {
@@ -281,6 +315,7 @@ func tag(accounts []ReachedAccount, profile string) []ReachedAccount {
 func ReachProfiles(ctx context.Context, profiles []Profile, o Options) (Reached, error) {
 	o = defaults(o)
 	if len(profiles) == 1 {
+		o.Profile = profiles[0].Profile
 		r, err := Reach(ctx, profiles[0].Ports, o)
 		if err != nil {
 			return Reached{}, err
@@ -294,7 +329,7 @@ func ReachProfiles(ctx context.Context, profiles []Profile, o Options) (Reached,
 	}
 	var each []reached
 	for _, p := range profiles {
-		r, err := Reach(ctx, p.Ports, Options{Role: o.Role, Now: o.Now, Unreachable: o.Unreachable})
+		r, err := Reach(ctx, p.Ports, Options{Role: o.Role, Now: o.Now, Unreachable: o.Unreachable, Profile: p.Profile, Say: o.Say, Listing: o.Listing})
 		if err != nil {
 			// Which profile failed, such as an expired SSO session
 			return Reached{}, awserr.Prefixed(p.Profile, err)

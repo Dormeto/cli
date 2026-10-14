@@ -69,8 +69,12 @@ type fakeAccounts struct {
 
 func (f *fakeAccounts) Whoami(ctx context.Context) (string, error)       { return f.whoami(ctx) }
 func (f *fakeAccounts) Organization(ctx context.Context) (string, error) { return f.organization(ctx) }
-func (f *fakeAccounts) Inventory(ctx context.Context) (discover.OrgInventory, error) {
-	return f.inventory(ctx)
+func (f *fakeAccounts) Inventory(ctx context.Context, progress func(discover.InventoryProgress)) (discover.OrgInventory, error) {
+	inv, err := f.inventory(ctx)
+	if err == nil && progress != nil {
+		progress(discover.InventoryProgress{Read: 1, Found: len(inv.OUs), Accounts: len(inv.Accounts)})
+	}
+	return inv, err
 }
 func (f *fakeAccounts) Assume(ctx context.Context, account, role string) (aws.Credentials, error) {
 	return f.assume(ctx, account, role)
@@ -171,7 +175,7 @@ func fakeAWS(o fakeOptions) (*EstimateAWS, *calls) {
 			if o.organization == "" {
 				return discover.OrgInventory{Accounts: []discover.Account{}, OUs: map[string]discover.OU{}}, nil
 			}
-			return discover.OrgInventory{Accounts: []discover.Account{member(acctA), member(acctB)}, OUs: map[string]discover.OU{}}, nil
+			return discover.OrgInventory{Accounts: []discover.Account{member(acctA), member(acctB)}, OUs: map[string]discover.OU{"r-root": {Name: "Root"}}}, nil
 		},
 		assume: func(context.Context, string, string) (aws.Credentials, error) {
 			c.add(&c.assumed)
@@ -394,6 +398,45 @@ func TestTheDiscoveryPhasesProgressALinePerAccountWithoutATerminalOneLineRewritt
 	}
 }
 
+// Before the estimate, what the run reads (the user, 2026-10-14: an organization of 311 accounts took a while without a
+// word): without a terminal a line each step; in a terminal the organization's walk on one line, ended by the count.
+// The estimate's line says the days of requests read (--days).
+func TestItSaysWhatItReadsBeforeEstimatingAndTheDaysOfRequests(t *testing.T) {
+	e, _ := fakeAWS(fakeOptions{organization: "o-abc123"})
+	r := newRun(t, e)
+	out := t.TempDir()
+	if code := Main([]string{"--profile", "p", "--days", "7", "--out", out}, r.deps); code != 0 {
+		t.Fatalf("exit code %d: %q", code, r.errors())
+	}
+	want := []string{
+		"Reading the profile p: its account and its organization",
+		"Profile p: account " + acctA + " in the organization o-abc123; listing the organization's accounts",
+		"Listed 2 active accounts in 1 organizational unit (0:00)",
+		"Estimating the organization o-abc123 (2 accounts) from the last 7 days of requests; cache " + filepath.Join(r.cacheRoot, "o-abc123"),
+	}
+	if l := r.logged(); len(l) < 4 || !slices.Equal(l[:4], want) {
+		t.Fatalf("log %q", l)
+	}
+	if n := at(t, written(t, out), "period", "days"); n != 7.0 {
+		t.Fatalf("period.days %v", n)
+	}
+	e2, _ := fakeAWS(fakeOptions{organization: "o-abc123"})
+	term := newRun(t, e2)
+	s := &statuses{}
+	term.deps.Status = s
+	if code := Main([]string{"--profile", "p", "--out", t.TempDir()}, term.deps); code != 0 {
+		t.Fatalf("exit code %d: %q", code, term.errors())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.updates) == 0 || s.updates[0] != "  Listing the organization's accounts: 1/1 organizational unit read · 2 accounts" {
+		t.Fatalf("updates %q", s.updates)
+	}
+	if len(s.ends) == 0 || s.ends[0] != "Listed 2 active accounts in 1 organizational unit (0:00)" || slices.Contains(term.logged(), s.ends[0]) {
+		t.Fatalf("ends %q, logged %q", s.ends, term.logged())
+	}
+}
+
 func TestRestrictedToAccountsOfTheOrganizationOnlyThoseAndHowManyOfItsAccounts(t *testing.T) {
 	e, c := fakeAWS(fakeOptions{organization: "o-abc123"})
 	r := newRun(t, e)
@@ -401,7 +444,7 @@ func TestRestrictedToAccountsOfTheOrganizationOnlyThoseAndHowManyOfItsAccounts(t
 	if code := Main([]string{"--profile", "p", "--accounts", acctA, "--out", out}, r.deps); code != 0 {
 		t.Fatalf("exit code %d: %q", code, r.errors())
 	}
-	if l := r.logged(); l[0] != "Estimating the organization o-abc123 (1 of its 2 accounts, --accounts); cache "+filepath.Join(r.cacheRoot, "o-abc123") {
+	if l := r.logged(); !slices.Contains(l, "Estimating the organization o-abc123 (1 of its 2 accounts, --accounts) from the last 14 days of requests; cache "+filepath.Join(r.cacheRoot, "o-abc123")) {
 		t.Fatalf("first line %q", l[0])
 	}
 	// The other account is never reached.
@@ -462,8 +505,11 @@ func TestSeveralProfilesSuchAsOneSSOProfilePerAccountEachAccountThroughItsOwnPro
 	if at(t, j, "organization") != "o-abc123" || at(t, j, "accounts") != 2.0 || len(at(t, j, "unreachable").([]any)) != 0 {
 		t.Fatalf("organization %v, accounts %v, unreachable %v", j["organization"], j["accounts"], j["unreachable"])
 	}
-	if l := r.logged(); !strings.Contains(l[0], "the organization o-abc123 (2 of its 2 accounts, --accounts)") {
-		t.Fatalf("first line %q", l[0])
+	// After what each profile read.
+	l := r.logged()
+	i := slices.IndexFunc(l, func(s string) bool { return strings.HasPrefix(s, "Estimating ") })
+	if i < 0 || !strings.Contains(l[i], "the organization o-abc123 (2 of its 2 accounts, --accounts)") || !slices.Contains(l[:i], "Reading the profile qal: its account and its organization") {
+		t.Fatalf("log %q", l)
 	}
 }
 

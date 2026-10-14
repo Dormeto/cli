@@ -75,9 +75,9 @@ func (a *accountsPort) Organization(ctx context.Context) (string, error) {
 	return awssdk.ToString(out.Organization.Id), nil
 }
 
-// Inventory is the organization's active accounts and OU tree, without tags.
-func (a *accountsPort) Inventory(ctx context.Context) (discover.OrgInventory, error) {
-	return discover.LoadInventory(ctx, a.organizations, false)
+// Inventory is the organization's active accounts and OU tree, without tags, saying how far it is.
+func (a *accountsPort) Inventory(ctx context.Context, progress func(discover.InventoryProgress)) (discover.OrgInventory, error) {
+	return discover.LoadInventoryProgress(ctx, a.organizations, false, progress)
 }
 
 // Assume assumes the role of that name in the account for an hour.

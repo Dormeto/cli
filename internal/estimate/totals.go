@@ -9,6 +9,7 @@ import (
 	"github.com/Dormeto/cli/internal/accounts"
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/prices"
+	"time"
 )
 
 // kindOf: the Kinds counter of a backend kind; none for a kind discovery does not give (Node would count it under an
@@ -252,7 +253,7 @@ func (s *state) result(totals Totals, dormeto DormetoCost, byAccount, byRegion O
 		excluded = []Excluded{}
 	}
 	e := Estimate{
-		GeneratedAt: isoOf(s.in.Now), Organization: r.Organization, Why: r.Why, Options: s.in.Options, Accounts: len(r.Accounts), AccountsListed: r.Listed,
+		GeneratedAt: isoOf(s.in.Now), Organization: r.Organization, Why: r.Why, Options: s.in.Options, Period: s.period(), Accounts: len(r.Accounts), AccountsListed: r.Listed,
 		AccountNames: names, Totals: totals, Dormeto: dormeto, ByAccount: byAccount, ByRegion: byRegion, Workloads: s.workloads, LeftOut: s.leftOut,
 		Excluded: excluded, Busy: s.busy, Small: s.small, DatabasesLeftOut: s.databasesLeftOut, DatabasesUnread: []DatabasesUnread{},
 		Ineligible: []IneligibleAt{}, Unreachable: unreachable, FailedRegions: []FailedRegion{}, UnreadableClusters: []UnreadableCluster{},
@@ -277,4 +278,23 @@ func (s *state) result(totals Totals, dormeto DormetoCost, byAccount, byRegion O
 	}
 	e.Assumptions = assumptionsOf(s.in.Baseline, s.in.Options, kubernetes)
 	return e
+}
+
+// period is the requests' period: the reads' earliest start and latest end (ISO strings, compared as text); no read,
+// the days before the run, to the minute.
+func (s *state) period() Period {
+	p := Period{Days: s.in.Options.DaysRead()}
+	for _, r := range s.in.Requests {
+		if p.From == "" || r.From < p.From {
+			p.From = r.From
+		}
+		if r.To > p.To {
+			p.To = r.To
+		}
+	}
+	if p.From == "" {
+		to := s.in.Now.UTC().Truncate(time.Minute)
+		p.From, p.To = isoOf(to.Add(-time.Duration(p.Days)*24*time.Hour)), isoOf(to)
+	}
+	return p
 }

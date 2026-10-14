@@ -32,6 +32,8 @@ func sharedMarkdown(t *testing.T) {
 			// The report in the case has no run time: the Markdown has "<generatedAt>" where it stands.
 			e.GeneratedAt = "2026-10-12T08:00:00.000Z"
 			got := strings.Replace(Markdown(e), "2026-10-12 08:00", "<generatedAt>", 1)
+			// Go only (the user, 2026-10-14): the days of requests read among the options (--days).
+			got = strings.Replace(got, "- Requests: the last 14 days (--days)\n", "", 1)
 			if got != *out.Markdown {
 				t.Errorf("Markdown differs from Node's:\n%s", firstDifference(got, *out.Markdown))
 			}

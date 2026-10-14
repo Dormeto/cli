@@ -63,7 +63,7 @@ func (s *state) attach(region discover.RegionDiscovery, chosen []*elected, ran *
 		case !measured && (d.Status == "stopped" || d.Status == "stopping") && unread == "":
 			leave(CodeStopped, "stopped when discovered (--rds-uptime estimates it from the hours it ran)")
 		case measured && len(periods) == 0:
-			leave(CodeIdle, "it did not run in the last 14 days (its measured uptime)")
+			leave(CodeIdle, fmt.Sprintf("it did not run in the last %d days (its measured uptime)", o.DaysRead()))
 		default:
 			owner.companions = append(owner.companions, d)
 		}
@@ -83,7 +83,12 @@ func databasePeriods(rdsUptime bool, ran *metrics.RegionUptime, key string) ([][
 func (s *state) price(e *elected, ran *metrics.RegionUptime) error {
 	o := s.in.Options
 	w := e.workload
-	at, err := rowOf(e.advice, o.Window)
+	// The figures' window: --window, else the workload's recommended one.
+	figures := e.advice.Recommended
+	if o.Window != nil {
+		figures = *o.Window
+	}
+	at, err := rowOf(e.advice, figures)
 	if err != nil {
 		return err
 	}
@@ -127,7 +132,7 @@ func (s *state) price(e *elected, ran *metrics.RegionUptime) error {
 		} else if why, _ := unreadableOf(ran, key); o.RdsUptime && why != "" {
 			uptime = &Uptime{Unreadable: &why}
 		}
-		ownAt, err := rowOf(own, o.Window)
+		ownAt, err := rowOf(own, figures)
 		if err != nil {
 			return err
 		}

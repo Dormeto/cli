@@ -30,7 +30,7 @@ func TestEachPricedWorkloadAtTheReportsWindowAndAtItsRecommendedWindow(t *testin
 		t.Fatalf("atWindow %+v, want %+v", shop.AtWindow, want)
 	}
 	// Another window when asked (--window 15).
-	quarter := run(t, func(in *Input) { in.Options.Window = 15 })
+	quarter := run(t, func(in *Input) { in.Options.Window = minutes(15) })
 	if got, want := nth(t, quarter.Workloads, 0).AtWindow.USDMonth, usd(t, row(t, advise(t, daily(), []stopped.Item{T3}, always, 15, nil), 15)); got != want {
 		t.Fatalf("at 15 minutes %v, want %v", got, want)
 	}
@@ -44,6 +44,35 @@ func TestEachPricedWorkloadAtTheReportsWindowAndAtItsRecommendedWindow(t *testin
 	}
 	if shop.Quiet {
 		t.Fatal("shop has requests")
+	}
+}
+
+// Without --window (the default), every figure is at each workload's recommended window: its own, the totals and the
+// cost with Dormeto. The recommendations are the ones with the product's default window.
+func TestWithoutAWindowTheFiguresAreAtEachWorkloadsRecommendedWindow(t *testing.T) {
+	at60 := run(t)
+	e := run(t, func(in *Input) { in.Options.Window = nil })
+	if len(e.Workloads) != len(at60.Workloads) || len(e.Workloads) == 0 {
+		t.Fatalf("workloads %d, at 60 minutes %d", len(e.Workloads), len(at60.Workloads))
+	}
+	for i, x := range e.Workloads {
+		if x.Recommended != at60.Workloads[i].Recommended {
+			t.Fatalf("%s: recommended %+v, at 60 minutes %+v", x.Workload.TargetGroup, x.Recommended, at60.Workloads[i].Recommended)
+		}
+		if x.AtWindow.USDMonth != x.Recommended.USDMonth || x.AtWindow.WakesPerDay != x.Recommended.WakesPerDay {
+			t.Fatalf("%s: figures %+v, recommended %+v", x.Workload.TargetGroup, x.AtWindow, x.Recommended)
+		}
+	}
+	shop := nth(t, e.Workloads, 0)
+	expected := advise(t, daily(), []stopped.Item{T3}, always, 60, nil)
+	if best := row(t, expected, expected.Recommended); shop.AtWindow.AsleepHours != best.AsleepHours {
+		t.Fatalf("asleep %v, want %v", shop.AtWindow.AsleepHours, best.AsleepHours)
+	}
+	tt := e.Totals
+	closeTo(t, "usdMonthWindow", tt.USDMonthWindow, tt.USDMonthRecommended, 9)
+	closeTo(t, "withDormetoMonth", tt.WithDormetoMonth, tt.ActualMonth-tt.USDMonthRecommended+tt.DormetoMonth, 9)
+	if at60.Totals.USDMonthWindow == at60.Totals.USDMonthRecommended {
+		t.Fatal("the fixture should save differently at 60 minutes and at the recommended windows")
 	}
 }
 
@@ -415,7 +444,8 @@ func TestTheEstimatesJSONAsNodeWritesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"generatedAt", "organization", "why", "options", "accounts", "accountsListed", "accountNames", "totals", "dormeto", "byAccount", "byRegion",
+	// Node's keys, and Go's period after the options (the user, 2026-10-14).
+	want := []string{"generatedAt", "organization", "why", "options", "period", "accounts", "accountsListed", "accountNames", "totals", "dormeto", "byAccount", "byRegion",
 		"workloads", "leftOut", "excluded", "busy", "small", "databasesLeftOut", "databasesUnread", "ineligible", "unreachable", "failedRegions",
 		"unreadableClusters", "assumptions"}
 	if !reflect.DeepEqual(keys, want) {
@@ -448,5 +478,27 @@ func TestTheEstimatesJSONAsNodeWritesIt(t *testing.T) {
 	b, _ = jsonOf(IneligibleAt{Account: A, Region: "eu-west-1", IneligibleRule: discover.IneligibleRule{LoadBalancer: "web", TargetGroup: &shared, Hosts: []string{}, Reason: "why"}})
 	if want := `{"account":"111111111111","region":"eu-west-1","loadBalancer":"web","targetGroup":"shared","hosts":[],"reason":"why"}`; string(b) != want {
 		t.Fatalf("ineligible %s", b)
+	}
+}
+
+// The period of the requests read (--days, the user, 2026-10-14): its days, and its dates from the reads (the earliest
+// start, the latest end: a region kept from earlier the same day starts earlier); no read, the days before the run.
+func TestThePeriodOfTheRequestsRead(t *testing.T) {
+	e := run(t)
+	if want := (Period{Days: 14, From: FROM, To: TO}); e.Period != want {
+		t.Fatalf("period %+v, want %+v", e.Period, want)
+	}
+	earlier := "2026-09-26T08:00:00.000Z"
+	e = run(t, func(in *Input) {
+		in.Options.Days = 7
+		in.Requests = defaultRequests()
+		in.Requests[1].From = earlier
+	})
+	if want := (Period{Days: 7, From: earlier, To: TO}); e.Period != want {
+		t.Fatalf("period %+v, want %+v", e.Period, want)
+	}
+	e = run(t, func(in *Input) { in.Requests = nil; in.Regions = region() })
+	if want := (Period{Days: 14, From: "2026-09-26T12:00:00.000Z", To: "2026-10-10T12:00:00.000Z"}); e.Period != want {
+		t.Fatalf("no read: period %+v, want %+v", e.Period, want)
 	}
 }

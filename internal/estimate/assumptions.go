@@ -4,6 +4,8 @@
 package estimate
 
 import (
+	"strconv"
+
 	"github.com/Dormeto/cli/internal/options"
 	"github.com/Dormeto/cli/internal/prices"
 )
@@ -14,13 +16,14 @@ func assumptionsOf(baseline prices.Baseline, o options.Options, kubernetes bool)
 	if baseline.Kind != "always" {
 		within = "business hours (weekdays 08:00 to 20:00, " + baseline.TimeZone + ")"
 	}
+	days := strconv.Itoa(o.DaysRead()) + " days"
 	ec2 := "EC2 instances without an Auto Scaling group are assumed to run 24/7 (--ec2-uptime measures it): one stopped at night by a schedule saves less than estimated here."
 	if o.Ec2Uptime {
-		ec2 = "EC2 instances without an Auto Scaling group: their uptime measured over the 14 days (CloudWatch CPUUtilization, published every 5 minutes while an instance runs); their actual cost counts the hours they ran, their savings only the hours Dormeto would nap them while they ran. Instances Dormeto already manages and Auto Scaling groups are assumed to run all the time."
+		ec2 = "EC2 instances without an Auto Scaling group: their uptime measured over the " + days + " (CloudWatch CPUUtilization, published every 5 minutes while an instance runs); their actual cost counts the hours they ran, their savings only the hours Dormeto would nap them while they ran. Instances Dormeto already manages and Auto Scaling groups are assumed to run all the time."
 	}
 	ecs := "ECS services are assumed to run all the time at their desired count when discovered (--ecs-uptime measures when they had a task): one scaled to 0 at night by a schedule saves less than estimated here."
 	if o.EcsUptime {
-		ecs = "ECS services: their uptime measured over the 14 days (CloudWatch CPUUtilization of the service, published every minute while it has a task); their actual cost counts the hours they had a task, their savings only the hours Dormeto would nap them then, at their desired count when discovered (one task for a service found at 0). Services Dormeto already manages are assumed to run all the time."
+		ecs = "ECS services: their uptime measured over the " + days + " (CloudWatch CPUUtilization of the service, published every minute while it has a task); their actual cost counts the hours they had a task, their savings only the hours Dormeto would nap them then, at their desired count when discovered (one task for a service found at 0). Services Dormeto already manages are assumed to run all the time."
 	}
 	out := []string{
 		"Every request counts as activity and as a wake: no waker is installed yet to set scanners and other filtered requests apart, so the workloads stay awake longer here than they would (smaller savings).",

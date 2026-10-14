@@ -22,7 +22,7 @@ type Uptime struct {
 	Unreadable  *string  `json:"unreadable,omitempty"`
 }
 
-// AtWindow is a workload's figures at the report's window (options.Window).
+// AtWindow is a workload's figures at the report's window: --window (options.Window), else its recommended window.
 type AtWindow struct {
 	USDMonth    float64 `json:"usdMonth"`
 	WakesPerDay float64 `json:"wakesPerDay"`
@@ -39,7 +39,7 @@ type Recommended struct {
 // WorkloadEstimate is a workload estimated.
 type WorkloadEstimate struct {
 	Workload discover.Workload `json:"workload"`
-	// No request in 14 days.
+	// No request in the days read (--days).
 	Quiet bool `json:"quiet"`
 	// What its naps would stop, running every hour of the baseline (or, measured, the hours it ran): its cost a month
 	// now.
@@ -126,7 +126,7 @@ type Kinds struct {
 
 // Totals are the figures of some workloads (all, an account's, a region's). Excluded: the workloads not estimated,
 // whatever the reason (tags, left out, too many wakes, too small a saving). WithDormetoMonth: the actual cost less the
-// savings at the report's window, plus Dormeto's cost (an account's: its routers and workloads; the total's: the
+// savings at the report's window (--window, else each workload's recommended one), plus Dormeto's cost (an account's: its routers and workloads; the total's: the
 // manager too).
 type Totals struct {
 	Workloads           int     `json:"workloads"`
@@ -215,6 +215,15 @@ type UnreadableCluster struct {
 	Reason  string `json:"reason"`
 }
 
+// Period is the period of the requests read (Go only, the user, 2026-10-14): its days (--days) and its dates, the
+// reads' earliest start and latest end (a region kept from earlier the same day starts earlier); no read, the days
+// before the run.
+type Period struct {
+	Days int    `json:"days"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 // Estimate is the estimate the reports are written from. Slices are never nil (written as []).
 type Estimate struct {
 	GeneratedAt  string  `json:"generatedAt"`
@@ -222,6 +231,7 @@ type Estimate struct {
 	Why          *string `json:"why"`
 	// The options, without out and profiles (their JSON leaves them out).
 	Options  options.Options `json:"options"`
+	Period   Period          `json:"period"`
 	Accounts int             `json:"accounts"`
 	// The accounts reached before --accounts restricted them.
 	AccountsListed int                `json:"accountsListed"`

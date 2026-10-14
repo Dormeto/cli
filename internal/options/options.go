@@ -37,13 +37,33 @@ type Options struct {
 	// "discovery", "metrics" or nil.
 	Refresh *string `json:"refresh"`
 	Out     string  `json:"-"`
-	// The idle window, in minutes, the report's figures use.
-	Window int `json:"window"`
+	// The idle window, in minutes, the report's figures use for every workload (--window); nil: each workload's
+	// recommended window (Go only: Node's figures were at 60 minutes by default).
+	Window *int `json:"window"`
+	// The days of requests read before the run (--days, Go only), at most the 15 CloudWatch keeps by the minute.
+	Days int `json:"days"`
 	// nil: none (no limit).
 	MaxWakes    *float64 `json:"maxWakes"`
 	MinSaving   *float64 `json:"minSaving"`
 	Parallel    int      `json:"parallel"`
 	MaxWakesRds *float64 `json:"maxWakesRds"`
+}
+
+// ReplayWindow is the window the replay takes as the current one: --window, else the product's default (60 minutes).
+// The recommendations do not depend on it but for a --window outside the product's windows, which the replay adds.
+func (o Options) ReplayWindow() int {
+	if o.Window != nil {
+		return *o.Window
+	}
+	return windowDefault
+}
+
+// DaysRead is the days of requests read: --days, 14 when unset (Options not from Parse).
+func (o Options) DaysRead() int {
+	if o.Days < 1 {
+		return daysDefault
+	}
+	return o.Days
 }
 
 // UsageError is a bad option: the command prints its message and Usage, and exits 2.
@@ -60,7 +80,7 @@ var ErrHelp = errors.New("help requested")
 const Usage = `Usage: dormeto estimate --profile <profile>[,<profile>...] [--accounts 111111111111,222222222222]
   [--regions eu-west-1,eu-west-3] [--exclude-tags 'env=dev|test,team=web' ...] [--uptime | --ec2-uptime | --ecs-uptime | --rds-uptime] [--role <name>]
   [--baseline always|business-hours] [--timezone Europe/Paris] [--discount-compute 0-90] [--discount-databases 0-90]
-  [--refresh discovery|metrics] [--window 60] [--max-wakes 3|none]
+  [--refresh discovery|metrics] [--days 14] [--window <minutes>] [--max-wakes 3|none]
   [--min-saving 1|none] [--max-wakes-rds 2|none] [--parallel 5] [--out <dir>]`
 
 // Accounts created by AWS Organizations have it; the role is supposed to be there.
@@ -75,10 +95,11 @@ var (
 
 // Options without a value; --uptime is every uptime option.
 var flagNames = []string{"uptime", "ec2-uptime", "ecs-uptime", "rds-uptime"}
-var valueNames = []string{"profile", "accounts", "regions", "exclude-tags", "role", "baseline", "timezone", "discount-compute", "discount-databases", "refresh", "out", "window", "max-wakes", "min-saving", "parallel", "max-wakes-rds"}
+var valueNames = []string{"profile", "accounts", "regions", "exclude-tags", "role", "baseline", "timezone", "discount-compute", "discount-databases", "refresh", "out", "days", "window", "max-wakes", "min-saving", "parallel", "max-wakes-rds"}
 
 const (
 	windowMin, windowMax, windowDefault       = 5, 1440, 60
+	daysMin, daysMax, daysDefault             = 1, 15, 14
 	parallelMin, parallelMax, parallelDefault = 1, 50, 5
 )
 
@@ -265,10 +286,19 @@ func Parse(args []string) (Options, error) {
 		}
 		refresh = &r
 	}
-	windowText := or("window", strconv.Itoa(windowDefault))
-	window, _ := strconv.Atoi(windowText)
-	if !wholeRe.MatchString(windowText) || window < windowMin || window > windowMax {
-		return Options{}, usageErr("--window: whole minutes from " + strconv.Itoa(windowMin) + " to " + strconv.Itoa(windowMax))
+	var window *int
+	if has("window") {
+		windowText := given["window"]
+		w, _ := strconv.Atoi(windowText)
+		if !wholeRe.MatchString(windowText) || w < windowMin || w > windowMax {
+			return Options{}, usageErr("--window: whole minutes from " + strconv.Itoa(windowMin) + " to " + strconv.Itoa(windowMax))
+		}
+		window = &w
+	}
+	daysText := or("days", strconv.Itoa(daysDefault))
+	days, _ := strconv.Atoi(daysText)
+	if !wholeRe.MatchString(daysText) || days < daysMin || days > daysMax {
+		return Options{}, usageErr("--days: whole days from " + strconv.Itoa(daysMin) + " to " + strconv.Itoa(daysMax) + " (CloudWatch keeps the requests by the minute 15 days)")
 	}
 	maxWakes, err := optionalNumber(or("max-wakes", "3"), "--max-wakes: a number of wakes a day, such as 3 or 0.5, or none")
 	if err != nil {
@@ -313,6 +343,6 @@ func Parse(args []string) (Options, error) {
 		Profiles: profiles, Accounts: accounts, Regions: regions, ExcludeTags: excludeTags,
 		Ec2Uptime: all || flags["ec2-uptime"], EcsUptime: all || flags["ecs-uptime"], RdsUptime: all || flags["rds-uptime"],
 		Role: or("role", defaultRole), Baseline: baseline, Discounts: prices.Discounts{Compute: compute, Databases: databases},
-		Refresh: refresh, Out: out, Window: window, MaxWakes: maxWakes, MinSaving: minSaving, Parallel: parallel, MaxWakesRds: maxWakesRds,
+		Refresh: refresh, Out: out, Window: window, Days: days, MaxWakes: maxWakes, MinSaving: minSaving, Parallel: parallel, MaxWakesRds: maxWakesRds,
 	}, nil
 }

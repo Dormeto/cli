@@ -205,3 +205,21 @@ func TestTheAssumptionsSayHowECSServicesRan(t *testing.T) {
 		t.Fatal("not said measured")
 	}
 }
+
+// The days said are the days read (--days, the user, 2026-10-14): the reason a measured workload is left out and the
+// assumptions of the uptimes measured.
+func TestTheDaysSaidAreTheDaysRead(t *testing.T) {
+	idle := vm("idle", func(x *discover.Workload) { x.InstanceState = "stopped" })
+	e := run(t, only(idle), func(in *Input) {
+		in.Options.Ec2Uptime, in.Options.EcsUptime, in.Options.Days = true, true, 7
+		in.Uptime = uptimeOf(map[string][][2]int{"i-idle": {}}, nil)
+	})
+	if got := reasons(e.LeftOut); !reflect.DeepEqual(got, []string{"it did not run in the last 7 days (its measured uptime)"}) {
+		t.Fatalf("left out %q", got)
+	}
+	all := said(e.Assumptions)
+	if strings.Contains(all, "14 days") || !strings.Contains(all, "EC2 instances without an Auto Scaling group: their uptime measured over the 7 days") ||
+		!strings.Contains(all, "ECS services: their uptime measured over the 7 days") {
+		t.Fatalf("assumptions %s", all)
+	}
+}

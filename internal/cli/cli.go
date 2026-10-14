@@ -174,7 +174,8 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 		awsByProfile[p] = deps.AWS(o, p)
 		profiles[i] = accounts.Profile{Profile: p, Ports: awsByProfile[p].Accounts}
 	}
-	reached, err := accounts.ReachProfiles(ctx, profiles, accounts.Options{Role: o.Role, Only: o.Accounts, Now: deps.Now})
+	say, listing := reachingView(deps)
+	reached, err := accounts.ReachProfiles(ctx, profiles, accounts.Options{Role: o.Role, Only: o.Accounts, Now: deps.Now, Say: say, Listing: listing})
 	if err != nil {
 		return err
 	}
@@ -221,7 +222,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 		}
 		what = "the accounts " + strings.Join(ids, ", ")
 	}
-	deps.Log(fmt.Sprintf("Estimating %s; cache %s", what, dir))
+	deps.Log(fmt.Sprintf("Estimating %s from the last %d days of requests; cache %s", what, o.DaysRead(), dir))
 	if reached.Why != nil && *reached.Why != "" {
 		deps.Log(*reached.Why)
 	}
@@ -270,7 +271,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 	reading := progress.RegionsView("Requests", views)
 	requests, err := metrics.RequestsAll(ctx, metrics.RequestsOptions{
 		Regions: regions, CloudWatchOf: cloudwatchOf, Cache: c, Refresh: refresh, Now: deps.Now, Concurrency: o.Parallel,
-		Progress: reading.Done, OnPlan: reading.Plan, OnStart: reading.Start,
+		Progress: reading.Done, OnPlan: reading.Plan, OnStart: reading.Start, Days: o.DaysRead(),
 	})
 	reading.End()
 	if err != nil {
@@ -336,6 +337,29 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 var jsonReport = report.JSON
 
 // unreachable says whether an account was listed apart as refusing its role.
+// reachingView is what reaching the accounts says (the user, 2026-10-14: a large organization took a while without a
+// word): each step a line; in a terminal, the organization's walk on one line rewritten, ended by the next step's line.
+// Reaching the accounts calls both from one goroutine.
+func reachingView(deps Deps) (say func(string), listing func(discover.InventoryProgress)) {
+	walking := false
+	say = func(line string) {
+		if walking {
+			walking = false
+			deps.Status.End(line)
+			return
+		}
+		deps.Log(line)
+	}
+	listing = func(p discover.InventoryProgress) {
+		if deps.Status == nil {
+			return
+		}
+		walking = true
+		deps.Status.Update(fmt.Sprintf("  Listing the organization's accounts: %d/%s read · %s", p.Read, plural(p.Found, "organizational unit"), plural(p.Accounts, "account")))
+	}
+	return say, listing
+}
+
 func unreachable(reached accounts.Reached, account string) bool {
 	if reached.Unreachable == nil {
 		return false

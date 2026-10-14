@@ -189,3 +189,24 @@ func TestLoadInventoryReturnsAPortsError(t *testing.T) {
 		t.Errorf("got %v, want %v", err, boom)
 	}
 }
+
+// The walk says how far it is after each organizational unit (the user, 2026-10-14: a large organization takes a while):
+// the units read, of those found so far (the root included), and the active accounts found.
+func TestLoadInventoryProgressAfterEachOrganizationalUnit(t *testing.T) {
+	var got []InventoryProgress
+	inv, err := LoadInventoryProgress(context.Background(), &fakeOrg{}, false, func(p InventoryProgress) { got = append(got, p) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []InventoryProgress{{Read: 1, Found: 2, Accounts: 1}, {Read: 2, Found: 3, Accounts: 2}, {Read: 3, Found: 3, Accounts: 5}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("progress %+v, want %+v", got, want)
+	}
+	if len(inv.Accounts) != 5 {
+		t.Fatalf("accounts %d", len(inv.Accounts))
+	}
+	// Without a callback, as LoadInventory.
+	if _, err := LoadInventoryProgress(context.Background(), &fakeOrg{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+}

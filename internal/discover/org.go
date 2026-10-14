@@ -32,9 +32,20 @@ func pages[T any](call func(token string) ([]T, string, error)) ([]T, error) {
 	}
 }
 
+// InventoryProgress is the inventory's walk so far: the organizational units read (their accounts and children
+// listed), of those found (the root included), and the active accounts found.
+type InventoryProgress struct {
+	Read, Found, Accounts int
+}
+
 // LoadInventory reads the organization's OU tree and its active accounts, each
 // with its OU path from the root; with tags, their tags too.
 func LoadInventory(ctx context.Context, org OrganizationsPort, tags bool) (OrgInventory, error) {
+	return LoadInventoryProgress(ctx, org, tags, nil)
+}
+
+// LoadInventoryProgress is LoadInventory saying how far it is after each organizational unit (progress nil: silent).
+func LoadInventoryProgress(ctx context.Context, org OrganizationsPort, tags bool, progress func(InventoryProgress)) (OrgInventory, error) {
 	roots, err := pages(func(t string) ([]Root, string, error) {
 		out, err := org.ListRoots(ctx, ListRootsInput{NextToken: t})
 		return out.Roots, out.NextToken, err
@@ -59,6 +70,7 @@ func LoadInventory(ctx context.Context, org OrganizationsPort, tags bool) (OrgIn
 		inv.OUs[root.ID] = OU{Name: name}
 		queue = append(queue, node{root.ID, []string{root.ID}})
 	}
+	read := 0
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -102,6 +114,10 @@ func LoadInventory(ctx context.Context, org OrganizationsPort, tags bool) (OrgIn
 			parent := cur.id
 			inv.OUs[ou.ID] = OU{Name: name, Parent: &parent}
 			queue = append(queue, node{ou.ID, append(slices.Clip(cur.path), ou.ID)})
+		}
+		read++
+		if progress != nil {
+			progress(InventoryProgress{Read: read, Found: len(inv.OUs), Accounts: len(inv.Accounts)})
 		}
 	}
 	if tags {

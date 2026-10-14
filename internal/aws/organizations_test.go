@@ -89,7 +89,7 @@ func TestTheAccountsAdapterWhoamiTheOrganizationAndItsActiveAccounts(t *testing.
 	if id, err := a.Organization(ctx); err != nil || id != "o-abc123" {
 		t.Errorf("organization %q %v", id, err)
 	}
-	inv, err := a.Inventory(ctx)
+	inv, err := a.Inventory(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

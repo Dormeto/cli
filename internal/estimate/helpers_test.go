@@ -90,7 +90,7 @@ type reachedPorts struct{}
 
 func (reachedPorts) Whoami(context.Context) (string, error)       { return A, nil }
 func (reachedPorts) Organization(context.Context) (string, error) { return "o-abc123", nil }
-func (reachedPorts) Inventory(context.Context) (discover.OrgInventory, error) {
+func (reachedPorts) Inventory(context.Context, func(discover.InventoryProgress)) (discover.OrgInventory, error) {
 	return discover.OrgInventory{Accounts: []discover.Account{{ID: A, Name: "prod"}, {ID: B, Name: "staging"}}}, nil
 }
 func (reachedPorts) Assume(context.Context, string, string) (aws.Credentials, error) {
@@ -138,9 +138,11 @@ func region(workloads ...discover.Workload) []discover.RegionDiscovery {
 	return []discover.RegionDiscovery{{Account: A, Region: "eu-west-1", Workloads: workloads, Ineligible: []discover.IneligibleRule{}}}
 }
 
+func minutes(m int) *int { return &m }
+
 func defaultOptions() options.Options {
 	return options.Options{
-		ExcludeTags: []discover.TagWants{}, Role: "OrganizationAccountAccessRole", Baseline: always, Window: 60,
+		ExcludeTags: []discover.TagWants{}, Role: "OrganizationAccountAccessRole", Baseline: always, Window: minutes(60), Days: 14,
 		MaxWakes: f(3), MinSaving: f(1), Parallel: 5, MaxWakesRds: f(2),
 	}
 }

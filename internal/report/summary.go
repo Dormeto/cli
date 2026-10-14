@@ -18,7 +18,7 @@ var leftOutWords = []struct {
 	words string
 }{
 	{estimate.CodeShared, "shared with other workloads"}, {estimate.CodeTags, "excluded by tags"}, {estimate.CodeStoppable, "cannot be stopped"},
-	{estimate.CodeWakes, "of a workload waking too often"}, {estimate.CodeStopped, "stopped, not measured"}, {estimate.CodeIdle, "idle for 14 days"},
+	{estimate.CodeWakes, "of a workload waking too often"}, {estimate.CodeStopped, "stopped, not measured"}, {estimate.CodeIdle, "idle for the days read"},
 	{estimate.CodePrice, "without a price"},
 }
 
@@ -37,10 +37,17 @@ func Summary(e estimate.Estimate) []string {
 	if restricted(e) {
 		accountsIn = fmt.Sprintf("%d of the organization's %s", e.Accounts, n(e.AccountsListed, "account"))
 	}
-	lines := []string{
-		fmt.Sprintf("About %s a month at a %s idle window (%s at the recommended windows) for %s in %s; Dormeto costs about %s a month: net about %s.",
-			usd(t.USDMonthWindow), windowAdjective(e.Options.Window), usd(t.USDMonthRecommended), n(t.Workloads, "workload"), accountsIn, usd(t.DormetoMonth), usd(net(t))),
+	first := fmt.Sprintf("About %s a month at each workload's recommended idle window for %s in %s; Dormeto costs about %s a month: net about %s.",
+		usd(t.USDMonthWindow), n(t.Workloads, "workload"), accountsIn, usd(t.DormetoMonth), usd(net(t)))
+	if e.Options.Window != nil {
+		first = fmt.Sprintf("About %s a month at a %s idle window (%s at the recommended windows) for %s in %s; Dormeto costs about %s a month: net about %s.",
+			usd(t.USDMonthWindow), windowAdjective(*e.Options.Window), usd(t.USDMonthRecommended), n(t.Workloads, "workload"), accountsIn, usd(t.DormetoMonth), usd(net(t)))
 	}
+	period := fmt.Sprintf("From the requests of the last %d days.", daysOf(e))
+	if dates := periodDates(e.Period); dates != "" {
+		period = fmt.Sprintf("From the requests of the last %d days: %s (--days).", daysOf(e), dates)
+	}
+	lines := []string{first, period}
 	if e.Why != nil && *e.Why != "" {
 		lines = append(lines, *e.Why)
 	}
@@ -74,10 +81,14 @@ func Summary(e estimate.Estimate) []string {
 			}
 			quiet := ""
 			if x.Quiet {
-				quiet = ", no request in 14 days"
+				quiet = fmt.Sprintf(", no request in %d days", daysOf(e))
 			}
-			lines = append(lines, fmt.Sprintf("  %s  %s (%s, %s, %s)%s; recommended %d min: %s",
-				padStart(usd(x.AtWindow.USDMonth), 10), host, w.LoadBalancer, w.Region, w.Account, quiet, x.Recommended.Minutes, usd(x.Recommended.USDMonth)))
+			recommended := fmt.Sprintf("; at its recommended %s window", windowAdjective(x.Recommended.Minutes))
+			if e.Options.Window != nil {
+				recommended = fmt.Sprintf("; recommended %d min: %s", x.Recommended.Minutes, usd(x.Recommended.USDMonth))
+			}
+			lines = append(lines, fmt.Sprintf("  %s  %s (%s, %s, %s)%s%s",
+				padStart(usd(x.AtWindow.USDMonth), 10), host, w.LoadBalancer, w.Region, w.Account, quiet, recommended))
 		}
 	}
 	if len(e.LeftOut) > 0 {
@@ -110,7 +121,11 @@ func Summary(e estimate.Estimate) []string {
 				}
 			}
 			if count != 0 {
-				why = append(why, fmt.Sprintf("%d %s", count, l.words))
+				words := l.words
+				if l.code == estimate.CodeIdle {
+					words = fmt.Sprintf("idle for %d days", daysOf(e))
+				}
+				why = append(why, fmt.Sprintf("%d %s", count, words))
 			}
 		}
 		reasons := ""
@@ -168,7 +183,7 @@ func costVisual(e estimate.Estimate) []string {
 		last = fmt.Sprintf("  Saved: %s a month, %s", usd(saving), share)
 	}
 	return []string{
-		fmt.Sprintf("Monthly cost of the %s estimated, at a %s idle window:", n(t.Workloads, "workload"), windowAdjective(e.Options.Window)),
+		fmt.Sprintf("Monthly cost of the %s estimated, at %s:", n(t.Workloads, "workload"), figuresWindow(e.Options)),
 		fmt.Sprintf("  Actual cost   %s  %s  %s", barOf(t.ActualMonth), padStart(values[0], width), percent(t.ActualMonth)),
 		fmt.Sprintf("  With Dormeto  %s  %s  %s", barOf(t.WithDormetoMonth), padStart(values[1], width), percent(t.WithDormetoMonth)),
 		last,

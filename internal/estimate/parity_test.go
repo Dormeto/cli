@@ -56,7 +56,7 @@ type worldPorts struct{ refusal string }
 
 func (worldPorts) Whoami(context.Context) (string, error)       { return "111111111111", nil }
 func (worldPorts) Organization(context.Context) (string, error) { return "o-a1b2c3d4e5", nil }
-func (worldPorts) Inventory(context.Context) (discover.OrgInventory, error) {
+func (worldPorts) Inventory(context.Context, func(discover.InventoryProgress)) (discover.OrgInventory, error) {
 	return discover.OrgInventory{Accounts: []discover.Account{{ID: "111111111111", Name: "management"}, {ID: "222222222222", Name: "shop"}, {ID: "333333333333", Name: "legacy"}}}, nil
 }
 func (p worldPorts) Assume(_ context.Context, account, _ string) (aws.Credentials, error) {
@@ -94,7 +94,7 @@ func TestTheWorldsEstimateAsNodes(t *testing.T) {
 	if err := json.Unmarshal(c.Output, &output); err != nil {
 		t.Fatal(err)
 	}
-	o, err := options.Parse(input.Argv)
+	o, err := options.Parse(nodeArgv(input.Argv))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +182,8 @@ func TestTheWorldsEstimateAsNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(fields, "generatedAt") // the report's run times are removed
+	fields["options"] = withoutGoOnlyOptions(t, fields["options"])
+	delete(fields, "period") // Go only (the user, 2026-10-14)
 	// Go only (the user, 2026-10-13): Dormeto installed, its cost is the installation now (portal, the world's one
 	// onboarded workload, estimated) and the recommendation's change: the same total as Node's.
 	var node DormetoCost
@@ -208,4 +210,29 @@ func TestTheWorldsEstimateAsNodes(t *testing.T) {
 	if keys := e.AccountNames.Keys(); !slices.Equal(keys, []string{"111111111111", "222222222222", "333333333333"}) {
 		t.Fatalf("accountNames %q", keys)
 	}
+}
+
+// nodeArgv is a shared case's arguments as Node read them: its figures were at a 60-minute window by default (Go's,
+// without --window, at each workload's recommended window; the user, 2026-10-14). The case's own --window, later,
+// wins.
+func nodeArgv(argv []string) []string {
+	return append([]string{"--window", "60"}, argv...)
+}
+
+// withoutGoOnlyOptions is the report's options without Go's own: --days (the user, 2026-10-14; Node read 14 days).
+func withoutGoOnlyOptions(t *testing.T, raw json.RawMessage) json.RawMessage {
+	t.Helper()
+	var o map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &o); err != nil {
+		t.Fatal(err)
+	}
+	if string(o["days"]) != "14" {
+		t.Fatalf("days %s, want 14 (Node's)", o["days"])
+	}
+	delete(o, "days")
+	out, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

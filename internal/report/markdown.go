@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Dormeto/cli/internal/discover"
@@ -108,15 +109,14 @@ func Markdown(e estimate.Estimate) string {
 	generated = strings.Replace(generated, "T", " ", 1)
 	out := []string{
 		"# Dormeto savings estimate", "",
-		fmt.Sprintf("%s, estimated %s UTC from the last 14 days of requests.", target(e), generated), "",
+		fmt.Sprintf("%s, estimated %s UTC from the last %d days of requests%s.", target(e), generated, daysOf(e), datesIn(e.Period)), "",
 	}
 	if e.Why != nil && *e.Why != "" {
 		out = append(out, "> "+*e.Why, "")
 	}
 	out = append(out,
 		"## Totals", "",
-		fmt.Sprintf("Dormeto would save about **%s a month** with a %s idle window (%s with each workload's recommended window), for %s. Dormeto itself costs about %s a month: **net about %s**.",
-			usd(t.USDMonthWindow), windowAdjective(o.Window), usd(t.USDMonthRecommended), n(t.Workloads, "workload"), usd(t.DormetoMonth), usd(net(t))), "",
+		headline(t, o), "",
 	)
 	if visual := costVisual(e); len(visual) > 0 {
 		out = append(out, "```text")
@@ -138,7 +138,7 @@ func Markdown(e estimate.Estimate) string {
 		w := x.Workload
 		hosts := hostsOr(w.Hosts, w.TargetGroup)
 		if x.Quiet {
-			hosts += " (no request in 14 days)"
+			hosts += fmt.Sprintf(" (no request in %d days)", daysOf(e))
 		}
 		hosts += managedMark(w)
 		databases := ""
@@ -247,6 +247,11 @@ func Markdown(e estimate.Estimate) string {
 
 // The options section's lines.
 func optionLines(o options.Options) []string {
+	days := strconv.Itoa(o.DaysRead()) + " days"
+	window := "each workload's recommended window (--window sets one for every workload)"
+	if o.Window != nil {
+		window = windowWords(*o.Window) + " (the recommended windows besides)"
+	}
 	accounts := "every account reached"
 	if o.Accounts != nil {
 		accounts = strings.Join(o.Accounts, ", ") + " (--accounts)"
@@ -257,15 +262,15 @@ func optionLines(o options.Options) []string {
 	}
 	ec2 := "24/7 assumed (--ec2-uptime measures it)"
 	if o.Ec2Uptime {
-		ec2 = "measured over the 14 days (--ec2-uptime)"
+		ec2 = "measured over the " + days + " (--ec2-uptime)"
 	}
 	ecs := "at the desired count when discovered, all the time (--ecs-uptime measures it)"
 	if o.EcsUptime {
-		ecs = "measured over the 14 days (--ecs-uptime)"
+		ecs = "measured over the " + days + " (--ecs-uptime)"
 	}
 	rds := "companion databases available all the time assumed, one stopped left out (--rds-uptime measures it)"
 	if o.RdsUptime {
-		rds = "companion databases measured over the 14 days (--rds-uptime)"
+		rds = "companion databases measured over the " + days + " (--rds-uptime)"
 	}
 	excluded := "none"
 	if len(o.ExcludeTags) > 0 {
@@ -301,9 +306,29 @@ func optionLines(o options.Options) []string {
 		"- Role in member accounts: " + o.Role,
 		"- Baseline: " + baseline,
 		fmt.Sprintf("- Discounts: compute %s%%, databases %s%%", estimate.JSNumber(o.Discounts.Compute), estimate.JSNumber(o.Discounts.Databases)),
-		"- Idle window of the figures: " + windowWords(o.Window) + " (the recommended windows besides)",
+		"- Requests: the last " + days + " (--days)",
+		"- Idle window of the figures: " + window,
 		"- Wakes a day: " + wakes,
 		"- Minimum saving: " + minSaving,
 		"- Companion databases: found by security group, " + rdsWakes,
 	}
+}
+
+// headline is the Totals' sentence: the savings at the figures' window (--window, then the recommended windows' too),
+// Dormeto's cost and the net.
+func headline(t estimate.Totals, o options.Options) string {
+	if o.Window == nil {
+		return fmt.Sprintf("Dormeto would save about **%s a month** at each workload's recommended idle window, for %s. Dormeto itself costs about %s a month: **net about %s**.",
+			usd(t.USDMonthWindow), n(t.Workloads, "workload"), usd(t.DormetoMonth), usd(net(t)))
+	}
+	return fmt.Sprintf("Dormeto would save about **%s a month** with a %s idle window (%s with each workload's recommended window), for %s. Dormeto itself costs about %s a month: **net about %s**.",
+		usd(t.USDMonthWindow), windowAdjective(*o.Window), usd(t.USDMonthRecommended), n(t.Workloads, "workload"), usd(t.DormetoMonth), usd(net(t)))
+}
+
+// datesIn is the period's dates in parentheses, after a space, or "" (an estimate written before --days).
+func datesIn(p estimate.Period) string {
+	if dates := periodDates(p); dates != "" {
+		return " (" + dates + ")"
+	}
+	return ""
 }
