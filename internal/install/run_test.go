@@ -804,7 +804,7 @@ func TestInstallGuidedFirstInstall(t *testing.T) {
 
 	s := w.saved()
 	want := Settings{Env: "prod", Region: "eu-west-1", Version: "0.11.0", Mode: "organization", AdminEmails: []string{"you@example.com"},
-		OrganizationID: "o-vvk0115ixn", ReleaseBase: base, LastPlan: "dmt-prod-install:b1"}
+		OrganizationID: "o-vvk0115ixn", ReleaseBase: base, LastPlan: "dmt-prod-install:b1", LastPlanKind: "apply"}
 	rwEqual(t, "install.json", s, want)
 	cfg := w.objects["prod/config/main.tf.json"]
 	if !strings.Contains(cfg, `"discovery_mode": "organization"`) || !strings.Contains(cfg, `"you@example.com"`) {

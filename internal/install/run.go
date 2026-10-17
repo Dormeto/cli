@@ -591,7 +591,8 @@ func (x *run) install() error {
 	if err := PutConfig(x.ctx, x.c, x.p, cfg); err != nil {
 		return err
 	}
-	s.LastPlan = "" // a plan of the settings before is not this release's: until the new one starts, there is none to apply
+	// A plan of the settings before is not this release's: until the new one starts, there is none to apply.
+	s.LastPlan, s.LastPlanKind = "", ""
 	if err := WriteSettings(x.ctx, x.c, x.p, s); err != nil {
 		return err
 	}
@@ -603,7 +604,7 @@ func (x *run) install() error {
 	following := "Follow it: dormeto install status " + x.args() + "; apply it once done: dormeto install apply " + x.args()
 	planGoesOn := "the plan goes on in CodeBuild. " + following
 	x.interrupted = "Interrupted: the plan started (build " + id + ") and goes on in CodeBuild. " + following
-	s.LastPlan = id
+	s.LastPlan, s.LastPlanKind = id, planApply
 	// The plan runs: its id is kept even when Ctrl-C comes now.
 	if err := WriteSettings(context.WithoutCancel(x.ctx), x.c, x.p, s); err != nil {
 		return err
@@ -771,6 +772,9 @@ func (x *run) applyLast() error {
 			return &stop{1, "no plan to apply: run dormeto install"}
 		}
 		return x.accessInstalled(s, saved, applied, true)
+	}
+	if saved.LastPlanKind == planDestroy {
+		return &stop{1, "the last plan destroys the manager: dormeto uninstall apply applies it"}
 	}
 	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args()
 	// A stale or failed plan is refused before it is shown; with a management profile, a plan applied already leaves

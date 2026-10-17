@@ -46,11 +46,18 @@ type Settings struct {
 	ExcludeAccounts []string                   `json:"excludeAccounts,omitempty"`
 	DiscoveryOnly   []string                   `json:"discoveryOnly,omitempty"`
 	BuildRole       string                     `json:"buildRole,omitempty"`
-	ReleaseBase     string                     `json:"releaseBase,omitempty"` // the base the plan used, for a later install apply
-	Installed       string                     `json:"installed,omitempty"`   // the version applied
-	LastPlan        string                     `json:"lastPlan,omitempty"`    // build ids
+	ReleaseBase     string                     `json:"releaseBase,omitempty"`  // the base the plan used, for a later install apply
+	Installed       string                     `json:"installed,omitempty"`    // the version applied
+	LastPlan        string                     `json:"lastPlan,omitempty"`     // build ids
+	LastPlanKind    string                     `json:"lastPlanKind,omitempty"` // planApply or planDestroy; "": planApply
 	LastApply       string                     `json:"lastApply,omitempty"`
 }
+
+// The kinds of the last plan (Settings.LastPlanKind): each explicit apply applies its own kind only (ruling R15).
+const (
+	planApply   = "apply"   // install's: dormeto install apply applies it
+	planDestroy = "destroy" // uninstall's: dormeto uninstall apply applies it
+)
 
 var (
 	envRe        = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,8}[a-z0-9])?$`)
@@ -150,7 +157,7 @@ func validRegion(region string) error {
 
 // Merge is the settings a run uses: saved (install.json, or zero on a first install), each field whose flag is in set
 // (the flag names) replaced by the flag's value. Vars merge key by key, a flag's key winning. The install's own state
-// (Installed, LastPlan, LastApply) is always saved's.
+// (Installed, LastPlan, LastPlanKind, LastApply) is always saved's.
 func Merge(flags, saved Settings, set map[string]bool) Settings {
 	s := saved
 	if set["env"] {
