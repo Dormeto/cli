@@ -255,10 +255,15 @@ func (x *run) accessSteps(s Settings, rel Release, confirmed bool) error {
 	return x.deployAccess(mgmt, op, s, rel, a)
 }
 
-// showAccessPlan prints what the build would do: the delegation policy, the roles, the accounts left out.
+// showAccessPlan prints what the build would do: the delegation policy (an existing one warned about), the roles, the
+// accounts left out.
 func (x *run) showAccessPlan(a Access) {
 	x.say("\nPlan (organization access)")
 	x.say("  delegation policy: %s", policyDetail(a.PolicyChange))
+	if len(a.PolicyBase) > 0 { // one policy per organization (spec §9)
+		x.say("  ! the delegation policy exists already: a Terraform configuration that writes it whole (the release's organization module) " +
+			"removes the statement merged here at its next apply")
+	}
 	if len(a.Unreachable) > 0 && len(a.Ready)+len(a.Missing)+len(a.Foreign) == 0 {
 		x.say("  roles: none, the member role reaches no account (the procedure for them: %s)", organizationProcedure)
 	} else {

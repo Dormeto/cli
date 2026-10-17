@@ -430,6 +430,32 @@ func TestInstallOrganizationAccessNothingToDo(t *testing.T) {
 	}
 }
 
+// A delegation policy already there is merged: the plan warns that a Terraform configuration writing it whole removes the
+// merged statement (spec §9); a new policy has no such warning.
+func TestOrganizationAccessPlanWarnsOfATerraformManagedPolicy(t *testing.T) {
+	const warning = "  ! the delegation policy exists already: a Terraform configuration that writes it whole (the release's organization module) " +
+		"removes the statement merged here at its next apply\n"
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.rwOrganization()
+	other := `{"Version":"2012-10-17","Statement":[{"Sid":"Other","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::121014831971:root"},"Action":"organizations:ListAccounts","Resource":"*"}]}`
+	w.policy = &other
+	r := Request{Profile: "p", Region: "eu-west-1", ManagementProfile: "m", Access: true}
+	code, out, _ := w.run(Install, r, true, "n")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwInOrder(t, out, "\nPlan (organization access)\n", "  delegation policy: DormetoReadOrganization gets this manager\n", warning,
+		"Organization access not deployed: ")
+
+	w = rwNew(t)
+	w.installed("0.11.0")
+	w.rwOrganization()
+	if code, out, _ = w.run(Install, r, true, "n"); code != 0 || !strings.Contains(out, "  delegation policy: new\n") || strings.Contains(out, "Terraform configuration") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
 // A detached run's organization build still running: nothing is written over it, install status follows it.
 func TestInstallOrganizationAccessAlreadyRunning(t *testing.T) {
 	w := rwNew(t)
