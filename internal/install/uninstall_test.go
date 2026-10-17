@@ -51,7 +51,10 @@ const (
 	unKept      = "Kept the bucket dmt-install-532105290256-eu-west-1 (its answers serve a reinstall) and the project; dormeto uninstall " + rwArgs + " again in a terminal removes them.\n"
 	unRemoved   = "Removed the bucket dmt-install-532105290256-eu-west-1, the role dmt-prod-install, the log group /aws/codebuild/dmt-prod-install and the project dmt-prod-install.\n"
 	unAccess    = "Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: https://dormeto.com/organization-access.html\n"
-	unRefused   = "offboard the workloads and uninstall the routers in the dashboard (Routers) first.\n"
+	// unLeftover is said while the bucket is kept: install status needs install.json.
+	unLeftover = "A detached organization access run's build role and project in the management account: dormeto install status --management-profile <profile> " +
+		rwArgs + " removes them.\n"
+	unRefused = "offboard the workloads and uninstall the routers in the dashboard (Routers) first.\n"
 )
 
 var unRequest = Request{Profile: "p", Region: "eu-west-1"}
@@ -288,7 +291,7 @@ func TestUninstallALocalInstalledVersionNeedsItsRelease(t *testing.T) {
 func TestUninstallWritesTheProtectionOffThenForgetsTheDestroyPlan(t *testing.T) {
 	w := unNew(t)
 	code, out, _ := w.run(Uninstall, unRequest, true, "y", "y", "y", "n")
-	if code != 0 || !strings.HasSuffix(out, unKept+unAccess) {
+	if code != 0 || !strings.HasSuffix(out, unKept+unAccess+unLeftover) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	if cfg := w.objects["prod/config/main.tf.json"]; !strings.Contains(cfg, `"deletion_protection": false`) {
@@ -312,7 +315,7 @@ func TestUninstallProtectionAlreadyOff(t *testing.T) {
 	}
 	rwEqual(t, "questions", asked, []string{unEvent, unDestroy, unBootstrap})
 	rwEqual(t, "builds", w.actions(), []string{"plan-destroy", "apply-destroy"})
-	if strings.Contains(out, "Deletion protection") || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) {
+	if strings.Contains(out, "Deletion protection") || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess+unLeftover) {
 		t.Errorf("output:\n%s", out)
 	}
 
@@ -386,7 +389,7 @@ func TestUninstallWithoutATerminal(t *testing.T) {
 	}
 	rwInOrder(t, out, "Plan (build dmt-prod-install:b3)\n  manager 0.11.0: 0 to add, 0 to change, 3 to destroy\n",
 		"Destroy (build dmt-prod-install:b4…)  succeeded", "  ✓ destroyed: 3 resources\n")
-	if !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) || strings.Contains(out, "Event-driven") {
+	if !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess+unLeftover) || strings.Contains(out, "Event-driven") {
 		t.Errorf("output:\n%s", out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan", "apply", "plan-destroy", "apply-destroy"})
@@ -452,8 +455,18 @@ func TestUninstallNothingAppliedGoesToTheBootstrap(t *testing.T) {
 	w := unNew(t)
 	delete(w.objects, "prod/manager.tfstate")
 	code, out, asked := w.run(Uninstall, unRequest, false)
-	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, unKept+unAccess) || w.gone() || len(w.writes) != 0 {
+	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, unKept+unAccess+unLeftover) || w.gone() || len(w.writes) != 0 {
 		t.Errorf("exit code %d, asked %q, writes %v:\n%s", code, asked, w.writes, out)
+	}
+}
+
+// The bucket removed, install status cannot run: the line naming it is not said.
+func TestUninstallTheBucketRemovedNamesNoStatus(t *testing.T) {
+	w := unNew(t)
+	unProtectionOff(w)
+	code, out, _ := w.run(Uninstall, unRequest, true, "y", "y", "y")
+	if code != 0 || !strings.HasSuffix(out, unRemoved+unAccess) || strings.Contains(out, "dormeto install status --management-profile") {
+		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }
 
@@ -513,7 +526,7 @@ func TestUninstallYesConfirmsNoPlan(t *testing.T) {
 	r.Yes = true
 	code, out, asked := w.run(Uninstall, r, true, "y")
 	rwEqual(t, "questions", asked, []string{unDestroy})
-	if code != 0 || !strings.Contains(out, unWarning) || !strings.HasSuffix(out, unKept+unAccess) || w.gone() {
+	if code != 0 || !strings.Contains(out, unWarning) || !strings.HasSuffix(out, unKept+unAccess+unLeftover) || w.gone() {
 		t.Errorf("exit code %d, gone %v:\n%s", code, w.gone(), out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan-destroy", "apply-destroy"})
@@ -582,7 +595,7 @@ func TestUninstallApplyInATerminalAsksNothing(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	code, out, asked := w.run(UninstallApply, unRequest, true)
-	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) || w.gone() {
+	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess+unLeftover) || w.gone() {
 		t.Errorf("exit code %d, asked %q, gone %v:\n%s", code, asked, w.gone(), out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan-destroy", "apply-destroy"})
@@ -599,7 +612,7 @@ func TestUninstallAFailedFirstApplyIsDestroyed(t *testing.T) {
 	}
 	rwEqual(t, "questions", asked, []string{unEvent, unLift, unDestroy, unBootstrap})
 	rwEqual(t, "builds", w.actions(), []string{"plan", "apply", "plan-destroy", "apply-destroy"})
-	if !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) {
+	if !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess+unLeftover) {
 		t.Errorf("output:\n%s", out)
 	}
 
@@ -613,7 +626,7 @@ func TestUninstallAFailedFirstApplyIsDestroyed(t *testing.T) {
 	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:d1", env: map[string]string{"ACTION": "plan-destroy"}, status: cbtypes.StatusTypeSucceeded,
 		start: rwT0.Add(-time.Minute)})
 	code, out, _ = w.run(UninstallApply, unRequest, false)
-	if code != 0 || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) {
+	if code != 0 || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess+unLeftover) {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"apply-destroy"})

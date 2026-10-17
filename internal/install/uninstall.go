@@ -47,10 +47,11 @@ func (x *run) uninstall() error {
 			return err
 		}
 	}
-	if err := x.removeBootstrap(s, true); err != nil {
+	kept, err := x.removeBootstrap(s, true)
+	if err != nil {
 		return err
 	}
-	x.accessKept(s)
+	x.accessKept(s, kept)
 	return nil
 }
 
@@ -91,10 +92,11 @@ func (x *run) uninstallApply() error {
 	if err := x.applyDestroy(s, sum); err != nil {
 		return err
 	}
-	if err := x.removeBootstrap(s, false); err != nil {
+	kept, err := x.removeBootstrap(s, false)
+	if err != nil {
 		return err
 	}
-	x.accessKept(s)
+	x.accessKept(s, kept)
 	return nil
 }
 
@@ -447,35 +449,42 @@ func (x *run) applyDestroy(s Settings, sum PlanSummary) error {
 }
 
 // removeBootstrap removes the install's bucket (its state and answers), role, log group and project once the person
-// asks (ask: in a terminal, without --yes, whose answer is no); otherwise they are kept, and how to remove them is
-// said. Once started, the removal is not cancelled: a bucket left half emptied would have lost install.json, which
+// asks (ask: in a terminal, without --yes, whose answer is no); otherwise they are kept (kept), and how to remove them
+// is said. Once started, the removal is not cancelled: a bucket left half emptied would have lost install.json, which
 // names the install to remove.
-func (x *run) removeBootstrap(s Settings, ask bool) error {
+func (x *run) removeBootstrap(s Settings, ask bool) (kept bool, err error) {
 	if ask && x.d.Terminal && !x.r.Yes {
 		ok, err := x.confirm("Remove the install's bucket (its state and answers), role, log group and project too?")
 		if err != nil {
-			return err
+			return true, err
 		}
 		if ok {
 			if err := Teardown(context.WithoutCancel(x.ctx), x.c, x.p, true); err != nil {
-				return err
+				return true, err
 			}
 			role := ", the role " + x.p.Role
 			if s.BuildRole != "" { // the role given is not the install's to remove
 				role = ""
 			}
 			x.say("Removed the bucket %s%s, the log group %s and the project %s.", x.p.Bucket, role, x.p.LogGroup, x.p.Name)
-			return nil
+			return false, nil
 		}
 	}
 	x.say("Kept the bucket %s (its answers serve a reinstall) and the project; dormeto uninstall %s again in a terminal removes them.", x.p.Bucket, x.args())
-	return nil
+	return true, nil
 }
 
-// accessKept says, in organization mode, that organization access is not removed, and where its removal is described.
-func (x *run) accessKept(s Settings) {
-	if s.Mode == "organization" {
-		x.say("Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: %s",
-			organizationProcedure)
+// accessKept says, in organization mode, that organization access is not removed, and where its removal is described;
+// while the bucket is kept (install status reads install.json), the command that removes what a detached organization
+// access run left in the management account (its build role and project).
+func (x *run) accessKept(s Settings, bucketKept bool) {
+	if s.Mode != "organization" {
+		return
+	}
+	x.say("Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: %s",
+		organizationProcedure)
+	if bucketKept {
+		x.say("A detached organization access run's build role and project in the management account: dormeto install status --management-profile <profile> %s removes them.",
+			x.args())
 	}
 }
