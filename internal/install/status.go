@@ -205,7 +205,7 @@ func (x *run) lastBuilds(plan string, applied *Applied) (string, bool, error) {
 // detached run's leftovers removed, then the survey; without, where it is checked. It tells whether a check or a
 // followed organization build failed.
 func (x *run) accessStatus(s Settings, saved *Settings, applied *Applied) (bool, error) {
-	if s.Mode != "organization" || x.w.Organization == nil {
+	if s.Mode != "organization" {
 		x.say("%s", Check{"organization access", "not used (account deployment)", Skip}.Line())
 		return false, nil
 	}
@@ -239,15 +239,8 @@ func (x *run) accessStatus(s Settings, saved *Settings, applied *Applied) (bool,
 // build has ended, following that build first while it runs: whether it failed.
 func (x *run) leftover(mgmt Clients) (bool, error) {
 	op := OrgNames(x.w.Organization.Management, x.region, x.env)
-	got, err := mgmt.CodeBuild.BatchGetProjects(x.ctx, &codebuild.BatchGetProjectsInput{Names: []string{op.Name}})
-	if err != nil {
-		return false, fmt.Errorf("check project %s: %w", op.Name, err)
-	}
-	if len(got.Projects) == 0 {
-		return false, nil
-	}
-	id, err := Running(x.ctx, mgmt, op.Name)
-	if err != nil {
+	exists, id, err := orgRunning(x.ctx, mgmt, op)
+	if err != nil || !exists {
 		return false, err
 	}
 	if id == "" {

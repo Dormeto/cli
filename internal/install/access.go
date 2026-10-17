@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 )
 
 const (
@@ -212,11 +214,32 @@ func policyDone(change string) string {
 	return "updated"
 }
 
+// orgRunning tells whether the management account's organization project exists (what a detached run left) and its
+// build in progress ("" when none).
+func orgRunning(ctx context.Context, mgmt Clients, op Project) (exists bool, id string, err error) {
+	got, err := mgmt.CodeBuild.BatchGetProjects(ctx, &codebuild.BatchGetProjectsInput{Names: []string{op.Name}})
+	if err != nil {
+		return false, "", fmt.Errorf("check project %s: %w", op.Name, err)
+	}
+	if len(got.Projects) == 0 {
+		return false, "", nil
+	}
+	id, err = Running(ctx, mgmt, op.Name)
+	return true, id, err
+}
+
 // deployAccess applies the plan a from the management account: its project bootstrapped, the plan written, the build
-// started and followed, then the project and its role removed and the accounts' results said. A failure before the
-// build removes what the bootstrap made; a detached build keeps them, for install status to remove once it ends.
+// started and followed, then the project and its role removed and the accounts' results said. A detached run's build
+// still running is left alone. A failure before the build removes what the bootstrap made; a detached build keeps
+// them, for install status to remove once it ends.
 func (x *run) deployAccess(mgmt Clients, s Settings, rel Release, a Access) error {
 	op := OrgNames(a.Management, x.region, x.env)
+	if _, running, err := orgRunning(x.ctx, mgmt, op); err != nil || running != "" {
+		if err != nil {
+			return err
+		}
+		return &stop{1, "Organization access is running already (build " + running + "): dormeto install status " + x.args() + " follows it"}
+	}
 	id, err := x.startAccess(mgmt, op, s, rel, a)
 	if err != nil {
 		var running *RunningError

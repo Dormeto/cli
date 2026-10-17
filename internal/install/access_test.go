@@ -373,3 +373,20 @@ func TestInstallOrganizationAccessNothingToDo(t *testing.T) {
 		t.Errorf("wrote in the management account: %v", m)
 	}
 }
+
+// A detached run's organization build still running: nothing is written over it, install status follows it.
+func TestInstallOrganizationAccessAlreadyRunning(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.rwOrganization()
+	w.mgmt.bucket, w.mgmt.role, w.mgmt.project, w.mgmt.logGroup = true, true, true, true
+	w.mgmt.builds = []*rwBuild{{id: "dmt-prod-organization:b1", env: map[string]string{"ACTION": "apply"}, status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)}}
+	r := Request{Profile: "p", Region: "eu-west-1", ManagementProfile: "m", Access: true}
+	code, out, _ := w.run(Install, r, true, "y")
+	if code != 1 || !strings.HasSuffix(out, "Organization access is running already (build dmt-prod-organization:b1): dormeto install status "+rwMgmtArgs+" follows it\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if m := w.mgmtWrites(); len(m) != 0 {
+		t.Errorf("wrote in the management account: %v", m)
+	}
+}
