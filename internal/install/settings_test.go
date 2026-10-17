@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const acm = "arn:aws:acm:us-east-1:123456789012:certificate/abc-123"
+const certARN = "arn:aws:acm:us-east-1:123456789012:certificate/abc-123"
 
 // valid is the smallest settings that pass every check.
 func valid() Settings {
@@ -42,10 +42,10 @@ func TestValidate(t *testing.T) {
 		{"emails none", func(s *Settings) { s.AdminEmails = nil }, "--admin-emails"},
 		{"emails bad", func(s *Settings) { s.AdminEmails = []string{"a@example.com", "nope"} }, "--admin-emails"},
 		{"domain nil", func(s *Settings) { s.Domain = nil }, ""},
-		{"domain ok", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: acm, ZoneID: "Z1"} }, ""},
-		{"domain no dashboard", func(s *Settings) { s.Domain = &Domain{CertificateARN: acm, ZoneID: "Z1"} }, "--domain"},
+		{"domain ok", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: certARN, ZoneID: "Z1"} }, ""},
+		{"domain no dashboard", func(s *Settings) { s.Domain = &Domain{CertificateARN: certARN, ZoneID: "Z1"} }, "--domain"},
 		{"domain no certificate", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", ZoneID: "Z1"} }, "--certificate-arn"},
-		{"domain no zone", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: acm} }, "--zone-id"},
+		{"domain no zone", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: certARN} }, "--zone-id"},
 		{"domain bad region cert", func(s *Settings) {
 			s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: "arn:aws:acm:eu-west-1:123456789012:certificate/x", ZoneID: "Z1"}
 		}, "--certificate-arn"},
@@ -97,14 +97,14 @@ func TestAuthHost(t *testing.T) {
 func TestMerge(t *testing.T) {
 	saved := Settings{
 		Env: "prd", Region: "eu-west-1", Version: "0.10.0", Mode: "organization", AdminEmails: []string{"old@example.com"},
-		Domain:     &Domain{Dashboard: "old.example.com", CertificateARN: acm, ZoneID: "Z1"},
+		Domain:     &Domain{Dashboard: "old.example.com", CertificateARN: certARN, ZoneID: "Z1"},
 		Vars:       map[string]json.RawMessage{"a": json.RawMessage(`1`), "b": json.RawMessage(`2`)},
 		MemberRole: "OldRole", Accounts: []string{"111111111111"}, BuildRole: "arn:aws:iam::111111111111:role/B",
 		Installed: "0.10.0", LastPlan: "plan-1", LastApply: "apply-1",
 	}
 	flags := Settings{
 		Env: "dev", Region: "us-east-1", Version: "0.11.0", Mode: "account", AdminEmails: []string{"new@example.com"},
-		Domain: &Domain{Dashboard: "new.example.com", CertificateARN: acm, ZoneID: "Z2"}, SESIdentity: "ses", EmailFrom: "f@x.io",
+		Domain: &Domain{Dashboard: "new.example.com", CertificateARN: certARN, ZoneID: "Z2"}, SESIdentity: "ses", EmailFrom: "f@x.io",
 		Vars:       map[string]json.RawMessage{"b": json.RawMessage(`3`), "c": json.RawMessage(`4`)},
 		MemberRole: "NewRole", Accounts: []string{"222222222222"}, ExcludeAccounts: []string{"333333333333"},
 		DiscoveryOnly: []string{"444444444444"}, BuildRole: "arn:aws:iam::222222222222:role/B",
@@ -155,7 +155,7 @@ func TestMerge(t *testing.T) {
 func TestJSONRoundTrip(t *testing.T) {
 	s := valid()
 	s.Version = "0.11.0"
-	s.Domain = &Domain{Dashboard: "d.example.com", Auth: "auth.d.example.com", CertificateARN: acm, ZoneID: "Z1"}
+	s.Domain = &Domain{Dashboard: "d.example.com", Auth: "auth.d.example.com", CertificateARN: certARN, ZoneID: "Z1"}
 	s.Vars = map[string]json.RawMessage{"x": json.RawMessage(`{"a":1}`)}
 	s.Accounts = []string{"123456789012"}
 	s.Installed = "0.11.0"
