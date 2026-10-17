@@ -303,6 +303,21 @@ func TestSurveyAccountsExcludeAndDiscoveryOnly(t *testing.T) {
 	orgWant(t, cs, "member accounts", OK, "1 ready, 1 to create, 1 discovery only")
 }
 
+// --accounts naming the management account: left out of the roles all the same (decision 19), and said.
+func TestSurveyAccountsNamingTheManagementAccount(t *testing.T) {
+	w := orgNew()
+	s := orgSettings
+	s.Accounts = []string{orgMgmt, "444444444444"}
+	a, cs := w.survey(t, s)
+	orgEq(t, "Accounts", a.Accounts(), []string{"444444444444"})
+	orgWant(t, cs, "organization accounts", Warn, "--accounts names the management account 111111111111: left out of the roles (its procedure: https://dormeto.com/organization-access.html)")
+
+	s.Accounts = []string{orgMgmt, "123123123123"}
+	_, cs = w.survey(t, s)
+	orgWant(t, cs, "organization accounts", Warn, "not in the organization: 123123123123; "+
+		"--accounts names the management account 111111111111: left out of the roles (its procedure: https://dormeto.com/organization-access.html)")
+}
+
 func TestSurveyRoleNameVars(t *testing.T) {
 	w := orgNew()
 	w.accounts["444444444444"] = orgAcct{status: orgtypes.AccountStatusActive}

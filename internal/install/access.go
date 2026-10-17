@@ -256,7 +256,7 @@ func (x *run) accessSteps(s Settings, rel Release, confirmed bool) error {
 }
 
 // showAccessPlan prints what the build would do: the delegation policy (an existing one warned about), the roles, the
-// accounts left out.
+// accounts left out, the management account among them with its procedure (decision 19).
 func (x *run) showAccessPlan(a Access) {
 	x.say("\nPlan (organization access)")
 	x.say("  delegation policy: %s", policyDetail(a.PolicyChange))
@@ -272,6 +272,7 @@ func (x *run) showAccessPlan(a Access) {
 	if len(a.Unreachable)+len(a.Foreign) > 0 {
 		x.say("  left out: %s, %s", counted(a.Unreachable, "unreachable"), counted(a.Foreign, "another manager's"))
 	}
+	x.say("  management account %s: %s", a.Management, managementLeftOut)
 }
 
 // accounts is "1 account", "<n> accounts".

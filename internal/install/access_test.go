@@ -64,6 +64,7 @@ func TestInstallDeploysOrganizationAccess(t *testing.T) {
 		"  delegation policy: new\n",
 		"  roles: 1 updated, 1 created in 2 accounts (0 discovery only)\n",
 		"  left out: 1 unreachable (666666666666), 1 another manager's (777777777777)\n",
+		"  management account 809706483662: left out of the roles (its procedure: https://dormeto.com/organization-access.html)\n",
 		"\nBootstrap (API calls) in the management account 809706483662: bucket dmt-install-809706483662-eu-west-1, role dmt-prod-organization, project dmt-prod-organization\n",
 		"  the management account's build role and project removed\n",
 		"  ✓ organization access: delegation policy created; roles in 2 accounts\n",

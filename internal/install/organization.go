@@ -22,9 +22,12 @@ import (
 
 const (
 	organizationProcedure = "https://dormeto.com/organization-access.html"
-	delegationSid         = "DormetoReadOrganization"
-	orgPolicyName         = "dormeto-organization"
-	surveyParallel        = 20
+	// managementLeftOut is why the management account gets no roles (decision 19: the member role is not there, and AWS
+	// advises no workloads there), with its procedure.
+	managementLeftOut = "left out of the roles (its procedure: " + organizationProcedure + ")"
+	delegationSid     = "DormetoReadOrganization"
+	orgPolicyName     = "dormeto-organization"
+	surveyParallel    = 20
 )
 
 // Access is what the survey of the organization found, and the plan the build applies.
@@ -74,8 +77,15 @@ func Survey(ctx context.Context, mgmt Clients, assume func(account string) (Clie
 	if err != nil {
 		return Access{}, cs, fmt.Errorf("list the organization's accounts: %w", err)
 	}
+	var said []string
 	if len(outside) > 0 {
-		cs = append(cs, Check{"organization accounts", "not in the organization: " + strings.Join(outside, ", "), Warn})
+		said = append(said, "not in the organization: "+strings.Join(outside, ", "))
+	}
+	if slices.Contains(s.Accounts, m) { // left out all the same (decision 19)
+		said = append(said, "--accounts names the management account "+m+": "+managementLeftOut)
+	}
+	if len(said) > 0 {
+		cs = append(cs, Check{"organization accounts", strings.Join(said, "; "), Warn})
 	}
 
 	mine := managerRoles(manager.Account, s.Env)
