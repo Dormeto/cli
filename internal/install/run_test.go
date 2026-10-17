@@ -1,8 +1,9 @@
 package install
 
 // The commands' runs (run.go) through fakes of every port: one account's world (its organization, the install's
-// bucket, role, log group, project and builds, a started build running at once; with rwOrganization, the management
-// account's and the member accounts' too), a scripted prompter, the releases on a fake HTTP, a fake clock.
+// bucket, role, log group, project and builds, a started build running at once, the manager's table and the regions'
+// functions; with rwOrganization, the management account's and the member accounts' too), a scripted prompter, the
+// releases on a fake HTTP, a fake clock.
 
 import (
 	"bytes"
@@ -26,8 +27,14 @@ import (
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	cogtypes "github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	orgtypes "github.com/aws/aws-sdk-go-v2/service/organizations/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -56,6 +63,11 @@ const (
 		`{"address":"module.dormeto.aws_lambda_function.api","type":"aws_lambda_function","change":{"actions":["update"]}},` +
 		`{"address":"module.dormeto.aws_dynamodb_table.events","type":"aws_dynamodb_table","change":{"actions":["delete","create"]}}]}`
 	rwOutputs = `{"dashboard_url":{"value":"` + rwDashboard + `"},"user_pool_id":{"value":"eu-west-1_abc"},"version":{"value":"0.11.0"}}`
+	// What a destroy plan build writes: the manager's three resources destroyed.
+	rwDestroy = `{"format_version":"1.2","resource_changes":[` +
+		`{"address":"module.dormeto.aws_cognito_user_pool.users","type":"aws_cognito_user_pool","change":{"actions":["delete"]}},` +
+		`{"address":"module.dormeto.aws_dynamodb_table.manager","type":"aws_dynamodb_table","change":{"actions":["delete"]}},` +
+		`{"address":"module.dormeto.aws_lambda_function.api","type":"aws_lambda_function","change":{"actions":["delete"]}}]}`
 )
 
 // rwBuild is a build of a project: vars is nil for a build the run did not start (env then holds its variables).
@@ -130,6 +142,7 @@ type rwWorld struct {
 	org           *Organization
 	region        string // the profile's region; "": none
 	plan          string // the plan.json a plan build writes
+	destroyPlan   string // the plan.json a plan-destroy build writes
 	simDenied     bool   // iam:SimulatePrincipalPolicy refused: a warning
 	identityErr   error  // sts:GetCallerIdentity's error
 	cancelOnStart bool   // Ctrl-C as the build starts
@@ -148,14 +161,24 @@ type rwWorld struct {
 	failing map[string]string  // account → its error in the organization build's roles.json
 	mu      sync.Mutex         // the survey assumes the member role from many goroutines
 	assumed []string           // "<profile> <role ARN>" of each member role assumed
+
+	regions      map[string]string   // the account's regions and their opt-in status
+	functions    map[string][]string // region → the Lambda functions' names
+	listed       []string            // the regions whose functions were listed
+	routers      int                 // the router items in the manager's table
+	lambdaDenied map[string]bool     // the regions whose functions cannot be listed
+	noTable      bool                // the manager's table does not exist
 }
 
 func rwNew(t *testing.T) *rwWorld {
 	w := &rwWorld{
 		rwAcct: rwNewAcct(rwAccount, "dmt-prod-install", ""),
-		t:      t, region: "eu-west-1", plan: rwPlan, clock: rwT0,
+		t:      t, region: "eu-west-1", plan: rwPlan, destroyPlan: rwDestroy, clock: rwT0,
 		org:  &Organization{ID: "o-vvk0115ixn", Management: "809706483662", AllFeatures: true},
 		http: fakeHTTP{bodies: map[string]string{rwDashboard: "ok"}},
+		regions: map[string]string{"eu-west-1": "opt-in-not-required", "us-east-1": "opt-in-not-required", "eu-south-1": "opted-in",
+			"ap-east-1": "not-opted-in"},
+		functions: map[string][]string{},
 	}
 	w.release("0.11.0", true)
 	return w
@@ -257,11 +280,16 @@ func (w *rwWorld) clients() Clients { return w.clientsOf(&w.rwAcct) }
 func (w *rwWorld) clientsOf(a *rwAcct) Clients {
 	return Clients{
 		STS: rwSTS{w: w, a: a}, IAM: rwIAM{w: w, a: a}, S3: rwS3{w: w, a: a}, CodeBuild: rwCB{w: w, a: a}, Logs: rwLogs{w: w, a: a},
-		Organizations: rwOrgs{w: w}, EC2: &chkEC2{status: "opt-in-not-required"},
+		Organizations: rwOrgs{w: w}, EC2: rwEC2{w: w},
 		ACM:     chkACM{status: "ISSUED", names: []string{"dormeto.example.com", "*.dormeto.example.com"}},
 		Route53: chkR53{name: "example.com."}, SESv2: chkSES{verified: true, production: true},
-		Lambda: chkLambda{}, Cognito: rwCognito{},
+		Lambda: rwLambda{w: w, region: "eu-west-1"}, Cognito: rwCognito{}, DynamoDB: rwDDB{w: w},
 	}
+}
+
+// enabled tells whether the account's region is enabled.
+func (w *rwWorld) enabled(region string) bool {
+	return w.regions[region] == "opt-in-not-required" || w.regions[region] == "opted-in"
 }
 
 // assume is the member role assumed in an account of the organization, from the management account's profile.
@@ -295,6 +323,10 @@ func (w *rwWorld) run(cmd func(context.Context, Deps, Request) int, r Request, t
 	d := Deps{
 		Clients: func(_ context.Context, profile, region string) (Clients, error) {
 			switch {
+			case region != "eu-west-1" && profile == "p" && w.enabled(region): // another region's functions
+				c := w.clients()
+				c.Lambda = rwLambda{w: w, region: region}
+				return c, nil
 			case region != "eu-west-1":
 			case profile == "p":
 				return w.clients(), nil
@@ -472,6 +504,11 @@ func (f rwIAM) DeleteRolePolicy(_ context.Context, in *iam.DeleteRolePolicyInput
 	return &iam.DeleteRolePolicyOutput{}, nil
 }
 
+func (f rwIAM) DetachRolePolicy(context.Context, *iam.DetachRolePolicyInput, ...func(*iam.Options)) (*iam.DetachRolePolicyOutput, error) {
+	f.w.write(f.a.prefix + "iam:DetachRolePolicy")
+	return &iam.DetachRolePolicyOutput{}, nil
+}
+
 func (f rwIAM) DeleteRole(_ context.Context, in *iam.DeleteRoleInput, _ ...func(*iam.Options)) (*iam.DeleteRoleOutput, error) {
 	f.w.write(f.a.prefix + "iam:DeleteRole " + aws.ToString(in.RoleName))
 	f.a.role = false
@@ -562,6 +599,35 @@ func (f rwS3) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3
 	return out, nil
 }
 
+// ListObjectVersions is each object as one version, in one page.
+func (f rwS3) ListObjectVersions(context.Context, *s3.ListObjectVersionsInput, ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error) {
+	if !f.a.bucket {
+		return nil, chkAPI("NoSuchBucket")
+	}
+	out := &s3.ListObjectVersionsOutput{}
+	for _, k := range slices.Sorted(maps.Keys(f.a.objects)) {
+		out.Versions = append(out.Versions, s3types.ObjectVersion{Key: aws.String(k), VersionId: aws.String("v1")})
+	}
+	return out, nil
+}
+
+func (f rwS3) DeleteObjects(_ context.Context, in *s3.DeleteObjectsInput, _ ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	f.w.write(f.a.prefix + "s3:DeleteObjects")
+	for _, o := range in.Delete.Objects {
+		delete(f.a.objects, aws.ToString(o.Key))
+	}
+	return &s3.DeleteObjectsOutput{}, nil
+}
+
+func (f rwS3) DeleteBucket(context.Context, *s3.DeleteBucketInput, ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
+	f.w.write(f.a.prefix + "s3:DeleteBucket")
+	if len(f.a.objects) > 0 {
+		return nil, chkAPI("BucketNotEmpty")
+	}
+	f.a.bucket = false
+	return &s3.DeleteBucketOutput{}, nil
+}
+
 type rwCB struct {
 	CodeBuild
 	w *rwWorld
@@ -632,8 +698,9 @@ func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInpu
 }
 
 // StartBuild runs the build: it ends as ends says (SUCCEEDED by default), at once unless runFor. A manager's plan that
-// succeeds writes its plan.json, an apply its applied.json and outputs.json; the organization's build says each account's
-// roles and writes roles.json, the accounts in failing failed.
+// succeeds writes its plan.json (a destroy plan's: destroyPlan), an apply its applied.json and outputs.json, an
+// apply-destroy removes them; the organization's build says each account's roles and writes roles.json, the accounts in
+// failing failed.
 func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
 	vars := map[string]string{}
 	for _, v := range in.EnvironmentVariablesOverride {
@@ -665,9 +732,14 @@ func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...
 		f.a.objects["prod/organization/roles.json"] = roles.String()
 	case b.status == cbtypes.StatusTypeSucceeded && action == "plan":
 		f.a.objects["prod/plans/"+b.id+"/plan.json"] = f.w.plan
+	case b.status == cbtypes.StatusTypeSucceeded && action == "plan-destroy":
+		f.a.objects["prod/plans/"+b.id+"/plan.json"] = f.w.destroyPlan
 	case b.status == cbtypes.StatusTypeSucceeded && action == "apply":
 		f.a.objects["prod/applied.json"] = `{"version":"` + vars["RELEASE_VERSION"] + `","build":"` + b.id + `"}`
 		f.a.objects["prod/outputs.json"] = rwOutputs
+	case b.status == cbtypes.StatusTypeSucceeded && action == "apply-destroy":
+		delete(f.a.objects, "prod/applied.json")
+		delete(f.a.objects, "prod/outputs.json")
 	}
 	f.a.builds = append(f.a.builds, b)
 	if f.w.cancelOnStart {
@@ -714,6 +786,77 @@ func (f rwLogs) GetLogEvents(_ context.Context, in *cloudwatchlogs.GetLogEventsI
 			out.Events = append(out.Events, cwtypes.OutputLogEvent{Message: aws.String(l), Timestamp: aws.Int64(b.start.UnixMilli())})
 		}
 	}
+	return out, nil
+}
+
+// rwEC2 lists the account's regions, whatever the filter (the region check looks for its own).
+type rwEC2 struct {
+	EC2
+	w *rwWorld
+}
+
+func (f rwEC2) DescribeRegions(_ context.Context, in *ec2.DescribeRegionsInput, _ ...func(*ec2.Options)) (*ec2.DescribeRegionsOutput, error) {
+	if !aws.ToBool(in.AllRegions) {
+		f.w.t.Errorf("regions listed without AllRegions")
+	}
+	out := &ec2.DescribeRegionsOutput{}
+	for _, r := range slices.Sorted(maps.Keys(f.w.regions)) {
+		out.Regions = append(out.Regions, ec2types.Region{RegionName: aws.String(r), OptInStatus: aws.String(f.w.regions[r])})
+	}
+	return out, nil
+}
+
+// rwLambda is a region's functions, listed two a page; GetFunction finds none (chkLambda's).
+type rwLambda struct {
+	chkLambda
+	w      *rwWorld
+	region string
+}
+
+func (f rwLambda) ListFunctions(_ context.Context, in *lambda.ListFunctionsInput, _ ...func(*lambda.Options)) (*lambda.ListFunctionsOutput, error) {
+	if f.w.lambdaDenied[f.region] {
+		return nil, chkAPI("AccessDeniedException")
+	}
+	start := 0
+	if m := aws.ToString(in.Marker); m != "" {
+		fmt.Sscan(m, &start)
+	} else {
+		f.w.listed = append(f.w.listed, f.region)
+	}
+	names := f.w.functions[f.region]
+	end := min(start+2, len(names))
+	out := &lambda.ListFunctionsOutput{}
+	for _, n := range names[start:end] {
+		out.Functions = append(out.Functions, lambdatypes.FunctionConfiguration{FunctionName: aws.String(n)})
+	}
+	if end < len(names) {
+		out.NextMarker = aws.String(fmt.Sprint(end))
+	}
+	return out, nil
+}
+
+// rwDDB is the manager's table, dmt-prod-manager, its router items queried.
+type rwDDB struct {
+	DynamoDB
+	w *rwWorld
+}
+
+func (f rwDDB) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+	pk, _ := in.ExpressionAttributeValues[":pk"].(*ddbtypes.AttributeValueMemberS)
+	prefix, _ := in.ExpressionAttributeValues[":prefix"].(*ddbtypes.AttributeValueMemberS)
+	if aws.ToString(in.TableName) != "dmt-prod-manager" || aws.ToString(in.KeyConditionExpression) != "pk = :pk AND begins_with(sk, :prefix)" ||
+		pk == nil || pk.Value != "T#default" || prefix == nil || prefix.Value != "ROUTER#" || aws.ToInt32(in.Limit) != 1 {
+		f.w.t.Errorf("query %s %q %v limit %d", aws.ToString(in.TableName), aws.ToString(in.KeyConditionExpression), in.ExpressionAttributeValues, aws.ToInt32(in.Limit))
+	}
+	if f.w.noTable {
+		return nil, &ddbtypes.ResourceNotFoundException{Message: aws.String("Requested resource not found")}
+	}
+	out := &dynamodb.QueryOutput{}
+	if f.w.routers > 0 {
+		out.Items = []map[string]ddbtypes.AttributeValue{{"pk": &ddbtypes.AttributeValueMemberS{Value: "T#default"},
+			"sk": &ddbtypes.AttributeValueMemberS{Value: "ROUTER#444444444444#eu-west-1"}}}
+	}
+	out.Count = int32(len(out.Items))
 	return out, nil
 }
 
