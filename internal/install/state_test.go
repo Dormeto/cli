@@ -20,6 +20,8 @@ type stS3 struct {
 	S3
 	objects  map[string]string
 	noBucket bool
+	missing  string // the error code of an absent object; NoSuchKey by default
+	desc     bool   // the listing is in descending key order
 	puts     map[string]string
 }
 
@@ -31,6 +33,9 @@ func (f *stS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3
 	}
 	body, ok := f.objects[aws.ToString(in.Key)]
 	if !ok {
+		if f.missing != "" {
+			return nil, stErr(f.missing)
+		}
 		return nil, stErr("NoSuchKey")
 	}
 	return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader(body))}, nil
@@ -54,6 +59,9 @@ func (f *stS3) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
+	if f.desc {
+		slices.Reverse(keys)
+	}
 	start := 0
 	if in.ContinuationToken != nil {
 		for i, k := range keys {
@@ -138,6 +146,15 @@ func TestReadApplied(t *testing.T) {
 	}
 }
 
+func TestAbsentObjectCodes(t *testing.T) {
+	for _, code := range []string{"NoSuchKey", "NotFound"} {
+		got, err := ReadApplied(context.Background(), stClients(&stS3{missing: code}), bootP)
+		if err != nil || got != nil {
+			t.Fatalf("%s: %+v, %v", code, got, err)
+		}
+	}
+}
+
 func TestReadOutputs(t *testing.T) {
 	ctx := context.Background()
 	body := `{"dashboard_url":{"sensitive":false,"type":"string","value":"https://d.example.com"},"user_pool_id":{"value":"eu-west-1_abc"},"version":{"value":"0.11.0"},"other":{"value":{"a":1}}}`
@@ -177,6 +194,10 @@ func TestOtherEnvs(t *testing.T) {
 	got, err := OtherEnvs(ctx, stClients(f), bootP)
 	if err != nil || !reflect.DeepEqual(got, []string{"dev", "staging"}) {
 		t.Fatalf("got %v, %v", got, err)
+	}
+	f.desc = true
+	if got, err := OtherEnvs(ctx, stClients(f), bootP); err != nil || !reflect.DeepEqual(got, []string{"dev", "staging"}) {
+		t.Fatalf("listed descending: %v, %v", got, err)
 	}
 	if got, err := OtherEnvs(ctx, stClients(&stS3{noBucket: true}), bootP); err != nil || len(got) != 0 {
 		t.Fatalf("no bucket: %v, %v", got, err)
