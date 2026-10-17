@@ -337,7 +337,20 @@ func checkRoles(ctx context.Context, c Clients, s Settings, w Where, f Found) Ch
 	if len(trusted) > 0 {
 		d += ", trusting " + strings.Join(trusted, ", ")
 	}
+	mine := managerRoles(w.Account, s.Env)
+	if len(trusted) > 0 && !slices.ContainsFunc(trusted, func(p string) bool { return !slices.Contains(mine, p) }) {
+		return Check{name, d + ": env " + s.Env + "'s manager without dormeto install's record (installed by other means, or left by an earlier one); " +
+			"delete them before installing (decision 15)", Fail}
+	}
 	return Check{name, d + ": another manager's (decision 15)", Fail}
+}
+
+// managerRoles are the ARNs of the manager's roles that Dormeto's roles trust (discovery, operations), of env in account.
+func managerRoles(account, env string) []string {
+	return []string{
+		"arn:aws:iam::" + account + ":role/dmt-" + env + "-manager-discovery",
+		"arn:aws:iam::" + account + ":role/dmt-" + env + "-manager-operations",
+	}
 }
 
 const dormetoBoundary = "DmtRouterBoundary"
@@ -378,35 +391,95 @@ func staleOnly(principals []string) bool {
 	return len(principals) > 0 && !slices.ContainsFunc(principals, func(p string) bool { return !isUniqueID(p) })
 }
 
-// trustedPrincipals are the AWS principals of a role's trust policy (a URL-encoded JSON document).
+// principalArnOperators are the condition operators whose aws:PrincipalArn values narrow an account's root to roles.
+var principalArnOperators = []string{"ArnLike", "ArnEquals", "StringLike", "StringEquals"}
+
+// trustedPrincipals are the AWS principals a role's trust policy (a URL-encoded JSON document) names: an account's root
+// narrowed by its statement's aws:PrincipalArn condition to the role ARNs of that account it names (how Dormeto's access
+// module and release script write the trust), else the principals as they are (a role ARN, a root without such a
+// condition, a deleted role's unique id).
 func trustedPrincipals(doc string) []string {
 	if d, err := url.QueryUnescape(doc); err == nil {
 		doc = d
 	}
-	var p struct {
-		Statement json.RawMessage
-	}
+	var p struct{ Statement json.RawMessage }
 	if json.Unmarshal([]byte(doc), &p) != nil {
 		return nil
 	}
-	var stmts []struct{ Principal struct{ AWS json.RawMessage } }
-	if json.Unmarshal(p.Statement, &stmts) != nil {
-		var one struct{ Principal struct{ AWS json.RawMessage } }
-		if json.Unmarshal(p.Statement, &one) != nil {
-			return nil
-		}
-		stmts = append(stmts, one)
+	stmts, err := statements(p.Statement)
+	if err != nil {
+		return nil
 	}
 	var out []string
-	for _, st := range stmts {
-		var list []string
-		var one string
-		if json.Unmarshal(st.Principal.AWS, &list) != nil && json.Unmarshal(st.Principal.AWS, &one) == nil {
-			list = []string{one}
+	for _, raw := range stmts {
+		var st struct{ Principal, Condition json.RawMessage }
+		var pr struct{ AWS json.RawMessage }
+		if json.Unmarshal(raw, &st) != nil || json.Unmarshal(st.Principal, &pr) != nil {
+			continue
 		}
-		out = append(out, list...)
+		arns := conditionArns(st.Condition)
+		for _, principal := range stringList(pr.AWS) {
+			out = append(out, narrowed(principal, arns)...)
+		}
 	}
 	return out
+}
+
+// conditionArns are the aws:PrincipalArn values of a statement's condition (the key's case does not matter).
+func conditionArns(raw json.RawMessage) []string {
+	var cond map[string]map[string]json.RawMessage
+	if json.Unmarshal(raw, &cond) != nil {
+		return nil
+	}
+	var out []string
+	for _, op := range principalArnOperators {
+		for key, v := range cond[op] {
+			if strings.EqualFold(key, "aws:PrincipalArn") {
+				out = append(out, stringList(v)...)
+			}
+		}
+	}
+	return out
+}
+
+// narrowed is what a principal lets assume a role under a condition naming arns: an account's root (its ARN, or its id)
+// stands for the role ARNs of that account among arns; for an ARN of another account, the root itself.
+func narrowed(principal string, arns []string) []string {
+	account, root := rootAccount(principal)
+	if !root || len(arns) == 0 {
+		return []string{principal}
+	}
+	var out []string
+	for _, a := range arns {
+		if arnAccount(a) == account {
+			out = append(out, a)
+		} else if !slices.Contains(out, principal) {
+			out = append(out, principal)
+		}
+	}
+	return out
+}
+
+// rootAccount is the account of a principal that is an account's root (arn:<partition>:iam::<account>:root, or the bare
+// account id).
+func rootAccount(principal string) (string, bool) {
+	if accountIDRe.MatchString(principal) {
+		return principal, true
+	}
+	parts := strings.SplitN(principal, ":", 6)
+	if len(parts) == 6 && parts[0] == "arn" && parts[2] == "iam" && parts[5] == "root" {
+		return parts[4], true
+	}
+	return "", false
+}
+
+// arnAccount is the account field of an ARN, or empty.
+func arnAccount(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" {
+		return ""
+	}
+	return parts[4]
 }
 
 func checkRelease(f Found) Check {

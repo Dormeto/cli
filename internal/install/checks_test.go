@@ -427,13 +427,98 @@ func TestChecksAnotherEnvironment(t *testing.T) {
 	chkWant(t, x, "another environment", Fail, "one environment per account: prd, stg installed here")
 }
 
+// chkTrust is a role's trust naming principals as Dormeto's access module and release script write it: each account's
+// root as the principal, its role ARNs in an ArnLike aws:PrincipalArn condition; unique ids (deleted roles, AROA…) as
+// the principals of a statement of their own.
 func chkTrust(principals ...string) *iam.GetRoleOutput {
-	var q []string
+	var roots, ids, stmts []string
+	arns := map[string][]string{}
 	for _, p := range principals {
-		q = append(q, `"`+p+`"`)
+		i := strings.Index(p, ":role/")
+		if i < 0 {
+			ids = append(ids, `"`+p+`"`)
+			continue
+		}
+		root := p[:i] + ":root"
+		if arns[root] == nil {
+			roots = append(roots, root)
+		}
+		arns[root] = append(arns[root], `"`+p+`"`)
 	}
-	doc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":[` + strings.Join(q, ",") + `]}}]}`
+	for _, r := range roots {
+		stmts = append(stmts, `{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"`+r+`"},"Condition":{"ArnLike":{"aws:PrincipalArn":[`+
+			strings.Join(arns[r], ",")+`]}}}`)
+	}
+	if len(ids) > 0 {
+		stmts = append(stmts, `{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":[`+strings.Join(ids, ",")+`]}}`)
+	}
+	return chkDoc(`{"Version":"2012-10-17","Statement":[` + strings.Join(stmts, ",") + `]}`)
+}
+
+// chkDoc is a role whose trust is doc, URL-encoded as IAM returns it.
+func chkDoc(doc string) *iam.GetRoleOutput {
 	return &iam.GetRoleOutput{Role: &iamtypes.Role{AssumeRolePolicyDocument: aws.String(url.QueryEscape(doc))}}
+}
+
+// releaseTrust is the trust dormeto-access-commands-<version>.sh writes (the manager's scripts/release/access-script.mjs,
+// as the access module does): role "discovery" (with the organization's condition) or "operations", of the manager's
+// account and environments.
+func releaseTrust(manager, role string, envs ...string) *iam.GetRoleOutput {
+	var arns []string
+	for _, e := range envs {
+		arns = append(arns, `"arn:aws:iam::`+manager+`:role/dmt-`+e+`-manager-`+role+`"`)
+	}
+	org := ""
+	if role == "discovery" {
+		org = `,"StringEquals":{"aws:PrincipalOrgID":"o-vvk0115ixn"}`
+	}
+	return chkDoc(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"arn:aws:iam::` + manager +
+		`:root"},"Condition":{"ArnLike":{"aws:PrincipalArn":[` + strings.Join(arns, ",") + `]}` + org + `}}]}`)
+}
+
+// The trust a policy names, read from the aws:PrincipalArn conditions that narrow an account's root.
+func TestTrustedPrincipals(t *testing.T) {
+	const (
+		m    = "arn:aws:iam::333333333333"
+		disc = m + ":role/dmt-prd-manager-discovery"
+		ops  = m + ":role/dmt-prd-manager-operations"
+	)
+	stmt := func(principal, condition string) string {
+		s := `{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":` + principal + `}`
+		if condition != "" {
+			s += `,"Condition":` + condition
+		}
+		return s + `}`
+	}
+	doc := func(stmts ...string) string {
+		return `{"Version":"2012-10-17","Statement":[` + strings.Join(stmts, ",") + `]}`
+	}
+	for _, c := range []struct {
+		name, doc string
+		want      []string
+	}{
+		{"ArnLike, a list", doc(stmt(`"`+m+`:root"`, `{"ArnLike":{"aws:PrincipalArn":["`+disc+`","`+ops+`"]}}`)), []string{disc, ops}},
+		{"ArnEquals, a string", doc(stmt(`"`+m+`:root"`, `{"ArnEquals":{"aws:PrincipalArn":"`+disc+`"}}`)), []string{disc}},
+		{"StringLike", doc(stmt(`["`+m+`:root"]`, `{"StringLike":{"aws:PrincipalArn":["`+disc+`"]}}`)), []string{disc}},
+		{"StringEquals, the key in another case, beside the organization's", doc(stmt(`"`+m+`:root"`,
+			`{"StringEquals":{"aws:principalarn":"`+ops+`","aws:PrincipalOrgID":"o-abc"}}`)), []string{ops}},
+		{"an account id for its root", doc(stmt(`"333333333333"`, `{"ArnLike":{"aws:PrincipalArn":"`+disc+`"}}`)), []string{disc}},
+		{"a role ARN as the principal", doc(stmt(`"`+disc+`"`, "")), []string{disc}},
+		{"a root without a condition", doc(stmt(`"`+m+`:root"`, `{"StringEquals":{"aws:PrincipalOrgID":"o-abc"}}`)), []string{m + ":root"}},
+		{"another account's root naming this manager's role", doc(stmt(`"arn:aws:iam::121014831971:root"`, `{"ArnLike":{"aws:PrincipalArn":"`+disc+`"}}`)),
+			[]string{"arn:aws:iam::121014831971:root"}},
+		{"a deleted role's unique id", doc(stmt(`"AROAEXAMPLE123"`, "")), []string{"AROAEXAMPLE123"}},
+		{"one object for Statement", `{"Statement":` + stmt(`"`+m+`:root"`, `{"ArnLike":{"aws:PrincipalArn":"`+disc+`"}}`) + `}`,
+			[]string{disc}},
+		{"no AWS principal", doc(`{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"Service":"codebuild.amazonaws.com"}}`), nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := trustedPrincipals(url.QueryEscape(c.doc))
+			if strings.Join(got, " ") != strings.Join(c.want, " ") {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
 }
 
 func TestChecksDormetoRoles(t *testing.T) {
@@ -451,6 +536,29 @@ func TestChecksDormetoRoles(t *testing.T) {
 	c := chkRow(t, x.run(), "Dormeto roles")
 	if c.Verdict != Fail || !strings.Contains(c.Detail, "DmtDiscoveryRole") || !strings.Contains(c.Detail, mgr) || !strings.Contains(c.Detail, "another manager's (decision 15)") {
 		t.Errorf("roles = %d %q", c.Verdict, c.Detail)
+	}
+	x.f.Saved = &Settings{Installed: "0.10.0"}
+	chkWant(t, x, "Dormeto roles", OK, "this install's")
+}
+
+// In the manager's own account, Dormeto's roles as the release writes them for this env, without this install's record:
+// they fail, named for what they trust (the role ARNs of the condition, not the account's root).
+func TestChecksDormetoRolesOfThisEnvironment(t *testing.T) {
+	x := chkNew()
+	x.iam.getRole = func(name string) (*iam.GetRoleOutput, error) {
+		switch name {
+		case "DmtDiscoveryRole":
+			return releaseTrust("532105290256", "discovery", "dev"), nil
+		case "DmtCommandRole":
+			return releaseTrust("532105290256", "operations", "dev"), nil
+		}
+		return nil, chkNoEntity()
+	}
+	chkWant(t, x, "Dormeto roles", Fail, "DmtDiscoveryRole, DmtCommandRole exist, trusting arn:aws:iam::532105290256:role/dmt-dev-manager-discovery, "+
+		"arn:aws:iam::532105290256:role/dmt-dev-manager-operations: env dev's manager without dormeto install's record (installed by other means, or left "+
+		"by an earlier one); delete them before installing (decision 15)")
+	if c := chkRow(t, x.run(), "Dormeto roles"); strings.Contains(c.Detail, ":root") {
+		t.Errorf("roles = %q", c.Detail)
 	}
 	x.f.Saved = &Settings{Installed: "0.10.0"}
 	chkWant(t, x, "Dormeto roles", OK, "this install's")

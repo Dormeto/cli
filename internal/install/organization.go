@@ -78,10 +78,7 @@ func Survey(ctx context.Context, mgmt Clients, assume func(account string) (Clie
 		cs = append(cs, Check{"organization accounts", "not in the organization: " + strings.Join(outside, ", "), Warn})
 	}
 
-	mine := []string{
-		"arn:aws:iam::" + manager.Account + ":role/dmt-" + s.Env + "-manager-discovery",
-		"arn:aws:iam::" + manager.Account + ":role/dmt-" + s.Env + "-manager-operations",
-	}
+	mine := managerRoles(manager.Account, s.Env)
 	results := make([]accountResult, len(ids))
 	var g errgroup.Group
 	g.SetLimit(surveyParallel)

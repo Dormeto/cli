@@ -36,6 +36,7 @@ type orgAcct struct {
 	boundary  bool
 	unreach   string // the assume error's message
 	iamErr    error
+	trust     map[string]*iam.GetRoleOutput // a role's GetRole as it is, before discovery and command
 }
 
 type orgWorld struct {
@@ -108,6 +109,9 @@ type orgIAM struct {
 func (f orgIAM) GetRole(_ context.Context, in *iam.GetRoleInput, _ ...func(*iam.Options)) (*iam.GetRoleOutput, error) {
 	if f.a.iamErr != nil {
 		return nil, f.a.iamErr
+	}
+	if got, ok := f.a.trust[aws.ToString(in.RoleName)]; ok {
+		return got, nil
 	}
 	var trust []string
 	switch aws.ToString(in.RoleName) {
@@ -242,6 +246,44 @@ func TestSurveyRoleTrustingThisAndAnotherManagerIsForeign(t *testing.T) {
 	w.accounts["444444444444"] = orgAcct{status: orgtypes.AccountStatusActive, discovery: []string{orgMine, orgDev}}
 	a, _ := w.survey(t, orgSettings)
 	orgEq(t, "Foreign", a.Foreign, []string{"444444444444", "777777777777", "888888888888"})
+}
+
+// The roles as the release's access script writes them (the manager's root, its roles' ARNs in an aws:PrincipalArn
+// condition): this manager's when they name this env's roles only; another account's root, or the same root naming
+// another env, is another manager's.
+func TestSurveyReadsTheTrustTheReleaseWrites(t *testing.T) {
+	w := orgNew()
+	active := orgtypes.AccountStatusActive
+	roles := func(discovery, command *iam.GetRoleOutput) map[string]*iam.GetRoleOutput {
+		m := map[string]*iam.GetRoleOutput{"DmtDiscoveryRole": discovery}
+		if command != nil {
+			m["DmtCommandRole"] = command
+		}
+		return m
+	}
+	w.accounts = map[string]orgAcct{
+		orgMgmt:    {status: active},
+		orgManager: {status: active},
+		"444444444444": {status: active, boundary: true,
+			trust: roles(releaseTrust(orgManager, "discovery", "prd"), releaseTrust(orgManager, "operations", "prd"))},
+		"555555555555": {status: active, trust: roles(releaseTrust(orgManager, "discovery", "prd"), nil)}, // discovery only
+		"666666666666": {status: active, boundary: true,
+			trust: roles(releaseTrust(orgManager, "discovery", "dev"), releaseTrust(orgManager, "operations", "dev"))},
+		"777777777777": {status: active, trust: roles(releaseTrust("121014831971", "discovery", "prd"), nil)},
+		"888888888888": {status: active, trust: roles(releaseTrust(orgManager, "discovery", "prd", "dev"), nil)},
+	}
+	a, _ := w.survey(t, orgSettings)
+	orgEq(t, "Ready", a.Ready, []string{"444444444444", "555555555555"})
+	orgEq(t, "Foreign", a.Foreign, []string{"666666666666", "777777777777", "888888888888"})
+	for acct, want := range map[string]string{
+		"666666666666": "roles trust arn:aws:iam::333333333333:role/dmt-dev-manager-discovery, arn:aws:iam::333333333333:role/dmt-dev-manager-operations",
+		"777777777777": "roles trust arn:aws:iam::121014831971:role/dmt-prd-manager-discovery",
+		"888888888888": "roles trust arn:aws:iam::333333333333:role/dmt-dev-manager-discovery",
+	} {
+		if n := a.Notes[acct]; n != want {
+			t.Errorf("note of %s = %q, want %q", acct, n, want)
+		}
+	}
 }
 
 func TestSurveyAccountsExcludeAndDiscoveryOnly(t *testing.T) {
