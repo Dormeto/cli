@@ -329,7 +329,8 @@ func stringList(raw json.RawMessage) []string {
 // MergePolicy puts this manager into the organization's delegation policy: the template (the release's
 // dormeto-organization-policy.json, MANAGER_ACCOUNT and ENV replaced) when there is none; else the statement of
 // the template's Sid gets the manager's principal and the template's actions, the other statements kept in place. change
-// is "new", "updated", or "unchanged" (current returned as it is).
+// is "new", "updated" (the principal was added), "actions" (only the release's actions were added) or "unchanged"
+// (current returned as it is).
 func MergePolicy(current, template []byte, managerAccount, env string) (merged []byte, change string, err error) {
 	filled := strings.NewReplacer("MANAGER_ACCOUNT", managerAccount, "ENV", env).Replace(string(template))
 	var tpl policyDoc
@@ -491,7 +492,9 @@ func OrgTeardown(ctx context.Context, mgmt Clients, p Project) error {
 	return nil
 }
 
-// PutOrgPlan writes the plan the build applies: the policy to put and the policy it was merged from // object when there was none, which is what the build compares with an absent policy).
+// PutOrgPlan writes the plan the build applies: policy.json is the policy to put; policy-base.json is the policy it was
+// merged from, an empty object (zero bytes) when there was none (ruling R23), which is what the build compares with an
+// absent policy.
 func PutOrgPlan(ctx context.Context, mgmt Clients, p Project, a Access) error {
 	if err := putObject(ctx, mgmt, p, p.Key("organization", "policy.json"), a.Policy); err != nil {
 		return err
