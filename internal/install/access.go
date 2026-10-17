@@ -42,8 +42,8 @@ func (x *run) management(s Settings) (string, bool) {
 	return "", false
 }
 
-// memberRole is the role assumed in each member account: --member-role's (its leading slash left out), else the supposed
-// one.
+// memberRole is the role assumed in each member account: --member-role's (its leading slash left out), else the
+// supposed one.
 func memberRole(s Settings) string {
 	if s.MemberRole == "" {
 		return defaultMemberRole

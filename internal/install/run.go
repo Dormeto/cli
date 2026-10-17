@@ -661,8 +661,8 @@ func (x *run) apply(s Settings, sum PlanSummary) error {
 
 // InstallCheck is `dormeto install check` (Check is a check's row): the prerequisites, read-only, without asking
 // anything but the region: the version the latest unless given, the mode the suggested one unless given, the
-// administrators a warning until given; with a management profile, organization access surveyed. Exit codes: 0; 1 when a check fails or AWS refuses; 2 for a bad flag; 130 when
-// ctx is cancelled.
+// administrators a warning until given; with a management profile, organization access surveyed. Exit codes: 0; 1
+// when a check fails or AWS refuses; 2 for a bad flag; 130 when ctx is cancelled.
 func InstallCheck(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.end(x.check())
