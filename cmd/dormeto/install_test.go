@@ -36,7 +36,7 @@ func installed(t *testing.T, code int, args ...string) (calls []ran, stdout, std
 		}
 	}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
-	root.AddCommand(newInstall(installRuns{install: fake("install"), check: fake("check"), apply: fake("apply")}))
+	root.AddCommand(newInstall(installRuns{install: fake("install"), check: fake("check"), apply: fake("apply"), status: fake("status")}))
 	var out, errs bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errs)
@@ -71,6 +71,24 @@ func TestInstallFlagsMakeTheRequest(t *testing.T) {
 			Vars: map[string]json.RawMessage{"alert_emails": json.RawMessage(`["o@x.io"]`), "retention_days": json.RawMessage("30")}},
 		Set: map[string]bool{"profile": true, "region": true, "env": true, "version": true, "admin-emails": true, "mode": true,
 			"ses-identity": true, "email-from": true, "build-role": true, "release": true, "yes": true, "verbose": true, "var": true},
+	}
+	if !reflect.DeepEqual(r, want) {
+		t.Errorf("request\n%+v\nwant\n%+v", r, want)
+	}
+}
+
+func TestInstallOrganizationAccessFlags(t *testing.T) {
+	calls, _, errs, exit := installed(t, 0, "install", "--management-profile", "m", "--member-role", "org/Member",
+		"--accounts", "111111111111, 222222222222", "--exclude-accounts", "333333333333", "--discovery-only", "222222222222", "--access")
+	if exit != 0 || errs != "" {
+		t.Fatalf("exit %d, errors %q", exit, errs)
+	}
+	r := only(t, calls).r
+	want := install.Request{
+		ManagementProfile: "m", Access: true,
+		Flags: install.Settings{MemberRole: "org/Member", Accounts: []string{"111111111111", "222222222222"}, ExcludeAccounts: []string{"333333333333"},
+			DiscoveryOnly: []string{"222222222222"}},
+		Set: map[string]bool{"management-profile": true, "member-role": true, "accounts": true, "exclude-accounts": true, "discovery-only": true, "access": true},
 	}
 	if !reflect.DeepEqual(r, want) {
 		t.Errorf("request\n%+v\nwant\n%+v", r, want)
@@ -118,6 +136,8 @@ func TestInstallSubcommandsAndTheirFlags(t *testing.T) {
 		{[]string{"install", "check", "--profile", "p"}, "check"},
 		{[]string{"install", "--profile", "p", "check"}, "check"},
 		{[]string{"install", "apply", "--profile", "p"}, "apply"},
+		{[]string{"install", "status", "--profile", "p"}, "status"},
+		{[]string{"install", "--profile", "p", "status"}, "status"},
 		{[]string{"install", "--profile", "p"}, "install"},
 	} {
 		calls, _, errs, exit := installed(t, 0, c.args...)
@@ -160,7 +180,8 @@ func TestInstallHelpListsTheFlags(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", exit, out)
 	}
 	for _, f := range []string{"--profile", "--region", "--env", "--version", "--admin-emails", "--mode", "--domain", "--certificate-arn",
-		"--zone-id", "--ses-identity", "--email-from", "--var", "--build-role", "--release", "--yes", "--verbose", "check", "apply"} {
+		"--zone-id", "--ses-identity", "--email-from", "--var", "--build-role", "--release", "--yes", "--verbose", "check", "apply",
+		"--management-profile", "--member-role", "OrganizationAccountAccessRole", "--accounts", "--exclude-accounts", "--discovery-only", "--access", "status"} {
 		if !strings.Contains(out, f) {
 			t.Errorf("the usage lacks %s:\n%s", f, out)
 		}
@@ -168,12 +189,16 @@ func TestInstallHelpListsTheFlags(t *testing.T) {
 	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "install     Install the Dormeto manager in an AWS account, with CodeBuild\n") {
 		t.Errorf("the commands listed without install:\n%s", out)
 	}
+	if _, out, _, exit := installed(t, 0, "install", "status", "--help"); exit != 0 || !strings.Contains(out, "dormeto install status [flags]") ||
+		!strings.Contains(out, "--management-profile") {
+		t.Errorf("exit %d:\n%s", exit, out)
+	}
 }
 
 func TestInstallRealDependenciesWithoutATerminal(t *testing.T) {
 	calls, _, _, _ := installed(t, 0, "install")
 	d := only(t, calls).d
-	if d.Terminal || d.Status != nil || d.Out == nil || d.Clients == nil || d.Region == nil || d.Now == nil || d.Every == nil {
+	if d.Terminal || d.Status != nil || d.Out == nil || d.Clients == nil || d.Region == nil || d.Assume == nil || d.Now == nil || d.Every == nil {
 		t.Errorf("dependencies %+v", d)
 	}
 	if h, ok := d.HTTP.(*http.Client); !ok || h.Timeout != 30*time.Second {

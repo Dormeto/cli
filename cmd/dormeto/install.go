@@ -1,10 +1,10 @@
 package main
 
-// `dormeto install`, `install check` and `install apply`: the flags read into an install.Request and the run of
-// internal/install called with the real dependencies — the profile's AWS over the AWS SDK for Go v2, HTTPS with a 30 s
-// timeout, the terminal's prompts when stdin is one, its status line when stdout is one (not with --verbose) — and its
-// exit code returned: 0; 1 when AWS refuses, a check fails or a build fails; 2 for a bad flag or a missing answer; 128 and
-// the signal's number when SIGINT (Ctrl-C) or SIGTERM stopped it (a running build goes on).
+// `dormeto install`, `install check`, `install apply` and `install status`: the flags read into an install.Request and
+// the run of internal/install called with the real dependencies — the profile's AWS over the AWS SDK for Go v2, HTTPS
+// with a 30 s timeout, the terminal's prompts when stdin is one, its status line when stdout is one (not with
+// --verbose) — and its exit code returned: 0; 1 when AWS refuses, a check fails or a build fails; 2 for a bad flag or a
+// missing answer; 128 and the signal's number when SIGINT (Ctrl-C) or SIGTERM stopped it (a running build goes on).
 
 import (
 	"context"
@@ -15,8 +15,10 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/aws"
@@ -28,25 +30,29 @@ import (
 // installRun is one of internal/install's commands.
 type installRun func(ctx context.Context, d install.Deps, r install.Request) int
 
-// installRuns are the runs of install, install check and install apply: internal/install's, or a test's.
-type installRuns struct{ install, check, apply installRun }
+// installRuns are the runs of install, install check, install apply and install status: internal/install's, or a
+// test's.
+type installRuns struct{ install, check, apply, status installRun }
 
 // theInstallRuns are internal/install's.
-var theInstallRuns = installRuns{install: install.Install, check: install.InstallCheck, apply: install.Apply}
+var theInstallRuns = installRuns{install: install.Install, check: install.InstallCheck, apply: install.Apply, status: install.Status}
 
 // installFlags are the flags of install and its subcommands.
 type installFlags struct {
 	profile, region, env, version, mode        string
 	domain, certificateARN, zoneID             string
 	sesIdentity, emailFrom, buildRole, release string
+	managementProfile, memberRole              string
 	adminEmails, vars                          []string
-	yes, verbose                               bool
+	accounts, excludeAccounts, discoveryOnly   []string
+	yes, verbose, access                       bool
 }
 
 // installFlagNames are the flags, as Request.Set names them; the domain's three are one, "domain".
 var (
 	installFlagNames = []string{"profile", "region", "env", "version", "admin-emails", "mode", "domain", "certificate-arn", "zone-id",
-		"ses-identity", "email-from", "var", "build-role", "release", "yes", "verbose"}
+		"ses-identity", "email-from", "var", "build-role", "release", "yes", "verbose",
+		"management-profile", "member-role", "accounts", "exclude-accounts", "discovery-only", "access"}
 	domainFlags = []string{"domain", "certificate-arn", "zone-id"}
 )
 
@@ -62,7 +68,10 @@ func newInstall(runs installRuns) *cobra.Command {
 		"Install the Dormeto manager in an AWS account: the questions a first install needs (each has its flag), read-only\n"+
 			"checks, the install's bucket, role and CodeBuild project by API calls, a Terraform plan in CodeBuild, your\n"+
 			"confirmation, then that saved plan applied and followed. Without a terminal, it stops after the plan: dormeto install\n"+
-			"apply applies it. --yes takes the suggested answers; it never confirms a plan.", runs.install)
+			"apply applies it. --yes takes the suggested answers; it never confirms a plan.\n\n"+
+			"In organization mode, with the management account's profile (--management-profile, or --profile when it is the\n"+
+			"management account's), organization access follows the manager: the delegation policy and the member accounts'\n"+
+			"roles, shown, confirmed, then deployed by a CodeBuild project of the management account removed once it ends.", runs.install)
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		fmt.Fprintln(c.ErrOrStderr(), err)
 		return exitCode(2)
@@ -72,7 +81,12 @@ func newInstall(runs installRuns) *cobra.Command {
 			"Check the prerequisites of the install, read-only: nothing is created, nothing is asked but the region.", runs.check),
 		command("apply", "Apply the last saved plan of the install",
 			"Apply the last saved plan of the install (made without a terminal, or not confirmed): it is shown, then applied and\n"+
-				"followed. Running this command is the confirmation.", runs.apply),
+				"followed. With --management-profile, organization access is deployed after it, or alone when there is no plan to\n"+
+				"apply. Running this command is the confirmation.", runs.apply),
+		command("status", "Show where the install stands; follow a running build",
+			"Show where the install stands: a running build followed, the manager's version and the latest release, the last\n"+
+				"plan and apply, the dashboard and the invitations, organization access. With --management-profile, what a detached\n"+
+				"organization access run left in the management account (its build role and project) is removed once it ends.", runs.status),
 	)
 
 	p := cmd.PersistentFlags()
@@ -92,6 +106,12 @@ func newInstall(runs installRuns) *cobra.Command {
 	p.StringVar(&f.release, "release", "", "a local release directory, uploaded to the install's bucket (an unreleased manager)")
 	p.BoolVar(&f.yes, "yes", false, "take the suggested answers without asking; never confirms a plan")
 	p.BoolVar(&f.verbose, "verbose", false, "print Terraform's lines instead of the status line")
+	p.StringVar(&f.managementProfile, "management-profile", "", "the management account's profile: organization access (organization mode)")
+	p.StringVar(&f.memberRole, "member-role", "", "the role assumed in each member account from the management account (default OrganizationAccountAccessRole)")
+	p.StringSliceVar(&f.accounts, "accounts", nil, "the member accounts that get the roles, comma-separated (default: every active account)")
+	p.StringSliceVar(&f.excludeAccounts, "exclude-accounts", nil, "member accounts left out, comma-separated")
+	p.StringSliceVar(&f.discoveryOnly, "discovery-only", nil, "member accounts without the command role, comma-separated")
+	p.BoolVar(&f.access, "access", false, "run organization access alone, the manager installed (needs the management account's profile)")
 	return cmd
 }
 
@@ -113,7 +133,7 @@ func (f *installFlags) run(c *cobra.Command, run installRun) error {
 	}
 	ctx, signalled, stop := interruptible(c.Context())
 	defer stop()
-	code := run(ctx, installDeps(c, f.verbose), r)
+	code := run(ctx, installDeps(c, f.verbose, f.env), r)
 	if s := signalled(); s != nil {
 		code = signalCode(s)
 	}
@@ -135,14 +155,11 @@ func (f *installFlags) request(c *cobra.Command) (install.Request, error) {
 		}
 	}
 	r := install.Request{
-		Profile: f.profile, Region: f.region, Release: f.release, Set: set, Yes: f.yes, Verbose: f.verbose,
+		Profile: f.profile, Region: f.region, Release: f.release, ManagementProfile: f.managementProfile, Set: set,
+		Yes: f.yes, Verbose: f.verbose, Access: f.access,
 		Flags: install.Settings{Env: f.env, Region: f.region, Version: f.version, Mode: f.mode, SESIdentity: f.sesIdentity,
-			EmailFrom: f.emailFrom, BuildRole: f.buildRole},
-	}
-	for _, e := range f.adminEmails {
-		if e = strings.TrimSpace(e); e != "" {
-			r.Flags.AdminEmails = append(r.Flags.AdminEmails, e)
-		}
+			EmailFrom: f.emailFrom, BuildRole: f.buildRole, MemberRole: f.memberRole, AdminEmails: items(f.adminEmails),
+			Accounts: items(f.accounts), ExcludeAccounts: items(f.excludeAccounts), DiscoveryOnly: items(f.discoveryOnly)},
 	}
 	if f.domain != "" || f.certificateARN != "" || f.zoneID != "" {
 		r.Flags.Domain = &install.Domain{Dashboard: f.domain, CertificateARN: f.certificateARN, ZoneID: f.zoneID}
@@ -160,26 +177,60 @@ func (f *installFlags) request(c *cobra.Command) (install.Request, error) {
 	return r, nil
 }
 
-// installDeps are the real dependencies: the profile's configuration and the install's clients, HTTPS with a 30 s
-// timeout, the prompts when stdin is a terminal, the status line when stdout is one (not with --verbose).
-func installDeps(c *cobra.Command, verbose bool) install.Deps {
+// items are a list flag's values, trimmed, the empty ones left out.
+func items(values []string) []string {
+	var out []string
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// installDeps are the real dependencies: each profile's configuration loaded once (its credentials shared by the
+// install's clients and the member roles assumed with them, session dmt-<env>-install), HTTPS with a 30 s timeout, the
+// prompts when stdin is a terminal, the status line when stdout is one (not with --verbose).
+func installDeps(c *cobra.Command, verbose bool, env string) install.Deps {
 	in, out := c.InOrStdin(), c.OutOrStdout()
 	terminal := isTerminal(in)
 	status := cli.StatusOf(out)
 	if verbose {
 		status = nil
 	}
+	var mu sync.Mutex
+	loaded := map[string]awssdk.Config{}
+	load := func(ctx context.Context, profile string) (awssdk.Config, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cfg, ok := loaded[profile]; ok {
+			return cfg, nil
+		}
+		cfg, err := aws.Load(ctx, profile)
+		if err == nil {
+			loaded[profile] = cfg
+		}
+		return cfg, err
+	}
+	session := "dmt-" + orDefault(env, "prod") + "-install"
 	return install.Deps{
 		Clients: func(ctx context.Context, profile, region string) (install.Clients, error) {
-			cfg, err := aws.Load(ctx, profile)
+			cfg, err := load(ctx, profile)
 			if err != nil {
 				return install.Clients{}, err
 			}
 			return installaws.Clients(cfg, region), nil
 		},
 		Region: func(ctx context.Context, profile string) (string, error) {
-			cfg, err := aws.Load(ctx, profile)
+			cfg, err := load(ctx, profile)
 			return cfg.Region, err
+		},
+		Assume: func(ctx context.Context, profile, region, roleARN string) (install.Clients, error) {
+			cfg, err := load(ctx, profile)
+			if err != nil {
+				return install.Clients{}, err
+			}
+			return installaws.Clients(installaws.Assumed(cfg, roleARN, session), region), nil
 		},
 		HTTP:     &http.Client{Timeout: 30 * time.Second},
 		Prompter: install.NewPrompter(in, out, terminal),
