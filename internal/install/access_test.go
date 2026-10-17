@@ -390,3 +390,25 @@ func TestInstallOrganizationAccessAlreadyRunning(t *testing.T) {
 		t.Errorf("wrote in the management account: %v", m)
 	}
 }
+
+// Nothing applied yet: no manager role for the member accounts' roles to trust, so no organization access.
+func TestOrganizationAccessNeedsTheManagerApplied(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.rwOrganization()
+	delete(w.objects, "prod/applied.json")
+	s := w.saved()
+	s.LastPlan = ""
+	w.save(s)
+	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1", ManagementProfile: "m"}, false)
+	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto install\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	code, out, _ = w.run(Install, Request{Profile: "p", Region: "eu-west-1", ManagementProfile: "m", Access: true}, true)
+	if code != 1 || !strings.HasSuffix(out, "no install of env prod in 532105290256 eu-west-1: run dormeto install\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if len(w.assumed) != 0 || len(w.writes) != 0 {
+		t.Errorf("assumed %v, writes %v", w.assumed, w.writes)
+	}
+}

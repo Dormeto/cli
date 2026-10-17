@@ -755,7 +755,7 @@ func (x *run) applyLast() error {
 		return err
 	}
 	if saved.LastPlan == "" {
-		if !access {
+		if !access || applied == nil { // nothing applied: no manager role for the member accounts' roles to trust
 			return &stop{1, "no plan to apply: run dormeto install"}
 		}
 		return x.accessInstalled(s, saved, applied, true)

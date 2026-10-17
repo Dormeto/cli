@@ -139,9 +139,10 @@ func (x *run) accessInstalled(s Settings, saved *Settings, applied *Applied, con
 	return x.access(s, rel, confirmed)
 }
 
-// accessAlone is install --access: organization access alone, the manager installed and not planned again.
+// accessAlone is install --access: organization access alone, the manager installed (applied: its roles exist for the
+// member accounts' roles to trust) and not planned again.
 func (x *run) accessAlone(saved *Settings, applied *Applied, s Settings) error {
-	if saved == nil {
+	if saved == nil || applied == nil {
 		return x.noInstall()
 	}
 	if _, ok := x.management(s); !ok {
