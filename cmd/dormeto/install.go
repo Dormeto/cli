@@ -1,10 +1,11 @@
 package main
 
-// `dormeto install`, `install check`, `install apply` and `install status`: the flags read into an install.Request and
-// the run of internal/install called with the real dependencies — the profile's AWS over the AWS SDK for Go v2, HTTPS
-// with a 30 s timeout, the terminal's prompts when stdin is one, its status line when stdout is one (not with
-// --verbose) — and its exit code returned: 0; 1 when AWS refuses, a check fails or a build fails; 2 for a bad flag or a
-// missing answer; 128 and the signal's number when SIGINT (Ctrl-C) or SIGTERM stopped it (a running build goes on).
+// `dormeto install`, `install check`, `install apply`, `install status`, `dormeto uninstall` and `uninstall apply`: the
+// flags read into an install.Request and the run of internal/install called with the real dependencies — the profile's
+// AWS over the AWS SDK for Go v2, HTTPS with a 30 s timeout, the terminal's prompts when stdin is one, its status line
+// when stdout is one (not with --verbose) — and its exit code returned: 0; 1 when AWS refuses, a check fails or a build
+// fails; 2 for a bad flag or a missing answer; 128 and the signal's number when SIGINT (Ctrl-C) or SIGTERM stopped it (a
+// running build goes on).
 
 import (
 	"context"
@@ -30,14 +31,15 @@ import (
 // installRun is one of internal/install's commands.
 type installRun func(ctx context.Context, d install.Deps, r install.Request) int
 
-// installRuns are the runs of install, install check, install apply and install status: internal/install's, or a
-// test's.
-type installRuns struct{ install, check, apply, status installRun }
+// installRuns are the runs of install, install check, install apply, install status, uninstall and uninstall apply:
+// internal/install's, or a test's.
+type installRuns struct{ install, check, apply, status, uninstall, uninstallApply installRun }
 
 // theInstallRuns are internal/install's.
-var theInstallRuns = installRuns{install: install.Install, check: install.InstallCheck, apply: install.Apply, status: install.Status}
+var theInstallRuns = installRuns{install: install.Install, check: install.InstallCheck, apply: install.Apply, status: install.Status,
+	uninstall: install.Uninstall, uninstallApply: install.UninstallApply}
 
-// installFlags are the flags of install and its subcommands.
+// installFlags are the flags of install, uninstall and their subcommands.
 type installFlags struct {
 	profile, region, env, version, mode        string
 	domain, certificateARN, zoneID             string
@@ -56,14 +58,33 @@ var (
 	domainFlags = []string{"domain", "certificate-arn", "zone-id"}
 )
 
+// command is a command of the flags f calling run; a bad flag exits 2 (its subcommands inherit it).
+func (f *installFlags) command(use, short, long string, run installRun) *cobra.Command {
+	cmd := &cobra.Command{
+		Use: use, Short: short, Long: long, Args: noArgs, SilenceErrors: true,
+		RunE: func(c *cobra.Command, _ []string) error { return f.run(c, run) },
+	}
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		fmt.Fprintln(c.ErrOrStderr(), err)
+		return exitCode(2)
+	})
+	return cmd
+}
+
+// profileFlags are cmd's flags, its subcommands' too, that name an install: --profile, --region, --env; and --yes
+// (what it does: yes), --verbose.
+func (f *installFlags) profileFlags(cmd *cobra.Command, yes string) {
+	p := cmd.PersistentFlags()
+	p.StringVar(&f.profile, "profile", "", "the AWS profile (default: the SDK's)")
+	p.StringVar(&f.region, "region", "", "the manager's region (default: the profile's, else asked; eu-west-1 suggested)")
+	p.StringVar(&f.env, "env", "", "the environment: 1 to 10 lowercase letters, digits or inner hyphens (default prod)")
+	p.BoolVar(&f.yes, "yes", false, yes)
+	p.BoolVar(&f.verbose, "verbose", false, "print Terraform's lines instead of the status line")
+}
+
 func newInstall(runs installRuns) *cobra.Command {
 	f := &installFlags{}
-	command := func(use, short, long string, run installRun) *cobra.Command {
-		return &cobra.Command{
-			Use: use, Short: short, Long: long, Args: noArgs, SilenceErrors: true,
-			RunE: func(c *cobra.Command, _ []string) error { return f.run(c, run) },
-		}
-	}
+	command := f.command
 	cmd := command("install", "Install the Dormeto manager in an AWS account, with CodeBuild",
 		"Install the Dormeto manager in an AWS account: the questions a first install needs (each has its flag), read-only\n"+
 			"checks, the install's bucket, role and CodeBuild project by API calls, a Terraform plan in CodeBuild, your\n"+
@@ -72,10 +93,6 @@ func newInstall(runs installRuns) *cobra.Command {
 			"In organization mode, with the management account's profile (--management-profile, or --profile when it is the\n"+
 			"management account's), organization access follows the manager: the delegation policy and the member accounts'\n"+
 			"roles, shown, confirmed, then deployed by a CodeBuild project of the management account removed once it ends.", runs.install)
-	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		fmt.Fprintln(c.ErrOrStderr(), err)
-		return exitCode(2)
-	})
 	cmd.AddCommand(
 		command("check", "Check the prerequisites of the install (read-only)",
 			"Check the prerequisites of the install, read-only: nothing is created, nothing is asked but the region.", runs.check),
@@ -89,10 +106,8 @@ func newInstall(runs installRuns) *cobra.Command {
 				"organization access run left in the management account (its build role and project) is removed once it ends.", runs.status),
 	)
 
+	f.profileFlags(cmd, "take the suggested answers without asking; never confirms a plan")
 	p := cmd.PersistentFlags()
-	p.StringVar(&f.profile, "profile", "", "the AWS profile (default: the SDK's)")
-	p.StringVar(&f.region, "region", "", "the manager's region (default: the profile's, else asked; eu-west-1 suggested)")
-	p.StringVar(&f.env, "env", "", "the environment: 1 to 10 lowercase letters, digits or inner hyphens (default prod)")
 	p.StringVar(&f.version, "version", "", "the manager release (default: the latest)")
 	p.StringSliceVar(&f.adminEmails, "admin-emails", nil, "the administrators' emails, comma-separated")
 	p.StringVar(&f.mode, "mode", "", "organization or account (default: suggested from the account's organization)")
@@ -104,14 +119,32 @@ func newInstall(runs installRuns) *cobra.Command {
 	p.StringArrayVar(&f.vars, "var", nil, "another input of the manager module, its value as JSON: name=value (repeatable)")
 	p.StringVar(&f.buildRole, "build-role", "", "an existing role's ARN for CodeBuild (default: created by the install)")
 	p.StringVar(&f.release, "release", "", "a local release directory, uploaded to the install's bucket (an unreleased manager)")
-	p.BoolVar(&f.yes, "yes", false, "take the suggested answers without asking; never confirms a plan")
-	p.BoolVar(&f.verbose, "verbose", false, "print Terraform's lines instead of the status line")
 	p.StringVar(&f.managementProfile, "management-profile", "", "the management account's profile: organization access (organization mode)")
 	p.StringVar(&f.memberRole, "member-role", "", "the role assumed in each member account from the management account (default OrganizationAccountAccessRole)")
 	p.StringSliceVar(&f.accounts, "accounts", nil, "the member accounts that get the roles, comma-separated (default: every active account)")
 	p.StringSliceVar(&f.excludeAccounts, "exclude-accounts", nil, "member accounts left out, comma-separated")
 	p.StringSliceVar(&f.discoveryOnly, "discovery-only", nil, "member accounts without the command role, comma-separated")
 	p.BoolVar(&f.access, "access", false, "run organization access alone, the manager installed (needs the management account's profile)")
+	return cmd
+}
+
+// newUninstall is `dormeto uninstall` and its subcommand apply, with the flags that name the install.
+func newUninstall(runs installRuns) *cobra.Command {
+	f := &installFlags{}
+	cmd := f.command("uninstall", "Remove the Dormeto manager that dormeto install installed",
+		"Remove the Dormeto manager that dormeto install installed, in this order: refused while routers are installed\n"+
+			"(offboard the workloads and uninstall them in the dashboard first); event-driven refresh confirmed off; the\n"+
+			"deletion protection lifted by a plan applied first; the destroy plan in CodeBuild, your confirmation, then that\n"+
+			"saved plan applied and followed; then, if you say so, the install's bucket (its state and answers), role, log group\n"+
+			"and project. Without a terminal, it stops after each plan: dormeto install apply applies the deletion protection's,\n"+
+			"dormeto uninstall apply the destroy plan. --yes never confirms a plan.\n\n"+
+			"Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement\n"+
+			"of the delegation policy: https://dormeto.com/organization-access.html", runs.uninstall)
+	cmd.AddCommand(f.command("apply", "Apply the last saved destroy plan of the uninstall",
+		"Apply the last saved destroy plan of the uninstall (made without a terminal, or not confirmed): it is shown, then\n"+
+			"applied and followed; the install's bucket, role, log group and project are kept (dormeto uninstall removes them).\n"+
+			"Running this command is the confirmation.", runs.uninstallApply))
+	f.profileFlags(cmd, "answer that event-driven refresh is off and keep the bootstrap, without asking; never confirms a plan")
 	return cmd
 }
 

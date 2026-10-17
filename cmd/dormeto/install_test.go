@@ -1,7 +1,7 @@
 package main
 
-// `dormeto install`, `install check` and `install apply`: the flags read into the run's request, the run each command
-// calls, the exit codes, the usage; the real dependencies without a terminal.
+// `dormeto install`, its subcommands and `dormeto uninstall`: the flags read into the run's request, the run each
+// command calls, the exit codes, the usage; the real dependencies without a terminal.
 
 import (
 	"bytes"
@@ -36,7 +36,9 @@ func installed(t *testing.T, code int, args ...string) (calls []ran, stdout, std
 		}
 	}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
-	root.AddCommand(newInstall(installRuns{install: fake("install"), check: fake("check"), apply: fake("apply"), status: fake("status")}))
+	runs := installRuns{install: fake("install"), check: fake("check"), apply: fake("apply"), status: fake("status"),
+		uninstall: fake("uninstall"), uninstallApply: fake("uninstall apply")}
+	root.AddCommand(newInstall(runs), newUninstall(runs))
 	var out, errs bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errs)
@@ -218,5 +220,72 @@ func TestDevNullIsNotATerminal(t *testing.T) {
 	defer f.Close()
 	if isTerminal(f) {
 		t.Error("/dev/null is taken for a terminal")
+	}
+}
+
+func TestUninstallFlagsMakeTheRequest(t *testing.T) {
+	calls, _, errs, exit := installed(t, 0, "uninstall", "--profile", "p", "--region", "eu-west-1", "--env", "dev", "--yes", "--verbose")
+	if exit != 0 || errs != "" {
+		t.Fatalf("exit %d, errors %q", exit, errs)
+	}
+	c := only(t, calls)
+	want := install.Request{
+		Profile: "p", Region: "eu-west-1", Yes: true, Verbose: true,
+		Flags: install.Settings{Env: "dev", Region: "eu-west-1"},
+		Set:   map[string]bool{"profile": true, "region": true, "env": true, "yes": true, "verbose": true},
+	}
+	if c.command != "uninstall" || !reflect.DeepEqual(c.r, want) {
+		t.Errorf("%s: request\n%+v\nwant\n%+v", c.command, c.r, want)
+	}
+	for _, args := range [][]string{{"uninstall", "apply", "--profile", "p"}, {"uninstall", "--profile", "p", "apply"}} {
+		calls, _, errs, exit := installed(t, 0, args...)
+		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].command != "uninstall apply" || calls[0].r.Profile != "p" {
+			t.Errorf("%q: exit %d, errors %q, calls %+v", args, exit, errs, calls)
+		}
+	}
+	// The exit code is the run's.
+	if _, _, _, exit := installed(t, 130, "uninstall"); exit != 130 {
+		t.Errorf("exit %d", exit)
+	}
+}
+
+// uninstall takes the flags that name the install, not install's answers.
+func TestUninstallBadFlagsExitCode2(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"uninstall", "--version", "0.11.0"}, "unknown flag: --version"},
+		{[]string{"uninstall", "apply", "--management-profile", "m"}, "unknown flag: --management-profile"},
+		{[]string{"uninstall", "--yes=maybe"}, `invalid argument "maybe" for "--yes"`},
+		{[]string{"uninstall", "apply", "extra"}, `unexpected argument "extra"`},
+	} {
+		calls, out, errs, exit := installed(t, 0, c.args...)
+		if exit != 2 || len(calls) != 0 || out != "" || !strings.Contains(errs, c.want) {
+			t.Errorf("%q: exit %d, calls %d, out %q, errors %q", c.args, exit, len(calls), out, errs)
+		}
+	}
+}
+
+func TestUninstallHelpListsTheFlags(t *testing.T) {
+	_, out, _, exit := installed(t, 0, "uninstall", "--help")
+	if exit != 0 || !strings.Contains(out, "Remove the Dormeto manager that dormeto install installed") {
+		t.Fatalf("exit %d:\n%s", exit, out)
+	}
+	for _, f := range []string{"--profile", "--region", "--env", "--yes", "--verbose", "apply", "dormeto uninstall apply", "dormeto install apply",
+		"https://dormeto.com/organization-access.html"} {
+		if !strings.Contains(out, f) {
+			t.Errorf("the usage lacks %s:\n%s", f, out)
+		}
+	}
+	if strings.Contains(out, "--version") || strings.Contains(out, "--admin-emails") {
+		t.Errorf("install's flags in the usage:\n%s", out)
+	}
+	if _, out, _, exit := installed(t, 0, "uninstall", "apply", "--help"); exit != 0 || !strings.Contains(out, "dormeto uninstall apply [flags]") ||
+		!strings.Contains(out, "Running this command is the confirmation.") {
+		t.Errorf("exit %d:\n%s", exit, out)
+	}
+	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "uninstall   Remove the Dormeto manager that dormeto install installed\n") {
+		t.Errorf("the commands listed without uninstall:\n%s", out)
 	}
 }
