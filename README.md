@@ -384,6 +384,11 @@ manager module creates IAM roles, Lambda functions, a user pool, a distribution 
 for the install's project only. `--build-role` gives your own role instead, and `dormeto uninstall` removes the one the
 install created.
 
+That role keeps `AdministratorAccess` until `dormeto uninstall` (it serves the upgrades). Anyone allowed
+`codebuild:StartBuild` or `codebuild:UpdateProject` on the project `dmt-<env>-install` can therefore run commands as an
+administrator of that account: allow those actions to the install's operators only, or give your own role with
+`--build-role`.
+
 In the management account, the profile reads the organization (`organizations:DescribeOrganization`, `ListAccounts`,
 `DescribeResourcePolicy`), assumes the member role in each chosen account (`sts:AssumeRole`; there `iam:GetRole` and
 `GetPolicy` read the Dormeto roles), and creates and deletes the organization build's bucket, role, project and log
