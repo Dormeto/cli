@@ -105,9 +105,9 @@ func (x *run) args() string {
 	return a
 }
 
-// prompted is the prompter's answer, or the context's error as soon as the run is cancelled: a terminal's read does
-// not end with Ctrl-C.
-func prompted[T any](ctx context.Context, ask func() (T, error)) (T, error) {
+// prompted is the prompter's answer, or the context's error as soon as the run is cancelled (a terminal's read does
+// not end with Ctrl-C), a newline then written to out so that what follows does not land on the question's line.
+func prompted[T any](ctx context.Context, out io.Writer, ask func() (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, err
@@ -123,37 +123,46 @@ func prompted[T any](ctx context.Context, ask func() (T, error)) (T, error) {
 	}()
 	select {
 	case <-ctx.Done():
-		return zero, ctx.Err()
 	case a := <-got:
-		if err := ctx.Err(); err != nil {
-			return zero, err
+		if ctx.Err() == nil {
+			return a.v, a.err
 		}
-		return a.v, a.err
 	}
+	fmt.Fprintln(out)
+	return zero, ctx.Err()
 }
 
-// ask is an answer no flag gave: the suggestion with --yes, else the person's in a terminal. Without a terminal, or
-// without an answer, the run stops naming the flag.
-func (x *run) ask(question, suggestion, flag string) (string, error) {
+// asks is how many times an empty answer to a question without a suggestion is asked.
+const asks = 3
+
+// ask is an answer no flag gave. Without a terminal, or with --yes, it is the default (ruling R26): an answer without
+// one stops the run naming its flag. In a terminal it is the person's, the default suggested: an empty answer to a
+// question without a suggestion is asked again, up to three times; the end of the input stops the run at once.
+func (x *run) ask(question, def, flag string) (string, error) {
 	if x.r.Yes || !x.d.Terminal {
-		if x.r.Yes && suggestion != "" {
-			return suggestion, nil
+		if def != "" {
+			return def, nil
 		}
 		return "", needed(flag)
 	}
-	a, err := prompted(x.ctx, func() (string, error) { return x.d.Prompter.Ask(question, suggestion) })
-	if err != nil && x.ctx.Err() != nil {
-		return "", err
+	for range asks {
+		a, err := prompted(x.ctx, x.d.Out, func() (string, error) { return x.d.Prompter.Ask(question, def) })
+		switch {
+		case err != nil && x.ctx.Err() != nil:
+			return "", err
+		case err != nil:
+			return "", needed(flag)
+		}
+		if a = strings.TrimSpace(a); a != "" {
+			return a, nil
+		}
 	}
-	if a = strings.TrimSpace(a); err != nil || a == "" {
-		return "", needed(flag)
-	}
-	return a, nil
+	return "", needed(flag)
 }
 
 // confirm asks a yes-or-no question in the terminal.
 func (x *run) confirm(question string) (bool, error) {
-	return prompted(x.ctx, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+	return prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
 }
 
 // locate finds where the run happens: the region (the flag's, else the profile's, else asked), the clients, the
@@ -166,6 +175,9 @@ func (x *run) locate() error {
 			return err
 		}
 		region = got
+	}
+	if region == "" && !x.d.Terminal && !x.r.Yes { // eu-west-1 is a suggestion, not a default
+		return needed("--region")
 	}
 	if region == "" {
 		got, err := x.ask("Region", "eu-west-1", "--region")
@@ -342,11 +354,13 @@ func (x *run) answer(s *Settings) error {
 	}
 	if !set["mode"] {
 		mode, why := Suggest(x.w)
-		if x.w.Organization != nil {
+		if x.w.Organization != nil && x.d.Terminal && !x.r.Yes {
 			var err error
 			if mode, err = x.ask(modeQuestion(mode, why), mode, "--mode"); err != nil {
 				return err
 			}
+		} else {
+			x.say("Mode: %s (%s)", mode, why)
 		}
 		s.Mode = mode
 	}
@@ -391,6 +405,19 @@ func (x *run) answer(s *Settings) error {
 // follow is how a build is shown: the status line in a terminal, Terraform's lines otherwise or with --verbose.
 func (x *run) follow(label string, total int) FollowOptions {
 	return FollowOptions{Label: label, Total: total, Status: x.d.Status, Out: x.d.Out, Lines: x.r.Verbose, Every: x.d.Every, Now: x.d.Now}
+}
+
+// lost ends a run whose build was followed no longer, the build going on (goesOn says how to follow it): Ctrl-C
+// detaches (130); expired credentials say their own message; another failure is said, then goesOn (1).
+func (x *run) lost(err error, goesOn string) error {
+	var expired *CredentialsError
+	switch {
+	case x.ctx.Err() != nil:
+		return &stop{exitInterrupted, "Detached: " + goesOn}
+	case errors.As(err, &expired):
+		return err
+	}
+	return &stop{1, err.Error() + "\n" + strings.ToUpper(goesOn[:1]) + goesOn[1:]}
 }
 
 // failed says how a build failed: the log's last lines and the build's page in the console.
@@ -512,6 +539,7 @@ func (x *run) install() error {
 	if err := PutConfig(x.ctx, x.c, x.p, cfg); err != nil {
 		return err
 	}
+	s.LastPlan = "" // a plan of the settings before is not this release's: until the new one starts, there is none to apply
 	if err := WriteSettings(x.ctx, x.c, x.p, s); err != nil {
 		return err
 	}
@@ -520,17 +548,17 @@ func (x *run) install() error {
 	if err != nil {
 		return err
 	}
+	following := "Follow it: dormeto install status " + x.args() + "; apply it once done: dormeto install apply " + x.args()
+	planGoesOn := "the plan goes on in CodeBuild. " + following
+	x.interrupted = "Interrupted: the plan started (build " + id + ") and goes on in CodeBuild. " + following
 	s.LastPlan = id
-	if err := WriteSettings(x.ctx, x.c, x.p, s); err != nil {
+	// The plan runs: its id is kept even when Ctrl-C comes now.
+	if err := WriteSettings(context.WithoutCancel(x.ctx), x.c, x.p, s); err != nil {
 		return err
 	}
 	res, err := Follow(x.ctx, x.c, x.p, id, x.follow("Plan", 0))
 	if err != nil {
-		if x.ctx.Err() != nil {
-			return &stop{exitInterrupted, "Detached: the plan goes on in CodeBuild. Follow it: dormeto install status " + x.args() +
-				"; apply it once done: dormeto install apply " + x.args()}
-		}
-		return err
+		return x.lost(err, planGoesOn)
 	}
 	if res.Failed {
 		return x.failed("Plan", res)
@@ -570,10 +598,7 @@ func (x *run) apply(s Settings, sum PlanSummary) error {
 	}
 	res, err := Follow(x.ctx, x.c, x.p, id, x.follow("Apply", sum.Add+sum.Change+sum.Destroy))
 	if err != nil {
-		if x.ctx.Err() != nil {
-			return &stop{exitInterrupted, "Detached: the apply goes on in CodeBuild. Follow it: dormeto install status " + x.args()}
-		}
-		return err
+		return x.lost(err, "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args())
 	}
 	if res.Failed {
 		return x.failed("Apply", res)

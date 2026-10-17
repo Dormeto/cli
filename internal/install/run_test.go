@@ -75,9 +75,11 @@ type rwWorld struct {
 	bucket, role, project, logGroup bool              // the bootstrap's resources exist
 	builds                          []*rwBuild        // oldest first
 	ends                            map[string]cbtypes.StatusType
-	plan                            string // the plan.json a plan build writes
-	simDenied                       bool   // iam:SimulatePrincipalPolicy refused: a warning
-	identityErr                     error  // sts:GetCallerIdentity's error
+	plan                            string           // the plan.json a plan build writes
+	simDenied                       bool             // iam:SimulatePrincipalPolicy refused: a warning
+	identityErr                     error            // sts:GetCallerIdentity's error
+	followErr                       map[string]error // by ACTION: following its build fails (BatchGetBuilds of it alone)
+	cancelOnStart                   bool             // Ctrl-C as the build starts
 	writes                          []string
 	readOnly                        bool
 	clock                           time.Time
@@ -88,7 +90,7 @@ type rwWorld struct {
 
 func rwNew(t *testing.T) *rwWorld {
 	w := &rwWorld{
-		t: t, region: "eu-west-1", objects: map[string]string{}, ends: map[string]cbtypes.StatusType{}, plan: rwPlan, clock: rwT0,
+		t: t, region: "eu-west-1", objects: map[string]string{}, ends: map[string]cbtypes.StatusType{}, followErr: map[string]error{}, plan: rwPlan, clock: rwT0,
 		org:  &Organization{ID: "o-vvk0115ixn", Management: "809706483662", AllFeatures: true},
 		http: fakeHTTP{bodies: map[string]string{rwDashboard: "ok"}},
 	}
@@ -244,6 +246,8 @@ func (p *rwPrompter) next(suggestion string) (string, error) {
 	case "^C":
 		p.cancel()
 		return "", context.Canceled
+	case "^D":
+		return "", io.EOF
 	case "":
 		return suggestion, nil
 	}
@@ -400,7 +404,10 @@ func (f rwS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.
 	return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
-func (f rwS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+func (f rwS3) PutObject(ctx context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	b, err := io.ReadAll(in.Body)
 	if err != nil {
 		return nil, err
@@ -457,6 +464,11 @@ func (f rwCB) ListBuildsForProject(context.Context, *codebuild.ListBuildsForProj
 }
 
 func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInput, _ ...func(*codebuild.Options)) (*codebuild.BatchGetBuildsOutput, error) {
+	if len(in.Ids) == 1 {
+		if b := f.w.build(in.Ids[0]); b != nil && b.vars != nil && f.w.followErr[b.vars["ACTION"]] != nil {
+			return nil, f.w.followErr[b.vars["ACTION"]]
+		}
+	}
 	out := &codebuild.BatchGetBuildsOutput{}
 	for _, id := range in.Ids {
 		b := f.w.build(id)
@@ -494,6 +506,9 @@ func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...
 		f.w.objects["prod/outputs.json"] = rwOutputs
 	}
 	f.w.builds = append(f.w.builds, b)
+	if f.w.cancelOnStart {
+		f.w.cancel()
+	}
 	return &codebuild.StartBuildOutput{Build: &cbtypes.Build{Id: aws.String(b.id)}}, nil
 }
 
@@ -674,9 +689,6 @@ func TestInstallWithoutATerminalAMissingAnswerNamesItsFlag(t *testing.T) {
 	}{
 		{"administrators", func(_ *rwWorld, r *Request) { delete(r.Set, "admin-emails"); r.Flags.AdminEmails = nil }, "--admin-emails"},
 		{"region", func(w *rwWorld, r *Request) { w.region, r.Region = "", ""; delete(r.Set, "region") }, "--region"},
-		{"version", func(_ *rwWorld, r *Request) { delete(r.Set, "version"); r.Flags.Version = "" }, "--version"},
-		{"mode", func(_ *rwWorld, r *Request) { delete(r.Set, "mode"); r.Flags.Mode = "" }, "--mode"},
-		{"domain", func(_ *rwWorld, r *Request) { delete(r.Set, "domain") }, "--domain"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := rwNew(t)
@@ -690,6 +702,34 @@ func TestInstallWithoutATerminalAMissingAnswerNamesItsFlag(t *testing.T) {
 				t.Errorf("created: %v", w.writes)
 			}
 		})
+	}
+}
+
+// Without a terminal, an answer with a default takes it (ruling R26): the latest version, the suggested mode (said), no
+// domain, no SES identity, no sender, env prod.
+func TestInstallWithoutATerminalTakesTheDefaults(t *testing.T) {
+	r := Request{Profile: "p", Region: "eu-west-1", Flags: Settings{AdminEmails: []string{"you@example.com"}}, Set: map[string]bool{"admin-emails": true}}
+	w := rwNew(t)
+	code, out, asked := w.run(Install, r, false)
+	if code != 0 || len(asked) != 0 {
+		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	rwInOrder(t, out,
+		"Profile p: account 532105290256",
+		"Mode: organization (the manager reads every account of o-vvk0115ixn)\n",
+		"  ✓ release: manager 0.11.0\n",
+		"Plan saved. Apply it: dormeto install apply "+rwArgs+"\n")
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+	if s := w.saved(); s.Env != "prod" || s.Version != "0.11.0" || s.Mode != "organization" || s.Domain != nil || s.SESIdentity != "" || s.EmailFrom != "" {
+		t.Errorf("install.json: %+v", s)
+	}
+
+	// An SES identity without a sender: none.
+	w = rwNew(t)
+	r.Flags.SESIdentity, r.Set["ses-identity"] = "example.com", true
+	code, out, _ = w.run(Install, r, false)
+	if s := w.saved(); code != 0 || s.SESIdentity != "example.com" || s.EmailFrom != "" {
+		t.Errorf("exit code %d, install.json %+v:\n%s", code, s, out)
 	}
 }
 
@@ -853,7 +893,7 @@ func TestInstallAFailedPlan(t *testing.T) {
 func TestInstallCtrlCAtTheConfirmationAppliesNothing(t *testing.T) {
 	w := rwNew(t)
 	code, out, _ := w.run(Install, rwFlags(), true, "^C")
-	if code != 130 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+	if code != 130 || !strings.HasSuffix(out, "      1 aws_lambda_function\n\nNot applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -863,7 +903,7 @@ func TestInstallCtrlCAtAQuestionCreatesNothing(t *testing.T) {
 	w := rwNew(t)
 	w.region = ""
 	code, out, _ := w.run(Install, Request{Profile: "p"}, true, "^C")
-	if code != 130 || !strings.HasSuffix(out, "Interrupted: nothing was created.\n") || len(w.writes) != 0 {
+	if code != 130 || out != "\nInterrupted: nothing was created.\n" || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 }
@@ -1102,5 +1142,106 @@ func TestAnExpiredSSOSessionSaysHowToSignIn(t *testing.T) {
 	code, out, _ = w.run(Install, rwFlags(), false)
 	if code != 1 || strings.Contains(out, "sso login") || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+// A new plan replaces the last one in install.json before anything can stop the run: a plan of the old settings is never
+// left next to the new release.
+func TestInstallForgetsTheLastPlanBeforeANewOne(t *testing.T) {
+	w := rwPlanned(t) // the plan p1 of 0.12.0, pending
+	w.release("0.13.0", true)
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)})
+	code, out, _ := w.run(Install, Request{Profile: "p", Region: "eu-west-1"}, true)
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	if s := w.saved(); s.LastPlan != "" || s.Version != "0.13.0" {
+		t.Errorf("install.json: %+v", s)
+	}
+	code, out, _ = w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
+	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto install\n") || len(w.actions()) != 0 {
+		t.Errorf("exit code %d, started %v:\n%s", code, w.actions(), out)
+	}
+}
+
+// Ctrl-C as the plan starts: its id is kept all the same, for install status and install apply.
+func TestInstallKeepsTheStartedPlanOnCtrlC(t *testing.T) {
+	w := rwNew(t)
+	w.cancelOnStart = true
+	code, out, _ := w.run(Install, rwFlags(), true)
+	if code != 130 || !strings.HasSuffix(out, "dormeto install status "+rwArgs+"; apply it once done: dormeto install apply "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if s := w.saved(); s.LastPlan != "dmt-prod-install:b1" {
+		t.Errorf("install.json: %+v", s)
+	}
+}
+
+// Following fails for a reason of AWS's (not expired credentials): the build goes on, and the commands that follow and
+// apply it are named.
+func TestInstallAFollowErrorSaysTheBuildGoesOn(t *testing.T) {
+	w := rwNew(t)
+	w.followErr["plan"] = chkAPI("ThrottlingException")
+	code, out, _ := w.run(Install, rwFlags(), true)
+	if code != 1 {
+		t.Errorf("exit code %d", code)
+	}
+	rwInOrder(t, out, "follow build dmt-prod-install:b1: api error ThrottlingException: ThrottlingException message\n",
+		"The plan goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+"; apply it once done: dormeto install apply "+rwArgs+"\n")
+
+	w = rwNew(t)
+	w.followErr["apply"] = chkAPI("ThrottlingException")
+	code, out, _ = w.run(Install, rwFlags(), true, "y")
+	if code != 1 || !strings.HasSuffix(out, "The apply goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+func TestInstallALocalRelease(t *testing.T) {
+	dir := writeLocal(t, "0.11.0-dev", nil)
+	w := rwNew(t)
+	r := rwFlags()
+	delete(r.Set, "version")
+	r.Flags.Version, r.Release = "", dir
+	code, out, _ := w.run(Install, r, false)
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	base := "s3://dmt-install-532105290256-eu-west-1/prod/release"
+	if !strings.Contains(out, "  ✓ release: manager 0.11.0-dev (local: "+dir+")\n") {
+		t.Errorf("output:\n%s", out)
+	}
+	for _, f := range []string{"SHA256SUMS", "terraform-aws-dormeto-0.11.0-dev.zip", "dormeto-organization-policy.json"} {
+		if !slices.Contains(w.writes, "s3:PutObject prod/release/"+f) {
+			t.Errorf("%s not uploaded: %v", f, w.writes)
+		}
+	}
+	if b := w.started(); len(b) != 1 || b[0].vars["RELEASE_BASE"] != base || b[0].vars["RELEASE_VERSION"] != "0.11.0-dev" {
+		t.Errorf("builds %v", w.actions())
+	}
+	if s := w.saved(); s.ReleaseBase != base || s.Version != "0.11.0-dev" {
+		t.Errorf("install.json: %+v", s)
+	}
+}
+
+func TestInstallAnEmptyAnswerIsAskedAgain(t *testing.T) {
+	r := rwFlags()
+	delete(r.Set, "admin-emails")
+
+	w := rwNew(t)
+	code, out, asked := w.run(Install, r, true, "", "", "you@example.com", "n")
+	rwEqual(t, "questions", asked, []string{"Administrators (emails, comma-separated)", "Administrators (emails, comma-separated)",
+		"Administrators (emails, comma-separated)", "Apply this plan? [y/N]"})
+	if code != 0 || w.saved().AdminEmails[0] != "you@example.com" {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+
+	// Three empty answers, or the end of the input at once: the flag is needed.
+	for _, answers := range [][]string{{"", "", ""}, {"^D"}} {
+		w = rwNew(t)
+		code, out, asked = w.run(Install, r, true, answers...)
+		if code != 2 || len(asked) != len(answers) || !strings.HasSuffix(out, "--admin-emails: needed\n") || len(w.writes) != 0 {
+			t.Errorf("%q: exit code %d, asked %q:\n%s", answers, code, asked, out)
+		}
 	}
 }
