@@ -617,55 +617,71 @@ func (x *run) install() error {
 	return x.thenAccess(s, rel, false)
 }
 
-// plan writes the configuration and the settings s, its last plan forgotten (a plan of the settings before is not
-// theirs: until the new one starts, there is none to apply), starts an install plan with s's release and follows it,
-// its id kept in s and install.json as soon as it runs; then its summary. then is what to run once it is applied ("":
-// nothing more), said with the command that applies it.
+// plan writes the configuration, then makes an install plan of the settings s (startPlan); then is what to run once it
+// is applied ("": nothing more), said with the command that applies it.
 func (x *run) plan(s *Settings, cfg []byte, then string) (string, PlanSummary, error) {
 	if err := PutConfig(x.ctx, x.c, x.p, cfg); err != nil {
 		return "", PlanSummary{}, err
 	}
+	return x.startPlan(s, ActionPlan, planApply, "Plan", "dormeto install apply "+x.args()+then)
+}
+
+// startPlan makes a plan of the settings s: its last plan forgotten in s and install.json (a plan of the settings
+// before is not theirs: until the new one starts, there is none to apply), a plan build of action a started with s's
+// release and followed (label, which names the plan in the messages too), its id and kind kept in s and install.json as
+// soon as it runs; then its summary. apply is the command that applies it, said when the run stops.
+func (x *run) startPlan(s *Settings, a Action, kind, label, apply string) (string, PlanSummary, error) {
 	s.LastPlan, s.LastPlanKind = "", ""
 	if err := WriteSettings(x.ctx, x.c, x.p, *s); err != nil {
 		return "", PlanSummary{}, err
 	}
-	id, err := Start(x.ctx, x.c, x.p, ActionPlan, map[string]string{"RELEASE_BASE": s.ReleaseBase, "RELEASE_VERSION": s.Version})
+	id, err := Start(x.ctx, x.c, x.p, a, map[string]string{"RELEASE_BASE": s.ReleaseBase, "RELEASE_VERSION": s.Version})
 	if err != nil {
 		return "", PlanSummary{}, err
 	}
-	following := "Follow it: dormeto install status " + x.args() + "; apply it once done: dormeto install apply " + x.args() + then
-	x.interrupted = "Interrupted: the plan started (build " + id + ") and goes on in CodeBuild. " + following
-	s.LastPlan, s.LastPlanKind = id, planApply
+	what := strings.ToLower(label)
+	following := "Follow it: dormeto install status " + x.args() + "; apply it once done: " + apply
+	x.interrupted = "Interrupted: the " + what + " started (build " + id + ") and goes on in CodeBuild. " + following
+	s.LastPlan, s.LastPlanKind = id, kind
 	// The plan runs: its id is kept even when Ctrl-C comes now.
 	if err := WriteSettings(context.WithoutCancel(x.ctx), x.c, x.p, *s); err != nil {
 		return "", PlanSummary{}, err
 	}
-	res, err := Follow(x.ctx, x.c, x.p, id, x.follow("Plan", 0))
+	res, err := Follow(x.ctx, x.c, x.p, id, x.follow(label, 0))
 	if err != nil {
-		return "", PlanSummary{}, x.lost(err, "the plan goes on in CodeBuild. "+following)
+		return "", PlanSummary{}, x.lost(err, "the "+what+" goes on in CodeBuild. "+following)
 	}
 	if res.Failed {
-		return "", PlanSummary{}, x.failed("Plan", res, x.p.LogGroup)
+		return "", PlanSummary{}, x.failed(label, res, x.p.LogGroup)
 	}
-	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args() + then
+	x.interrupted = "Not applied; the " + what + " is kept: " + apply
 	sum, err := x.summary(id)
 	return id, sum, err
 }
 
-// applyPlan applies the saved plan s.LastPlan (sum its summary) with s's release and follows it; then is what to run
-// once it is applied ("": nothing more), said with the commands that follow and apply it.
-func (x *run) applyPlan(s Settings, sum PlanSummary, then string) error {
-	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args() + then
-	id, err := Start(x.ctx, x.c, x.p, ActionApply, map[string]string{"PLAN_BUILD": s.LastPlan, "RELEASE_BASE": s.ReleaseBase, "RELEASE_VERSION": s.Version})
+// applyPlan applies the saved plan s.LastPlan (sum its summary) with s's release by a build of action a and follows it
+// (label); goesOn is what a lost follow says of the build.
+func (x *run) applyPlan(s Settings, sum PlanSummary, a Action, label, goesOn string) error {
+	id, err := Start(x.ctx, x.c, x.p, a, map[string]string{"PLAN_BUILD": s.LastPlan, "RELEASE_BASE": s.ReleaseBase, "RELEASE_VERSION": s.Version})
 	if err != nil {
 		return err
 	}
-	res, err := Follow(x.ctx, x.c, x.p, id, x.follow("Apply", sum.Add+sum.Change+sum.Destroy))
+	res, err := Follow(x.ctx, x.c, x.p, id, x.follow(label, sum.Add+sum.Change+sum.Destroy))
 	if err != nil {
-		return x.lost(err, "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args()+then)
+		return x.lost(err, goesOn)
 	}
 	if res.Failed {
-		return x.failed("Apply", res, x.p.LogGroup)
+		return x.failed(label, res, x.p.LogGroup)
+	}
+	return nil
+}
+
+// applyInstall applies the saved install plan s.LastPlan (sum its summary) and follows it; then is what to run once it
+// is applied ("": nothing more), said with the commands that follow and apply it.
+func (x *run) applyInstall(s Settings, sum PlanSummary, then string) error {
+	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args() + then
+	if err := x.applyPlan(s, sum, ActionApply, "Apply", "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args()+then); err != nil {
+		return err
 	}
 	x.say("  ✓ applied: %d added, %d changed, %d destroyed", sum.Add, sum.Change, sum.Destroy)
 	return nil
@@ -673,7 +689,7 @@ func (x *run) applyPlan(s Settings, sum PlanSummary, then string) error {
 
 // apply applies the saved plan s.LastPlan with s's release, follows it, then checks the dashboard and the invitations.
 func (x *run) apply(s Settings, sum PlanSummary) error {
-	if err := x.applyPlan(s, sum, ""); err != nil {
+	if err := x.applyInstall(s, sum, ""); err != nil {
 		return err
 	}
 	x.interrupted = "Interrupted: the manager is installed; dormeto install status checks it."

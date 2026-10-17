@@ -48,7 +48,7 @@ const (
 	unDestroy   = "Destroy the manager? This deletes its users, its table and its history. [y/N]"
 	unBootstrap = "Remove the install's bucket (its state and answers), role, log group and project too? [y/N]"
 	unWarning   = "! Event-driven refresh must be off (Discovery, Perimeter settings), with a discovery run since: its forwarders in member accounts are removed only by a run.\n"
-	unKept      = "Kept the bucket dmt-install-532105290256-eu-west-1 (its answers serve a reinstall) and the project; dormeto uninstall " + rwArgs + " again removes them.\n"
+	unKept      = "Kept the bucket dmt-install-532105290256-eu-west-1 (its answers serve a reinstall) and the project; dormeto uninstall " + rwArgs + " again in a terminal removes them.\n"
 	unRemoved   = "Removed the bucket dmt-install-532105290256-eu-west-1, the role dmt-prod-install, the log group /aws/codebuild/dmt-prod-install and the project dmt-prod-install.\n"
 	unAccess    = "Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: https://dormeto.com/organization-access.html\n"
 	unRefused   = "offboard the workloads and uninstall the routers in the dashboard (Routers) first.\n"
@@ -118,14 +118,44 @@ func TestUninstallRefusesWhileRoutersAreInstalled(t *testing.T) {
 	}
 }
 
-// A region whose functions cannot be listed (a policy of the organization denying it) is said, and the others decide.
+// A region whose functions cannot be listed (a policy of the organization denying it) is said; in a terminal, the
+// person decides whether to go on; the manager's own region must be checked.
 func TestUninstallARegionDenied(t *testing.T) {
 	w := unNew(t)
 	w.lambdaDenied = map[string]bool{"eu-south-1": true}
-	code, out, asked := w.run(Uninstall, unRequest, true, "n")
-	rwEqual(t, "questions", asked, []string{unEvent})
-	if code != 1 || !strings.Contains(out, "  ! routers in eu-south-1: not checked (lambda:ListFunctions refused)\nRouters: none\n") {
+	code, out, asked := w.run(Uninstall, unRequest, true, "y", "n")
+	rwEqual(t, "questions", asked, []string{"Continue? [y/N]", unEvent})
+	if code != 1 || !strings.Contains(out, "\nRouters: none found (1 region not checked: eu-south-1)\n") || strings.Contains(out, "Routers: none\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
+	}
+
+	// No: nothing removed.
+	w = unNew(t)
+	w.lambdaDenied = map[string]bool{"eu-south-1": true, "us-east-1": true}
+	code, out, _ = w.run(Uninstall, unRequest, true, "n")
+	if code != 1 || !strings.HasSuffix(out, "Routers: none found (2 regions not checked: eu-south-1, us-east-1)\n"+
+		"Nothing was removed: look for dmtr- functions in eu-south-1, us-east-1, then run dormeto uninstall "+rwArgs+" again.\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+
+	// Without a terminal: said, and the uninstall goes on.
+	w = unNew(t)
+	w.lambdaDenied = map[string]bool{"eu-south-1": true}
+	code, out, _ = w.run(Uninstall, unRequest, false)
+	if code != 0 || !strings.Contains(out, "Routers: none found (1 region not checked: eu-south-1)\n"+unWarning) {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+
+	// The manager's own region not checked: refused.
+	for _, terminal := range []bool{true, false} {
+		w = unNew(t)
+		w.lambdaDenied = map[string]bool{"eu-west-1": true}
+		code, out, asked = w.run(Uninstall, unRequest, terminal)
+		if code != 1 || len(asked) != 0 || len(w.writes) != 0 ||
+			!strings.HasSuffix(out, "Routers not checked in eu-west-1, the manager's region (lambda:ListFunctions refused): nothing was removed.\n") {
+			t.Errorf("terminal %v: exit code %d, asked %q, writes %v:\n%s", terminal, code, asked, w.writes, out)
+		}
 	}
 }
 
@@ -184,7 +214,7 @@ func TestUninstallLiftsTheProtectionThenDestroys(t *testing.T) {
 	rwEqual(t, "writes", w.writes, []string{
 		"s3:PutObject prod/config/main.tf.json", "s3:PutObject prod/install.json", "codebuild:StartBuild plan", "s3:PutObject prod/install.json",
 		"codebuild:StartBuild apply",
-		"codebuild:StartBuild plan-destroy", "s3:PutObject prod/install.json",
+		"s3:PutObject prod/install.json", "codebuild:StartBuild plan-destroy", "s3:PutObject prod/install.json",
 		"codebuild:StartBuild apply-destroy", "s3:PutObject prod/install.json",
 		"codebuild:DeleteProject", "iam:DetachRolePolicy", "iam:DeleteRole dmt-prod-install", "logs:DeleteLogGroup", "s3:DeleteObjects", "s3:DeleteBucket",
 	})
@@ -322,7 +352,7 @@ func TestUninstallApplyRefusesAnotherPlan(t *testing.T) {
 			s := w.saved()
 			s.LastPlanKind = "destroy"
 			w.save(s)
-			delete(w.objects, "prod/applied.json")
+			w.objects["prod/manager.tfstate"] = rwNoneState
 		}, "nothing applied to destroy: dormeto uninstall " + rwArgs + " removes the bootstrap\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -336,20 +366,31 @@ func TestUninstallApplyRefusesAnotherPlan(t *testing.T) {
 	}
 }
 
+// Nothing applied is the Terraform state's say: none, or one without a resource (applied.json present or not).
 func TestUninstallNothingAppliedGoesToTheBootstrap(t *testing.T) {
-	w := unNew(t)
-	delete(w.objects, "prod/applied.json")
-	w.routers = 1 // not read: nothing is applied
-	code, out, asked := w.run(Uninstall, unRequest, true, "y")
-	rwEqual(t, "questions", asked, []string{unBootstrap})
-	if code != 0 || !strings.HasSuffix(out, unRemoved+unAccess) || !w.gone() || len(w.actions()) != 0 || len(w.listed) != 0 {
-		t.Errorf("exit code %d, gone %v, builds %v, listed %v:\n%s", code, w.gone(), w.actions(), w.listed, out)
+	for _, c := range []struct {
+		name string
+		edit func(w *rwWorld)
+	}{
+		{"no state", func(w *rwWorld) { delete(w.objects, "prod/manager.tfstate"); delete(w.objects, "prod/applied.json") }},
+		{"a state without resources", func(w *rwWorld) { w.objects["prod/manager.tfstate"] = rwNoneState }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := unNew(t)
+			c.edit(w)
+			w.routers = 1 // not read: nothing is applied
+			code, out, asked := w.run(Uninstall, unRequest, true, "y")
+			rwEqual(t, "questions", asked, []string{unBootstrap})
+			if code != 0 || !strings.HasSuffix(out, unRemoved+unAccess) || !w.gone() || len(w.actions()) != 0 || len(w.listed) != 0 {
+				t.Errorf("exit code %d, gone %v, builds %v, listed %v:\n%s", code, w.gone(), w.actions(), w.listed, out)
+			}
+		})
 	}
 
 	// Without a terminal: kept.
-	w = unNew(t)
-	delete(w.objects, "prod/applied.json")
-	code, out, asked = w.run(Uninstall, unRequest, false)
+	w := unNew(t)
+	delete(w.objects, "prod/manager.tfstate")
+	code, out, asked := w.run(Uninstall, unRequest, false)
 	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, unKept+unAccess) || w.gone() || len(w.writes) != 0 {
 		t.Errorf("exit code %d, asked %q, writes %v:\n%s", code, asked, w.writes, out)
 	}
@@ -360,7 +401,7 @@ func TestUninstallAccountModeSaysNothingOfOrganizationAccess(t *testing.T) {
 	s := w.saved()
 	s.Mode, s.OrganizationID = "account", ""
 	w.save(s)
-	delete(w.objects, "prod/applied.json")
+	delete(w.objects, "prod/manager.tfstate")
 	code, out, _ := w.run(Uninstall, unRequest, true, "n")
 	if code != 0 || !strings.HasSuffix(out, unKept) || strings.Contains(out, "Organization access") {
 		t.Errorf("exit code %d:\n%s", code, out)
@@ -379,7 +420,8 @@ func TestUninstallNotConfirmedKeepsThePlans(t *testing.T) {
 	// No to the protection's plan: kept for install apply, nothing destroyed.
 	w := unNew(t)
 	code, out, _ := w.run(Uninstall, unRequest, true, "y", "n")
-	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+", then dormeto uninstall "+rwArgs+" again\n") {
+	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+", then dormeto uninstall "+rwArgs+" again. "+
+		"install.json now has deletion_protection=false: dormeto install "+rwArgs+" --var deletion_protection=true puts it back.\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -414,6 +456,16 @@ func TestUninstallYesConfirmsNoPlan(t *testing.T) {
 		t.Errorf("exit code %d, gone %v:\n%s", code, w.gone(), out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan-destroy", "apply-destroy"})
+
+	// Regions not checked: said, and no question.
+	w = unNew(t)
+	unProtectionOff(w)
+	w.lambdaDenied = map[string]bool{"eu-south-1": true}
+	code, out, asked = w.run(Uninstall, r, true, "n")
+	rwEqual(t, "questions", asked, []string{unDestroy})
+	if code != 0 || !strings.Contains(out, "Routers: none found (1 region not checked: eu-south-1)\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
 }
 
 func TestUninstallAFailedDestroy(t *testing.T) {
@@ -473,4 +525,149 @@ func TestUninstallApplyInATerminalAsksNothing(t *testing.T) {
 		t.Errorf("exit code %d, asked %q, gone %v:\n%s", code, asked, w.gone(), out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan-destroy", "apply-destroy"})
+}
+
+// A first install whose apply failed halfway: resources in the state, no applied.json. The manager's resources are
+// destroyed (the protection first), never left behind by removing the bucket and its state.
+func TestUninstallAFailedFirstApplyIsDestroyed(t *testing.T) {
+	w := unNew(t)
+	delete(w.objects, "prod/applied.json")
+	code, out, asked := w.run(Uninstall, unRequest, true, "y", "y", "y", "n")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "questions", asked, []string{unEvent, unLift, unDestroy, unBootstrap})
+	rwEqual(t, "builds", w.actions(), []string{"plan", "apply", "plan-destroy", "apply-destroy"})
+	if !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) {
+		t.Errorf("output:\n%s", out)
+	}
+
+	// uninstall apply too: a destroy plan, the state's resources, no applied.json.
+	w = unNew(t)
+	delete(w.objects, "prod/applied.json")
+	s := w.saved()
+	s.LastPlan, s.LastPlanKind = "dmt-prod-install:d1", "destroy"
+	w.save(s)
+	w.objects["prod/plans/dmt-prod-install:d1/plan.json"] = rwDestroy
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:d1", env: map[string]string{"ACTION": "plan-destroy"}, status: cbtypes.StatusTypeSucceeded,
+		start: rwT0.Add(-time.Minute)})
+	code, out, _ = w.run(UninstallApply, unRequest, false)
+	if code != 0 || !strings.HasSuffix(out, "  ✓ destroyed: 3 resources\n"+unKept+unAccess) {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"apply-destroy"})
+}
+
+// The protection off in install.json but its plan never started (a build running refused it): planned again.
+func TestUninstallPlansTheProtectionAgainWhenItsPlanDidNotStart(t *testing.T) {
+	w := unNew(t)
+	running := &rwBuild{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)}
+	w.builds = append(w.builds, running)
+	code, out, _ := w.run(Uninstall, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	if s := w.saved(); string(s.Vars["deletion_protection"]) != "false" || s.LastPlan != "" {
+		t.Fatalf("install.json: %+v", s)
+	}
+	running.status = cbtypes.StatusTypeSucceeded
+	code, out, _ = w.run(Uninstall, unRequest, false)
+	if code != 0 || !strings.Contains(out, "\nDeletion protection is on: a plan lifts it first.\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+}
+
+// The protection's plan failed: planned again, not taken as lifted.
+func TestUninstallPlansTheProtectionAgainWhenItsPlanFailed(t *testing.T) {
+	w := unNew(t)
+	w.ends["plan"] = cbtypes.StatusTypeFailed
+	code, out, _ := w.run(Uninstall, unRequest, false)
+	if code != 1 || !strings.Contains(out, "Plan failed\n") {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	delete(w.ends, "plan")
+	code, out, _ = w.run(Uninstall, unRequest, false)
+	if code != 0 || !strings.Contains(out, "\nDeletion protection is on: a plan lifts it first.\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan", "plan"})
+}
+
+// AWS failing to say how the last plan stands is an error, not a protection lifted.
+func TestUninstallAnErrorReadingTheLastPlan(t *testing.T) {
+	w := unNew(t)
+	unProtectionOff(w)
+	w.batchErr = chkAPI("ThrottlingException")
+	code, out, _ := w.run(Uninstall, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "get build dmt-prod-install:p0: api error ThrottlingException: ThrottlingException message\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+// The destroy plan, as the protection's, forgets the last plan before it starts: a plan refused leaves none to apply.
+func TestUninstallTheDestroyPlanForgetsTheLastPlan(t *testing.T) {
+	w := unNew(t)
+	unProtectionOff(w)
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)})
+	code, out, _ := w.run(Uninstall, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	if s := w.saved(); s.LastPlan != "" || s.LastPlanKind != "" {
+		t.Errorf("install.json: %+v", s)
+	}
+	rwEqual(t, "writes", w.writes, []string{"s3:PutObject prod/install.json"})
+}
+
+// uninstall apply checks the routers again: one installed since the plan refuses it.
+func TestUninstallApplyChecksTheRoutersAgain(t *testing.T) {
+	w := unNew(t)
+	unProtectionOff(w)
+	if code, out, _ := w.run(Uninstall, unRequest, false); code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	w.routers = 1
+	code, out, _ := w.run(UninstallApply, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "Routers are installed (table dmt-prod-manager): "+unRefused) {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan-destroy"})
+
+	// Regions not checked: said, and no question (the command is the confirmation).
+	w.routers = 0
+	w.lambdaDenied = map[string]bool{"eu-south-1": true}
+	code, out, asked := w.run(UninstallApply, unRequest, true)
+	if code != 0 || len(asked) != 0 || !strings.Contains(out, "Routers: none found (1 region not checked: eu-south-1)\n") {
+		t.Errorf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan-destroy", "apply-destroy"})
+}
+
+// uninstall apply refuses a destroy plan that failed, or that an apply followed, before reading it, with what to run.
+func TestUninstallApplyAnUnusableDestroyPlan(t *testing.T) {
+	w := unNew(t)
+	unProtectionOff(w)
+	w.ends["plan-destroy"] = cbtypes.StatusTypeFailed
+	if code, out, _ := w.run(Uninstall, unRequest, false); code != 1 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	code, out, _ := w.run(UninstallApply, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "the destroy plan dmt-prod-install:b1 did not succeed (FAILED): run dormeto uninstall "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan-destroy"})
+
+	w = unNew(t)
+	s := w.saved()
+	s.LastPlan, s.LastPlanKind = "dmt-prod-install:d0", "destroy"
+	w.save(s)
+	w.objects["prod/plans/dmt-prod-install:d0/plan.json"] = rwDestroy
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:d0", env: map[string]string{"ACTION": "plan-destroy"}, status: cbtypes.StatusTypeSucceeded,
+		start: rwT0.Add(-3 * time.Hour)})
+	code, out, _ = w.run(UninstallApply, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "the destroy plan dmt-prod-install:d0 predates the last apply dmt-prod-install:a0: run dormeto uninstall "+rwArgs+"\n") ||
+		strings.Contains(out, "Plan (build") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
 }

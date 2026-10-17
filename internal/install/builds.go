@@ -189,8 +189,18 @@ func (e *StalePlanError) Error() string {
 	return fmt.Sprintf("the plan %s predates the last apply %s: plan again", e.Plan, e.Apply)
 }
 
-// CheckPlan refuses a plan that did not succeed, is unknown, or was made before the last apply (applied, when not nil:
-// a *StalePlanError).
+// UnusablePlanError is a plan that cannot be applied: unknown (Status empty), or it did not succeed.
+type UnusablePlanError struct{ Plan, Status string }
+
+func (e *UnusablePlanError) Error() string {
+	if e.Status == "" {
+		return fmt.Sprintf("no plan %s: plan again", e.Plan)
+	}
+	return fmt.Sprintf("the plan %s did not succeed (%s): plan again", e.Plan, e.Status)
+}
+
+// CheckPlan refuses a plan that is unknown or did not succeed (an *UnusablePlanError), or was made before the last
+// apply (applied, when not nil: a *StalePlanError); its other errors are AWS's.
 func CheckPlan(ctx context.Context, c Clients, planBuild string, applied *Applied) error {
 	ids := []string{planBuild}
 	if applied != nil && applied.Build != "" && applied.Build != planBuild {
@@ -210,10 +220,10 @@ func CheckPlan(ctx context.Context, c Clients, planBuild string, applied *Applie
 		}
 	}
 	if plan == nil {
-		return fmt.Errorf("no plan %s: plan again", planBuild)
+		return &UnusablePlanError{Plan: planBuild}
 	}
 	if plan.BuildStatus != cbtypes.StatusTypeSucceeded {
-		return fmt.Errorf("the plan %s did not succeed (%s): plan again", planBuild, plan.BuildStatus)
+		return &UnusablePlanError{Plan: planBuild, Status: string(plan.BuildStatus)}
 	}
 	if apply != nil && apply.StartTime != nil && plan.StartTime != nil && plan.StartTime.Before(*apply.StartTime) {
 		return &StalePlanError{Plan: planBuild, Apply: aws.ToString(apply.Id)}

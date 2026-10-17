@@ -85,6 +85,23 @@ func ReadApplied(ctx context.Context, c Clients, p Project) (*Applied, error) {
 	return &a, nil
 }
 
+// StateHasResources tells whether the manager's Terraform state, <env>/manager.tfstate, holds a resource: false when
+// it is absent (or the bucket is) or its resources are none. It, not applied.json, says whether anything is applied: an
+// apply that failed halfway leaves resources and no applied.json.
+func StateHasResources(ctx context.Context, c Clients, p Project) (bool, error) {
+	b, err := getObject(ctx, c, p, p.StateKey())
+	if err != nil || b == nil {
+		return false, err
+	}
+	var state struct {
+		Resources []json.RawMessage `json:"resources"`
+	}
+	if err := json.Unmarshal(b, &state); err != nil {
+		return false, fmt.Errorf("s3://%s/%s: %w", p.Bucket, p.StateKey(), err)
+	}
+	return len(state.Resources) > 0, nil
+}
+
 // ReadOutputs reads <env>/outputs.json, Terraform's `output -json` ({"dashboard_url":{"value":…},…}); nil when absent.
 func ReadOutputs(ctx context.Context, c Clients, p Project) (*Outputs, error) {
 	b, err := getObject(ctx, c, p, p.Key("outputs.json"))

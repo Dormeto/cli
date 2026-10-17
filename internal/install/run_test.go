@@ -63,6 +63,9 @@ const (
 		`{"address":"module.dormeto.aws_lambda_function.api","type":"aws_lambda_function","change":{"actions":["update"]}},` +
 		`{"address":"module.dormeto.aws_dynamodb_table.events","type":"aws_dynamodb_table","change":{"actions":["delete","create"]}}]}`
 	rwOutputs = `{"dashboard_url":{"value":"` + rwDashboard + `"},"user_pool_id":{"value":"eu-west-1_abc"},"version":{"value":"0.11.0"}}`
+	// The manager's Terraform state: with its resources (applied), and without (destroyed).
+	rwState     = `{"version":4,"terraform_version":"1.16.5","resources":[{"mode":"managed","type":"aws_dynamodb_table","name":"manager"}]}`
+	rwNoneState = `{"version":4,"terraform_version":"1.16.5","resources":[]}`
 	// What a destroy plan build writes: the manager's three resources destroyed.
 	rwDestroy = `{"format_version":"1.2","resource_changes":[` +
 		`{"address":"module.dormeto.aws_cognito_user_pool.users","type":"aws_cognito_user_pool","change":{"actions":["delete"]}},` +
@@ -146,6 +149,7 @@ type rwWorld struct {
 	simDenied     bool   // iam:SimulatePrincipalPolicy refused: a warning
 	identityErr   error  // sts:GetCallerIdentity's error
 	cancelOnStart bool   // Ctrl-C as the build starts
+	batchErr      error  // codebuild:BatchGetBuilds's error
 	writes        []string
 	readOnly      bool
 	clock         time.Time
@@ -221,13 +225,14 @@ func (w *rwWorld) release(v string, latest bool) {
 }
 
 // installed is prod installed at version: the bootstrap, install.json (its plan p0), applied.json (the apply a0, after
-// p0) and outputs.json.
+// p0), outputs.json and the state.
 func (w *rwWorld) installed(version string) {
 	w.bucket, w.role, w.project, w.logGroup = true, true, true, true
 	w.save(Settings{Env: "prod", Region: "eu-west-1", Version: version, Mode: "organization", AdminEmails: []string{"you@example.com"},
 		OrganizationID: "o-vvk0115ixn", ReleaseBase: ReleasesURL + "/" + version, LastPlan: "dmt-prod-install:p0"})
 	w.objects["prod/applied.json"] = `{"version":"` + version + `","build":"dmt-prod-install:a0"}`
 	w.objects["prod/outputs.json"] = rwOutputs
+	w.objects["prod/manager.tfstate"] = rwState
 	w.objects["prod/plans/dmt-prod-install:p0/plan.json"] = rwPlan
 	w.builds = append(w.builds,
 		&rwBuild{id: "dmt-prod-install:p0", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-2 * time.Hour)},
@@ -671,6 +676,9 @@ func (f rwCB) ListBuildsForProject(context.Context, *codebuild.ListBuildsForProj
 }
 
 func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInput, _ ...func(*codebuild.Options)) (*codebuild.BatchGetBuildsOutput, error) {
+	if f.w.batchErr != nil {
+		return nil, f.w.batchErr
+	}
 	if len(in.Ids) == 1 {
 		if b := f.a.build(in.Ids[0]); b != nil && b.vars != nil && f.a.followErr[b.vars["ACTION"]] != nil {
 			return nil, f.a.followErr[b.vars["ACTION"]]
@@ -698,9 +706,9 @@ func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInpu
 }
 
 // StartBuild runs the build: it ends as ends says (SUCCEEDED by default), at once unless runFor. A manager's plan that
-// succeeds writes its plan.json (a destroy plan's: destroyPlan), an apply its applied.json and outputs.json, an
-// apply-destroy removes them; the organization's build says each account's roles and writes roles.json, the accounts in
-// failing failed.
+// succeeds writes its plan.json (a destroy plan's: destroyPlan), an apply its applied.json, outputs.json and the state
+// with resources, an apply-destroy removes the first two and empties the state; the organization's build says each
+// account's roles and writes roles.json, the accounts in failing failed.
 func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
 	vars := map[string]string{}
 	for _, v := range in.EnvironmentVariablesOverride {
@@ -737,9 +745,11 @@ func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...
 	case b.status == cbtypes.StatusTypeSucceeded && action == "apply":
 		f.a.objects["prod/applied.json"] = `{"version":"` + vars["RELEASE_VERSION"] + `","build":"` + b.id + `"}`
 		f.a.objects["prod/outputs.json"] = rwOutputs
+		f.a.objects["prod/manager.tfstate"] = rwState
 	case b.status == cbtypes.StatusTypeSucceeded && action == "apply-destroy":
 		delete(f.a.objects, "prod/applied.json")
 		delete(f.a.objects, "prod/outputs.json")
+		f.a.objects["prod/manager.tfstate"] = rwNoneState
 	}
 	f.a.builds = append(f.a.builds, b)
 	if f.w.cancelOnStart {

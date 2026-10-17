@@ -146,6 +146,30 @@ func TestReadApplied(t *testing.T) {
 	}
 }
 
+// The state says whether anything is applied: its resources, none when it or the bucket is absent.
+func TestStateHasResources(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name string
+		f    *stS3
+		want bool
+	}{
+		{"resources", &stS3{objects: map[string]string{"prod/manager.tfstate": `{"version":4,"resources":[{"mode":"managed","type":"aws_dynamodb_table"}]}`}}, true},
+		{"none", &stS3{objects: map[string]string{"prod/manager.tfstate": `{"version":4,"resources":[]}`}}, false},
+		{"no resources key", &stS3{objects: map[string]string{"prod/manager.tfstate": `{"version":4}`}}, false},
+		{"absent", &stS3{}, false},
+		{"no bucket", &stS3{noBucket: true}, false},
+	} {
+		if got, err := StateHasResources(ctx, stClients(c.f), bootP); err != nil || got != c.want {
+			t.Errorf("%s: %v, %v", c.name, got, err)
+		}
+	}
+	_, err := StateHasResources(ctx, stClients(&stS3{objects: map[string]string{"prod/manager.tfstate": "not json"}}), bootP)
+	if err == nil || !strings.Contains(err.Error(), "prod/manager.tfstate") {
+		t.Errorf("a malformed state: %v", err)
+	}
+}
+
 func TestAbsentObjectCodes(t *testing.T) {
 	for _, code := range []string{"NoSuchKey", "NotFound"} {
 		got, err := ReadApplied(context.Background(), stClients(&stS3{missing: code}), bootP)
