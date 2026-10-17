@@ -39,15 +39,23 @@ curl -fsSL -o "$TF_ZIP" "$TF_URL/$TF_ZIP"
 verify "terraform_${TF_VERSION}_SHA256SUMS" "$TF_ZIP"
 unzip -q -o "$TF_ZIP" -d ./bin
 PATH="$PWD/bin:$PATH"
-export PATH
+# no call to HashiCorp's checkpoint service, no colors in the log the CLI follows
+CHECKPOINT_DISABLE=1
+TF_IN_AUTOMATION=1
+TF_CLI_ARGS=-no-color
+export PATH CHECKPOINT_DISABLE TF_IN_AUTOMATION TF_CLI_ARGS
 
 say "reading the configuration of $ENV"
 aws s3 cp --only-show-errors "$S3/config/main.tf.json" main.tf.json
 case $ACTION in
 apply*) aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/.terraform.lock.hcl" .terraform.lock.hcl ;;
-*) if aws s3 ls "$S3/config/.terraform.lock.hcl" >/dev/null 2>&1; then
-  aws s3 cp --only-show-errors "$S3/config/.terraform.lock.hcl" .terraform.lock.hcl
-fi ;;
+*) # a kept lock keeps the providers: only a 404 means there is none, any other error stops
+  if aws s3api head-object --bucket "$BUCKET" --key "$ENV/config/.terraform.lock.hcl" >/dev/null 2>lock.err; then
+    aws s3 cp --only-show-errors "$S3/config/.terraform.lock.hcl" .terraform.lock.hcl
+  elif ! grep -q -e '(404)' -e 'Not Found' lock.err; then
+    cat lock.err >&2
+    die "cannot check the lock file of the providers: stopped"
+  fi ;;
 esac
 
 say "downloading the manager release $RELEASE_VERSION and checking it"

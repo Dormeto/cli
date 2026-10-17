@@ -32,6 +32,7 @@ type bootWorld struct {
 	bucket    error // HeadBucket's answer
 	role      bool  // the role exists
 	rolePath  string
+	untagged  bool // the existing role lacks managed-by=dormeto-cli
 	logGroup  bool
 	project   bool
 	cbErr     func(n int) error // the nth CreateProject/UpdateProject
@@ -130,11 +131,15 @@ func (f bootIAM) GetRole(_ context.Context, in *iam.GetRoleInput, _ ...func(*iam
 	if path == "" {
 		path = "/dormeto/"
 	}
-	return &iam.GetRoleOutput{Role: &iamtypes.Role{RoleName: in.RoleName, Path: &path}}, nil
+	r := &iamtypes.Role{RoleName: in.RoleName, Path: &path, Arn: aws.String("arn:aws:iam::123456789012:role" + path + aws.ToString(in.RoleName))}
+	if !f.w.untagged {
+		r.Tags = []iamtypes.Tag{{Key: aws.String("managed-by"), Value: aws.String("dormeto-cli")}}
+	}
+	return &iam.GetRoleOutput{Role: r}, nil
 }
 func (f bootIAM) CreateRole(_ context.Context, in *iam.CreateRoleInput, _ ...func(*iam.Options)) (*iam.CreateRoleOutput, error) {
 	f.w.rec("iam.CreateRole", in)
-	return &iam.CreateRoleOutput{}, nil
+	return &iam.CreateRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::123456789012:role" + aws.ToString(in.Path) + aws.ToString(in.RoleName))}}, nil
 }
 func (f bootIAM) UpdateAssumeRolePolicy(_ context.Context, in *iam.UpdateAssumeRolePolicyInput, _ ...func(*iam.Options)) (*iam.UpdateAssumeRolePolicyOutput, error) {
 	f.w.rec("iam.UpdateAssumeRolePolicy", in)
@@ -580,5 +585,40 @@ func TestTeardownDeletesByThousand(t *testing.T) {
 			n = append(n, len(d))
 		}
 		t.Errorf("batches %v", n)
+	}
+}
+
+func TestBootstrapRefusesARoleOutsideDormetoPath(t *testing.T) {
+	bootClock(t)
+	w := &bootWorld{role: true, rolePath: "/team/"}
+	err := Bootstrap(context.Background(), w.clients(), bootP, "")
+	if err == nil || err.Error() != "role dmt-prod-install exists outside /dormeto/: not this install's" {
+		t.Fatalf("err = %v", err)
+	}
+	for _, c := range []string{"iam.UpdateAssumeRolePolicy", "iam.AttachRolePolicy", "iam.CreateRole", "codebuild.CreateProject"} {
+		if slices.Contains(w.calls, c) {
+			t.Errorf("%s called", c)
+		}
+	}
+}
+
+func TestBootstrapUsesTheARNTheAPIReturns(t *testing.T) {
+	bootClock(t)
+	w := &bootWorld{role: true}
+	if err := Bootstrap(context.Background(), w.clients(), bootP, ""); err != nil {
+		t.Fatal(err)
+	}
+	if cp := w.in["codebuild.CreateProject"].(*codebuild.CreateProjectInput); aws.ToString(cp.ServiceRole) != "arn:aws:iam::123456789012:role/dormeto/dmt-prod-install" {
+		t.Errorf("service role = %v", cp.ServiceRole)
+	}
+}
+
+func TestTeardownKeepsARoleNotTaggedAsTheCLIs(t *testing.T) {
+	w := &bootWorld{role: true, untagged: true}
+	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DetachRolePolicy") {
+		t.Errorf("deleted a role the CLI did not tag: %v", w.calls)
 	}
 }

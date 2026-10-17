@@ -33,7 +33,7 @@ func TestManagerPlanUploads(t *testing.T) {
 	for _, want := range []string{
 		"curl -fsSL -o terraform_1.16.5_linux_amd64.zip https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_linux_amd64.zip",
 		"curl -fsSL -o terraform-aws-dormeto-0.11.0.zip https://releases.dormeto.com/manager/0.11.0/terraform-aws-dormeto-0.11.0.zip",
-		"terraform init -input=false", "terraform plan -input=false -out=tfplan", "terraform show -json tfplan", "terraform-from-bin",
+		"env CHECKPOINT_DISABLE=1 TF_IN_AUTOMATION=1 TF_CLI_ARGS=-no-color", "terraform init -input=false", "terraform plan -input=false -out=tfplan", "terraform show -json tfplan", "terraform-from-bin",
 	} {
 		if !has(log, want) {
 			t.Errorf("no %q in\n%s", want, strings.Join(log, "\n"))
@@ -184,4 +184,29 @@ func TestManagerPlanFetchesTheKeptLockFile(t *testing.T) {
 	if c, i := index(log, "aws s3 cp --only-show-errors s3://"+mb+"config/.terraform.lock.hcl"), index(log, "terraform init"); c < 0 || c > i {
 		t.Errorf("the kept lock must be fetched before init:\n%s", strings.Join(log, "\n"))
 	}
+}
+
+func TestManagerLockFileHeadObject(t *testing.T) {
+	lock := "aws s3 cp --only-show-errors s3://" + mb + "config/.terraform.lock.hcl"
+	t.Run("absent: no lock, the run goes on", func(t *testing.T) {
+		s := newSandbox(t)
+		if out, err := s.run("manager.sh", managerEnv("plan")); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !has(s.log(), "aws s3api head-object --bucket dmt-install-123456789012-eu-west-1 --key prod/config/.terraform.lock.hcl") || has(s.log(), lock) {
+			t.Errorf("log:\n%s", strings.Join(s.log(), "\n"))
+		}
+	})
+	t.Run("an error that is not a 404 stops before init", func(t *testing.T) {
+		s := newSandbox(t)
+		env := managerEnv("plan")
+		env["FAKE_HEAD_ERR"] = "1"
+		out, err := s.run("manager.sh", env)
+		if err == nil || !strings.Contains(out, "dormeto: cannot check the lock file") {
+			t.Fatalf("err %v\n%s", err, out)
+		}
+		if has(s.log(), "terraform init") {
+			t.Error("init after an unreadable lock check")
+		}
+	})
 }

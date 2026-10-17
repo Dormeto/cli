@@ -144,10 +144,6 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-func roleARN(p Project) string {
-	return "arn:aws:iam::" + p.Account + ":role" + rolePath + p.Role
-}
-
 func trustPolicy(p Project) string {
 	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"codebuild.amazonaws.com"},"Action":"sts:AssumeRole",`+
 		`"Condition":{"StringEquals":{"aws:SourceAccount":"%s"},"ArnLike":{"aws:SourceArn":"arn:aws:codebuild:%s:%s:project/%s"}}}]}`,
@@ -157,9 +153,14 @@ func trustPolicy(p Project) string {
 // ensureBuildRole creates the build role (administrator access: Terraform creates the manager's resources with it) or
 // brings an existing one to the expected trust, and returns its ARN.
 func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) {
-	_, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &p.Role})
+	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &p.Role})
+	var arn string
 	switch {
 	case err == nil:
+		if got.Role == nil || aws.ToString(got.Role.Path) != rolePath {
+			return "", fmt.Errorf("role %s exists outside %s: not this install's", p.Role, rolePath)
+		}
+		arn = aws.ToString(got.Role.Arn)
 		if _, err := c.IAM.UpdateAssumeRolePolicy(ctx, &iam.UpdateAssumeRolePolicyInput{RoleName: &p.Role, PolicyDocument: aws.String(trustPolicy(p))}); err != nil {
 			return "", fmt.Errorf("update role %s: %w", p.Role, err)
 		}
@@ -168,9 +169,13 @@ func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) 
 		for _, k := range sortedKeys(p.Tags()) {
 			tags = append(tags, iamtypes.Tag{Key: aws.String(k), Value: aws.String(p.Tags()[k])})
 		}
-		if _, err := c.IAM.CreateRole(ctx, &iam.CreateRoleInput{RoleName: &p.Role, Path: aws.String(rolePath), AssumeRolePolicyDocument: aws.String(trustPolicy(p)),
-			MaxSessionDuration: aws.Int32(3600), Tags: tags, Description: aws.String("Dormeto install: what CodeBuild runs Terraform with")}); err != nil {
+		created, err := c.IAM.CreateRole(ctx, &iam.CreateRoleInput{RoleName: &p.Role, Path: aws.String(rolePath), AssumeRolePolicyDocument: aws.String(trustPolicy(p)),
+			MaxSessionDuration: aws.Int32(3600), Tags: tags, Description: aws.String("Dormeto install: what CodeBuild runs Terraform with")})
+		if err != nil {
 			return "", fmt.Errorf("create role %s: %w", p.Role, err)
+		}
+		if created.Role != nil {
+			arn = aws.ToString(created.Role.Arn)
 		}
 	default:
 		return "", fmt.Errorf("check role %s: %w", p.Role, err)
@@ -178,7 +183,7 @@ func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) 
 	if _, err := c.IAM.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil {
 		return "", fmt.Errorf("attach AdministratorAccess to role %s: %w", p.Role, err)
 	}
-	return roleARN(p), nil
+	return arn, nil
 }
 
 func ensureLogGroup(ctx context.Context, c Clients, p Project) error {
@@ -284,7 +289,8 @@ func Teardown(ctx context.Context, c Clients, p Project, bucket bool) error {
 	return nil
 }
 
-// deleteBuildRole deletes p.Role when it is under /dormeto/: a role of that name elsewhere is not the install's.
+// deleteBuildRole deletes p.Role when it is under /dormeto/ and tagged managed-by=dormeto-cli (GetRole returns the
+// tags): a role of that name elsewhere, or not made by the CLI, is not the install's.
 func deleteBuildRole(ctx context.Context, c Clients, p Project) error {
 	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &p.Role})
 	if isNotFound(err, "NoSuchEntity") {
@@ -293,7 +299,9 @@ func deleteBuildRole(ctx context.Context, c Clients, p Project) error {
 	if err != nil {
 		return fmt.Errorf("check role %s: %w", p.Role, err)
 	}
-	if got.Role == nil || aws.ToString(got.Role.Path) != rolePath {
+	if got.Role == nil || aws.ToString(got.Role.Path) != rolePath || !slices.ContainsFunc(got.Role.Tags, func(t iamtypes.Tag) bool {
+		return aws.ToString(t.Key) == "managed-by" && aws.ToString(t.Value) == "dormeto-cli"
+	}) {
 		return nil
 	}
 	if _, err := c.IAM.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil && !isNotFound(err, "NoSuchEntity") {

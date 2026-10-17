@@ -132,8 +132,8 @@ func TestOrganizationBatchesOfTen(t *testing.T) {
 			uploads++
 		}
 	}
-	if uploads != 2 {
-		t.Errorf("roles.json uploaded %d times, want 2 (after each batch)", uploads)
+	if uploads != 3 {
+		t.Errorf("roles.json uploaded %d times, want 3 (empty at the start, then after each batch)", uploads)
 	}
 	roles, _ := s.uploaded(ob + "roles.json")
 	if n := len(strings.Split(strings.TrimSpace(roles), "\n")); n != 12 {
@@ -174,4 +174,34 @@ func mustPut(t *testing.T, s *sandbox, name, body string) {
 	t.Helper()
 	p := s.fake + "/s3/" + ob + name
 	s.write2(p, body)
+}
+
+func TestOrganizationEmptiesRolesJSONFirst(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	s.write2(s.fake+"/s3/"+ob+"roles.json", "previous run\n")
+	if out, err := s.run("organization.sh", orgEnv()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	log := s.log()
+	empty := index(log, "aws s3 cp --only-show-errors roles.json s3://"+ob+"roles.json")
+	if empty < 0 || empty > index(log, "aws organizations put-resource-policy") {
+		t.Errorf("an empty roles.json must be uploaded before the policy step:\n%s", strings.Join(log, "\n"))
+	}
+}
+
+func TestOrganizationBadAccountIDStopsBeforeThePolicy(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	env := orgEnv()
+	env["ACCOUNTS"] = "111111111111 12345"
+	out, err := s.run("organization.sh", env)
+	if err == nil || !strings.Contains(out, "12345") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	if has(s.log(), "aws organizations put-resource-policy") || has(s.log(), "aws sts assume-role") {
+		t.Errorf("went on:\n%s", strings.Join(s.log(), "\n"))
+	}
 }

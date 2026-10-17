@@ -11,6 +11,9 @@ need() { eval "[ -n \"\${$1:-}\" ]" || die "$1 is not set"; }
 for v in BUCKET ENV MANAGER_ACCOUNT ORGANIZATION MEMBER_ROLE RELEASE_BASE RELEASE_VERSION CODEBUILD_BUILD_ID; do need "$v"; done
 ACCOUNTS=${ACCOUNTS:-}
 DISCOVERY_ONLY=${DISCOVERY_ONLY:-}
+for a in $ACCOUNTS; do
+  case $a in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) die "ACCOUNTS: $a is not an account id" ;; esac
+done
 S3="s3://$BUCKET/$ENV/organization"
 ACCESS="dormeto-access-commands-$RELEASE_VERSION.sh"
 
@@ -30,6 +33,10 @@ say "downloading the access commands of release $RELEASE_VERSION and checking th
 fetch SHA256SUMS
 fetch "$ACCESS"
 verify SHA256SUMS "$ACCESS"
+
+# the CLI follows roles.json: what a previous run left must not be read as this run's
+: >roles.json
+aws s3 cp --only-show-errors roles.json "$S3/roles.json"
 
 say "checking that the delegation policy is the one that was planned"
 aws s3 cp --only-show-errors "$S3/policy-base.json" policy-base.json
@@ -77,7 +84,6 @@ job() {
   return 0
 }
 
-: >roles.json
 batch=
 n=0
 total=0
@@ -92,7 +98,6 @@ flush() {
   n=0
 }
 for a in $ACCOUNTS; do
-  case $a in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) die "ACCOUNTS: $a is not an account id" ;; esac
   job "$a" &
   batch="$batch $a"
   n=$((n + 1))

@@ -43,7 +43,12 @@ case "$1 $2" in
   *)
     f="$FAKE/s3/${dst#s3://}"; mkdir -p "$(dirname "$f")"; cp "$src" "$f" ;;
   esac ;;
-"s3 ls") [ -f "$FAKE/s3/${3#s3://}" ] ;;
+"s3api head-object")
+  b=; k=
+  while [ $# -gt 0 ]; do case $1 in --bucket) b=$2 ;; --key) k=$2 ;; esac; shift; done
+  if [ -f "$FAKE/s3/$b/$k" ]; then echo '{}'
+  elif [ -n "${FAKE_HEAD_ERR:-}" ]; then echo "An error occurred (403) when calling the HeadObject operation: Forbidden" >&2; exit 254
+  else echo "An error occurred (404) when calling the HeadObject operation: Not Found" >&2; exit 254; fi ;;
 "s3 rm") ;;
 "organizations describe-resource-policy")
   if [ -f "$FAKE/policy" ]; then cat "$FAKE/policy"
@@ -62,6 +67,7 @@ esac
 `,
 	"terraform": `#!/bin/sh
 echo "terraform $*" >> "$FAKE/log"
+echo "env CHECKPOINT_DISABLE=${CHECKPOINT_DISABLE:-} TF_IN_AUTOMATION=${TF_IN_AUTOMATION:-} TF_CLI_ARGS=${TF_CLI_ARGS:-}" >> "$FAKE/log"
 case $1 in
 init) [ -f .terraform.lock.hcl ] || echo lock-from-init > .terraform.lock.hcl ;;
 plan) for a in "$@"; do case $a in -out=*) echo plan > "${a#-out=}" ;; esac; done ;;
