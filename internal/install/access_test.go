@@ -598,6 +598,42 @@ func TestOrganizationAccessErrorsNameTheProfile(t *testing.T) {
 	}
 }
 
+// A failure after the management account's bootstrap and before its build starts: what the bootstrap made (the role
+// that can assume the member role everywhere) is removed at once, best effort (decision 17).
+func TestOrganizationAccessAFailureBeforeTheBuildRemovesTheBootstrap(t *testing.T) {
+	w := rwNew(t)
+	w.rwOrganization()
+	w.failWrites = map[string]error{"mgmt s3:PutObject prod/organization/policy.json": chkAPI("AccessDenied")}
+	code, out, _ := w.run(Install, rwMgmtFlags(), true, "y", "y", "y")
+	if code != 1 || !strings.HasSuffix(out, "AccessDenied message\nOrganization access is not deployed; the manager is installed.\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if len(w.mgmt.started()) != 0 || w.mgmt.project || w.mgmt.role || w.mgmt.logGroup {
+		t.Errorf("builds %v, left: project %v, role %v, log group %v", w.mgmt.actions(), w.mgmt.project, w.mgmt.role, w.mgmt.logGroup)
+	}
+	rwInOrder(t, strings.Join(w.mgmtWrites(), "\n")+"\n", "mgmt iam:CreateRole dmt-prod-organization\n", "mgmt codebuild:CreateProject\n",
+		"mgmt s3:PutObject prod/organization/policy.json (failed)\n", "mgmt codebuild:DeleteProject\n", "mgmt iam:DeleteRole dmt-prod-organization\n",
+		"mgmt logs:DeleteLogGroup\n")
+}
+
+// The management account's role not removed after its build: said with a "!", and the run fails (exit 1) though the
+// build succeeded.
+func TestOrganizationAccessATeardownFailureAfterTheBuild(t *testing.T) {
+	w := rwNew(t)
+	w.rwOrganization()
+	w.failWrites = map[string]error{"mgmt iam:DeleteRole dmt-prod-organization": chkAPI("DeleteConflict")}
+	code, out, _ := w.run(Install, rwMgmtFlags(), true, "y", "y", "y")
+	if code != 1 {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwInOrder(t, out, "Organization access (build dmt-prod-organization:b1…)  succeeded",
+		"  ! the management account's build role and project not removed: delete role dmt-prod-organization: api error DeleteConflict: DeleteConflict message\n",
+		"  ✓ organization access: delegation policy created; roles in 2 accounts\n")
+	if !w.mgmt.role {
+		t.Error("the role reported not removed is gone")
+	}
+}
+
 func TestInstallOrganizationAccessAFailedBuild(t *testing.T) {
 	w := rwNew(t)
 	w.rwOrganization()

@@ -153,6 +153,7 @@ type rwWorld struct {
 	cancelOnStart bool   // Ctrl-C as the build starts
 	batchErr      error  // codebuild:BatchGetBuilds's error
 	writes        []string
+	failWrites    map[string]error // a write (as writes records it) that fails so
 	readOnly      bool
 	clock         time.Time
 	detach        bool // following a running build: Ctrl-C
@@ -265,6 +266,15 @@ func (w *rwWorld) write(call string) {
 		w.t.Errorf("a write in a read-only run: %s", call)
 	}
 	w.writes = append(w.writes, call)
+}
+
+// failed is the error failWrites gives the write call, recorded first; nil when it succeeds.
+func (w *rwWorld) failed(call string) error {
+	err := w.failWrites[call]
+	if err != nil {
+		w.write(call + " (failed)")
+	}
+	return err
 }
 
 func (w *rwWorld) now() time.Time { return w.clock }
@@ -517,6 +527,9 @@ func (f rwIAM) DetachRolePolicy(context.Context, *iam.DetachRolePolicyInput, ...
 }
 
 func (f rwIAM) DeleteRole(_ context.Context, in *iam.DeleteRoleInput, _ ...func(*iam.Options)) (*iam.DeleteRoleOutput, error) {
+	if err := f.w.failed(f.a.prefix + "iam:DeleteRole " + aws.ToString(in.RoleName)); err != nil {
+		return nil, err
+	}
 	f.w.write(f.a.prefix + "iam:DeleteRole " + aws.ToString(in.RoleName))
 	f.a.role = false
 	return &iam.DeleteRoleOutput{}, nil
@@ -588,6 +601,9 @@ func (f rwS3) PutObject(ctx context.Context, in *s3.PutObjectInput, _ ...func(*s
 	}
 	b, err := io.ReadAll(in.Body)
 	if err != nil {
+		return nil, err
+	}
+	if err := f.w.failed(f.a.prefix + "s3:PutObject " + aws.ToString(in.Key)); err != nil {
 		return nil, err
 	}
 	f.w.write(f.a.prefix + "s3:PutObject " + aws.ToString(in.Key))
