@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Dormeto/cli/internal/install"
 )
@@ -287,5 +290,53 @@ func TestUninstallHelpListsTheFlags(t *testing.T) {
 	}
 	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "uninstall   Remove the Dormeto manager that dormeto install installed\n") {
 		t.Errorf("the commands listed without uninstall:\n%s", out)
+	}
+}
+
+// The README's "### Flags" subsection of "## Install the manager" lists exactly the flags of `install`, its own and
+// the persistent ones its subcommands share (help left out): none missing, none extra.
+func TestReadmeInstallFlagsAreTheCommandsFlags(t *testing.T) {
+	root := &cobra.Command{Use: "dormeto"}
+	root.AddCommand(newInstall(installRuns{}))
+	cmd, _, err := root.Find([]string{"install"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	add := func(f *pflag.Flag) {
+		if f.Name != "help" && !slices.Contains(want, f.Name) {
+			want = append(want, f.Name)
+		}
+	}
+	cmd.LocalFlags().VisitAll(add)
+	cmd.PersistentFlags().VisitAll(add)
+	slices.Sort(want)
+	if len(want) < 10 {
+		t.Fatalf("only %d flags found on install: %v", len(want), want)
+	}
+
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, ok := strings.Cut(string(b), "\n## Install the manager\n")
+	if !ok {
+		t.Fatal("README.md has no '## Install the manager' section")
+	}
+	body, _, _ := strings.Cut(rest, "\n## ")
+	_, flags, ok := strings.Cut(body, "\n### Flags\n")
+	if !ok {
+		t.Fatal("the section has no '### Flags' subsection")
+	}
+	flags, _, _ = strings.Cut(flags, "\n### ")
+	var got []string
+	for _, m := range regexp.MustCompile("(?m)^- `--([a-z][a-z0-9-]*)").FindAllStringSubmatch(flags, -1) {
+		if !slices.Contains(got, m[1]) {
+			got = append(got, m[1])
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(want, got) {
+		t.Errorf("README flags %v, install's flags %v", got, want)
 	}
 }

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `dormeto install` and `dormeto uninstall`: the Dormeto manager installed in an AWS account by CodeBuild, guided. The
+  CLI suggests organization or account mode, asks what it needs (each answer has a flag), checks the prerequisites
+  read-only (`dormeto install check`), creates the install's bucket, role, CodeBuild project and log group by API calls,
+  runs `terraform plan` in a build, shows it and applies that saved plan once you confirm (`--yes` never confirms;
+  without a terminal it stops after the plan and `dormeto install apply` applies it), tracks the builds, and checks the
+  dashboard and the invitations. `dormeto install status` follows a running build; an upgrade is `dormeto install` again.
+  With `--management-profile`, organization access (the delegation policy merged, the member accounts' roles) is
+  planned, confirmed and deployed by a build in the management account, whose role and project are deleted when it ends;
+  without it, it is disabled with the procedure. `dormeto uninstall` removes the manager (routers first, deletion
+  protection lifted, the destroy plan confirmed) and, on request, the bootstrap. Manager 0.11.0 or later. The README
+  has the section "Install the manager", its flags and its permissions; the Privacy section names what the install
+  downloads.
 - `--ecs-uptime` counts each ECS service's tasks (CloudWatch `LiveTaskCount`) and prices the service at its average
   number of tasks while it ran, instead of its desired count when discovered: a service stopped at night by a schedule
   (found at 0, priced as one task before) or autoscaled is priced as it ran. The Uptime column and the JSON

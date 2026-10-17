@@ -82,7 +82,7 @@ func TestReadmeRelativeLinksResolve(t *testing.T) {
 
 func TestReadmeSections(t *testing.T) {
 	text := readme(t)
-	for _, title := range []string{"Install", "First run", "Options", "Permissions", "Report", "Cache", "Privacy", "Releasing", "License"} {
+	for _, title := range []string{"Install", "First run", "Options", "Install the manager", "Permissions", "Report", "Cache", "Privacy", "Releasing", "License"} {
 		section(t, text, title)
 	}
 }

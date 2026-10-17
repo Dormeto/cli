@@ -10,15 +10,19 @@
 
 ![License](https://img.shields.io/badge/license-MIT-3546c4)
 ![Go](https://img.shields.io/badge/Go-single_binary-00ADD8?logo=go&logoColor=white)
-![AWS](https://img.shields.io/badge/AWS-read--only-FF9900?logo=amazonwebservices&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-estimate_read--only-FF9900?logo=amazonwebservices&logoColor=white)
 
 </div>
 
-`dormeto` is the Dormeto command line. Its first command, `dormeto estimate`, reads an AWS account or a whole
-organization with read-only access and estimates what Dormeto would save on the web workloads behind your Application
-Load Balancers (EC2, Auto Scaling, ECS, EKS, and the RDS databases that nap with them): the workloads that could nap,
-how long each would sleep and wake, and the monthly saving net of Dormeto's own cost. It gives a summary in the
-terminal and a Markdown and a JSON report. It installs nothing in your accounts and sends nothing anywhere but to AWS.
+`dormeto` is the Dormeto command line. `dormeto estimate` reads an AWS account or a whole organization with read-only
+access and estimates what Dormeto would save on the web workloads behind your Application Load Balancers (EC2, Auto
+Scaling, ECS, EKS, and the RDS databases that nap with them): the workloads that could nap, how long each would sleep and
+wake, and the monthly saving net of Dormeto's own cost. It gives a summary in the terminal and a Markdown and a JSON
+report. It installs nothing in your accounts and sends nothing anywhere but to AWS.
+
+`dormeto install` then installs the Dormeto manager in your AWS account with CodeBuild, after its checks and your
+confirmation of the plan (see [Install the manager](#install-the-manager)). It is the only command that changes your
+accounts.
 
 ## Install
 
@@ -173,7 +177,7 @@ discovered stays in that cost, but its saving is not counted (nothing is running
 
 ## Permissions
 
-Read-only: the estimate calls `Describe*`, `List*` and `Get*` operations, plus `sts:AssumeRole` to reach member
+These are the estimate's (the install's are in [Permissions to install](#permissions-to-install)). Read-only: the estimate calls `Describe*`, `List*` and `Get*` operations, plus `sts:AssumeRole` to reach member
 accounts, and Kubernetes `GET`s. It changes nothing.
 
 - `sts:GetCallerIdentity`, `AssumeRole`
@@ -213,6 +217,186 @@ delete the directory.
 
 `dormeto` sends nothing but its calls to AWS and to your EKS clusters' APIs, with your credentials, from your machine.
 There is no telemetry and no update check. What it reads stays in the cache and the reports you choose to share.
+
+That is the estimate's promise, and it holds. `dormeto install` also downloads from `releases.dormeto.com`
+(`latest.json`, then the release's `SHA256SUMS` and the release, checked against it). Its builds, in your account,
+download Terraform from `releases.hashicorp.com` and the providers through the Terraform registry, with Terraform's
+checkpoint (its version check) off. The CLI and the builds use only your credentials and your account; still no
+telemetry.
+
+## Install the manager
+
+`dormeto install` installs the Dormeto manager in an AWS account, with CodeBuild: Terraform runs in your account, not
+on your machine. It asks what it needs, checks what can fail before anything is created, shows the plan, applies it once
+you confirm, and follows the build. It needs a manager release 0.11.0 or later (an account outside any organization
+needs 0.11.0). In order:
+
+1. **Where it runs.** It reads the profile's account and its organization, and suggests the mode: `organization` (the
+   manager reads every account of the organization) in an organization with all features, else `account` (the manager
+   reads its own account only, with why). A manager in the organization's management account is allowed after a warning.
+2. **The questions.** The release (the latest by default), the region (the profile's, else `eu-west-1` is suggested),
+   the environment (`prod`), the administrators' emails, the mode, the management account's profile, a custom domain
+   and SES. Each has a flag; a question already answered by a flag or a previous run is not asked.
+3. **The checks**, read-only (`dormeto install check` runs them alone): credentials, administrator rights (simulated),
+   the region and CodeBuild, the organization, an existing install of the same environment or another manager's
+   resources and Dormeto roles, the release, the administrators' addresses, the domain's certificate and zone, the SES
+   identity, and organization access. A failure stops the install before anything is created; a warning is shown and
+   asked about once.
+4. **What it creates in your account**, by API calls, tagged `project=dormeto` and `managed-by=dormeto-cli`: the bucket
+   `dmt-install-<account>-<region>` (the answers, the generated Terraform configuration, the state and the plans), the
+   role and the CodeBuild project `dmt-<env>-install`, and the log group `/aws/codebuild/dmt-<env>-install` (90 days).
+5. **The plan.** A first build runs `terraform plan -out` and keeps the saved plan. The CLI shows what it creates,
+   changes and destroys (a destroy in an install or an upgrade first, as a warning), and asks. After your confirmation,
+   a second build applies exactly that saved plan, never `-auto-approve`. An install is two builds, about 15 minutes.
+6. **The tracking.** In a terminal, one status line (the phase, the resources done out of the plan's total, the one in
+   progress, the elapsed time); without one, or with `--verbose`, Terraform's lines. Ctrl-C detaches: the build goes on,
+   and `dormeto install status` follows it again. A failure prints the last lines of the log and where to read the rest.
+7. **The result.** The dashboard's URL must answer over HTTPS (a new distribution can take some minutes), and each
+   administrator's invitation is checked.
+
+The generated Terraform configuration is written again at every run: edit nothing in it by hand. An input of the manager
+module without a flag is set with `--var name=<JSON value>` (`--var 'alert_emails=["ops@example.com"]'`), kept for the
+next runs.
+
+### First run
+
+Log in with a profile that has administrator rights in the account to install in (see
+[Permissions to install](#permissions-to-install)), then:
+
+```sh
+aws sso login --profile <profile>
+dormeto install --profile <profile>
+```
+
+Without a terminal (a script, a pipeline), every answer comes from a flag. Answers that have a default take it: the
+latest release, the suggested mode, no domain and no SES, the environment `prod`; only the administrators' emails are
+required. The run stops after the plan, prints what it would do and the command that applies it:
+
+```sh
+dormeto install --profile <profile> --admin-emails you@example.com
+dormeto install apply --profile <profile>
+```
+
+`dormeto install apply` is the confirmation when you run it yourself: it shows the last saved plan, applies it and
+follows the build. It refuses a plan made for an uninstall. `--yes` takes the suggested answers; it never confirms a plan.
+
+### Flags
+
+`dormeto install check`, `apply` and `status` take the same flags. `dormeto install --help` prints them.
+
+- `--profile <profile>`: the AWS profile (the SDK's default, such as `AWS_PROFILE`, when absent).
+- `--region <region>`: the manager's region (the profile's, else asked, with `eu-west-1` suggested).
+- `--env <name>`: the environment, 1 to 10 lowercase letters, digits or inner hyphens (`prod` by default). One
+  environment per account.
+- `--version <version>`: the manager release to install (the latest by default, from `releases.dormeto.com`).
+- `--release <dir>`: a local release directory, uploaded to the install's bucket instead of downloaded: an unreleased
+  manager.
+- `--admin-emails <email>[,<email>...]`: the administrators, at least one; each gets an invitation.
+- `--mode organization|account`: where the manager discovers workloads (suggested from the account's organization).
+- `--domain <host>`: the dashboard's custom domain (a `cloudfront.net` host by default), with `--certificate-arn` and
+  `--zone-id`.
+- `--certificate-arn <arn>`: the domain's ACM certificate, in `us-east-1`, issued and covering the dashboard's host and
+  `auth.<host>`.
+- `--zone-id <id>`: the domain's Route 53 hosted zone.
+- `--ses-identity <identity>`: the SES identity that sends the invitations (Cognito sends them by default, about 50 a
+  day), with `--email-from`. An identity not verified is a failure; an SES account still in its sandbox, a warning.
+- `--email-from <address>`: the invitations' sender, with `--ses-identity`.
+- `--var name=<JSON>`: another input of the manager module, its value as JSON; repeatable.
+- `--build-role <arn>`: an existing role for CodeBuild instead of the one the install creates; it must trust CodeBuild.
+- `--management-profile <profile>`: the management account's profile, for [organization access](#organization-access).
+- `--member-role <name>`: the role assumed in each member account from the management account
+  (`OrganizationAccountAccessRole` by default).
+- `--accounts <id>[,<id>...]`: the member accounts that get the roles (every active account by default).
+- `--exclude-accounts <id>[,<id>...]`: member accounts left out.
+- `--discovery-only <id>[,<id>...]`: member accounts that get the discovery role but not the command role: the manager
+  reads them, and cannot put their workloads to sleep.
+- `--access`: runs organization access alone, the manager being installed (needs the management account's profile).
+- `--yes`: takes the suggested answers without asking; never confirms a plan.
+- `--verbose`: prints Terraform's lines instead of the status line.
+
+### Organization access
+
+Organization mode needs the delegation policy in the management account and, in each other account, the discovery role
+(and the command role, where workloads nap) trusting the manager. They are deployed with the management account's
+credentials: `--management-profile <profile>`, or `--profile` when it is the management account's.
+
+```sh
+dormeto install --profile <manager-account-profile> --management-profile <management-profile>
+```
+
+- The CLI plans it read-only, shows it (the delegation policy as it would be, the accounts and the roles each gets),
+  and after your confirmation one build in the management account applies it. That build's role and project
+  (`dmt-<env>-organization`) are created by API calls for the run, and deleted when it ends; the bucket stays, with the
+  reports. Detached, `dormeto install status` deletes them once the build ends.
+- The member role is `--member-role` (`OrganizationAccountAccessRole` by default: the accounts that AWS Organizations
+  created have it, the invited ones do not). An account where it cannot be assumed is left out and listed, with the
+  procedure for it.
+- An account that already holds another manager's Dormeto roles or boundary is left out and listed: a boundary named
+  `DmtRouterBoundary` is shared by every Dormeto role, so one account holds one manager's.
+- The manager's own account (its roles come from the manager module) and the management account (the member role is not
+  there, and AWS advises no workloads in it) get no roles by default. `--accounts`, `--exclude-accounts` and
+  `--discovery-only` narrow the rest.
+- The delegation policy is merged, not replaced: Dormeto's statement `DormetoReadOrganization` is added or updated, the
+  other statements are kept. The organization has one such policy: a Terraform configuration that writes it whole (the
+  release's organization module) removes the merged statement at its next apply.
+
+Without the management account's credentials, organization access is disabled: the manager is installed all the same,
+but it cannot list the accounts until the delegation policy exists, nor read an account without its roles. Deploy them
+with the procedure, <https://dormeto.com/organization-access.html>, and check them with
+`dormeto install check --management-profile <profile>`.
+
+Without a terminal, `dormeto install apply --management-profile <profile>` deploys organization access: after the
+manager's plan when there is one to apply, alone when there is none.
+
+### Status, upgrade, uninstall
+
+`dormeto install status` shows where the install stands: a running build, followed; the manager's version and the latest
+release; the last plan and apply; the dashboard and the invitations; organization access.
+
+An upgrade is `dormeto install` again (`--version <newer>` for a given release): the answers of the last run are reused,
+nothing already answered is asked, then the plan is shown and confirmed as before. Organization access runs again when
+you give the management profile (its script is idempotent); without it, the release's notes may ask for the roles to
+be applied again.
+
+`dormeto uninstall` removes the manager, in this order:
+
+1. It refuses while routers are installed: offboard the workloads and uninstall the routers in the dashboard first. It
+   asks you to confirm that event-driven refresh is off.
+2. The deletion protection is lifted by a plan, shown, confirmed and applied.
+3. The destroy plan is built, shown and confirmed; that saved plan is applied and followed.
+4. If you say so, the install's bucket (its state and answers), role, log group and project are removed.
+
+Organization access is kept: its roles keep working for a reinstall. To remove them and Dormeto's statement of the
+delegation policy, see <https://dormeto.com/organization-access.html>.
+
+Without a terminal, `dormeto uninstall` stops after each plan: `dormeto install apply` applies the deletion protection's,
+`dormeto uninstall apply` the destroy plan, which keeps the bootstrap (a run with a terminal removes it on request).
+`dormeto install apply` refuses a destroy plan, and `dormeto uninstall apply` an install plan. `uninstall` takes
+`--profile`, `--region`, `--env`, `--verbose` and `--yes`, which here answers that event-driven refresh is off and
+keeps the bootstrap; it never confirms a plan.
+
+### Permissions to install
+
+The install's profile needs administrator rights in the manager's account: the checks simulate the actions of the
+bootstrap (the bucket, the role, the project, the log group) and `iam:PassRole`, and the install is refused when one is
+denied. The build role the install creates gets the `AdministratorAccess` managed policy in that account only, since the
+manager module creates IAM roles, Lambda functions, a user pool, a distribution and tables; it is trusted by CodeBuild
+for the install's project only. `--build-role` gives your own role instead, and `dormeto uninstall` removes the one the
+install created.
+
+In the management account, the profile reads the organization (`organizations:DescribeOrganization`, `ListAccounts`,
+`DescribeResourcePolicy`), assumes the member role in each chosen account (`sts:AssumeRole`; there `iam:GetRole` and
+`GetPolicy` read the Dormeto roles), and creates and deletes the organization build's bucket, role, project and log
+group. The build's role has no managed policy: only a scoped one.
+
+- `sts:AssumeRole` on `arn:aws:iam::*:role/<member role>`
+- `organizations:DescribeResourcePolicy`, `PutResourcePolicy`, `ListAccounts`
+- `s3:GetObject`, `PutObject`, `ListBucket` on the install's bucket
+- `logs:CreateLogStream`, `PutLogEvents` on its log group
+
+Through the member role, the build runs Dormeto's release script, which creates or updates the two Dormeto roles and the
+boundary in each account: the member role must be allowed to do that (the role AWS Organizations creates is an
+administrator).
 
 ## Building from source
 
