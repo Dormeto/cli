@@ -397,7 +397,7 @@ In the management account, the profile reads the organization (`organizations:De
 `GetPolicy` read the Dormeto roles), and creates and deletes the organization build's bucket, role, project and log
 group. The build's role has no managed policy: only a scoped one.
 
-- `sts:AssumeRole` on `arn:aws:iam::*:role/<member role>`
+- `sts:AssumeRole` on `arn:aws:iam::*:role/<member role>`, in the organization's accounts only (`aws:ResourceOrgID`)
 - `organizations:DescribeResourcePolicy`, `PutResourcePolicy`, `ListAccounts`
 - `s3:GetObject`, `PutObject`, `ListBucket` on the install's bucket
 - `logs:CreateLogStream`, `PutLogEvents` on its log group

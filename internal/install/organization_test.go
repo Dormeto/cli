@@ -445,7 +445,8 @@ func TestOrgNames(t *testing.T) {
 	}
 }
 
-const wantOrgPolicy = `{"Version":"2012-10-17","Statement":[{"Sid":"AssumeMemberRole","Effect":"Allow","Action":"sts:AssumeRole","Resource":"arn:aws:iam::*:role/org/Member"},` +
+const wantOrgPolicy = `{"Version":"2012-10-17","Statement":[{"Sid":"AssumeMemberRole","Effect":"Allow","Action":"sts:AssumeRole","Resource":"arn:aws:iam::*:role/org/Member",` +
+	`"Condition":{"StringEquals":{"aws:ResourceOrgID":"o-abcdefghij"}}},` +
 	`{"Sid":"DelegationPolicy","Effect":"Allow","Action":["organizations:DescribeResourcePolicy","organizations:PutResourcePolicy","organizations:ListAccounts"],"Resource":"*"},` +
 	`{"Sid":"State","Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::dmt-install-111111111111-eu-west-1","arn:aws:s3:::dmt-install-111111111111-eu-west-1/*"]},` +
 	`{"Sid":"Logs","Effect":"Allow","Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:eu-west-1:111111111111:log-group:/aws/codebuild/dmt-prd-organization:*"}]}`
@@ -454,7 +455,7 @@ func TestOrgBootstrap(t *testing.T) {
 	bootClock(t)
 	w := &bootWorld{bucket: &s3types.NotFound{}}
 	p := OrgNames(orgMgmt, "eu-west-1", "prd")
-	if err := OrgBootstrap(context.Background(), w.clients(), p, "/org/Member"); err != nil {
+	if err := OrgBootstrap(context.Background(), w.clients(), p, "/org/Member", "o-abcdefghij"); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.AttachRolePolicy") {
@@ -485,7 +486,7 @@ func TestOrgBootstrap(t *testing.T) {
 
 func TestOrgBootstrapRefusesRoleOutsideDormeto(t *testing.T) {
 	w := &bootWorld{role: true, rolePath: "/other/"}
-	err := OrgBootstrap(context.Background(), w.clients(), OrgNames(orgMgmt, "eu-west-1", "prd"), "Member")
+	err := OrgBootstrap(context.Background(), w.clients(), OrgNames(orgMgmt, "eu-west-1", "prd"), "Member", "o-abcdefghij")
 	if err == nil || !strings.Contains(err.Error(), "outside /dormeto/") {
 		t.Errorf("err = %v", err)
 	}
@@ -634,7 +635,7 @@ func TestMergePolicyStatementObject(t *testing.T) {
 
 func TestOrgBootstrapRefusesUntaggedRole(t *testing.T) {
 	w := &bootWorld{role: true, untagged: true}
-	err := OrgBootstrap(context.Background(), w.clients(), OrgNames(orgMgmt, "eu-west-1", "prd"), "Member")
+	err := OrgBootstrap(context.Background(), w.clients(), OrgNames(orgMgmt, "eu-west-1", "prd"), "Member", "o-abcdefghij")
 	if err == nil || !strings.Contains(err.Error(), "exists without the managed-by=dormeto-cli tag: not this install's") {
 		t.Errorf("err = %v", err)
 	}

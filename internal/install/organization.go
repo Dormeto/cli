@@ -433,20 +433,22 @@ func OrgNames(managementAccount, region, env string) Project {
 	}
 }
 
-// orgRolePolicy is what the organization build may do: assume the member role, read and put the delegation policy,
-// keep its plan and results in the bucket, and write its log.
-func orgRolePolicy(p Project, memberRole string) string {
+// orgRolePolicy is what the organization build may do: assume the member role in the organization's accounts only, read
+// and put the delegation policy, keep its plan and results in the bucket, and write its log.
+func orgRolePolicy(p Project, memberRole, organization string) string {
 	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
-		`{"Sid":"AssumeMemberRole","Effect":"Allow","Action":"sts:AssumeRole","Resource":"arn:aws:iam::*:role/%[1]s"},`+
+		`{"Sid":"AssumeMemberRole","Effect":"Allow","Action":"sts:AssumeRole","Resource":"arn:aws:iam::*:role/%[1]s",`+
+		`"Condition":{"StringEquals":{"aws:ResourceOrgID":"%[6]s"}}},`+
 		`{"Sid":"DelegationPolicy","Effect":"Allow","Action":["organizations:DescribeResourcePolicy","organizations:PutResourcePolicy","organizations:ListAccounts"],"Resource":"*"},`+
 		`{"Sid":"State","Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::%[2]s","arn:aws:s3:::%[2]s/*"]},`+
 		`{"Sid":"Logs","Effect":"Allow","Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:aws:logs:%[3]s:%[4]s:log-group:%[5]s:*"}]}`,
-		strings.TrimPrefix(memberRole, "/"), p.Bucket, p.Region, p.Account, p.LogGroup)
+		strings.TrimPrefix(memberRole, "/"), p.Bucket, p.Region, p.Account, p.LogGroup, organization)
 }
 
 // OrgBootstrap creates, or updates, the management account's project that runs organization.sh: the bucket, the role
-// (no managed policy, one scoped inline policy), the log group, the scripts and the project.
-func OrgBootstrap(ctx context.Context, mgmt Clients, p Project, memberRole string) error {
+// (no managed policy, one scoped inline policy: the member role of the organization's accounts), the log group, the
+// scripts and the project.
+func OrgBootstrap(ctx context.Context, mgmt Clients, p Project, memberRole, organization string) error {
 	if err := ensureBucket(ctx, mgmt, p); err != nil {
 		return err
 	}
@@ -455,7 +457,7 @@ func OrgBootstrap(ctx context.Context, mgmt Clients, p Project, memberRole strin
 		return err
 	}
 	if _, err := mgmt.IAM.PutRolePolicy(ctx, &iam.PutRolePolicyInput{RoleName: &p.Role, PolicyName: aws.String(orgPolicyName),
-		PolicyDocument: aws.String(orgRolePolicy(p, memberRole))}); err != nil {
+		PolicyDocument: aws.String(orgRolePolicy(p, memberRole, organization))}); err != nil {
 		return fmt.Errorf("put the policy of role %s: %w", p.Role, err)
 	}
 	if err := ensureLogGroup(ctx, mgmt, p); err != nil {
