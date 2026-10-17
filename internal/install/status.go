@@ -267,7 +267,7 @@ func (x *run) leftover(mgmt Clients) (bool, error) {
 	x.say("Build %s is running (organization access)", id)
 	res, err := Follow(x.ctx, mgmt, op, id, x.followAccess(len(accounts)))
 	if err != nil {
-		return false, x.lost(err, x.accessGoesOn())
+		return false, x.lostAccess(err)
 	}
 	return x.accessEnded(mgmt, op, res, "put")
 }

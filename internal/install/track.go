@@ -48,14 +48,23 @@ type Result struct {
 	ConsoleURL string
 }
 
-// CredentialsError is the AWS credentials expiring while a build is followed: the build goes on.
+// CredentialsError is the AWS credentials expiring while a build is followed: the build goes on. The run that followed
+// it gives the command that signs in again (Login) and the flags that name the install again (Args).
 type CredentialsError struct {
-	Build string
-	Err   error
+	Build       string
+	Err         error
+	Login, Args string
 }
 
 func (e *CredentialsError) Error() string {
-	return fmt.Sprintf("the AWS credentials expired while following build %s; the build goes on: sign in again (aws sso login --profile <your profile>), then run dormeto install status", e.Build)
+	login, status := e.Login, "dormeto install status"
+	if login == "" {
+		login = "aws sso login --profile <your profile>"
+	}
+	if e.Args != "" {
+		status += " " + e.Args
+	}
+	return fmt.Sprintf("the AWS credentials expired while following build %s; the build goes on: sign in again (%s), then run %s", e.Build, login, status)
 }
 
 func (e *CredentialsError) Unwrap() error { return e.Err }

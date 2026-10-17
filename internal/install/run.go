@@ -103,14 +103,19 @@ func (x *run) end(err error) int {
 			profile = access.profile
 		}
 	}
-	if awserr.SSOToken(err) {
-		login := "aws sso login"
-		if profile != "" {
-			login += " --profile " + profile
-		}
-		x.say("Run %s and try again.", login)
+	var expired *CredentialsError
+	if awserr.SSOToken(err) && !errors.As(err, &expired) { // a build followed says how to sign in and follow it again
+		x.say("Run %s and try again.", ssoLogin(profile))
 	}
 	return 1
+}
+
+// ssoLogin is the command that signs in again with profile (the SDK's default: "").
+func ssoLogin(profile string) string {
+	if profile == "" {
+		return "aws sso login"
+	}
+	return "aws sso login --profile " + profile
 }
 
 // args are the flags that name this install again: --management-profile and --profile (when given), --region and
@@ -441,14 +446,28 @@ func (x *run) follow(label string, total int) FollowOptions {
 	return FollowOptions{Label: label, Total: total, Status: x.d.Status, Out: x.d.Out, Lines: x.r.Verbose, Every: x.d.Every, Now: x.d.Now}
 }
 
-// lost ends a run whose build was followed no longer, the build going on (goesOn says how to follow it): Ctrl-C
-// detaches (130); expired credentials say their own message; another failure is said, then goesOn (1).
-func (x *run) lost(err error, goesOn string) error {
+// lost ends a run whose build was followed no longer with --profile's credentials, the build going on (goesOn says how
+// to follow it): Ctrl-C detaches (130); expired credentials say their own message, with how to sign in again and the
+// status command of this run; another failure is said, then goesOn (1).
+func (x *run) lost(err error, goesOn string) error { return x.lostWith(err, goesOn, x.r.Profile) }
+
+// lostAccess is lost for the organization build, followed with the management account's credentials.
+func (x *run) lostAccess(err error) error {
+	profile := x.r.ManagementProfile
+	if profile == "" { // the install's own profile is the management account's
+		profile = x.r.Profile
+	}
+	return x.lostWith(err, x.accessGoesOn(), profile)
+}
+
+// lostWith is lost, the build followed with profile's credentials.
+func (x *run) lostWith(err error, goesOn, profile string) error {
 	var expired *CredentialsError
 	switch {
 	case x.ctx.Err() != nil:
 		return &stop{exitInterrupted, "Detached: " + goesOn}
 	case errors.As(err, &expired):
+		expired.Login, expired.Args = ssoLogin(profile), x.args()
 		return err
 	}
 	return &stop{1, err.Error() + "\n" + strings.ToUpper(goesOn[:1]) + goesOn[1:]}

@@ -635,6 +635,29 @@ func TestOrganizationAccessATeardownFailureAfterTheBuild(t *testing.T) {
 	}
 }
 
+// The credentials expiring while the builds are followed: the build goes on, and the message names the profile to sign in
+// with and the status command of this run (the management profile's for organization access), with no "try again".
+func TestCredentialsExpiringWhileFollowingNameTheRunsCommand(t *testing.T) {
+	expired := fmt.Errorf("get credentials: %w", &ssocreds.InvalidTokenError{Err: errors.New("the SSO session has expired or is invalid")})
+
+	w := rwNew(t)
+	w.followErr["apply"] = expired
+	code, out, _ := w.run(Install, rwFlags(), true, "y")
+	if code != 1 || !strings.HasSuffix(out, "the AWS credentials expired while following build dmt-prod-install:b2; the build goes on: "+
+		"sign in again (aws sso login --profile p), then run dormeto install status "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+
+	w = rwNew(t)
+	w.rwOrganization()
+	w.mgmt.followErr["apply"] = expired
+	code, out, _ = w.run(Install, rwMgmtFlags(), true, "y", "y", "y")
+	if code != 1 || !strings.HasSuffix(out, "the AWS credentials expired while following build dmt-prod-organization:b1; the build goes on: "+
+		"sign in again (aws sso login --profile m), then run dormeto install status "+rwMgmtArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
 func TestInstallOrganizationAccessAFailedBuild(t *testing.T) {
 	w := rwNew(t)
 	w.rwOrganization()

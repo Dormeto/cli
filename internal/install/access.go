@@ -366,7 +366,7 @@ func (x *run) deployAccess(mgmt Clients, op Project, s Settings, rel Release, a 
 	}
 	res, err := Follow(x.ctx, mgmt, op, id, x.followAccess(len(a.Accounts())))
 	if err != nil {
-		return x.lost(err, x.accessGoesOn())
+		return x.lostAccess(err)
 	}
 	failed, err := x.accessEnded(mgmt, op, res, policyDone(a.PolicyChange))
 	if err == nil && failed {
