@@ -1,0 +1,53 @@
+{
+  "module": {
+    "dormeto": {
+      "admin_emails": [
+        "we\"ird@example.com"
+      ],
+      "description": {
+        "a": [
+          "$${y}"
+        ]
+      },
+      "discovery_mode": "account",
+      "email_from": "x $${x}",
+      "env": "prod",
+      "ses_identity": "id",
+      "source": "./release/modules/manager"
+    }
+  },
+  "output": {
+    "dashboard_url": {
+      "value": "${module.dormeto.dashboard_url}"
+    },
+    "user_pool_id": {
+      "value": "${module.dormeto.user_pool_id}"
+    },
+    "version": {
+      "value": "${module.dormeto.version}"
+    }
+  },
+  "provider": {
+    "aws": {
+      "default_tags": {
+        "tags": {
+          "dormeto:env": "prod",
+          "managed-by": "dormeto-cli",
+          "project": "dormeto"
+        }
+      },
+      "region": "eu-west-1"
+    }
+  },
+  "terraform": {
+    "backend": {
+      "s3": {
+        "bucket": "dmt-install-532105290256-eu-west-1",
+        "encrypt": true,
+        "key": "prod/manager.tfstate",
+        "region": "eu-west-1",
+        "use_lockfile": true
+      }
+    }
+  }
+}
