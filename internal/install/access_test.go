@@ -4,6 +4,7 @@ package install
 // (the profile m) and the organization's other accounts.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -81,7 +82,7 @@ func TestInstallDeploysOrganizationAccess(t *testing.T) {
 	}
 	rwEqual(t, "organization build's variables", b[0].vars, map[string]string{"ACTION": "apply", "MANAGER_ACCOUNT": rwAccount, "ORGANIZATION": "o-vvk0115ixn",
 		"MEMBER_ROLE": "OrganizationAccountAccessRole", "ACCOUNTS": "444444444444 555555555555", "DISCOVERY_ONLY": "",
-		"RELEASE_BASE": ReleasesURL + "/0.11.0", "RELEASE_VERSION": "0.11.0"})
+		"DISCOVERY_ROLE": "DmtDiscoveryRole", "COMMAND_ROLE": "DmtCommandRole", "RELEASE_BASE": ReleasesURL + "/0.11.0", "RELEASE_VERSION": "0.11.0"})
 	// After the manager's apply: the bootstrap, the plan, the build, then its project and role removed.
 	rwInOrder(t, strings.Join(w.writes, "\n")+"\n",
 		"codebuild:StartBuild apply\n",
@@ -575,6 +576,27 @@ func TestInstallOrganizationAccessAFailedBuild(t *testing.T) {
 	}
 	if w.mgmt.project || w.mgmt.role {
 		t.Errorf("left: %v", w.mgmtWrites())
+	}
+}
+
+// The roles' names the manager is given (--var discovery_role_name, command_role_name) are the names the build gives the
+// release's script, their paths kept.
+func TestInstallOrganizationAccessRoleNames(t *testing.T) {
+	w := rwNew(t)
+	w.rwOrganization()
+	r := rwMgmtFlags()
+	r.Flags.Vars = map[string]json.RawMessage{"discovery_role_name": json.RawMessage(`"team/MyDiscovery"`), "command_role_name": json.RawMessage(`"team/MyCommand"`)}
+	r.Set["var"] = true
+	code, out, _ := w.run(Install, r, true, "y", "y", "y")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	b := w.mgmt.started()
+	if len(b) != 1 || b[0].vars["DISCOVERY_ROLE"] != "team/MyDiscovery" || b[0].vars["COMMAND_ROLE"] != "team/MyCommand" {
+		t.Errorf("organization builds: %v", w.mgmt.actions())
+		for _, x := range b {
+			t.Logf("%v", x.vars)
+		}
 	}
 }
 

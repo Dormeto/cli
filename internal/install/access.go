@@ -375,7 +375,8 @@ func (x *run) accessGoesOn() string {
 }
 
 // startAccess bootstraps the management account's project, writes the plan, gives the release (a local one uploaded to
-// its bucket) and starts the build.
+// its bucket) and starts the build, with the roles' names the manager is given (--var discovery_role_name and
+// command_role_name, their paths kept).
 func (x *run) startAccess(mgmt Clients, op Project, s Settings, rel Release, a Access) (string, error) {
 	role := memberRole(s)
 	if err := OrgBootstrap(x.ctx, mgmt, op, role); err != nil {
@@ -395,6 +396,7 @@ func (x *run) startAccess(mgmt Clients, op Project, s Settings, rel Release, a A
 	return Start(x.ctx, mgmt, op, ActionOrgApply, map[string]string{
 		"MANAGER_ACCOUNT": x.w.Account, "ORGANIZATION": x.w.Organization.ID, "MEMBER_ROLE": role,
 		"ACCOUNTS": strings.Join(a.Accounts(), " "), "DISCOVERY_ONLY": strings.Join(a.DiscoveryOnly, " "),
+		"DISCOVERY_ROLE": roleVar(s, "discovery_role_name", "DmtDiscoveryRole"), "COMMAND_ROLE": roleVar(s, "command_role_name", "DmtCommandRole"),
 		"RELEASE_BASE": base, "RELEASE_VERSION": rel.Version,
 	})
 }

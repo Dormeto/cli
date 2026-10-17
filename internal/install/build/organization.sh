@@ -1,7 +1,8 @@
 #!/bin/sh
 # Dormeto install: the organization's access, run by CodeBuild in the management account (buildspec.yml).
 # Inputs: BUCKET, ENV, MANAGER_ACCOUNT, ORGANIZATION, MEMBER_ROLE (a path may precede the name), ACCOUNTS and
-# DISCOVERY_ONLY (space-separated ids), RELEASE_BASE, RELEASE_VERSION, CODEBUILD_BUILD_ID.
+# DISCOVERY_ONLY (space-separated ids), DISCOVERY_ROLE and COMMAND_ROLE (the roles' names the manager is given, a path
+# may precede them; the release script's defaults otherwise), RELEASE_BASE, RELEASE_VERSION, CODEBUILD_BUILD_ID.
 set -eu
 
 say() { echo "dormeto: $*"; }
@@ -11,6 +12,8 @@ need() { eval "[ -n \"\${$1:-}\" ]" || die "$1 is not set"; }
 for v in BUCKET ENV MANAGER_ACCOUNT ORGANIZATION MEMBER_ROLE RELEASE_BASE RELEASE_VERSION CODEBUILD_BUILD_ID; do need "$v"; done
 ACCOUNTS=${ACCOUNTS:-}
 DISCOVERY_ONLY=${DISCOVERY_ONLY:-}
+DISCOVERY_ROLE=${DISCOVERY_ROLE:-DmtDiscoveryRole}
+COMMAND_ROLE=${COMMAND_ROLE:-DmtCommandRole}
 for a in $ACCOUNTS; do
   case $a in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) die "ACCOUNTS: $a is not an account id" ;; esac
 done
@@ -68,8 +71,9 @@ access() {
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
   ACCOUNT=$1
   ENVS=$ENV
-  export ACCOUNT MANAGER_ACCOUNT ENVS ORGANIZATION
-  case " $DISCOVERY_ONLY " in *" $1 "*) COMMAND_ROLE= && export COMMAND_ROLE ;; esac
+  # an empty COMMAND_ROLE: discovered, never napped (no command role, no boundary)
+  case " $DISCOVERY_ONLY " in *" $1 "*) COMMAND_ROLE= ;; esac
+  export ACCOUNT MANAGER_ACCOUNT ENVS ORGANIZATION DISCOVERY_ROLE COMMAND_ROLE
   bash "$ACCESS" 2>&1
 }
 

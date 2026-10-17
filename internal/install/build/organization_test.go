@@ -81,10 +81,10 @@ func TestOrganizationRoles(t *testing.T) {
 		t.Errorf("roles.json:\n%s\nwant\n%s", roles, strings.Join(want, "\n"))
 	}
 	log := s.log()
-	if !has(log, "access ACCOUNT=111111111111 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij COMMAND_ROLE=unset KEY=AK111111111111") {
+	if !has(log, "access ACCOUNT=111111111111 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij DISCOVERY_ROLE=DmtDiscoveryRole COMMAND_ROLE=DmtCommandRole KEY=AK111111111111") {
 		t.Errorf("first account:\n%s", strings.Join(log, "\n"))
 	}
-	if !has(log, "access ACCOUNT=222222222222 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij COMMAND_ROLE= KEY=AK222222222222") {
+	if !has(log, "access ACCOUNT=222222222222 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij DISCOVERY_ROLE=DmtDiscoveryRole COMMAND_ROLE= KEY=AK222222222222") {
 		t.Errorf("discovery-only account must run with an empty COMMAND_ROLE:\n%s", strings.Join(log, "\n"))
 	}
 	if has(log, "access ACCOUNT=333333333333") {
@@ -92,6 +92,24 @@ func TestOrganizationRoles(t *testing.T) {
 	}
 	if !has(log, "aws sts assume-role --role-arn arn:aws:iam::111111111111:role/OrganizationAccountAccessRole --role-session-name dmt-prod-organization") {
 		t.Errorf("assume-role:\n%s", strings.Join(log, "\n"))
+	}
+}
+
+// The roles' names the manager is given reach the release's script, their paths kept; a discovery-only account still
+// gets an empty COMMAND_ROLE.
+func TestOrganizationRoleNames(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	env := orgEnv()
+	env["DISCOVERY_ROLE"], env["COMMAND_ROLE"] = "team/MyDiscovery", "team/MyCommand"
+	if out, err := s.run("organization.sh", env); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	log := s.log()
+	if !has(log, "access ACCOUNT=111111111111 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij DISCOVERY_ROLE=team/MyDiscovery COMMAND_ROLE=team/MyCommand ") ||
+		!has(log, "access ACCOUNT=222222222222 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij DISCOVERY_ROLE=team/MyDiscovery COMMAND_ROLE= ") {
+		t.Errorf("log:\n%s", strings.Join(log, "\n"))
 	}
 }
 

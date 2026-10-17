@@ -107,7 +107,7 @@ chmod +x "$dir/terraform"
 `,
 }
 
-const fakeAccess = `echo "access ACCOUNT=$ACCOUNT MANAGER_ACCOUNT=$MANAGER_ACCOUNT ENVS=$ENVS ORGANIZATION=$ORGANIZATION COMMAND_ROLE=${COMMAND_ROLE-unset} KEY=$AWS_ACCESS_KEY_ID" >> "$FAKE/log"
+const fakeAccess = `echo "access ACCOUNT=$ACCOUNT MANAGER_ACCOUNT=$MANAGER_ACCOUNT ENVS=$ENVS ORGANIZATION=$ORGANIZATION DISCOVERY_ROLE=${DISCOVERY_ROLE-unset} COMMAND_ROLE=${COMMAND_ROLE-unset} KEY=$AWS_ACCESS_KEY_ID" >> "$FAKE/log"
 case " ${FAKE_ACCESS_FAIL:-} " in
 *" $ACCOUNT "*) echo "line one"; echo 'boom "quoted" \ here' >&2; exit 1 ;;
 esac

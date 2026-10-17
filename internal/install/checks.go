@@ -306,12 +306,18 @@ func checkAnotherEnv(f Found) Check {
 	return Check{"another environment", "none", OK}
 }
 
-// roleName is the name a variable overrides (a JSON string, a path may precede it), or def.
-func roleName(s Settings, key, def string) string {
+// roleVar is the role a variable names (a JSON string, a path may precede the name, kept), or def.
+func roleVar(s Settings, key, def string) string {
 	var v string
 	if json.Unmarshal(s.Vars[key], &v) != nil || v == "" {
 		return def
 	}
+	return v
+}
+
+// roleName is the name a variable overrides (its path left out), or def.
+func roleName(s Settings, key, def string) string {
+	v := roleVar(s, key, def)
 	return v[strings.LastIndex(v, "/")+1:]
 }
 
