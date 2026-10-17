@@ -1,0 +1,6 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - aws s3 cp "s3://$BUCKET/$ENV/build/$SCRIPT" ./run.sh
+      - sh ./run.sh
