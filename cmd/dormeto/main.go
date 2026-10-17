@@ -47,6 +47,7 @@ func newRoot(b build) *cobra.Command {
 		},
 	})
 	root.AddCommand(newEstimate(b))
+	root.AddCommand(newInstall(theInstallRuns))
 	return root
 }
 
