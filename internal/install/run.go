@@ -213,6 +213,59 @@ func (x *run) settings(env string) (*Settings, error) {
 	return ReadSettings(x.ctx, x.c, x.p)
 }
 
+// merged is the run's settings: the flags' over install.json's (saved, nil on a first install), in the run's env and
+// region.
+func (x *run) merged(saved *Settings) Settings {
+	var prior Settings
+	if saved != nil {
+		prior = *saved
+	}
+	s := Merge(x.r.Flags, prior, x.r.Set)
+	s.Env, s.Region = x.env, x.region
+	return s
+}
+
+// wanted is the version the flags ask for: --version's; "" for the local release's (--release) or the latest.
+func (x *run) wanted() string {
+	if x.r.Set["version"] {
+		return x.r.Flags.Version
+	}
+	return ""
+}
+
+// organization sets the organization the account belongs to, which the configuration's trust conditions keep.
+func (x *run) organization(s *Settings) {
+	s.OrganizationID = ""
+	if o := x.w.Organization; o != nil {
+		s.OrganizationID = o.ID
+	}
+}
+
+// valid checks the settings and generates the configuration from them: a bad one stops the run naming its flag.
+func (x *run) valid(s Settings) ([]byte, error) {
+	if err := s.Validate(); err != nil {
+		return nil, &stop{2, err.Error()}
+	}
+	cfg, err := Config(s, x.w, x.p)
+	if err != nil {
+		return nil, &stop{2, "--var: " + err.Error()}
+	}
+	return cfg, nil
+}
+
+// resolve reads and checks the release to install: version, else the local release's (--release), else the latest. Its
+// error is the release check's.
+func (x *run) resolve(version string) (Release, error) {
+	if version == "" && x.r.Release == "" {
+		latest, err := Latest(x.ctx, x.d.HTTP)
+		if err != nil {
+			return Release{}, err
+		}
+		version = latest
+	}
+	return Resolve(x.ctx, x.d.HTTP, version, x.r.Release)
+}
+
 // recorded is install.json as the checks read it: what the apply build recorded in applied.json is its installed
 // version and last apply (nil: no install.json).
 func recorded(saved *Settings, applied *Applied) *Settings {
@@ -388,54 +441,29 @@ func (x *run) install() error {
 	if err != nil {
 		return err
 	}
-	var prior Settings
-	if saved != nil {
-		prior = *saved
-	}
-	s := Merge(x.r.Flags, prior, x.r.Set)
-	s.Env, s.Region = x.env, x.region
-
-	// The version: the flag's; with --release, the local release's; else the latest, which a first install asks about.
-	version := ""
-	if x.r.Set["version"] {
-		version = x.r.Flags.Version
-	}
-	var latestErr error
-	if version == "" && x.r.Release == "" {
-		var latest string
-		switch latest, latestErr = Latest(x.ctx, x.d.HTTP); {
-		case latestErr != nil: // the release check says it
-		case saved == nil:
-			if version, err = x.ask("Manager release", latest, "--version"); err != nil {
-				return err
-			}
-		default:
-			version = latest
-		}
-	}
-	s.Version = version
+	s := x.merged(saved)
+	s.Version = x.wanted()
 	if saved == nil {
+		// A first install asks the version, the latest suggested; reading the latest failed, the release check says so.
+		if s.Version == "" && x.r.Release == "" {
+			if latest, err := Latest(x.ctx, x.d.HTTP); err == nil {
+				if s.Version, err = x.ask("Manager release", latest, "--version"); err != nil {
+					return err
+				}
+			}
+		}
 		if err := x.answer(&s); err != nil {
 			return err
 		}
 	}
-	s.OrganizationID = ""
-	if o := x.w.Organization; o != nil {
-		s.OrganizationID = o.ID
-	}
-	if err := s.Validate(); err != nil {
-		return &stop{2, err.Error()}
-	}
-	cfg, err := Config(s, x.w, x.p)
+	x.organization(&s)
+	cfg, err := x.valid(s)
 	if err != nil {
-		return &stop{2, "--var: " + err.Error()}
+		return err
 	}
-
-	rel, relErr := Release{}, latestErr
+	rel, relErr := x.resolve(s.Version)
 	if relErr == nil {
-		if rel, relErr = Resolve(x.ctx, x.d.HTTP, s.Version, x.r.Release); relErr == nil {
-			s.Version = rel.Version
-		}
+		s.Version = rel.Version
 	}
 	cs, err := x.checks(s, saved, applied, rel, relErr)
 	if err != nil {
@@ -562,8 +590,100 @@ func (x *run) apply(s Settings, sum PlanSummary) error {
 	return nil
 }
 
-// InstallCheck is `dormeto install check` (Check is a check's row).
-func InstallCheck(ctx context.Context, d Deps, r Request) int { return -1 }
+// InstallCheck is `dormeto install check` (Check is a check's row): the prerequisites, read-only, without asking
+// anything but the region: the version the latest unless given, the mode the suggested one unless given, the
+// administrators a warning until given. Exit codes: 0; 1 when a check fails or AWS refuses; 2 for a bad flag; 130 when
+// ctx is cancelled.
+func InstallCheck(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.end(x.check())
+}
 
-// Apply is `dormeto install apply`.
-func Apply(ctx context.Context, d Deps, r Request) int { return -1 }
+func (x *run) check() error {
+	if err := x.locate(); err != nil {
+		return err
+	}
+	saved, err := x.environment(false)
+	if err != nil {
+		return err
+	}
+	applied, err := ReadApplied(x.ctx, x.c, x.p)
+	if err != nil {
+		return err
+	}
+	s := x.merged(saved)
+	s.Version = x.wanted()
+	if s.Mode == "" {
+		s.Mode, _ = Suggest(x.w)
+	}
+	x.organization(&s)
+	valid := s
+	if len(valid.AdminEmails) == 0 { // their row says they are missing
+		valid.AdminEmails = []string{"someone@example.com"}
+	}
+	if _, err := x.valid(valid); err != nil {
+		return err
+	}
+	rel, relErr := x.resolve(s.Version)
+	cs, err := x.checks(s, saved, applied, rel, relErr)
+	if err != nil {
+		return err
+	}
+	if err := x.ctx.Err(); err != nil {
+		return err
+	}
+	if len(s.AdminEmails) == 0 {
+		for i, c := range cs {
+			if c.Name == "administrators" {
+				cs[i] = Check{c.Name, "none given yet (--admin-emails)", Warn}
+			}
+		}
+	}
+	x.showChecks(s, cs)
+	if Failed(cs) {
+		return &stop{code: 1}
+	}
+	return nil
+}
+
+// Apply is `dormeto install apply`: the explicit confirmation of the last plan (a plan made without a terminal, or
+// left at the question), shown, then applied, followed and verified as Install does. Exit codes as Install's.
+func Apply(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	x.interrupted = "Interrupted: nothing was applied."
+	return x.end(x.applyLast())
+}
+
+func (x *run) applyLast() error {
+	if err := x.locate(); err != nil {
+		return err
+	}
+	saved, err := x.environment(false)
+	if err != nil {
+		return err
+	}
+	if saved == nil {
+		return &stop{1, fmt.Sprintf("no install of env %s in %s %s: run dormeto install", x.env, x.w.Account, x.region)}
+	}
+	if saved.LastPlan == "" {
+		return &stop{1, "no plan to apply: run dormeto install"}
+	}
+	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args()
+	applied, err := ReadApplied(x.ctx, x.c, x.p)
+	if err != nil {
+		return err
+	}
+	// A stale or failed plan is refused before it is shown.
+	if err := CheckPlan(x.ctx, x.c, saved.LastPlan, applied); err != nil {
+		return err
+	}
+	sum, err := x.summary(saved.LastPlan)
+	if err != nil {
+		return err
+	}
+	if sum.Empty() {
+		return &stop{0, "Nothing to change: manager " + saved.Version + " is installed."}
+	}
+	x.showPlan(saved.LastPlan, saved.Version, sum)
+	return x.apply(*saved, sum)
+}

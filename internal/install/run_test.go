@@ -931,3 +931,154 @@ func TestInstallOutsideAnOrganizationIsAnAccountDeployment(t *testing.T) {
 		t.Errorf("organization access in an account deployment:\n%s", out)
 	}
 }
+
+// rwPlanned is prod installed at 0.11.0, then planned for 0.12.0 without a terminal: the plan p1, after the last apply.
+func rwPlanned(t *testing.T) *rwWorld {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.release("0.12.0", true)
+	s := w.saved()
+	s.Version, s.ReleaseBase, s.LastPlan = "0.12.0", ReleasesURL+"/0.12.0", "dmt-prod-install:p1"
+	w.save(s)
+	w.objects["prod/plans/dmt-prod-install:p1/plan.json"] = rwPlan
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:p1", status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-10 * time.Minute)})
+	return w
+}
+
+func TestApplyWithoutAnInstall(t *testing.T) {
+	w := rwNew(t)
+	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, true)
+	if code != 1 || !strings.HasSuffix(out, "no install of env prod in 532105290256 eu-west-1: run dormeto install\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+func TestApplyWithoutAPlan(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	s := w.saved()
+	s.LastPlan = ""
+	w.save(s)
+	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
+	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto install\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+func TestApplyRefusesAStalePlan(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0") // its plan p0 predates its apply a0
+	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
+	if code != 1 || !strings.HasSuffix(out, "the plan dmt-prod-install:p0 predates the last apply dmt-prod-install:a0: plan again\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if len(w.actions()) != 0 {
+		t.Errorf("started %v", w.actions())
+	}
+}
+
+func TestApplyShowsThePlanThenAppliesIt(t *testing.T) {
+	w := rwPlanned(t)
+	code, out, asked := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
+	if code != 0 || len(asked) != 0 {
+		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	rwInOrder(t, out,
+		"Profile p: account 532105290256",
+		"Plan (build dmt-prod-install:p1)\n  manager 0.12.0: 3 to add, 0 to change, 0 to destroy\n",
+		"Apply (build dmt-prod-install:b1…)  succeeded",
+		"  ✓ applied: 3 added, 0 changed, 0 destroyed\n",
+		"  ✓ dashboard: "+rwDashboard+" answers\n",
+		"Next: sign in at "+rwDashboard+"; in Discovery, Perimeter settings, add a filter, then Run now.\n",
+	)
+	rwEqual(t, "builds", w.actions(), []string{"apply"})
+	rwEqual(t, "apply's variables", w.started()[0].vars,
+		map[string]string{"ACTION": "apply", "PLAN_BUILD": "dmt-prod-install:p1", "RELEASE_BASE": ReleasesURL + "/0.12.0", "RELEASE_VERSION": "0.12.0"})
+	for _, c := range w.writes {
+		if c != "codebuild:StartBuild apply" {
+			t.Errorf("apply wrote %s", c)
+		}
+	}
+}
+
+func TestApplyAFailedApply(t *testing.T) {
+	w := rwPlanned(t)
+	w.ends["apply"] = cbtypes.StatusTypeFailed
+	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
+	if code != 1 {
+		t.Errorf("exit code %d", code)
+	}
+	rwInOrder(t, out, "Apply failed\n", "  Error: creating the user pool: AccessDenied\n", ConsoleURL(Names(rwAccount, "eu-west-1", "prod"), "dmt-prod-install:b1"))
+	if strings.Contains(out, "applied:") || strings.Contains(out, "Next:") {
+		t.Errorf("a failed apply reported applied:\n%s", out)
+	}
+}
+
+func TestCheckIsReadOnly(t *testing.T) {
+	w := rwNew(t)
+	w.readOnly = true
+	r := Request{Profile: "p", Region: "eu-west-1", Flags: Settings{AdminEmails: []string{"you@example.com"}}, Set: map[string]bool{"admin-emails": true}}
+	code, out, asked := w.run(InstallCheck, r, true)
+	if code != 0 || len(asked) != 0 {
+		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	rwInOrder(t, out,
+		"Profile p: account 532105290256 (sandbox) in the organization o-vvk0115ixn (management 809706483662)\n",
+		"\nChecks\n",
+		"  ✓ organization: o-vvk0115ixn: all features\n",
+		"  ✓ existing install: none: a first install of env prod\n",
+		"  ✓ release: manager 0.11.0\n",
+		"  ✓ administrators: you@example.com\n",
+		"  ! organization access: not deployed (no management profile)\n",
+		"    Organization access needs the management account 809706483662; without its profile (--management-profile) it is not deployed.\n",
+		"    Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
+	)
+	if len(w.writes) != 0 {
+		t.Errorf("writes: %v", w.writes)
+	}
+}
+
+func TestCheckWithoutAdministratorsYet(t *testing.T) {
+	w := rwNew(t)
+	w.readOnly = true
+	code, out, asked := w.run(InstallCheck, Request{Profile: "p"}, true)
+	if code != 0 || len(asked) != 0 {
+		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	if !strings.Contains(out, "  ! administrators: none given yet (--admin-emails)\n") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestCheckAFailedRow(t *testing.T) {
+	w := rwNew(t)
+	w.readOnly = true
+	w.bucket = true
+	w.objects["dev/install.json"] = "{}"
+	code, out, _ := w.run(InstallCheck, rwFlags(), false)
+	if code != 1 || !strings.Contains(out, "  ✗ another environment: one environment per account: dev installed here\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+func TestCheckAccountMode(t *testing.T) {
+	w := rwNew(t)
+	w.readOnly = true
+	r := rwFlags()
+	r.Flags.Mode = "account"
+	code, out, _ := w.run(InstallCheck, r, false)
+	if code != 0 || !strings.Contains(out, "  ✓ organization: account deployment (in o-vvk0115ixn)\n") || strings.Contains(out, "organization access") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+func TestCheckAnUpgradeComparesWithTheLatest(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.release("0.12.0", true)
+	w.readOnly = true
+	code, out, _ := w.run(InstallCheck, Request{Profile: "p", Region: "eu-west-1"}, false)
+	if code != 0 || !strings.Contains(out, "  ✓ existing install: upgrade: 0.11.0 → 0.12.0\n") || !strings.Contains(out, "  ✓ administrators: you@example.com\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
