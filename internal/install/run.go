@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dormeto/cli/internal/awserr"
 	"github.com/Dormeto/cli/internal/progress"
 )
 
@@ -69,7 +70,7 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
 
 // end is the exit code of the run's result, said: a stop's own; otherwise 130 when the run was cancelled (with what
-// that left), else 1 (with AWS's message).
+// that left), else 1 (with AWS's message, and how to sign in again when the SSO session expired).
 func (x *run) end(err error) int {
 	var s *stop
 	switch {
@@ -85,6 +86,13 @@ func (x *run) end(err error) int {
 		return exitInterrupted
 	}
 	x.say("%s", err)
+	if awserr.SSOToken(err) {
+		login := "aws sso login"
+		if x.r.Profile != "" {
+			login += " --profile " + x.r.Profile
+		}
+		x.say("Run %s and try again.", login)
+	}
 	return 1
 }
 

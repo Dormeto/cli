@@ -7,6 +7,7 @@ package install
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
@@ -75,6 +77,7 @@ type rwWorld struct {
 	ends                            map[string]cbtypes.StatusType
 	plan                            string // the plan.json a plan build writes
 	simDenied                       bool   // iam:SimulatePrincipalPolicy refused: a warning
+	identityErr                     error  // sts:GetCallerIdentity's error
 	writes                          []string
 	readOnly                        bool
 	clock                           time.Time
@@ -268,6 +271,9 @@ type rwSTS struct {
 }
 
 func (f rwSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+	if f.w.identityErr != nil {
+		return nil, f.w.identityErr
+	}
 	return &sts.GetCallerIdentityOutput{Account: aws.String(rwAccount), Arn: aws.String("arn:aws:sts::" + rwAccount + ":assumed-role/" + rwRole + "/you@example.com")}, nil
 }
 
@@ -1080,5 +1086,21 @@ func TestCheckAnUpgradeComparesWithTheLatest(t *testing.T) {
 	code, out, _ := w.run(InstallCheck, Request{Profile: "p", Region: "eu-west-1"}, false)
 	if code != 0 || !strings.Contains(out, "  ✓ existing install: upgrade: 0.11.0 → 0.12.0\n") || !strings.Contains(out, "  ✓ administrators: you@example.com\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+func TestAnExpiredSSOSessionSaysHowToSignIn(t *testing.T) {
+	w := rwNew(t)
+	w.identityErr = fmt.Errorf("get identity: get credentials: %w", &ssocreds.InvalidTokenError{Err: errors.New("the SSO session has expired or is invalid")})
+	code, out, _ := w.run(InstallCheck, rwFlags(), false)
+	if code != 1 || !strings.HasSuffix(out, "the SSO session has expired or is invalid\nRun aws sso login --profile p and try again.\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+
+	w = rwNew(t)
+	w.identityErr = chkAPI("AccessDenied")
+	code, out, _ = w.run(Install, rwFlags(), false)
+	if code != 1 || strings.Contains(out, "sso login") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 }
