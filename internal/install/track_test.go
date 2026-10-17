@@ -41,6 +41,8 @@ type trkWorld struct {
 	logCalls int
 	clock    time.Time
 	noLogs   bool
+	late     int // lines that reach the log only after the build ended and a delay
+	extra    int
 }
 
 func newTrkWorld(polls ...trkPoll) *trkWorld {
@@ -54,6 +56,9 @@ func (w *trkWorld) now() time.Time { return w.clock }
 // every advances the fake clock by d and answers at once.
 func (w *trkWorld) every(d time.Duration) <-chan time.Time {
 	w.clock = w.clock.Add(d)
+	if w.calls > 0 && w.poll().status != cbtypes.StatusTypeInProgress && w.poll().err == nil {
+		w.extra = w.late
+	}
 	c := make(chan time.Time)
 	close(c)
 	return c
@@ -95,7 +100,7 @@ func (f trkLogs) GetLogEvents(_ context.Context, in *cloudwatchlogs.GetLogEvents
 	} else if _, err := fmt.Sscanf(*in.NextToken, "t%d", &from); err != nil {
 		return nil, err
 	}
-	visible := min(f.w.poll().lines, len(f.w.log))
+	visible := min(f.w.poll().lines+f.w.extra, len(f.w.log))
 	to := min(visible, from+f.w.pageSize)
 	to = max(to, from)
 	out := &cloudwatchlogs.GetLogEventsOutput{NextForwardToken: aws.String(fmt.Sprintf("t%d", to))}
@@ -453,6 +458,119 @@ func TestVerifyAdministrators(t *testing.T) {
 	}
 	checks = Verify(context.Background(), Clients{Cognito: cog}, h, trkOut, []string{"a@x.com", "b@x.com"}, trkVerifyOpts(w))
 	if checks[1].Verdict != OK || checks[1].Detail != "invitation sent to a@x.com (valid 7 days); b@x.com signed in" {
+		t.Errorf("got %+v", checks[1])
+	}
+}
+
+func TestFollowEndsTheStatusLineOnDetach(t *testing.T) {
+	w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 0, nil})
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &trkStatus{}
+	o := trkOpts(w, s, &bytes.Buffer{})
+	o.Every = func(d time.Duration) <-chan time.Time {
+		cancel()
+		return w.every(d)
+	}
+	if _, err := Follow(ctx, w.clients(), Names("1", "eu-west-1", "prod"), trkID, o); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if s.end != "Plan (build dmt-prod-install:1234…)  detached" {
+		t.Errorf("end %q", s.end)
+	}
+}
+
+func TestFollowEndsTheStatusLineOnErrors(t *testing.T) {
+	for name, e := range map[string]error{"credentials": trkAPIErr("ExpiredTokenException"), "retries": errors.New("boom")} {
+		w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 0, nil}, trkPoll{err: e})
+		s := &trkStatus{}
+		if _, err := Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, trkOpts(w, s, &bytes.Buffer{})); err == nil {
+			t.Fatal(name, "no error")
+		}
+		if s.end != "Plan (build dmt-prod-install:1234…)  stopped following" {
+			t.Errorf("%s: end %q", name, s.end)
+		}
+	}
+}
+
+func TestFollowReadsTheLogOnceMoreAfterAFailure(t *testing.T) {
+	w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 1, nil}, trkPoll{cbtypes.StatusTypeFailed, "COMPLETED", 2, nil})
+	w.log = []string{"one", "two", "late error", "last line"}
+	w.late = 2
+	res, err := Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, trkOpts(w, &trkStatus{}, &bytes.Buffer{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(res.Tail, "|"); got != "one|two|late error|last line" {
+		t.Errorf("tail %q", got)
+	}
+	// a success does not wait
+	w = newTrkWorld(trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", 0, nil})
+	Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, trkOpts(w, nil, &bytes.Buffer{}))
+	if !w.clock.Equal(bldT0) {
+		t.Errorf("waited %v on success", w.clock.Sub(bldT0))
+	}
+}
+
+func TestVerifyDashboardInterrupted(t *testing.T) {
+	want := Check{"dashboard", "not checked (interrupted)", Skip}
+	w := newTrkWorld()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h := &trkHTTP{statuses: []int{403}}
+	if checks := Verify(ctx, Clients{}, h, trkOut, nil, trkVerifyOpts(w)); checks[0] != want || len(h.urls) != 0 {
+		t.Errorf("checks %+v, %d GETs", checks, len(h.urls))
+	}
+	// a cancel during the GET
+	ctx, cancel = context.WithCancel(context.Background())
+	h2 := &trkCancelHTTP{cancel: cancel}
+	if checks := Verify(ctx, Clients{}, h2, trkOut, nil, trkVerifyOpts(w)); checks[0] != want || h2.n != 1 {
+		t.Errorf("checks %+v, %d GETs", checks, h2.n)
+	}
+}
+
+type trkCancelHTTP struct {
+	cancel func()
+	n      int
+}
+
+func (h *trkCancelHTTP) Do(*http.Request) (*http.Response, error) {
+	h.n++
+	h.cancel()
+	return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+type trkFailingCognito struct {
+	Cognito
+	errs  map[string]error
+	calls []string
+}
+
+func (f *trkFailingCognito) ListUsers(_ context.Context, in *cognitoidentityprovider.ListUsersInput, _ ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ListUsersOutput, error) {
+	f.calls = append(f.calls, aws.ToString(in.Filter))
+	for email, err := range f.errs {
+		if aws.ToString(in.Filter) == fmt.Sprintf("email = %q", email) {
+			return nil, err
+		}
+	}
+	return &cognitoidentityprovider.ListUsersOutput{Users: []cogtypes.UserType{{UserStatus: "CONFIRMED"}}}, nil
+}
+
+func TestVerifyAdministratorsCredentialsExpired(t *testing.T) {
+	w := newTrkWorld()
+	cog := &trkFailingCognito{errs: map[string]error{"a@x.com": trkAPIErr("ExpiredTokenException")}}
+	checks := Verify(context.Background(), Clients{Cognito: cog}, &trkHTTP{statuses: []int{200}}, trkOut, []string{"a@x.com", "b@x.com"}, trkVerifyOpts(w))
+	want := Check{"administrators", "not checked (the AWS credentials expired: sign in again, then dormeto install status)", Warn}
+	if checks[1] != want || len(cog.calls) != 1 {
+		t.Errorf("got %+v after %d calls", checks[1], len(cog.calls))
+	}
+}
+
+func TestVerifyAdministratorsOtherErrorsStayPerAddress(t *testing.T) {
+	w := newTrkWorld()
+	cog := &trkFailingCognito{errs: map[string]error{"a@x.com": errors.New("boom")}}
+	checks := Verify(context.Background(), Clients{Cognito: cog}, &trkHTTP{statuses: []int{200}}, trkOut, []string{"a@x.com", "b@x.com"}, trkVerifyOpts(w))
+	want := Check{"administrators", "a@x.com: boom; b@x.com signed in", Warn}
+	if checks[1] != want {
 		t.Errorf("got %+v", checks[1])
 	}
 }

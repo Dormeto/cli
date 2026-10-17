@@ -211,25 +211,40 @@ func Follow(ctx context.Context, c Clients, p Project, build string, o FollowOpt
 		o.Now = time.Now
 	}
 	f := &follower{c: c, p: p, build: build, o: o}
+	// leave ends the terminal's status line, so the caller's next message does not land on the redrawn line.
+	leave := func(how string, err error) (Result, error) {
+		if o.Status != nil && !o.Lines {
+			o.Status.End(f.head() + "  " + how)
+		}
+		return Result{Status: statusRunning}, err
+	}
 	failures := 0
 	for {
 		if err := ctx.Err(); err != nil {
-			return Result{Status: statusRunning}, err
+			return leave("detached", err)
 		}
 		b, err := f.step(ctx)
 		switch {
 		case ctx.Err() != nil:
-			return Result{Status: statusRunning}, ctx.Err()
+			return leave("detached", ctx.Err())
 		case err != nil && isCredentials(err):
-			return Result{Status: statusRunning}, &CredentialsError{Build: build, Err: err}
+			return leave("stopped following", &CredentialsError{Build: build, Err: err})
 		case err != nil:
 			if failures++; failures >= maxFailures {
-				return Result{Status: statusRunning}, fmt.Errorf("follow build %s: %w", build, err)
+				return leave("stopped following", fmt.Errorf("follow build %s: %w", build, err))
 			}
 		default:
 			failures = 0
 			now := o.Now()
 			if b.BuildStatus != cbtypes.StatusTypeInProgress {
+				if b.BuildStatus != cbtypes.StatusTypeSucceeded {
+					// CloudWatch ingestion lags the build's end: read the stream once more before the tail is taken.
+					select {
+					case <-ctx.Done():
+					case <-o.Every(pollEvery):
+						f.readLog(ctx, b) //nolint:errcheck // best effort: the tail is what was read
+					}
+				}
 				return f.end(b, now), nil
 			}
 			if o.Status != nil && !o.Lines {
@@ -238,7 +253,7 @@ func Follow(ctx context.Context, c Clients, p Project, build string, o FollowOpt
 		}
 		select {
 		case <-ctx.Done():
-			return Result{Status: statusRunning}, ctx.Err()
+			return leave("detached", ctx.Err())
 		case <-o.Every(pollEvery):
 		}
 	}
@@ -295,7 +310,11 @@ func Verify(ctx context.Context, c Clients, h HTTP, out Outputs, admins []string
 func verifyDashboard(ctx context.Context, h HTTP, dashboard string, o VerifyOptions) Check {
 	const name = "dashboard"
 	deadline := o.Now().Add(o.Wait)
+	interrupted := Check{name, "not checked (interrupted)", Skip}
 	for {
+		if ctx.Err() != nil {
+			return interrupted
+		}
 		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, dashboard, nil); err == nil {
 			if resp, err := h.Do(req); err == nil {
 				resp.Body.Close()
@@ -304,11 +323,15 @@ func verifyDashboard(ctx context.Context, h HTTP, dashboard string, o VerifyOpti
 				}
 			}
 		}
-		if !o.Now().Before(deadline) || ctx.Err() != nil {
+		if ctx.Err() != nil {
+			return interrupted
+		}
+		if !o.Now().Before(deadline) {
 			break
 		}
 		select {
 		case <-ctx.Done():
+			return interrupted
 		case <-o.Every(o.Poll):
 		}
 	}
@@ -321,6 +344,8 @@ func verifyAdministrators(ctx context.Context, c Clients, pool string, admins []
 	for _, a := range admins {
 		out, err := c.Cognito.ListUsers(ctx, &cognitoidentityprovider.ListUsersInput{UserPoolId: &pool, Filter: aws.String(fmt.Sprintf("email = %q", a))})
 		switch {
+		case err != nil && isCredentials(err):
+			return Check{"administrators", "not checked (the AWS credentials expired: sign in again, then dormeto install status)", Warn}
 		case err != nil:
 			details = append(details, a+": "+err.Error())
 			verdict = Warn
