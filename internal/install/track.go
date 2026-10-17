@@ -290,7 +290,7 @@ func (f *follower) end(b cbtypes.Build, now time.Time) Result {
 
 // VerifyOptions are how long Verify waits for the dashboard.
 type VerifyOptions struct {
-	Wait, Poll time.Duration // 10 min, 15 s
+	Wait, Poll time.Duration // 10 min, 15 s when zero; a negative Wait: one try, no wait
 	Every      func(time.Duration) <-chan time.Time
 	Now        func() time.Time
 }

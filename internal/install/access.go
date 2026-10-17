@@ -75,16 +75,22 @@ func (x *run) template(rel Release) ([]byte, error) {
 	return b, nil
 }
 
-// survey reads organization access from the management account, changing nothing: its clients (the install's own when
-// its profile is the management account's), what the survey found and its checks.
+// managementClients are the management account's clients, profile its: the install's own when no --management-profile
+// is given (its account is the management account).
+func (x *run) managementClients(profile string) (Clients, error) {
+	if x.r.ManagementProfile == "" {
+		return x.c, nil
+	}
+	return x.d.Clients(x.ctx, profile, x.region)
+}
+
+// survey reads organization access from the management account, changing nothing: its clients, what the survey found
+// and its checks.
 func (x *run) survey(s Settings, rel Release) (Clients, Access, []Check, error) {
 	profile, _ := x.management(s)
-	mgmt := x.c
-	if x.r.ManagementProfile != "" {
-		var err error
-		if mgmt, err = x.d.Clients(x.ctx, profile, x.region); err != nil {
-			return Clients{}, Access{}, nil, err
-		}
+	mgmt, err := x.managementClients(profile)
+	if err != nil {
+		return Clients{}, Access{}, nil, err
 	}
 	template, err := x.template(rel)
 	if err != nil {
@@ -223,7 +229,11 @@ func (x *run) deployAccess(mgmt Clients, s Settings, rel Release, a Access) erro
 	if err != nil {
 		return x.lost(err, x.accessGoesOn())
 	}
-	return x.accessEnded(mgmt, op, res, policyDone(a.PolicyChange))
+	failed, err := x.accessEnded(mgmt, op, res, policyDone(a.PolicyChange))
+	if err == nil && failed {
+		err = &stop{code: 1}
+	}
+	return err
 }
 
 // accessGoesOn is what a detached organization build leaves, and the command that ends it.
@@ -264,10 +274,10 @@ func (x *run) followAccess(total int) FollowOptions {
 }
 
 // accessEnded closes an organization build that ended (res): its project and role removed, then the accounts' results
-// said, policy what it did to the delegation policy. 1 when the build, an account or the removal failed.
-func (x *run) accessEnded(mgmt Clients, op Project, res Result, policy string) error {
+// said, policy what it did to the delegation policy; failed when the build, an account or the removal did.
+func (x *run) accessEnded(mgmt Clients, op Project, res Result, policy string) (failed bool, err error) {
 	x.interrupted = "Interrupted: organization access ended; its results: s3://" + op.Bucket + "/" + op.Key("organization", "roles.json")
-	failed := res.Failed
+	failed = res.Failed
 	if failed {
 		x.failed("Organization access", res, "") //nolint:errcheck // said; the log group goes with the project
 	}
@@ -279,7 +289,7 @@ func (x *run) accessEnded(mgmt Clients, op Project, res Result, policy string) e
 	}
 	roles, err := ReadRoles(x.ctx, mgmt, op)
 	if err != nil {
-		return err
+		return failed, err
 	}
 	ok := 0
 	var bad []string
@@ -297,8 +307,5 @@ func (x *run) accessEnded(mgmt Clients, op Project, res Result, policy string) e
 		x.say("  ✗ roles failed in %d accounts: %s", len(bad), strings.Join(bad, ", "))
 		failed = true
 	}
-	if failed {
-		return &stop{code: 1}
-	}
-	return nil
+	return failed, nil
 }
