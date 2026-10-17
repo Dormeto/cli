@@ -317,41 +317,65 @@ func roleName(s Settings, key, def string) string {
 
 func checkRoles(ctx context.Context, c Clients, s Settings, w Where, f Found) Check {
 	const name = "Dormeto roles"
-	var found, trusted []string
-	for _, r := range []string{roleName(s, "discovery_role_name", "DmtDiscoveryRole"), roleName(s, "command_role_name", "DmtCommandRole")} {
-		out, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(r)})
-		if isNotFound(err, "NoSuchEntity") {
-			continue
-		}
-		if err != nil {
-			return failure(name, err)
-		}
-		found = append(found, r)
-		for _, p := range trustedPrincipals(aws.ToString(out.Role.AssumeRolePolicyDocument)) {
-			if !slices.Contains(trusted, p) {
-				trusted = append(trusted, p)
-			}
-		}
-	}
-	const boundary = "DmtRouterBoundary"
-	_, err := c.IAM.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String("arn:aws:iam::" + w.Account + ":policy/" + boundary)})
-	switch {
-	case err == nil:
-		found = append(found, boundary)
-	case !isNotFound(err, "NoSuchEntity"):
+	roles, trusted, boundary, err := readDormetoRoles(ctx, c, s, w.Account)
+	if err != nil {
 		return failure(name, err)
+	}
+	found := roles
+	if boundary {
+		found = append(found, dormetoBoundary)
 	}
 	switch {
 	case len(found) == 0:
 		return Check{name, "none", OK}
 	case f.Saved != nil:
 		return Check{name, "this install's", OK}
+	case len(roles) > 0 && staleOnly(trusted):
+		return Check{name, strings.Join(found, ", ") + " exist, trusting " + strings.Join(trusted, ", ") + ": a manager's deleted role (the install rewrites the trust)", OK}
 	}
 	d := strings.Join(found, ", ") + " exist"
 	if len(trusted) > 0 {
 		d += ", trusting " + strings.Join(trusted, ", ")
 	}
 	return Check{name, d + ": another manager's (decision 15)", Fail}
+}
+
+const dormetoBoundary = "DmtRouterBoundary"
+
+// readDormetoRoles reads the account's Dormeto roles (the names from the Vars, the defaults otherwise): the ones that
+// exist, the AWS principals their trusts name (no duplicate), and whether the DmtRouterBoundary policy exists.
+func readDormetoRoles(ctx context.Context, c Clients, s Settings, account string) (roles, principals []string, boundary bool, err error) {
+	for _, r := range []string{roleName(s, "discovery_role_name", "DmtDiscoveryRole"), roleName(s, "command_role_name", "DmtCommandRole")} {
+		out, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(r)})
+		if isNotFound(err, "NoSuchEntity") {
+			continue
+		}
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("read role %s: %w", r, err)
+		}
+		roles = append(roles, r)
+		for _, p := range trustedPrincipals(aws.ToString(out.Role.AssumeRolePolicyDocument)) {
+			if !slices.Contains(principals, p) {
+				principals = append(principals, p)
+			}
+		}
+	}
+	_, err = c.IAM.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String("arn:aws:iam::" + account + ":policy/" + dormetoBoundary)})
+	switch {
+	case err == nil:
+		boundary = true
+	case !isNotFound(err, "NoSuchEntity"):
+		return nil, nil, false, fmt.Errorf("read policy %s: %w", dormetoBoundary, err)
+	}
+	return roles, principals, boundary, nil
+}
+
+// isUniqueID tells a principal that is a unique id (AROA…): AWS shows that for a role deleted since the trust was written.
+func isUniqueID(p string) bool { return !strings.HasPrefix(p, "arn:") }
+
+// staleOnly: the trust names principals, all of them deleted roles (unique ids), so it is stale, not another manager's.
+func staleOnly(principals []string) bool {
+	return len(principals) > 0 && !slices.ContainsFunc(principals, func(p string) bool { return !isUniqueID(p) })
 }
 
 // trustedPrincipals are the AWS principals of a role's trust policy (a URL-encoded JSON document).

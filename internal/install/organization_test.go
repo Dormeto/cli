@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -45,6 +46,7 @@ type orgWorld struct {
 	listErr  error
 	calls    []string
 	assumed  []string
+	mu       sync.Mutex // the survey calls assume from many goroutines
 }
 
 type orgSTS struct {
@@ -128,7 +130,9 @@ func (f orgIAM) GetPolicy(_ context.Context, in *iam.GetPolicyInput, _ ...func(*
 }
 
 func (w *orgWorld) assume(account string) (Clients, error) {
+	w.mu.Lock()
 	w.assumed = append(w.assumed, account)
+	w.mu.Unlock()
 	a := w.accounts[account]
 	if a.unreach != "" {
 		return Clients{}, errors.New(a.unreach)
@@ -505,5 +509,74 @@ func TestDisabled(t *testing.T) {
 		"Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too."
 	if got := Disabled(orgMgmt); got != want {
 		t.Errorf("Disabled =\n%s", got)
+	}
+}
+
+func TestSurveyStaleUniqueIDIsReady(t *testing.T) {
+	w := orgNew()
+	w.accounts["444444444444"] = orgAcct{status: orgtypes.AccountStatusActive, discovery: []string{"AROAEXAMPLE123"}}
+	a, _ := w.survey(t, orgSettings)
+	if slices.Contains(a.Foreign, "444444444444") || !slices.Contains(a.Ready, "444444444444") {
+		t.Errorf("Ready = %v, Foreign = %v", a.Ready, a.Foreign)
+	}
+	// a stale id next to another manager's ARN stays foreign
+	w.accounts["444444444444"] = orgAcct{status: orgtypes.AccountStatusActive, discovery: []string{"AROAEXAMPLE123", orgDev}}
+	a, _ = w.survey(t, orgSettings)
+	if !slices.Contains(a.Foreign, "444444444444") {
+		t.Errorf("Foreign = %v", a.Foreign)
+	}
+}
+
+func TestMergePolicyUnionsActions(t *testing.T) {
+	cur := `{"Version":"2012-10-17","Statement":[{"Sid":"DormetoReadOrganization","Effect":"Allow","Principal":{"AWS":"` + orgMine + `"},"Action":["organizations:ListTagsForResource","organizations:ListAccounts"],"Resource":"*"}]}`
+	got, change, err := MergePolicy([]byte(cur), []byte(orgTemplate), orgManager, "prd")
+	if err != nil || change != "actions" ||
+		!strings.Contains(string(got), `"Action":["organizations:DescribeOrganization","organizations:ListAccounts","organizations:ListTagsForResource"]`) {
+		t.Fatalf("actions: %s %q %v", got, change, err)
+	}
+	// the principal present and every template action already there, plus an extra: unchanged
+	cur = `{"Version":"2012-10-17","Statement":[{"Sid":"DormetoReadOrganization","Effect":"Allow","Principal":{"AWS":"` + orgMine + `"},"Action":["organizations:ListTagsForResource","organizations:ListAccounts","organizations:DescribeOrganization"],"Resource":"*"}]}`
+	got, change, err = MergePolicy([]byte(cur), []byte(orgTemplate), orgManager, "prd")
+	if err != nil || change != "unchanged" || string(got) != cur {
+		t.Fatalf("unchanged: %s %q %v", got, change, err)
+	}
+	// the principal added and actions added: updated
+	cur = strings.Replace(cur, orgMine, orgDev, 1)
+	cur = strings.Replace(cur, `"organizations:DescribeOrganization"`, `"organizations:DescribeAccount"`, 1)
+	_, change, err = MergePolicy([]byte(cur), []byte(orgTemplate), orgManager, "prd")
+	if err != nil || change != "updated" {
+		t.Fatalf("both: %q %v", change, err)
+	}
+}
+
+func TestSurveyPolicyActionsDetail(t *testing.T) {
+	w := orgNew()
+	cur := `{"Version":"2012-10-17","Statement":[{"Sid":"DormetoReadOrganization","Effect":"Allow","Principal":{"AWS":"` + orgMine + `"},"Action":"organizations:ListAccounts","Resource":"*"}]}`
+	w.policy = &cur
+	_, cs := w.survey(t, orgSettings)
+	orgWant(t, cs, "delegation policy", OK, "DormetoReadOrganization gets the release's actions")
+}
+
+func TestMergePolicyStatementObject(t *testing.T) {
+	cur := `{"Version":"2012-10-17","Statement":{"Sid":"Other","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"*"}}`
+	got, change, err := MergePolicy([]byte(cur), []byte(orgTemplate), orgManager, "prd")
+	if err != nil || change != "updated" || !strings.Contains(string(got), `"Statement":[{"Sid":"Other"`) || !strings.Contains(string(got), `"Sid":"DormetoReadOrganization"`) {
+		t.Fatalf("object: %s %q %v", got, change, err)
+	}
+	cur = `{"Version":"2012-10-17","Statement":{"Sid":"DormetoReadOrganization","Effect":"Allow","Principal":{"AWS":"` + orgMine + `"},"Action":["organizations:DescribeOrganization","organizations:ListAccounts"],"Resource":"*"}}`
+	got, change, err = MergePolicy([]byte(cur), []byte(orgTemplate), orgManager, "prd")
+	if err != nil || change != "unchanged" || string(got) != cur {
+		t.Fatalf("object unchanged: %s %q %v", got, change, err)
+	}
+}
+
+func TestOrgBootstrapRefusesUntaggedRole(t *testing.T) {
+	w := &bootWorld{role: true, untagged: true}
+	err := OrgBootstrap(context.Background(), w.clients(), OrgNames(orgMgmt, "eu-west-1", "prd"), "Member")
+	if err == nil || !strings.Contains(err.Error(), "exists without the managed-by=dormeto-cli tag: not this install's") {
+		t.Errorf("err = %v", err)
+	}
+	if slices.Contains(w.calls, "iam.UpdateAssumeRolePolicy") || slices.Contains(w.calls, "iam.PutRolePolicy") {
+		t.Errorf("calls = %v", w.calls)
 	}
 }

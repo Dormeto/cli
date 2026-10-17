@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"golang.org/x/sync/errgroup"
@@ -39,7 +38,7 @@ type Access struct {
 	Notes         map[string]string // account → why it is unreachable or foreign
 	Policy        []byte            // the merged delegation policy to put
 	PolicyBase    []byte            // the policy as read (empty: none), which the build checks is unchanged
-	PolicyChange  string            // "new", "updated", "unchanged"
+	PolicyChange  string            // "new", "updated" (principal added), "actions" (only actions added), "unchanged"
 }
 
 // Accounts are the accounts the build runs the script in: Ready and Missing, sorted.
@@ -51,7 +50,7 @@ func (a Access) Accounts() []string {
 
 // Survey reads the organization from the management account, changing nothing: which accounts the member role reaches,
 // which of them hold Dormeto's roles (and whose), and the delegation policy that would be put. An error is returned
-// only for a failure that makes the rest meaningless.
+// only for a failure that makes the rest meaningless. assume is called from up to 20 goroutines at once.
 func Survey(ctx context.Context, mgmt Clients, assume func(account string) (Clients, error), s Settings, manager Where, template []byte) (Access, []Check, error) {
 	const name = "management account"
 	m := ""
@@ -203,33 +202,23 @@ func surveyAccount(ctx context.Context, assume func(string) (Clients, error), s 
 		r.kind, r.note = "unreachable", firstLine(err.Error())
 		return r
 	}
-	var others []string
-	trusting, found := false, false
-	for _, role := range []string{roleName(s, "discovery_role_name", "DmtDiscoveryRole"), roleName(s, "command_role_name", "DmtCommandRole")} {
-		out, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(role)})
-		if isNotFound(err, "NoSuchEntity") {
-			continue
-		}
-		if err != nil {
-			r.kind, r.note = "unreachable", "read "+role+": "+firstLine(err.Error())
-			return r
-		}
-		found = true
-		for _, p := range trustedPrincipals(aws.ToString(out.Role.AssumeRolePolicyDocument)) {
-			switch {
-			case slices.Contains(mine, p):
-				trusting = true
-			case !slices.Contains(others, p):
-				others = append(others, p)
-			}
-		}
-	}
-	_, err = c.IAM.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String("arn:aws:iam::" + account + ":policy/DmtRouterBoundary")})
-	boundary := err == nil
-	if err != nil && !isNotFound(err, "NoSuchEntity") {
-		r.kind, r.note = "unreachable", "read DmtRouterBoundary: "+firstLine(err.Error())
+	roles, principals, boundary, err := readDormetoRoles(ctx, c, s, account)
+	if err != nil {
+		r.kind, r.note = "unreachable", firstLine(err.Error())
 		return r
 	}
+	var others []string
+	trusting := false
+	for _, p := range principals {
+		switch {
+		case slices.Contains(mine, p):
+			trusting = true
+		case !isUniqueID(p): // a unique id is a deleted role of a manager: stale, the script rewrites the trust
+			others = append(others, p)
+		}
+	}
+	found := len(roles) > 0
+	trusting = trusting || (found && staleOnly(principals))
 	switch {
 	case len(others) > 0:
 		r.kind, r.note = "foreign", "roles trust "+strings.Join(others, ", ")
@@ -267,15 +256,28 @@ func surveyPolicy(ctx context.Context, mgmt Clients, a Access, cs []Check, templ
 	if err != nil {
 		return a, append(cs, failure(name, err)), nil
 	}
-	detail := map[string]string{"new": "new", "updated": delegationSid + " gets this manager", "unchanged": "already names this manager"}[a.PolicyChange]
+	detail := map[string]string{"new": "new", "updated": delegationSid + " gets this manager", "actions": delegationSid + " gets the release's actions", "unchanged": "already names this manager"}[a.PolicyChange]
 	return a, append(cs, Check{name, detail, OK}), nil
 }
 
 // policyDoc is a policy document whose statements stay as they were written.
 type policyDoc struct {
-	Version   json.RawMessage   `json:"Version,omitempty"`
-	ID        json.RawMessage   `json:"Id,omitempty"`
-	Statement []json.RawMessage `json:"Statement"`
+	Version   json.RawMessage `json:"Version,omitempty"`
+	ID        json.RawMessage `json:"Id,omitempty"`
+	Statement json.RawMessage `json:"Statement"` // an object or a list: IAM accepts both
+}
+
+// statements are a policy's statements, whether it wrote one object or a list.
+func statements(raw json.RawMessage) ([]json.RawMessage, error) {
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) == nil {
+		return list, nil
+	}
+	var one map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &one); err != nil {
+		return nil, errors.New("Statement is neither an object nor a list")
+	}
+	return []json.RawMessage{raw}, nil
 }
 
 // statementOrder is the order a statement's keys are written in.
@@ -335,7 +337,8 @@ func MergePolicy(current, template []byte, managerAccount, env string) (merged [
 		return nil, "", fmt.Errorf("the release's delegation policy: %w", err)
 	}
 	var tplStmt map[string]json.RawMessage
-	if len(tpl.Statement) != 1 || json.Unmarshal(tpl.Statement[0], &tplStmt) != nil {
+	tplStmts, err := statements(tpl.Statement)
+	if err != nil || len(tplStmts) != 1 || json.Unmarshal(tplStmts[0], &tplStmt) != nil {
 		return nil, "", errors.New("the release's delegation policy must have one statement")
 	}
 	var tplPrincipal struct{ AWS json.RawMessage }
@@ -360,7 +363,11 @@ func MergePolicy(current, template []byte, managerAccount, env string) (merged [
 	if err := json.Unmarshal(current, &doc); err != nil {
 		return nil, "", fmt.Errorf("the delegation policy in the organization: %w", err)
 	}
-	for i, raw := range doc.Statement {
+	stmts, err := statements(doc.Statement)
+	if err != nil {
+		return nil, "", fmt.Errorf("the delegation policy in the organization: %w", err)
+	}
+	for i, raw := range stmts {
 		var st map[string]json.RawMessage
 		if json.Unmarshal(raw, &st) != nil {
 			continue
@@ -376,7 +383,12 @@ func MergePolicy(current, template []byte, managerAccount, env string) (merged [
 		have := stringList(pr["AWS"])
 		haveActions := stringList(st["Action"])
 		slices.Sort(haveActions)
-		if slices.Contains(have, principal) && slices.Equal(haveActions, actions) {
+		added := !slices.Contains(have, principal)
+		union := slices.Clone(haveActions)
+		union = append(union, actions...)
+		slices.Sort(union)
+		union = slices.Compact(union)
+		if !added && len(union) == len(haveActions) {
 			return current, "unchanged", nil
 		}
 		have = append(have, principal)
@@ -384,15 +396,19 @@ func MergePolicy(current, template []byte, managerAccount, env string) (merged [
 		have = slices.Compact(have)
 		pr["AWS"], _ = json.Marshal(have)
 		st["Principal"] = orderedObject(pr)
-		st["Action"] = tplStmt["Action"]
-		doc.Statement[i] = orderedObject(st)
-		return marshalPolicy(doc)
+		st["Action"], _ = json.Marshal(union)
+		stmts[i] = orderedObject(st)
+		change = "actions"
+		if added {
+			change = "updated"
+		}
+		return marshalPolicy(doc, stmts, change)
 	}
-	doc.Statement = append(doc.Statement, tpl.Statement[0])
-	return marshalPolicy(doc)
+	return marshalPolicy(doc, append(stmts, tplStmts[0]), "updated")
 }
 
-func marshalPolicy(doc policyDoc) ([]byte, string, error) {
+func marshalPolicy(doc policyDoc, stmts []json.RawMessage, change string) ([]byte, string, error) {
+	doc.Statement, _ = json.Marshal(stmts)
 	b, err := json.Marshal(doc)
 	if err != nil {
 		return nil, "", err
@@ -401,7 +417,7 @@ func marshalPolicy(doc policyDoc) ([]byte, string, error) {
 	if err := json.Compact(&out, b); err != nil {
 		return nil, "", err
 	}
-	return out.Bytes(), "updated", nil
+	return out.Bytes(), change, nil
 }
 
 // OrgNames is the management account's own project: its bucket, CodeBuild project, role and log group.
@@ -461,9 +477,7 @@ func OrgTeardown(ctx context.Context, mgmt Clients, p Project) error {
 	case isNotFound(err, "NoSuchEntity"):
 	case err != nil:
 		return fmt.Errorf("check role %s: %w", p.Role, err)
-	case got.Role != nil && aws.ToString(got.Role.Path) == rolePath && slices.ContainsFunc(got.Role.Tags, func(t iamtypes.Tag) bool {
-		return aws.ToString(t.Key) == "managed-by" && aws.ToString(t.Value) == "dormeto-cli"
-	}):
+	case got.Role != nil && aws.ToString(got.Role.Path) == rolePath && hasCLITag(got.Role.Tags):
 		if _, err := mgmt.IAM.DeleteRolePolicy(ctx, &iam.DeleteRolePolicyInput{RoleName: &p.Role, PolicyName: aws.String(orgPolicyName)}); err != nil && !isNotFound(err, "NoSuchEntity") {
 			return fmt.Errorf("delete the policy of role %s: %w", p.Role, err)
 		}

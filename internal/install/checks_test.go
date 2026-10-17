@@ -456,6 +456,19 @@ func TestChecksDormetoRoles(t *testing.T) {
 	chkWant(t, x, "Dormeto roles", OK, "this install's")
 }
 
+func TestChecksDormetoRolesStaleUniqueID(t *testing.T) {
+	x := chkNew()
+	x.iam.getRole = func(name string) (*iam.GetRoleOutput, error) {
+		if name == "DmtDiscoveryRole" {
+			return chkTrust("AROAEXAMPLE123"), nil
+		}
+		return nil, chkNoEntity()
+	}
+	if c := chkRow(t, x.run(), "Dormeto roles"); c.Verdict == Fail {
+		t.Errorf("roles = %d %q", c.Verdict, c.Detail)
+	}
+}
+
 func TestChecksDormetoRolesNamesAndBoundary(t *testing.T) {
 	x := chkNew()
 	x.s.Vars = map[string]json.RawMessage{"discovery_role_name": json.RawMessage(`"/dmt/MyDiscovery"`), "command_role_name": json.RawMessage(`"MyCommand"`)}

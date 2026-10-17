@@ -630,3 +630,14 @@ func TestTeardownKeepsARoleNotTaggedAsTheCLIs(t *testing.T) {
 		t.Errorf("deleted a role the CLI did not tag: %v", w.calls)
 	}
 }
+
+func TestBootstrapRefusesUntaggedRole(t *testing.T) {
+	w := &bootWorld{role: true, untagged: true}
+	err := Bootstrap(context.Background(), w.clients(), bootP, "")
+	if err == nil || !strings.Contains(err.Error(), "role dmt-prod-install exists without the managed-by=dormeto-cli tag: not this install's") {
+		t.Errorf("err = %v", err)
+	}
+	if slices.Contains(w.calls, "iam.UpdateAssumeRolePolicy") || slices.Contains(w.calls, "iam.AttachRolePolicy") {
+		t.Errorf("calls = %v", w.calls)
+	}
+}

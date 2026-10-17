@@ -173,6 +173,9 @@ func ensureRole(ctx context.Context, c Clients, p Project, description string) (
 		if got.Role == nil || aws.ToString(got.Role.Path) != rolePath {
 			return "", fmt.Errorf("role %s exists outside %s: not this install's", p.Role, rolePath)
 		}
+		if !hasCLITag(got.Role.Tags) {
+			return "", fmt.Errorf("role %s exists without the managed-by=dormeto-cli tag: not this install's", p.Role)
+		}
 		arn = aws.ToString(got.Role.Arn)
 		if _, err := c.IAM.UpdateAssumeRolePolicy(ctx, &iam.UpdateAssumeRolePolicyInput{RoleName: &p.Role, PolicyDocument: aws.String(trustPolicy(p))}); err != nil {
 			return "", fmt.Errorf("update role %s: %w", p.Role, err)
@@ -194,6 +197,13 @@ func ensureRole(ctx context.Context, c Clients, p Project, description string) (
 		return "", fmt.Errorf("check role %s: %w", p.Role, err)
 	}
 	return arn, nil
+}
+
+// hasCLITag tells whether the tags say the CLI made the role (managed-by=dormeto-cli).
+func hasCLITag(tags []iamtypes.Tag) bool {
+	return slices.ContainsFunc(tags, func(t iamtypes.Tag) bool {
+		return aws.ToString(t.Key) == "managed-by" && aws.ToString(t.Value) == "dormeto-cli"
+	})
 }
 
 func ensureLogGroup(ctx context.Context, c Clients, p Project) error {
@@ -309,9 +319,7 @@ func deleteBuildRole(ctx context.Context, c Clients, p Project) error {
 	if err != nil {
 		return fmt.Errorf("check role %s: %w", p.Role, err)
 	}
-	if got.Role == nil || aws.ToString(got.Role.Path) != rolePath || !slices.ContainsFunc(got.Role.Tags, func(t iamtypes.Tag) bool {
-		return aws.ToString(t.Key) == "managed-by" && aws.ToString(t.Value) == "dormeto-cli"
-	}) {
+	if got.Role == nil || aws.ToString(got.Role.Path) != rolePath || !hasCLITag(got.Role.Tags) {
 		return nil
 	}
 	if _, err := c.IAM.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil && !isNotFound(err, "NoSuchEntity") {
