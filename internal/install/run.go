@@ -66,6 +66,7 @@ type run struct {
 	c           Clients
 	w           Where
 	p           Project
+	surveyed    *surveyed // organization access's survey of the prerequisite checks, for after the manager's apply
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {
@@ -75,7 +76,8 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
 
 // end is the exit code of the run's result, said: a stop's own; otherwise 130 when the run was cancelled (with what
-// that left), else 1 (with AWS's message, and how to sign in again when the SSO session expired).
+// that left), else 1 (with AWS's message, that organization access is not deployed when the manager is, and how to sign
+// in again with the profile that failed when its SSO session expired).
 func (x *run) end(err error) int {
 	var s *stop
 	switch {
@@ -91,10 +93,20 @@ func (x *run) end(err error) int {
 		return exitInterrupted
 	}
 	x.say("%s", err)
+	profile := x.r.Profile
+	var access *accessError
+	if errors.As(err, &access) {
+		if access.installed {
+			x.say("Organization access is not deployed; the manager is installed.")
+		}
+		if access.profile != "" {
+			profile = access.profile
+		}
+	}
 	if awserr.SSOToken(err) {
 		login := "aws sso login"
-		if x.r.Profile != "" {
-			login += " --profile " + x.r.Profile
+		if profile != "" {
+			login += " --profile " + profile
 		}
 		x.say("Run %s and try again.", login)
 	}
@@ -102,7 +114,7 @@ func (x *run) end(err error) int {
 }
 
 // args are the flags that name this install again: --management-profile and --profile (when given), --region and
-// --env.
+// --env, then --release (when given: a local release is not on releases.dormeto.com).
 func (x *run) args() string {
 	a := "--region " + x.region + " --env " + x.env
 	if x.r.Profile != "" {
@@ -110,6 +122,9 @@ func (x *run) args() string {
 	}
 	if x.r.ManagementProfile != "" {
 		a = "--management-profile " + x.r.ManagementProfile + " " + a
+	}
+	if x.r.Release != "" {
+		a += " --release " + x.r.Release
 	}
 	return a
 }
@@ -532,6 +547,11 @@ func (x *run) install() error {
 	if err != nil {
 		return err
 	}
+	access, err := x.surveyChecks(s, rel, relErr)
+	if err != nil {
+		return err
+	}
+	cs = append(cs, access...)
 	if err := x.ctx.Err(); err != nil {
 		return err
 	}
@@ -698,6 +718,11 @@ func (x *run) check() error {
 	if err != nil {
 		return err
 	}
+	access, err := x.surveyChecks(s, rel, relErr)
+	if err != nil {
+		return err
+	}
+	cs = append(cs, access...)
 	if err := x.ctx.Err(); err != nil {
 		return err
 	}
@@ -709,20 +734,7 @@ func (x *run) check() error {
 		}
 	}
 	x.showChecks(s, cs, "")
-	failed := Failed(cs)
-	if _, ok := x.management(s); ok {
-		if relErr != nil {
-			x.say("  - organization access: not checked (no release to read the delegation policy from)")
-		} else {
-			_, _, access, err := x.survey(s, rel)
-			if err != nil {
-				return err
-			}
-			x.showSurvey(access)
-			failed = failed || Failed(access)
-		}
-	}
-	if failed {
+	if Failed(cs) {
 		return &stop{code: 1}
 	}
 	return nil
@@ -770,6 +782,25 @@ func (x *run) applyLast() error {
 		}
 		return err
 	}
+	// Organization access's prerequisites, before the manager's plan is applied.
+	var rel Release
+	if access {
+		if err := s.Validate(); err != nil {
+			return &stop{2, err.Error()}
+		}
+		if rel, err = x.resolve(saved.Version); err != nil {
+			return err
+		}
+		sv, err := x.survey(s, rel)
+		if err != nil {
+			return err
+		}
+		x.showSurvey(sv.cs)
+		if Failed(sv.cs) {
+			return &stop{1, "Nothing was applied."}
+		}
+		x.surveyed = &sv
+	}
 	sum, err := x.summary(saved.LastPlan)
 	if err != nil {
 		return err
@@ -785,5 +816,5 @@ func (x *run) applyLast() error {
 	if !access {
 		return nil
 	}
-	return x.accessInstalled(s, saved, nil, true)
+	return x.access(s, rel, true)
 }

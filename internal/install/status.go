@@ -8,12 +8,17 @@ package install
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
 )
+
+// maxLastBuilds is how many of the project's latest builds status reads for the last plan and apply (BatchGetBuilds
+// takes 100 ids).
+const maxLastBuilds = 100
 
 // buildLabels are the follow's label of each action of the manager's project.
 var buildLabels = map[string]string{"plan": "Plan", "apply": "Apply", "plan-destroy": "Destroy plan", "apply-destroy": "Destroy"}
@@ -53,7 +58,7 @@ func (x *run) status() error {
 
 	x.say("Dormeto %s in %s %s", x.env, x.w.Account, x.region)
 	x.say("%s", versionsLine(applied, latest, latestErr))
-	builds, lastFailed, err := x.lastBuilds(saved.LastPlan, applied)
+	builds, lastFailed, err := x.lastBuilds()
 	if err != nil {
 		return err
 	}
@@ -131,14 +136,20 @@ func buildVars(ctx context.Context, c Clients, id string) (map[string]string, er
 	}
 	vars := map[string]string{}
 	for _, b := range got.Builds {
-		if b.Environment == nil {
-			continue
-		}
+		maps.Copy(vars, envOf(b))
+	}
+	return vars, nil
+}
+
+// envOf is a build's environment variables.
+func envOf(b cbtypes.Build) map[string]string {
+	vars := map[string]string{}
+	if b.Environment != nil {
 		for _, v := range b.Environment.EnvironmentVariables {
 			vars[aws.ToString(v.Name)] = aws.ToString(v.Value)
 		}
 	}
-	return vars, nil
+	return vars
 }
 
 // versionsLine is the manager's version applied and the latest release (its error when unknown), an upgrade said.
@@ -157,45 +168,51 @@ func versionsLine(applied *Applied, latest string, latestErr error) string {
 	return line + latest
 }
 
-// lastBuilds is the line of the last plan and the last apply, each's status and start time (local), and whether the
-// later of them failed.
-func (x *run) lastBuilds(plan string, applied *Applied) (string, bool, error) {
-	apply := ""
-	if applied != nil {
-		apply = applied.Build
+// lastBuilds is the line of the project's last plan and last apply, each's status and start time (local), and whether
+// the later of them failed. They are the newest of each kind (by their ACTION) among its latest builds: applied.json
+// knows only the applies that succeeded.
+func (x *run) lastBuilds() (string, bool, error) {
+	list, err := x.c.CodeBuild.ListBuildsForProject(x.ctx, &codebuild.ListBuildsForProjectInput{ProjectName: &x.p.Name, SortOrder: cbtypes.SortOrderTypeDescending})
+	if err != nil {
+		return "", false, fmt.Errorf("list builds of %s: %w", x.p.Name, err)
 	}
-	var ids []string
-	for _, id := range []string{plan, apply} {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	found := map[string]cbtypes.Build{}
-	if len(ids) > 0 {
+	var plan, apply *cbtypes.Build
+	if ids := list.Ids[:min(len(list.Ids), maxLastBuilds)]; len(ids) > 0 {
 		got, err := x.c.CodeBuild.BatchGetBuilds(x.ctx, &codebuild.BatchGetBuildsInput{Ids: ids})
 		if err != nil {
 			return "", false, fmt.Errorf("get builds of %s: %w", x.p.Name, err)
 		}
+		found := map[string]cbtypes.Build{}
 		for _, b := range got.Builds {
 			found[aws.ToString(b.Id)] = b
 		}
-	}
-	var last *cbtypes.Build
-	for _, id := range ids {
-		if b, ok := found[id]; ok && (last == nil || aws.ToTime(b.StartTime).After(aws.ToTime(last.StartTime))) {
-			last = &b
+		for _, id := range ids { // newest first
+			b, ok := found[id]
+			if !ok {
+				continue
+			}
+			switch envOf(b)["ACTION"] {
+			case string(ActionPlan), string(ActionPlanDestroy):
+				if plan == nil {
+					plan = &b
+				}
+			case string(ActionApply), string(ActionApplyDestroy):
+				if apply == nil {
+					apply = &b
+				}
+			}
 		}
 	}
-	describe := func(kind, id string) string {
-		b, ok := found[id]
-		switch {
-		case id == "":
+	describe := func(kind string, b *cbtypes.Build) string {
+		if b == nil {
 			return "last " + kind + ": none"
-		case !ok:
-			return "last " + kind + " " + id + ": not found"
 		}
 		status := strings.ReplaceAll(strings.ToLower(string(b.BuildStatus)), "_", " ")
-		return fmt.Sprintf("last %s %s: %s %s", kind, id, status, aws.ToTime(b.StartTime).Local().Format("2006-01-02 15:04"))
+		return fmt.Sprintf("last %s %s: %s %s", kind, aws.ToString(b.Id), status, aws.ToTime(b.StartTime).Local().Format("2006-01-02 15:04"))
+	}
+	last := plan
+	if last == nil || (apply != nil && aws.ToTime(apply.StartTime).After(aws.ToTime(plan.StartTime))) {
+		last = apply
 	}
 	lastFailed := last != nil && last.BuildStatus != cbtypes.StatusTypeSucceeded && last.BuildStatus != cbtypes.StatusTypeInProgress
 	return "  " + describe("plan", plan) + "; " + describe("apply", apply), lastFailed, nil
@@ -227,28 +244,21 @@ func (x *run) accessStatus(s Settings, saved *Settings, applied *Applied) (bool,
 	if err != nil {
 		return failed, err
 	}
-	_, _, cs, err := x.survey(s, rel)
+	sv, err := x.survey(s, rel)
 	if err != nil {
 		return failed, err
 	}
-	x.showSurvey(cs)
-	return failed || Failed(cs), nil
+	x.showSurvey(sv.cs)
+	return failed || Failed(sv.cs), nil
 }
 
 // leftover removes what a detached organization run left in the management account (its project and role) once its
 // build has ended, following that build first while it runs: whether it failed.
 func (x *run) leftover(mgmt Clients) (bool, error) {
 	op := OrgNames(x.w.Organization.Management, x.region, x.env)
-	exists, id, err := orgRunning(x.ctx, mgmt, op)
-	if err != nil || !exists {
+	id, err := x.clearLeftover(mgmt, op)
+	if err != nil || id == "" {
 		return false, err
-	}
-	if id == "" {
-		if err := OrgTeardown(x.ctx, mgmt, op); err != nil {
-			return false, err
-		}
-		x.say("  removed the management account's build role and project left by a detached run")
-		return false, nil
 	}
 	vars, err := buildVars(x.ctx, mgmt, id)
 	if err != nil {

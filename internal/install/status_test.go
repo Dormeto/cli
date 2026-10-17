@@ -54,6 +54,7 @@ func TestStatusNotAppliedYet(t *testing.T) {
 	w.installed("0.11.0")
 	delete(w.objects, "prod/applied.json")
 	delete(w.objects, "prod/outputs.json")
+	w.builds = w.builds[:1] // the plan p0, never applied
 	code, out, _ := w.run(Status, rwStatus, false)
 	if code != 0 || !strings.Contains(out, "  manager not applied yet; latest release 0.11.0\n") || !strings.Contains(out, "; last apply: none\n") ||
 		strings.Contains(out, "dashboard: "+rwDashboard) {
@@ -118,7 +119,7 @@ func TestStatusALastBuildFailed(t *testing.T) {
 	s := w.saved()
 	s.LastPlan = "dmt-prod-install:p1"
 	w.save(s)
-	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:p1", status: cbtypes.StatusTypeFailed, start: rwT0.Add(-10 * time.Minute)})
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:p1", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeFailed, start: rwT0.Add(-10 * time.Minute)})
 	code, out, _ := w.run(Status, rwStatus, false)
 	if code != 1 || !strings.Contains(out, "  last plan dmt-prod-install:p1: failed "+rwLocal(rwT0.Add(-10*time.Minute))+"; last apply dmt-prod-install:a0: succeeded ") {
 		t.Errorf("exit code %d:\n%s", code, out)
@@ -133,7 +134,7 @@ func TestStatusRemovesWhatADetachedOrganizationRunLeft(t *testing.T) {
 		w.rwOrganization()
 		w.mgmt.ends["apply"] = cbtypes.StatusTypeInProgress
 		w.detach = true
-		if code, out, _ := w.run(Install, rwMgmtFlags(), true, "y", "y"); code != 130 {
+		if code, out, _ := w.run(Install, rwMgmtFlags(), true, "y", "y", "y"); code != 130 {
 			t.Fatalf("exit code %d:\n%s", code, out)
 		}
 		w.detach = false
@@ -178,6 +179,22 @@ func TestStatusRemovesWhatADetachedOrganizationRunLeft(t *testing.T) {
 	w.readOnly = true
 	code, out, _ = w.run(Status, r, false)
 	if code != 0 || strings.Contains(out, "removed") || !strings.Contains(out, "\nOrganization access\n  ✓ management account: 809706483662\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+// The last apply is the project's, not applied.json's (which only a successful apply writes): a failed apply after the
+// last good one is shown failed.
+func TestStatusAFailedApply(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.builds = append(w.builds,
+		&rwBuild{id: "dmt-prod-install:p1", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-20 * time.Minute)},
+		&rwBuild{id: "dmt-prod-install:a1", env: map[string]string{"ACTION": "apply", "PLAN_BUILD": "dmt-prod-install:p1"}, status: cbtypes.StatusTypeFailed,
+			start: rwT0.Add(-10 * time.Minute)})
+	code, out, _ := w.run(Status, rwStatus, false)
+	if code != 1 || !strings.Contains(out, "  manager 0.11.0; latest release 0.11.0\n") ||
+		!strings.Contains(out, "  last plan dmt-prod-install:p1: succeeded "+rwLocal(rwT0.Add(-20*time.Minute))+"; last apply dmt-prod-install:a1: failed "+rwLocal(rwT0.Add(-10*time.Minute))+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }

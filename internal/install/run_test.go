@@ -142,6 +142,7 @@ type rwWorld struct {
 	status        *trkStatus // the terminal's status line; nil: none
 
 	mgmt    *rwAcct            // the management account, the profile m; nil: no such profile
+	mgmtErr error              // the profile m's clients fail so
 	members map[string]orgAcct // the organization's other accounts, as the member role reaches them
 	policy  *string            // the delegation policy; nil: none
 	failing map[string]string  // account → its error in the organization build's roles.json
@@ -206,8 +207,9 @@ func (w *rwWorld) installed(version string) {
 	w.objects["prod/outputs.json"] = rwOutputs
 	w.objects["prod/plans/dmt-prod-install:p0/plan.json"] = rwPlan
 	w.builds = append(w.builds,
-		&rwBuild{id: "dmt-prod-install:p0", status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-2 * time.Hour)},
-		&rwBuild{id: "dmt-prod-install:a0", status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-time.Hour)})
+		&rwBuild{id: "dmt-prod-install:p0", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-2 * time.Hour)},
+		&rwBuild{id: "dmt-prod-install:a0", env: map[string]string{"ACTION": "apply", "PLAN_BUILD": "dmt-prod-install:p0"}, status: cbtypes.StatusTypeSucceeded,
+			start: rwT0.Add(-time.Hour)})
 }
 
 func (w *rwWorld) save(s Settings) {
@@ -296,6 +298,8 @@ func (w *rwWorld) run(cmd func(context.Context, Deps, Request) int, r Request, t
 			case region != "eu-west-1":
 			case profile == "p":
 				return w.clients(), nil
+			case profile == "m" && w.mgmtErr != nil:
+				return Clients{}, w.mgmtErr
 			case profile == "m" && w.mgmt != nil:
 				return w.clientsOf(w.mgmt), nil
 			}
@@ -1154,7 +1158,7 @@ func rwPlanned(t *testing.T) *rwWorld {
 	s.Version, s.ReleaseBase, s.LastPlan = "0.12.0", ReleasesURL+"/0.12.0", "dmt-prod-install:p1"
 	w.save(s)
 	w.objects["prod/plans/dmt-prod-install:p1/plan.json"] = rwPlan
-	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:p1", status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-10 * time.Minute)})
+	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:p1", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-10 * time.Minute)})
 	return w
 }
 
@@ -1375,7 +1379,8 @@ func TestInstallALocalRelease(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	base := "s3://dmt-install-532105290256-eu-west-1/prod/release"
-	if !strings.Contains(out, "  ✓ release: manager 0.11.0-dev (local: "+dir+")\n") {
+	if !strings.Contains(out, "  ✓ release: manager 0.11.0-dev (local: "+dir+")\n") ||
+		!strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwArgs+" --release "+dir+"\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	for _, f := range []string{"SHA256SUMS", "terraform-aws-dormeto-0.11.0-dev.zip", "dormeto-organization-policy.json"} {
