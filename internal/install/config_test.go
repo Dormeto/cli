@@ -78,7 +78,10 @@ func TestConfig(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			again, _ := Config(c.s, c.w, p)
+			again, err := Config(c.s, c.w, p)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !bytes.Equal(got, again) {
 				t.Error("two runs give different bytes")
 			}
@@ -105,7 +108,10 @@ func TestConfig(t *testing.T) {
 	}
 
 	t.Run("escaping content", func(t *testing.T) {
-		got, _ := Config(esc, where(nil), Names("532105290256", "eu-west-1", "prod"))
+		got, err := Config(esc, where(nil), Names("532105290256", "eu-west-1", "prod"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if !strings.Contains(string(got), `x $${x}`) || !strings.Contains(string(got), `$${y}`) {
 			t.Errorf("${ not escaped:\n%s", got)
 		}
@@ -127,6 +133,42 @@ func TestConfig(t *testing.T) {
 		s.Vars = map[string]json.RawMessage{"bad": json.RawMessage(`{`)}
 		if _, err := Config(s, where(nil), Names("1", "eu-west-1", "prod")); err == nil {
 			t.Error("want an error")
+		}
+	})
+
+	t.Run("no zone", func(t *testing.T) {
+		s := base("account")
+		s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: certARN}
+		got, err := Config(s, where(nil), Names("1", "eu-west-1", "prod"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got), "zone_id") {
+			t.Errorf("zone_id emitted without a zone:\n%s", got)
+		}
+	})
+
+	t.Run("template directive", func(t *testing.T) {
+		s := base("account")
+		s.EmailFrom, s.SESIdentity = "%{if x}", "id"
+		s.Vars = map[string]json.RawMessage{"note": json.RawMessage(`["%{for}"]`)}
+		got, err := Config(s, where(nil), Names("1", "eu-west-1", "prod"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(got), `%%{if x}`) || !strings.Contains(string(got), `%%{for}`) {
+			t.Errorf("%%{ not escaped:\n%s", got)
+		}
+	})
+
+	t.Run("meta-arguments", func(t *testing.T) {
+		for _, name := range []string{"source", "version", "providers", "count", "for_each", "depends_on"} {
+			s := base("account")
+			s.Vars = map[string]json.RawMessage{name: json.RawMessage(`1`)}
+			_, err := Config(s, where(nil), Names("1", "eu-west-1", "prod"))
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("%s: err = %v", name, err)
+			}
 		}
 	})
 }

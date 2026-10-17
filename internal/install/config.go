@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -23,12 +24,15 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 		module["organization_id"] = esc(s.OrganizationID)
 	}
 	if d := s.Domain; d != nil {
-		module["domain"] = map[string]any{
+		domain := map[string]any{
 			"dashboard":       esc(d.Dashboard),
 			"auth":            esc(d.AuthHost()),
 			"certificate_arn": esc(d.CertificateARN),
-			"zone_id":         esc(d.ZoneID),
 		}
+		if d.ZoneID != "" { // the module tests zone_id == null: never an empty string
+			domain["zone_id"] = esc(d.ZoneID)
+		}
+		module["domain"] = domain
 	}
 	if s.SESIdentity != "" {
 		module["ses_identity"] = esc(s.SESIdentity)
@@ -37,6 +41,9 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 		module["email_from"] = esc(s.EmailFrom)
 	}
 	for name, raw := range s.Vars {
+		if slices.Contains(metaArguments, name) {
+			return nil, fmt.Errorf("var %q is a Terraform module argument, not a variable of the manager", name)
+		}
 		v, err := escRaw(raw)
 		if err != nil {
 			return nil, fmt.Errorf("var %q: %w", name, err)
@@ -73,8 +80,11 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 	return buf.Bytes(), nil // Encode ends with a newline
 }
 
-// esc keeps Terraform from interpolating a literal ${ of a user's value.
-func esc(s string) string { return strings.ReplaceAll(s, "${", "$${") }
+// metaArguments are the module block's own arguments: a variable cannot take their names.
+var metaArguments = []string{"source", "version", "providers", "count", "for_each", "depends_on"}
+
+// esc keeps Terraform from interpolating a literal ${ or running a literal %{ directive of a user's value.
+func esc(s string) string { return strings.NewReplacer("${", "$${", "%{", "%%{").Replace(s) }
 
 func escAll(l []string) []string {
 	out := make([]string, len(l))
