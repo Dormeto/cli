@@ -1,0 +1,13 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_changes": [
+    {"address": "aws_lambda_function.router", "type": "aws_lambda_function", "change": {"actions": ["create"]}},
+    {"address": "aws_lambda_function.manager", "type": "aws_lambda_function", "change": {"actions": ["update"]}},
+    {"address": "aws_iam_role.old", "type": "aws_iam_role", "change": {"actions": ["delete"]}},
+    {"address": "aws_dynamodb_table.events", "type": "aws_dynamodb_table", "change": {"actions": ["delete", "create"]}},
+    {"address": "aws_cloudfront_distribution.dashboard", "type": "aws_cloudfront_distribution", "change": {"actions": ["create", "delete"]}},
+    {"address": "aws_s3_bucket.same", "type": "aws_s3_bucket", "change": {"actions": ["no-op"]}},
+    {"address": "data.aws_caller_identity.me", "type": "aws_caller_identity", "change": {"actions": ["read"]}}
+  ]
+}
