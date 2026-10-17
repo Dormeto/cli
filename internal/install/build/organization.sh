@@ -91,7 +91,8 @@ flush() {
   wait
   for a in $batch; do
     cat "res.$a" >>roles.json
-    if grep -q '"ok":true' "res.$a"; then say "account $a: ok"; else say "account $a: failed"; fi
+    # the CLI counts these lines: the accounts done out of the total
+    if grep -q '"ok":true' "res.$a"; then say "roles of $a: ok"; else say "roles of $a: failed"; fi
   done
   aws s3 cp --only-show-errors roles.json "$S3/roles.json"
   batch=

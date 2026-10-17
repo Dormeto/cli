@@ -35,6 +35,9 @@ type FollowOptions struct {
 	Lines  bool // --verbose: Terraform's lines to Out even in a terminal (no status line)
 	Every  func(time.Duration) <-chan time.Time
 	Now    func() time.Time
+	// Count tells whether a log line is one more done out of Total (organization.sh's line per account); nil: Terraform's
+	// lines, the resource in progress shown.
+	Count func(line string) bool
 }
 
 // Result is how a build ended.
@@ -152,7 +155,13 @@ func (f *follower) readLog(ctx context.Context, b cbtypes.Build) error {
 		}
 		for _, e := range out.Events {
 			line := strings.TrimRight(ansiRe.ReplaceAllString(aws.ToString(e.Message), ""), " \r\n")
-			f.t.read(line, time.UnixMilli(aws.ToInt64(e.Timestamp)), f.o.Now())
+			switch {
+			case f.o.Count == nil:
+				f.t.read(line, time.UnixMilli(aws.ToInt64(e.Timestamp)), f.o.Now())
+			case f.o.Count(line):
+				f.t.done++
+				f.t.seen = true
+			}
 			f.ring = append(f.ring, line)
 			if len(f.ring) > tailLines {
 				f.ring = f.ring[1:]

@@ -95,6 +95,32 @@ func TestOrganizationRoles(t *testing.T) {
 	}
 }
 
+// The CLI counts the accounts done from the log: one line per account, once its result is in roles.json.
+func TestOrganizationSaysEachAccountsRoles(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	env := orgEnv()
+	env["FAKE_ASSUME_FAIL"] = "333333333333"
+	out, err := s.run("organization.sh", env)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var said []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "dormeto: roles of ") || strings.HasPrefix(l, "dormeto: account ") {
+			said = append(said, l)
+		}
+	}
+	want := []string{"dormeto: roles of 111111111111: ok", "dormeto: roles of 222222222222: ok", "dormeto: roles of 333333333333: failed"}
+	if strings.Join(said, "\n") != strings.Join(want, "\n") {
+		t.Errorf("lines:\n%s\nwant\n%s", strings.Join(said, "\n"), strings.Join(want, "\n"))
+	}
+	if !strings.Contains(out, "dormeto: roles of 333333333333: failed\ndormeto: done\n") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
 func TestOrganizationAccessFailureKeepsTheLastLine(t *testing.T) {
 	s := newSandbox(t)
 	mustPut(t, s, "policy-base.json", "")

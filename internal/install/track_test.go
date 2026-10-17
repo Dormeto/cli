@@ -272,6 +272,32 @@ func TestFollowCountsLinesWithEscapes(t *testing.T) {
 	}
 }
 
+// Count says which lines are one more done out of Total, in place of Terraform's: organization.sh's per account.
+func TestFollowCountsTheLinesCountSays(t *testing.T) {
+	w := newTrkWorld(
+		trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 2, nil},
+		trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 4, nil},
+		trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", 5, nil})
+	w.log = []string{
+		"dormeto: putting the delegation policy",
+		"dormeto: roles of 111111111111: ok",
+		"aws_x.y: Creation complete after 2s [id=x]",
+		"dormeto: roles of 222222222222: failed",
+		"dormeto: done",
+	}
+	s := &trkStatus{}
+	o := trkOpts(w, s, &bytes.Buffer{})
+	o.Label, o.Total = "Organization access", 2
+	o.Count = func(line string) bool { return strings.HasPrefix(line, "dormeto: roles of ") }
+	if _, err := Follow(context.Background(), w.clients(), OrgNames("111122223333", "eu-west-1", "prod"), "dmt-prod-organization:5678", o); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Organization access (build dmt-prod-organization:5678…)  1/2  0s", "Organization access (build dmt-prod-organization:5678…)  2/2  5s"}
+	if strings.Join(s.updates, "\n") != strings.Join(want, "\n") {
+		t.Errorf("updates\n%s\nwant\n%s", strings.Join(s.updates, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func TestFollowWithoutTerminalWritesLines(t *testing.T) {
 	w := newTrkWorld(trkPhases()...)
 	w.log = trkLog()
