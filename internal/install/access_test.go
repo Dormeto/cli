@@ -81,8 +81,13 @@ func TestInstallDeploysOrganizationAccess(t *testing.T) {
 		t.Fatalf("organization builds: %v", w.mgmt.actions())
 	}
 	rwEqual(t, "organization build's variables", b[0].vars, map[string]string{"ACTION": "apply", "MANAGER_ACCOUNT": rwAccount, "ORGANIZATION": "o-vvk0115ixn",
-		"MEMBER_ROLE": "OrganizationAccountAccessRole", "ACCOUNTS": "444444444444 555555555555", "DISCOVERY_ONLY": "",
-		"DISCOVERY_ROLE": "DmtDiscoveryRole", "COMMAND_ROLE": "DmtCommandRole", "RELEASE_BASE": ReleasesURL + "/0.11.0", "RELEASE_VERSION": "0.11.0"})
+		"MEMBER_ROLE": "OrganizationAccountAccessRole", "DISCOVERY_ROLE": "DmtDiscoveryRole", "COMMAND_ROLE": "DmtCommandRole",
+		"RELEASE_BASE": ReleasesURL + "/0.11.0", "RELEASE_VERSION": "0.11.0"})
+	// The accounts are in the bucket beside policy.json (no environment variable's size to fear at 300 accounts).
+	rwEqual(t, "organization build's accounts", b[0].accounts, []string{"444444444444", "555555555555"})
+	if l := w.mgmt.objects["prod/organization/accounts.txt"]; l != "444444444444\n555555555555\n" || w.mgmt.objects["prod/organization/discovery-only.txt"] != "" {
+		t.Errorf("accounts.txt %q, discovery-only.txt %q", l, w.mgmt.objects["prod/organization/discovery-only.txt"])
+	}
 	// After the manager's apply: the bootstrap, the plan, the build, then its project and role removed.
 	rwInOrder(t, strings.Join(w.writes, "\n")+"\n",
 		"codebuild:StartBuild apply\n",
@@ -92,6 +97,8 @@ func TestInstallDeploysOrganizationAccess(t *testing.T) {
 		"mgmt codebuild:CreateProject\n",
 		"mgmt s3:PutObject prod/organization/policy.json\n",
 		"mgmt s3:PutObject prod/organization/policy-base.json\n",
+		"mgmt s3:PutObject prod/organization/accounts.txt\n",
+		"mgmt s3:PutObject prod/organization/discovery-only.txt\n",
 		"mgmt codebuild:StartBuild apply\n",
 		"mgmt codebuild:DeleteProject\n",
 		"mgmt iam:DeleteRolePolicy dmt-prod-organization\n",
@@ -148,7 +155,7 @@ func TestInstallNoAccountReachableDeploysTheDelegationPolicyOnly(t *testing.T) {
 		"  left out: 4 unreachable (444444444444, 555555555555, 666666666666, 777777777777), 0 another manager's\n",
 		"  ✓ organization access: delegation policy created; roles in 0 accounts\n",
 	)
-	if b := w.mgmt.started(); len(b) != 1 || b[0].vars["ACCOUNTS"] != "" {
+	if b := w.mgmt.started(); len(b) != 1 || len(b[0].accounts) != 0 {
 		t.Errorf("organization builds: %v", w.mgmt.actions())
 	}
 	if p := w.mgmt.objects["prod/organization/policy.json"]; !strings.Contains(p, rwMine) {
@@ -522,10 +529,11 @@ func TestOrganizationFlagsAreKept(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	b := w.mgmt.started()
-	if len(b) != 2 || b[0].vars["ACCOUNTS"] != "444444444444" || b[1].vars["ACCOUNTS"] != "444444444444" || b[1].vars["RELEASE_VERSION"] != "0.12.0" {
+	if len(b) != 2 || !slices.Equal(b[0].accounts, []string{"444444444444"}) || !slices.Equal(b[1].accounts, []string{"444444444444"}) ||
+		b[1].vars["RELEASE_VERSION"] != "0.12.0" {
 		t.Errorf("organization builds: %v", w.mgmt.actions())
 		for _, x := range b {
-			t.Logf("%v", x.vars)
+			t.Logf("%v %v", x.vars, x.accounts)
 		}
 	}
 }

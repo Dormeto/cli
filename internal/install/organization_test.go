@@ -531,6 +531,22 @@ func TestPutOrgPlanAndReadRoles(t *testing.T) {
 	if v, ok := f.puts[p.Bucket+"/prd/organization/policy-base.json"]; !ok || v != "" {
 		t.Errorf("no base: %q %v", v, ok)
 	}
+	// The accounts the build gives roles, and the discovery-only ones: one id per line, beside policy.json.
+	for list, want := range map[string]string{"accounts.txt": "", "discovery-only.txt": ""} {
+		if v, ok := f.puts[p.Bucket+"/prd/organization/"+list]; !ok || v != want {
+			t.Errorf("%s: %q %v", list, v, ok)
+		}
+	}
+	a := Access{Policy: []byte(`{"a":1}`), Ready: []string{"555555555555"}, Missing: []string{"444444444444", "666666666666"}, DiscoveryOnly: []string{"666666666666"}}
+	if err := PutOrgPlan(context.Background(), c, p, a); err != nil {
+		t.Fatal(err)
+	}
+	if v := f.puts[p.Bucket+"/prd/organization/accounts.txt"]; v != "444444444444\n555555555555\n666666666666\n" {
+		t.Errorf("accounts.txt: %q", v)
+	}
+	if v := f.puts[p.Bucket+"/prd/organization/discovery-only.txt"]; v != "666666666666\n" {
+		t.Errorf("discovery-only.txt: %q", v)
+	}
 
 	got, err := ReadRoles(context.Background(), c, p)
 	if err != nil || got != nil {

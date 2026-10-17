@@ -494,12 +494,33 @@ func OrgTeardown(ctx context.Context, mgmt Clients, p Project) error {
 
 // PutOrgPlan writes the plan the build applies: policy.json is the policy to put; policy-base.json is the policy it was
 // merged from, an empty object (zero bytes) when there was none (ruling R23), which is what the build compares with an
-// absent policy.
+// absent policy; accounts.txt and discovery-only.txt are the accounts that get the roles and those of them without the
+// command role, one id per line (an organization's hundreds of ids do not fit the build's environment).
 func PutOrgPlan(ctx context.Context, mgmt Clients, p Project, a Access) error {
-	if err := putObject(ctx, mgmt, p, p.Key("organization", "policy.json"), a.Policy); err != nil {
-		return err
+	for _, f := range []struct {
+		name string
+		body []byte
+	}{{"policy.json", a.Policy}, {"policy-base.json", a.PolicyBase}, {"accounts.txt", idLines(a.Accounts())}, {"discovery-only.txt", idLines(a.DiscoveryOnly)}} {
+		if err := putObject(ctx, mgmt, p, p.Key("organization", f.name), f.body); err != nil {
+			return err
+		}
 	}
-	return putObject(ctx, mgmt, p, p.Key("organization", "policy-base.json"), a.PolicyBase)
+	return nil
+}
+
+// idLines are ids one per line, each ended by a newline (none: empty).
+func idLines(ids []string) []byte {
+	var b bytes.Buffer
+	for _, id := range ids {
+		b.WriteString(id + "\n")
+	}
+	return b.Bytes()
+}
+
+// ReadOrgAccounts reads the accounts of the plan the organization build applies (accounts.txt; none when absent).
+func ReadOrgAccounts(ctx context.Context, mgmt Clients, p Project) ([]string, error) {
+	b, err := getObject(ctx, mgmt, p, p.Key("organization", "accounts.txt"))
+	return strings.Fields(string(b)), err
 }
 
 // RoleResult is one account's line of roles.json.

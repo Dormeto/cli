@@ -260,12 +260,12 @@ func (x *run) leftover(mgmt Clients) (bool, error) {
 	if err != nil || id == "" {
 		return false, err
 	}
-	vars, err := buildVars(x.ctx, mgmt, id)
+	accounts, err := ReadOrgAccounts(x.ctx, mgmt, op)
 	if err != nil {
 		return false, err
 	}
 	x.say("Build %s is running (organization access)", id)
-	res, err := Follow(x.ctx, mgmt, op, id, x.followAccess(len(strings.Fields(vars["ACCOUNTS"]))))
+	res, err := Follow(x.ctx, mgmt, op, id, x.followAccess(len(accounts)))
 	if err != nil {
 		return false, x.lost(err, x.accessGoesOn())
 	}

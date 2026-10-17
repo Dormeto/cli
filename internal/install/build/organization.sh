@@ -1,8 +1,9 @@
 #!/bin/sh
 # Dormeto install: the organization's access, run by CodeBuild in the management account (buildspec.yml).
-# Inputs: BUCKET, ENV, MANAGER_ACCOUNT, ORGANIZATION, MEMBER_ROLE (a path may precede the name), ACCOUNTS and
-# DISCOVERY_ONLY (space-separated ids), DISCOVERY_ROLE and COMMAND_ROLE (the roles' names the manager is given, a path
-# may precede them; the release script's defaults otherwise), RELEASE_BASE, RELEASE_VERSION, CODEBUILD_BUILD_ID.
+# Inputs: BUCKET, ENV, MANAGER_ACCOUNT, ORGANIZATION, MEMBER_ROLE (a path may precede the name), DISCOVERY_ROLE and
+# COMMAND_ROLE (the roles' names the manager is given, a path may precede them; the release script's defaults
+# otherwise), RELEASE_BASE, RELEASE_VERSION, CODEBUILD_BUILD_ID. The plan, in the bucket under $ENV/organization/:
+# policy.json, policy-base.json, accounts.txt and discovery-only.txt (one account id per line).
 set -eu
 
 say() { echo "dormeto: $*"; }
@@ -10,15 +11,18 @@ die() { echo "dormeto: $*" >&2; exit 1; }
 need() { eval "[ -n \"\${$1:-}\" ]" || die "$1 is not set"; }
 
 for v in BUCKET ENV MANAGER_ACCOUNT ORGANIZATION MEMBER_ROLE RELEASE_BASE RELEASE_VERSION CODEBUILD_BUILD_ID; do need "$v"; done
-ACCOUNTS=${ACCOUNTS:-}
-DISCOVERY_ONLY=${DISCOVERY_ONLY:-}
 DISCOVERY_ROLE=${DISCOVERY_ROLE:-DmtDiscoveryRole}
 COMMAND_ROLE=${COMMAND_ROLE:-DmtCommandRole}
-for a in $ACCOUNTS; do
-  case $a in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) die "ACCOUNTS: $a is not an account id" ;; esac
-done
 S3="s3://$BUCKET/$ENV/organization"
 ACCESS="dormeto-access-commands-$RELEASE_VERSION.sh"
+
+# the plan's accounts, from the bucket: an organization's hundreds of ids do not fit the build's environment
+aws s3 cp --only-show-errors "$S3/accounts.txt" accounts.txt
+aws s3 cp --only-show-errors "$S3/discovery-only.txt" discovery-only.txt
+ACCOUNTS=$(cat accounts.txt)
+for a in $ACCOUNTS $(cat discovery-only.txt); do
+  case $a in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) die "the plan's accounts: $a is not an account id" ;; esac
+done
 
 verify() {
   grep "  $2\$" "$1" >"$2.sum" || die "no checksum for $2 in $1: stopped"
@@ -73,7 +77,7 @@ access() {
   ACCOUNT=$1
   ENVS=$ENV
   # an empty COMMAND_ROLE: discovered, never napped (no command role, no boundary)
-  case " $DISCOVERY_ONLY " in *" $1 "*) COMMAND_ROLE= ;; esac
+  if grep -qx "$1" discovery-only.txt; then COMMAND_ROLE=; fi
   export ACCOUNT MANAGER_ACCOUNT ENVS ORGANIZATION DISCOVERY_ROLE COMMAND_ROLE
   bash "$ACCESS" 2>&1
 }

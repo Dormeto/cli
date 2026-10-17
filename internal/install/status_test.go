@@ -3,6 +3,7 @@ package install
 // `dormeto install status` (status.go), through run_test.go's fakes.
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,16 +156,22 @@ func TestStatusRemovesWhatADetachedOrganizationRunLeft(t *testing.T) {
 		t.Errorf("left: %v", w.mgmtWrites())
 	}
 
-	// Still running: followed, then removed, its results said.
+	// Still running: followed (the accounts done out of accounts.txt's), then removed, its results said.
 	w = detached(t)
 	b := w.mgmt.builds[0]
 	b.status, b.until = cbtypes.StatusTypeSucceeded, w.clock.Add(5*time.Second)
+	w.status = &trkStatus{}
 	code, out, _ = w.run(Status, r, false)
 	if code != 0 {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
+	if !slices.Contains(w.status.updates, "Organization access (build dmt-prod-organization:b1…)  2/2  5s") {
+		t.Errorf("status line: %q", w.status.updates)
+	}
+	if !strings.HasPrefix(w.status.end, "Organization access (build dmt-prod-organization:b1…)  succeeded  ") {
+		t.Errorf("status line's end: %q", w.status.end)
+	}
 	rwInOrder(t, out, "Build dmt-prod-organization:b1 is running (organization access)\n",
-		"Organization access (build dmt-prod-organization:b1…)  succeeded",
 		"  the management account's build role and project removed\n",
 		"  ✓ organization access: delegation policy put; roles in 2 accounts\n",
 		"\nOrganization access\n  ✓ management account: 809706483662\n")

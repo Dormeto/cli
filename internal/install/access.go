@@ -379,7 +379,7 @@ func (x *run) accessGoesOn() string {
 	return "organization access goes on in CodeBuild. dormeto install status " + x.args() + " follows it and then removes its build role and project."
 }
 
-// startAccess bootstraps the management account's project, writes the plan, gives the release (a local one uploaded to
+// startAccess bootstraps the management account's project, writes the plan (its accounts among it), gives the release (a local one uploaded to
 // its bucket) and starts the build, with the roles' names the manager is given (--var discovery_role_name and
 // command_role_name, their paths kept).
 func (x *run) startAccess(mgmt Clients, op Project, s Settings, rel Release, a Access) (string, error) {
@@ -400,7 +400,6 @@ func (x *run) startAccess(mgmt Clients, op Project, s Settings, rel Release, a A
 	}
 	return Start(x.ctx, mgmt, op, ActionOrgApply, map[string]string{
 		"MANAGER_ACCOUNT": x.w.Account, "ORGANIZATION": x.w.Organization.ID, "MEMBER_ROLE": role,
-		"ACCOUNTS": strings.Join(a.Accounts(), " "), "DISCOVERY_ONLY": strings.Join(a.DiscoveryOnly, " "),
 		"DISCOVERY_ROLE": roleVar(s, "discovery_role_name", "DmtDiscoveryRole"), "COMMAND_ROLE": roleVar(s, "command_role_name", "DmtCommandRole"),
 		"RELEASE_BASE": base, "RELEASE_VERSION": rel.Version,
 	})

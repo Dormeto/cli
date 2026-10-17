@@ -82,6 +82,8 @@ type rwBuild struct {
 	start  time.Time
 	until  time.Time // in progress until the clock reaches it, then status
 	log    []string
+	// accounts are the accounts an organization build read in the bucket's accounts.txt as it started.
+	accounts []string
 }
 
 // state is the build's status at now.
@@ -708,7 +710,7 @@ func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInpu
 // StartBuild runs the build: it ends as ends says (SUCCEEDED by default), at once unless runFor. A manager's plan that
 // succeeds writes its plan.json (a destroy plan's: destroyPlan), an apply its applied.json, outputs.json and the state
 // with resources, an apply-destroy removes the first two and empties the state; the organization's build says each
-// account's roles and writes roles.json, the accounts in failing failed.
+// account's roles (accounts.txt's) and writes roles.json, the accounts in failing failed.
 func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
 	vars := map[string]string{}
 	for _, v := range in.EnvironmentVariablesOverride {
@@ -727,7 +729,8 @@ func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...
 	case strings.HasSuffix(f.a.name, "-organization"):
 		var roles strings.Builder
 		b.log = []string{"dormeto: putting the delegation policy"}
-		for _, account := range strings.Fields(vars["ACCOUNTS"]) {
+		b.accounts = strings.Fields(f.a.objects["prod/organization/accounts.txt"])
+		for _, account := range b.accounts {
 			if e, failed := f.w.failing[account]; failed {
 				roles.WriteString(`{"account":"` + account + `","ok":false,"error":"` + e + `"}` + "\n")
 				b.log = append(b.log, "dormeto: roles of "+account+": failed")

@@ -8,15 +8,72 @@ import (
 func orgEnv() map[string]string {
 	return map[string]string{
 		"BUCKET": "dmt-install-123456789012-eu-west-1", "ENV": "prod", "MANAGER_ACCOUNT": "123456789012", "ORGANIZATION": "o-abcdefghij",
-		"MEMBER_ROLE": "OrganizationAccountAccessRole", "ACCOUNTS": "111111111111 222222222222 333333333333", "DISCOVERY_ONLY": "222222222222",
+		"MEMBER_ROLE":  "OrganizationAccountAccessRole",
 		"RELEASE_BASE": "https://releases.dormeto.com/manager/0.11.0", "RELEASE_VERSION": "0.11.0", "CODEBUILD_BUILD_ID": "dmt-prod-install:build-3",
 	}
 }
 
 const ob = "dmt-install-123456789012-eu-west-1/prod/organization/"
 
-func TestOrganizationChangedPolicyStops(t *testing.T) {
+// newOrgSandbox is a sandbox whose plan names three accounts, 222… discovery only.
+func newOrgSandbox(t *testing.T) *sandbox {
 	s := newSandbox(t)
+	orgLists(t, s, []string{"111111111111", "222222222222", "333333333333"}, []string{"222222222222"})
+	return s
+}
+
+// orgLists writes the plan's accounts.txt and discovery-only.txt, one id per line, as the CLI does.
+func orgLists(t *testing.T, s *sandbox, accounts, discoveryOnly []string) {
+	t.Helper()
+	lines := func(ids []string) string {
+		if len(ids) == 0 {
+			return ""
+		}
+		return strings.Join(ids, "\n") + "\n"
+	}
+	mustPut(t, s, "accounts.txt", lines(accounts))
+	mustPut(t, s, "discovery-only.txt", lines(discoveryOnly))
+}
+
+// The accounts come from the plan in the bucket (accounts.txt, discovery-only.txt), not from the environment.
+func TestOrganizationReadsTheAccountsFromThePlan(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	orgLists(t, s, []string{"444444444444", "555555555555"}, []string{"555555555555"})
+	env := orgEnv()
+	env["ACCOUNTS"], env["DISCOVERY_ONLY"] = "111111111111", "111111111111"
+	if out, err := s.run("organization.sh", env); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	log := s.log()
+	if !has(log, "aws s3 cp --only-show-errors s3://"+ob+"accounts.txt accounts.txt") || !has(log, "aws s3 cp --only-show-errors s3://"+ob+"discovery-only.txt discovery-only.txt") {
+		t.Errorf("lists not read:\n%s", strings.Join(log, "\n"))
+	}
+	if !has(log, "access ACCOUNT=444444444444 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij DISCOVERY_ROLE=DmtDiscoveryRole COMMAND_ROLE=DmtCommandRole ") ||
+		!has(log, "access ACCOUNT=555555555555 MANAGER_ACCOUNT=123456789012 ENVS=prod ORGANIZATION=o-abcdefghij DISCOVERY_ROLE=DmtDiscoveryRole COMMAND_ROLE= ") ||
+		has(log, "access ACCOUNT=111111111111") {
+		t.Errorf("log:\n%s", strings.Join(log, "\n"))
+	}
+}
+
+// No account to give roles (none reachable): the delegation policy alone, an empty roles.json.
+func TestOrganizationNoAccount(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	orgLists(t, s, nil, nil)
+	out, err := s.run("organization.sh", orgEnv())
+	if err != nil || !strings.HasSuffix(out, "dormeto: putting the delegation policy\ndormeto: done\n") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if roles, ok := s.uploaded(ob + "roles.json"); !ok || roles != "" || has(s.log(), "aws sts assume-role") {
+		t.Errorf("roles.json %q %v:\n%s", roles, ok, strings.Join(s.log(), "\n"))
+	}
+}
+
+func TestOrganizationChangedPolicyStops(t *testing.T) {
+	s := newOrgSandbox(t)
 	s.write(s.fake+"/policy", `{"Statement":"someone else's"}`+"\n", 0o644)
 	mustPut(t, s, "policy-base.json", `{"Statement":[]}`)
 	mustPut(t, s, "policy.json", `{"Statement":["new"]}`)
@@ -33,7 +90,7 @@ func TestOrganizationChangedPolicyStops(t *testing.T) {
 }
 
 func TestOrganizationUnchangedPolicyIsPut(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	s.write(s.fake+"/policy", `{"Statement":[]}`+"\n", 0o644)
 	mustPut(t, s, "policy-base.json", `{"Statement":[]}`)
 	mustPut(t, s, "policy.json", `{"Statement":["new"]}`)
@@ -46,7 +103,7 @@ func TestOrganizationUnchangedPolicyIsPut(t *testing.T) {
 }
 
 func TestOrganizationNoPolicyYetAndEmptyBase(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{"Statement":["new"]}`)
 	if out, err := s.run("organization.sh", orgEnv()); err != nil {
@@ -58,7 +115,7 @@ func TestOrganizationNoPolicyYetAndEmptyBase(t *testing.T) {
 }
 
 func TestOrganizationRoles(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -98,7 +155,7 @@ func TestOrganizationRoles(t *testing.T) {
 // The roles' names the manager is given reach the release's script, their paths kept; a discovery-only account still
 // gets an empty COMMAND_ROLE.
 func TestOrganizationRoleNames(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -115,7 +172,7 @@ func TestOrganizationRoleNames(t *testing.T) {
 
 // What the AWS CLI writes on stderr while assuming the member role is not taken for the credentials.
 func TestOrganizationAssumeRoleStderrKeptApart(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -134,7 +191,7 @@ func TestOrganizationAssumeRoleStderrKeptApart(t *testing.T) {
 
 // A failed account's whole output reaches the build's log, each line prefixed with the account; a good one's does not.
 func TestOrganizationFailedAccountsOutputInTheLog(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -159,7 +216,7 @@ func TestOrganizationFailedAccountsOutputInTheLog(t *testing.T) {
 
 // The CLI counts the accounts done from the log: one line per account, once its result is in roles.json.
 func TestOrganizationSaysEachAccountsRoles(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -184,12 +241,11 @@ func TestOrganizationSaysEachAccountsRoles(t *testing.T) {
 }
 
 func TestOrganizationAccessFailureKeepsTheLastLine(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
-	env["ACCOUNTS"] = "111111111111 222222222222"
-	env["DISCOVERY_ONLY"] = ""
+	orgLists(t, s, []string{"111111111111", "222222222222"}, nil)
 	env["FAKE_ACCESS_FAIL"] = "222222222222"
 	if out, err := s.run("organization.sh", env); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -201,7 +257,7 @@ func TestOrganizationAccessFailureKeepsTheLastLine(t *testing.T) {
 }
 
 func TestOrganizationBatchesOfTen(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -209,8 +265,7 @@ func TestOrganizationBatchesOfTen(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		ids = append(ids, "1000000000"+string(rune('0'+i/10))+string(rune('0'+i%10)))
 	}
-	env["ACCOUNTS"] = strings.Join(ids, " ")
-	env["DISCOVERY_ONLY"] = ""
+	orgLists(t, s, ids, nil)
 	if out, err := s.run("organization.sh", env); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -230,7 +285,7 @@ func TestOrganizationBatchesOfTen(t *testing.T) {
 }
 
 func TestOrganizationWrongAccessScriptSumStops(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -244,7 +299,7 @@ func TestOrganizationWrongAccessScriptSumStops(t *testing.T) {
 }
 
 func TestOrganizationS3ReleaseBase(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	env := orgEnv()
@@ -265,7 +320,7 @@ func mustPut(t *testing.T, s *sandbox, name, body string) {
 }
 
 func TestOrganizationEmptiesRolesJSONFirst(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
 	s.write2(s.fake+"/s3/"+ob+"roles.json", "previous run\n")
@@ -280,12 +335,11 @@ func TestOrganizationEmptiesRolesJSONFirst(t *testing.T) {
 }
 
 func TestOrganizationBadAccountIDStopsBeforeThePolicy(t *testing.T) {
-	s := newSandbox(t)
+	s := newOrgSandbox(t)
 	mustPut(t, s, "policy-base.json", "")
 	mustPut(t, s, "policy.json", `{}`)
-	env := orgEnv()
-	env["ACCOUNTS"] = "111111111111 12345"
-	out, err := s.run("organization.sh", env)
+	orgLists(t, s, []string{"111111111111", "12345"}, nil)
+	out, err := s.run("organization.sh", orgEnv())
 	if err == nil || !strings.Contains(out, "12345") {
 		t.Fatalf("err %v\n%s", err, out)
 	}
