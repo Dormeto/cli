@@ -81,10 +81,12 @@ func Clients(cfg awssdk.Config, region string) install.Clients {
 	}
 }
 
-// Assumed is a copy of cfg whose credentials are the role's, assumed with cfg's credentials (session names the session)
-// and cached, refreshed before they expire.
-func Assumed(cfg awssdk.Config, roleARN, session string) awssdk.Config {
+// Assumed is a copy of cfg in region whose credentials are the role's, assumed with cfg's credentials through STS in
+// region (a profile may have none: the run's comes from --region or the question; session names the session) and
+// cached, refreshed before they expire.
+func Assumed(cfg awssdk.Config, region, roleARN, session string) awssdk.Config {
 	cfg = cfg.Copy()
+	cfg.Region = region
 	provider := stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), roleARN, func(o *stscreds.AssumeRoleOptions) { o.RoleSessionName = session })
 	cfg.Credentials = awssdk.NewCredentialsCache(provider)
 	return cfg

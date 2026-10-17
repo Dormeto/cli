@@ -263,7 +263,7 @@ func installDeps(c *cobra.Command, verbose bool, env string) install.Deps {
 			if err != nil {
 				return install.Clients{}, err
 			}
-			return installaws.Clients(installaws.Assumed(cfg, roleARN, session), region), nil
+			return installaws.Clients(installaws.Assumed(cfg, region, roleARN, session), region), nil
 		},
 		HTTP:     &http.Client{Timeout: 30 * time.Second},
 		Prompter: install.NewPrompter(in, out, terminal),
