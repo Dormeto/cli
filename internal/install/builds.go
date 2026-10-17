@@ -182,7 +182,15 @@ func (s PlanSummary) Lines() []string {
 	return lines
 }
 
-// CheckPlan refuses a plan that did not succeed, is unknown, or was made before the last apply (applied, when not nil).
+// StalePlanError is a plan made before the last apply: applied already, or replaced; there is no plan to apply.
+type StalePlanError struct{ Plan, Apply string }
+
+func (e *StalePlanError) Error() string {
+	return fmt.Sprintf("the plan %s predates the last apply %s: plan again", e.Plan, e.Apply)
+}
+
+// CheckPlan refuses a plan that did not succeed, is unknown, or was made before the last apply (applied, when not nil:
+// a *StalePlanError).
 func CheckPlan(ctx context.Context, c Clients, planBuild string, applied *Applied) error {
 	ids := []string{planBuild}
 	if applied != nil && applied.Build != "" && applied.Build != planBuild {
@@ -208,7 +216,7 @@ func CheckPlan(ctx context.Context, c Clients, planBuild string, applied *Applie
 		return fmt.Errorf("the plan %s did not succeed (%s): plan again", planBuild, plan.BuildStatus)
 	}
 	if apply != nil && apply.StartTime != nil && plan.StartTime != nil && plan.StartTime.Before(*apply.StartTime) {
-		return fmt.Errorf("the plan %s predates the last apply %s: plan again", planBuild, aws.ToString(apply.Id))
+		return &StalePlanError{Plan: planBuild, Apply: aws.ToString(apply.Id)}
 	}
 	return nil
 }

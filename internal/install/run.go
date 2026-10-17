@@ -14,8 +14,11 @@ import (
 
 // Deps are what a command's run uses outside itself.
 type Deps struct {
-	Clients  func(ctx context.Context, profile, region string) (Clients, error) // internal/aws.Load + installaws.Clients
-	Region   func(ctx context.Context, profile string) (string, error)          // the profile's configured region, "" when none
+	Clients func(ctx context.Context, profile, region string) (Clients, error) // internal/aws.Load + installaws.Clients
+	Region  func(ctx context.Context, profile string) (string, error)          // the profile's configured region, "" when none
+	// Assume is the clients of a role assumed with the profile's credentials (internal/aws.Load + installaws.Assumed +
+	// installaws.Clients, session dmt-<env>-install): the member role in each account, for organization access.
+	Assume   func(ctx context.Context, profile, region, roleARN string) (Clients, error)
 	HTTP     HTTP
 	Prompter Prompter
 	Out      io.Writer
@@ -28,9 +31,11 @@ type Deps struct {
 // Request is a command line: its profile, region and release, the flags' settings and which flags were given.
 type Request struct {
 	Profile, Region, Release string          // --profile, --region, --release
+	ManagementProfile        string          // --management-profile: the management account's, for organization access
 	Flags                    Settings        // the flags' values
 	Set                      map[string]bool // the flags given (Merge's keys)
 	Yes, Verbose             bool
+	Access                   bool // --access: organization access alone, the manager installed
 }
 
 // exitInterrupted is the exit code of a run Ctrl-C stopped: 128 + SIGINT.
@@ -96,13 +101,22 @@ func (x *run) end(err error) int {
 	return 1
 }
 
-// args are the flags that name this install again: --profile (when given), --region and --env.
+// args are the flags that name this install again: --management-profile and --profile (when given), --region and
+// --env.
 func (x *run) args() string {
 	a := "--region " + x.region + " --env " + x.env
 	if x.r.Profile != "" {
 		a = "--profile " + x.r.Profile + " " + a
 	}
+	if x.r.ManagementProfile != "" {
+		a = "--management-profile " + x.r.ManagementProfile + " " + a
+	}
 	return a
+}
+
+// noInstall stops a command that needs the install: there is none of the env here.
+func (x *run) noInstall() error {
+	return &stop{1, fmt.Sprintf("no install of env %s in %s %s: run dormeto install", x.env, x.w.Account, x.region)}
 }
 
 // prompted is the prompter's answer, or the context's error as soon as the run is cancelled (a terminal's read does
@@ -308,18 +322,23 @@ func (x *run) checks(s Settings, saved *Settings, applied *Applied, rel Release,
 	return Checks(x.ctx, x.c, s, x.w, Found{Saved: recorded(saved, applied), OtherEnvs: others, Release: rel, ReleaseErr: relErr}), nil
 }
 
-// showChecks prints the checks and, in organization mode, that organization access is not deployed (no management
-// profile) with what that costs.
-func (x *run) showChecks(s Settings, cs []Check) {
+// showChecks prints the checks and, in organization mode without a management profile, that organization access is not
+// deployed with what that costs; on an upgrade (upgradeFrom: the version installed), that it is not applied again.
+func (x *run) showChecks(s Settings, cs []Check, upgradeFrom string) {
 	x.say("\nChecks")
 	for _, c := range cs {
 		x.say("%s", c.Line())
 	}
-	if o := x.w.Organization; s.Mode == "organization" && o != nil {
-		x.say("  ! organization access: not deployed (no management profile)")
-		for _, l := range strings.Split(Disabled(o.Management), "\n") {
-			x.say("    %s", l)
-		}
+	o := x.w.Organization
+	if _, ok := x.management(s); ok || s.Mode != "organization" || o == nil {
+		return
+	}
+	x.say("  ! organization access: not deployed (no management profile)")
+	for _, l := range strings.Split(Disabled(o.Management), "\n") {
+		x.say("    %s", l)
+	}
+	if upgradeFrom != "" {
+		x.say("    Organization access is not applied again without --management-profile: each release's notes since %s say whether the roles need it (%s).", upgradeFrom, releasesPage)
 	}
 }
 
@@ -420,13 +439,18 @@ func (x *run) lost(err error, goesOn string) error {
 	return &stop{1, err.Error() + "\n" + strings.ToUpper(goesOn[:1]) + goesOn[1:]}
 }
 
-// failed says how a build failed: the log's last lines and the build's page in the console.
-func (x *run) failed(label string, res Result) error {
+// failed says how a build failed: the log's last lines and the build's page in the console, with its log group (none:
+// not named).
+func (x *run) failed(label string, res Result, logGroup string) error {
 	x.say("%s failed", label)
 	for _, l := range res.Tail {
 		x.say("  %s", l)
 	}
-	x.say("  %s (log group %s)", res.ConsoleURL, x.p.LogGroup)
+	if logGroup == "" {
+		x.say("  %s", res.ConsoleURL)
+	} else {
+		x.say("  %s (log group %s)", res.ConsoleURL, logGroup)
+	}
 	return &stop{code: 1}
 }
 
@@ -457,8 +481,9 @@ func (x *run) showPlan(build, version string, sum PlanSummary) {
 
 // Install is `dormeto install`: where it runs, the answers (asked on a first install), the checks, the bootstrap, the
 // plan in CodeBuild, its summary, the person's confirmation in a terminal, the saved plan applied and followed, then
-// the dashboard and the invitations checked. Exit codes: 0; 1 when AWS refuses, a check fails or a build fails; 2 for a
-// bad or missing answer; 130 when ctx is cancelled (Ctrl-C).
+// the dashboard and the invitations checked; with a management profile, organization access after the manager (also
+// when the plan changes nothing, and alone with --access). Exit codes: 0; 1 when AWS refuses, a check fails or a build
+// fails; 2 for a bad or missing answer; 130 when ctx is cancelled (Ctrl-C).
 func Install(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.end(x.install())
@@ -468,7 +493,7 @@ func (x *run) install() error {
 	if err := x.locate(); err != nil {
 		return err
 	}
-	saved, err := x.environment(true)
+	saved, err := x.environment(!x.r.Access)
 	if err != nil {
 		return err
 	}
@@ -477,6 +502,9 @@ func (x *run) install() error {
 		return err
 	}
 	s := x.merged(saved)
+	if x.r.Access {
+		return x.accessAlone(saved, applied, s)
+	}
 	s.Version = x.wanted()
 	if saved == nil {
 		// A first install asks the version, the latest suggested; reading the latest failed, the release check says so.
@@ -507,7 +535,11 @@ func (x *run) install() error {
 	if err := x.ctx.Err(); err != nil {
 		return err
 	}
-	x.showChecks(s, cs)
+	upgradeFrom := ""
+	if applied != nil && applied.Version != s.Version {
+		upgradeFrom = applied.Version
+	}
+	x.showChecks(s, cs, upgradeFrom)
 	if Failed(cs) {
 		return &stop{1, "Nothing was created."}
 	}
@@ -561,7 +593,7 @@ func (x *run) install() error {
 		return x.lost(err, planGoesOn)
 	}
 	if res.Failed {
-		return x.failed("Plan", res)
+		return x.failed("Plan", res, x.p.LogGroup)
 	}
 	kept := "Not applied; the plan is kept: dormeto install apply " + x.args()
 	x.interrupted = kept
@@ -570,7 +602,8 @@ func (x *run) install() error {
 		return err
 	}
 	if sum.Empty() {
-		return &stop{0, "Nothing to change: manager " + s.Version + " is installed."}
+		x.say("Nothing to change: manager %s is installed.", s.Version)
+		return x.thenAccess(s, rel, false)
 	}
 	x.showPlan(id, s.Version, sum)
 	if !x.d.Terminal {
@@ -586,7 +619,10 @@ func (x *run) install() error {
 	if err := CheckPlan(x.ctx, x.c, s.LastPlan, applied); err != nil {
 		return err
 	}
-	return x.apply(s, sum)
+	if err := x.apply(s, sum); err != nil {
+		return err
+	}
+	return x.thenAccess(s, rel, false)
 }
 
 // apply applies the saved plan s.LastPlan with s's release, follows it, then checks the dashboard and the invitations.
@@ -601,7 +637,7 @@ func (x *run) apply(s Settings, sum PlanSummary) error {
 		return x.lost(err, "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args())
 	}
 	if res.Failed {
-		return x.failed("Apply", res)
+		return x.failed("Apply", res, x.p.LogGroup)
 	}
 	x.interrupted = "Interrupted: the manager is installed; dormeto install status checks it."
 	x.say("  ✓ applied: %d added, %d changed, %d destroyed", sum.Add, sum.Change, sum.Destroy)
@@ -625,7 +661,7 @@ func (x *run) apply(s Settings, sum PlanSummary) error {
 
 // InstallCheck is `dormeto install check` (Check is a check's row): the prerequisites, read-only, without asking
 // anything but the region: the version the latest unless given, the mode the suggested one unless given, the
-// administrators a warning until given. Exit codes: 0; 1 when a check fails or AWS refuses; 2 for a bad flag; 130 when
+// administrators a warning until given; with a management profile, organization access surveyed. Exit codes: 0; 1 when a check fails or AWS refuses; 2 for a bad flag; 130 when
 // ctx is cancelled.
 func InstallCheck(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
@@ -672,15 +708,29 @@ func (x *run) check() error {
 			}
 		}
 	}
-	x.showChecks(s, cs)
-	if Failed(cs) {
+	x.showChecks(s, cs, "")
+	failed := Failed(cs)
+	if _, ok := x.management(s); ok {
+		if relErr != nil {
+			x.say("  - organization access: not checked (no release to read the delegation policy from)")
+		} else {
+			_, _, access, err := x.survey(s, rel)
+			if err != nil {
+				return err
+			}
+			x.showSurvey(access)
+			failed = failed || Failed(access)
+		}
+	}
+	if failed {
 		return &stop{code: 1}
 	}
 	return nil
 }
 
 // Apply is `dormeto install apply`: the explicit confirmation of the last plan (a plan made without a terminal, or
-// left at the question), shown, then applied, followed and verified as Install does. Exit codes as Install's.
+// left at the question), shown, then applied, followed and verified as Install does; with a management profile,
+// organization access deployed after it, or alone when there is no plan to apply (ruling R16). Exit codes as Install's.
 func Apply(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	x.interrupted = "Interrupted: nothing was applied."
@@ -696,18 +746,28 @@ func (x *run) applyLast() error {
 		return err
 	}
 	if saved == nil {
-		return &stop{1, fmt.Sprintf("no install of env %s in %s %s: run dormeto install", x.env, x.w.Account, x.region)}
+		return x.noInstall()
 	}
-	if saved.LastPlan == "" {
-		return &stop{1, "no plan to apply: run dormeto install"}
-	}
-	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args()
+	s := x.merged(saved)
+	_, access := x.management(s)
 	applied, err := ReadApplied(x.ctx, x.c, x.p)
 	if err != nil {
 		return err
 	}
-	// A stale or failed plan is refused before it is shown.
+	if saved.LastPlan == "" {
+		if !access {
+			return &stop{1, "no plan to apply: run dormeto install"}
+		}
+		return x.accessInstalled(s, saved, applied, true)
+	}
+	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args()
+	// A stale or failed plan is refused before it is shown; with a management profile, a plan applied already leaves
+	// organization access to deploy.
 	if err := CheckPlan(x.ctx, x.c, saved.LastPlan, applied); err != nil {
+		var stale *StalePlanError
+		if access && errors.As(err, &stale) {
+			return x.accessInstalled(s, saved, applied, true)
+		}
 		return err
 	}
 	sum, err := x.summary(saved.LastPlan)
@@ -715,8 +775,15 @@ func (x *run) applyLast() error {
 		return err
 	}
 	if sum.Empty() {
-		return &stop{0, "Nothing to change: manager " + saved.Version + " is installed."}
+		x.say("Nothing to change: manager %s is installed.", saved.Version)
+	} else {
+		x.showPlan(saved.LastPlan, saved.Version, sum)
+		if err := x.apply(*saved, sum); err != nil {
+			return err
+		}
 	}
-	x.showPlan(saved.LastPlan, saved.Version, sum)
-	return x.apply(*saved, sum)
+	if !access {
+		return nil
+	}
+	return x.accessInstalled(s, saved, nil, true)
 }

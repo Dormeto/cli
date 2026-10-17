@@ -1,8 +1,8 @@
 package install
 
 // The commands' runs (run.go) through fakes of every port: one account's world (its organization, the install's
-// bucket, role, log group, project and builds, a started build running at once), a scripted prompter, the releases on a
-// fake HTTP, a fake clock.
+// bucket, role, log group, project and builds, a started build running at once; with rwOrganization, the management
+// account's and the member accounts' too), a scripted prompter, the releases on a fake HTTP, a fake clock.
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,40 +58,101 @@ const (
 	rwOutputs = `{"dashboard_url":{"value":"` + rwDashboard + `"},"user_pool_id":{"value":"eu-west-1_abc"},"version":{"value":"0.11.0"}}`
 )
 
-// rwBuild is a build of the project: vars is nil for a build the run did not start.
+// rwBuild is a build of a project: vars is nil for a build the run did not start (env then holds its variables).
 type rwBuild struct {
 	id     string
 	vars   map[string]string
+	env    map[string]string
 	status cbtypes.StatusType
 	start  time.Time
+	until  time.Time // in progress until the clock reaches it, then status
 	log    []string
 }
 
-// rwWorld is one account in eu-west-1, member of an organization with all features unless org is nil.
-type rwWorld struct {
-	t                               *testing.T
-	org                             *Organization
-	region                          string            // the profile's region; "": none
-	objects                         map[string]string // the install's bucket, by key
+// state is the build's status at now.
+func (b *rwBuild) state(now time.Time) cbtypes.StatusType {
+	if now.Before(b.until) {
+		return cbtypes.StatusTypeInProgress
+	}
+	return b.status
+}
+
+// rwAcct is one account's install: its bucket, its project's role, log group and builds.
+type rwAcct struct {
+	id, name                        string            // the account; its project: dmt-prod-install, or dmt-prod-organization in the management account
+	prefix                          string            // its writes' in rwWorld.writes: "" for the manager's account, "mgmt " for the management account
+	objects                         map[string]string // its bucket, by key
 	bucket, role, project, logGroup bool              // the bootstrap's resources exist
 	builds                          []*rwBuild        // oldest first
 	ends                            map[string]cbtypes.StatusType
-	plan                            string           // the plan.json a plan build writes
-	simDenied                       bool             // iam:SimulatePrincipalPolicy refused: a warning
-	identityErr                     error            // sts:GetCallerIdentity's error
+	runFor                          time.Duration    // a started build runs that long (0: it ends at once)
 	followErr                       map[string]error // by ACTION: following its build fails (BatchGetBuilds of it alone)
-	cancelOnStart                   bool             // Ctrl-C as the build starts
-	writes                          []string
-	readOnly                        bool
-	clock                           time.Time
-	detach                          bool // following a running build: Ctrl-C
-	cancel                          context.CancelFunc
-	http                            fakeHTTP
+}
+
+func rwNewAcct(id, name, prefix string) rwAcct {
+	return rwAcct{id: id, name: name, prefix: prefix, objects: map[string]string{}, ends: map[string]cbtypes.StatusType{}, followErr: map[string]error{}}
+}
+
+// started are the builds the run started.
+func (a *rwAcct) started() []*rwBuild {
+	var out []*rwBuild
+	for _, b := range a.builds {
+		if b.vars != nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// actions are the ACTION of each build the run started.
+func (a *rwAcct) actions() []string {
+	var out []string
+	for _, b := range a.started() {
+		out = append(out, b.vars["ACTION"])
+	}
+	return out
+}
+
+func (a *rwAcct) build(id string) *rwBuild {
+	for _, b := range a.builds {
+		if b.id == id {
+			return b
+		}
+	}
+	return nil
+}
+
+// rwWorld is one account in eu-west-1 (the profile p), member of an organization with all features unless org is nil;
+// with rwOrganization, the organization's management account (the profile m) and other accounts too.
+type rwWorld struct {
+	rwAcct        // the manager's account
+	t             *testing.T
+	org           *Organization
+	region        string // the profile's region; "": none
+	plan          string // the plan.json a plan build writes
+	simDenied     bool   // iam:SimulatePrincipalPolicy refused: a warning
+	identityErr   error  // sts:GetCallerIdentity's error
+	cancelOnStart bool   // Ctrl-C as the build starts
+	writes        []string
+	readOnly      bool
+	clock         time.Time
+	detach        bool // following a running build: Ctrl-C
+	cancel        context.CancelFunc
+	http          fakeHTTP
+	status        *trkStatus // the terminal's status line; nil: none
+
+	mgmt    *rwAcct            // the management account, the profile m; nil: no such profile
+	members map[string]orgAcct // the organization's other accounts, as the member role reaches them
+	policy  *string            // the delegation policy; nil: none
+	failing map[string]string  // account → its error in the organization build's roles.json
+	mu      sync.Mutex         // the survey assumes the member role from many goroutines
+	assumed []string           // "<profile> <role ARN>" of each member role assumed
 }
 
 func rwNew(t *testing.T) *rwWorld {
 	w := &rwWorld{
-		t: t, region: "eu-west-1", objects: map[string]string{}, ends: map[string]cbtypes.StatusType{}, followErr: map[string]error{}, plan: rwPlan, clock: rwT0,
+		rwAcct: rwNewAcct(rwAccount, "dmt-prod-install", ""),
+		t:      t, region: "eu-west-1", plan: rwPlan, clock: rwT0,
 		org:  &Organization{ID: "o-vvk0115ixn", Management: "809706483662", AllFeatures: true},
 		http: fakeHTTP{bodies: map[string]string{rwDashboard: "ok"}},
 	}
@@ -98,9 +160,37 @@ func rwNew(t *testing.T) *rwWorld {
 	return w
 }
 
-// release publishes a manager version on releases.dormeto.com; latest: latest.json names it.
+// rwMine is this manager's discovery role, which the member accounts' roles trust.
+const rwMine = "arn:aws:iam::" + rwAccount + ":role/dmt-prod-manager-discovery"
+
+// rwOrganization gives the world its organization: the management account, reached with the profile m, and four other
+// accounts: roles trusting this manager (444…), none (555…), the member role not assumed (666…), another manager's
+// roles (777…).
+func (w *rwWorld) rwOrganization() {
+	m := rwNewAcct(w.org.Management, "dmt-prod-organization", "mgmt ")
+	w.mgmt = &m
+	w.failing = map[string]string{}
+	w.members = map[string]orgAcct{
+		"444444444444": {status: orgtypes.AccountStatusActive, discovery: []string{rwMine}},
+		"555555555555": {status: orgtypes.AccountStatusActive},
+		"666666666666": {status: orgtypes.AccountStatusActive, unreach: "AccessDenied: not authorized to perform sts:AssumeRole"},
+		"777777777777": {status: orgtypes.AccountStatusActive, discovery: []string{orgDev}, boundary: true},
+	}
+}
+
+// release publishes a manager version on releases.dormeto.com, its delegation policy the organization tests' template;
+// latest: latest.json names it.
 func (w *rwWorld) release(v string, latest bool) {
-	w.http.bodies[ReleasesURL+"/"+v+"/SHA256SUMS"] = sumsFor(v, releaseFiles(v)...)
+	var sums strings.Builder
+	for _, f := range releaseFiles(v) {
+		body := f
+		if f == "dormeto-organization-policy.json" {
+			body = orgTemplate
+		}
+		sums.WriteString(sum(body) + "  " + f + "\n")
+	}
+	w.http.bodies[ReleasesURL+"/"+v+"/SHA256SUMS"] = sums.String()
+	w.http.bodies[ReleasesURL+"/"+v+"/dormeto-organization-policy.json"] = orgTemplate
 	if latest {
 		w.http.bodies[ReleasesURL+"/latest.json"] = `{"version":"` + v + `"}`
 	}
@@ -145,35 +235,6 @@ func (w *rwWorld) write(call string) {
 	w.writes = append(w.writes, call)
 }
 
-// started are the builds the run started.
-func (w *rwWorld) started() []*rwBuild {
-	var out []*rwBuild
-	for _, b := range w.builds {
-		if b.vars != nil {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
-// actions are the ACTION of each build the run started.
-func (w *rwWorld) actions() []string {
-	var out []string
-	for _, b := range w.started() {
-		out = append(out, b.vars["ACTION"])
-	}
-	return out
-}
-
-func (w *rwWorld) build(id string) *rwBuild {
-	for _, b := range w.builds {
-		if b.id == id {
-			return b
-		}
-	}
-	return nil
-}
-
 func (w *rwWorld) now() time.Time { return w.clock }
 
 // every advances the clock and answers at once; with detach, it is Ctrl-C instead (the run cancelled, no tick).
@@ -188,14 +249,37 @@ func (w *rwWorld) every(d time.Duration) <-chan time.Time {
 	return c
 }
 
-func (w *rwWorld) clients() Clients {
+func (w *rwWorld) clients() Clients { return w.clientsOf(&w.rwAcct) }
+
+// clientsOf are the fakes of account a.
+func (w *rwWorld) clientsOf(a *rwAcct) Clients {
 	return Clients{
-		STS: rwSTS{w: w}, IAM: rwIAM{w: w}, S3: rwS3{w: w}, CodeBuild: rwCB{w: w}, Logs: rwLogs{w: w},
+		STS: rwSTS{w: w, a: a}, IAM: rwIAM{w: w, a: a}, S3: rwS3{w: w, a: a}, CodeBuild: rwCB{w: w, a: a}, Logs: rwLogs{w: w, a: a},
 		Organizations: rwOrgs{w: w}, EC2: &chkEC2{status: "opt-in-not-required"},
 		ACM:     chkACM{status: "ISSUED", names: []string{"dormeto.example.com", "*.dormeto.example.com"}},
 		Route53: chkR53{name: "example.com."}, SESv2: chkSES{verified: true, production: true},
 		Lambda: chkLambda{}, Cognito: rwCognito{},
 	}
+}
+
+// assume is the member role assumed in an account of the organization, from the management account's profile.
+func (w *rwWorld) assume(_ context.Context, profile, region, roleARN string) (Clients, error) {
+	w.mu.Lock()
+	w.assumed = append(w.assumed, profile+" "+roleARN)
+	w.mu.Unlock()
+	if region != "eu-west-1" {
+		w.t.Errorf("member role assumed in %q", region)
+	}
+	rest, _ := strings.CutPrefix(roleARN, "arn:aws:iam::")
+	account, _, _ := strings.Cut(rest, ":")
+	a, ok := w.members[account]
+	switch {
+	case !ok:
+		return Clients{}, fmt.Errorf("no account %s", account)
+	case a.unreach != "":
+		return Clients{}, errors.New(a.unreach)
+	}
+	return Clients{IAM: orgIAM{a: a}}, nil
 }
 
 // run runs a command; answers are the person's, in order: "" takes the suggestion, "^C" is Ctrl-C at that prompt.
@@ -206,21 +290,31 @@ func (w *rwWorld) run(cmd func(context.Context, Deps, Request) int, r Request, t
 	w.cancel = cancel
 	p := &rwPrompter{t: w.t, answers: answers, cancel: cancel}
 	var b bytes.Buffer
-	code = cmd(ctx, Deps{
+	d := Deps{
 		Clients: func(_ context.Context, profile, region string) (Clients, error) {
-			if profile != "p" || region != "eu-west-1" {
-				w.t.Errorf("clients of profile %q in %q", profile, region)
+			switch {
+			case region != "eu-west-1":
+			case profile == "p":
+				return w.clients(), nil
+			case profile == "m" && w.mgmt != nil:
+				return w.clientsOf(w.mgmt), nil
 			}
-			return w.clients(), nil
+			w.t.Errorf("clients of profile %q in %q", profile, region)
+			return Clients{}, errors.New("no such profile")
 		},
 		Region:   func(context.Context, string) (string, error) { return w.region, nil },
+		Assume:   w.assume,
 		HTTP:     w.http,
 		Prompter: p,
 		Out:      &b,
 		Terminal: terminal,
 		Now:      w.now,
 		Every:    w.every,
-	}, r)
+	}
+	if w.status != nil {
+		d.Status = w.status
+	}
+	code = cmd(ctx, d, r)
 	if len(p.answers) > 0 {
 		w.t.Errorf("answers left: %q", p.answers)
 	}
@@ -272,13 +366,14 @@ func (p *rwPrompter) Confirm(question string) (bool, error) {
 type rwSTS struct {
 	STS
 	w *rwWorld
+	a *rwAcct
 }
 
 func (f rwSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
 	if f.w.identityErr != nil {
 		return nil, f.w.identityErr
 	}
-	return &sts.GetCallerIdentityOutput{Account: aws.String(rwAccount), Arn: aws.String("arn:aws:sts::" + rwAccount + ":assumed-role/" + rwRole + "/you@example.com")}, nil
+	return &sts.GetCallerIdentityOutput{Account: aws.String(f.a.id), Arn: aws.String("arn:aws:sts::" + f.a.id + ":assumed-role/" + rwRole + "/you@example.com")}, nil
 }
 
 type rwOrgs struct {
@@ -298,9 +393,27 @@ func (f rwOrgs) DescribeOrganization(context.Context, *organizations.DescribeOrg
 	return &organizations.DescribeOrganizationOutput{Organization: &orgtypes.Organization{Id: aws.String(o.ID), MasterAccountId: aws.String(o.Management), FeatureSet: features}}, nil
 }
 
+// ListAccounts is the manager's account, the management account and the other accounts, in one page.
+func (f rwOrgs) ListAccounts(context.Context, *organizations.ListAccountsInput, ...func(*organizations.Options)) (*organizations.ListAccountsOutput, error) {
+	out := &organizations.ListAccountsOutput{Accounts: []orgtypes.Account{
+		{Id: aws.String(rwAccount), Status: orgtypes.AccountStatusActive}, {Id: aws.String(f.w.org.Management), Status: orgtypes.AccountStatusActive}}}
+	for _, id := range slices.Sorted(maps.Keys(f.w.members)) {
+		out.Accounts = append(out.Accounts, orgtypes.Account{Id: aws.String(id), Status: f.w.members[id].status})
+	}
+	return out, nil
+}
+
+func (f rwOrgs) DescribeResourcePolicy(context.Context, *organizations.DescribeResourcePolicyInput, ...func(*organizations.Options)) (*organizations.DescribeResourcePolicyOutput, error) {
+	if f.w.policy == nil {
+		return nil, &orgtypes.ResourcePolicyNotFoundException{Message: aws.String("none")}
+	}
+	return &organizations.DescribeResourcePolicyOutput{ResourcePolicy: &orgtypes.ResourcePolicy{Content: f.w.policy}}, nil
+}
+
 type rwIAM struct {
 	IAM
 	w *rwWorld
+	a *rwAcct
 }
 
 func (f rwIAM) ListAccountAliases(context.Context, *iam.ListAccountAliasesInput, ...func(*iam.Options)) (*iam.ListAccountAliasesOutput, error) {
@@ -310,10 +423,10 @@ func (f rwIAM) ListAccountAliases(context.Context, *iam.ListAccountAliasesInput,
 func (f rwIAM) GetRole(_ context.Context, in *iam.GetRoleInput, _ ...func(*iam.Options)) (*iam.GetRoleOutput, error) {
 	switch name := aws.ToString(in.RoleName); {
 	case name == rwRole:
-		return &iam.GetRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + rwAccount + ":role/aws-reserved/sso.amazonaws.com/eu-west-1/" + name)}}, nil
-	case name == "dmt-prod-install" && f.w.role:
+		return &iam.GetRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + f.a.id + ":role/aws-reserved/sso.amazonaws.com/eu-west-1/" + name)}}, nil
+	case name == f.a.name && f.a.role:
 		return &iam.GetRoleOutput{Role: &iamtypes.Role{RoleName: aws.String(name), Path: aws.String("/dormeto/"),
-			Arn: aws.String("arn:aws:iam::" + rwAccount + ":role/dormeto/" + name), Tags: []iamtypes.Tag{{Key: aws.String("managed-by"), Value: aws.String("dormeto-cli")}}}}, nil
+			Arn: aws.String("arn:aws:iam::" + f.a.id + ":role/dormeto/" + name), Tags: []iamtypes.Tag{{Key: aws.String("managed-by"), Value: aws.String("dormeto-cli")}}}}, nil
 	}
 	return nil, chkNoEntity()
 }
@@ -330,74 +443,91 @@ func (f rwIAM) GetPolicy(context.Context, *iam.GetPolicyInput, ...func(*iam.Opti
 }
 
 func (f rwIAM) CreateRole(_ context.Context, in *iam.CreateRoleInput, _ ...func(*iam.Options)) (*iam.CreateRoleOutput, error) {
-	f.w.write("iam:CreateRole " + aws.ToString(in.RoleName))
-	f.w.role = true
-	return &iam.CreateRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + rwAccount + ":role/dormeto/" + aws.ToString(in.RoleName))}}, nil
+	f.w.write(f.a.prefix + "iam:CreateRole " + aws.ToString(in.RoleName))
+	f.a.role = true
+	return &iam.CreateRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + f.a.id + ":role/dormeto/" + aws.ToString(in.RoleName))}}, nil
 }
 
 func (f rwIAM) UpdateAssumeRolePolicy(context.Context, *iam.UpdateAssumeRolePolicyInput, ...func(*iam.Options)) (*iam.UpdateAssumeRolePolicyOutput, error) {
-	f.w.write("iam:UpdateAssumeRolePolicy")
+	f.w.write(f.a.prefix + "iam:UpdateAssumeRolePolicy")
 	return &iam.UpdateAssumeRolePolicyOutput{}, nil
 }
 
 func (f rwIAM) AttachRolePolicy(context.Context, *iam.AttachRolePolicyInput, ...func(*iam.Options)) (*iam.AttachRolePolicyOutput, error) {
-	f.w.write("iam:AttachRolePolicy")
+	f.w.write(f.a.prefix + "iam:AttachRolePolicy")
 	return &iam.AttachRolePolicyOutput{}, nil
+}
+
+func (f rwIAM) PutRolePolicy(_ context.Context, in *iam.PutRolePolicyInput, _ ...func(*iam.Options)) (*iam.PutRolePolicyOutput, error) {
+	f.w.write(f.a.prefix + "iam:PutRolePolicy " + aws.ToString(in.RoleName))
+	return &iam.PutRolePolicyOutput{}, nil
+}
+
+func (f rwIAM) DeleteRolePolicy(_ context.Context, in *iam.DeleteRolePolicyInput, _ ...func(*iam.Options)) (*iam.DeleteRolePolicyOutput, error) {
+	f.w.write(f.a.prefix + "iam:DeleteRolePolicy " + aws.ToString(in.RoleName))
+	return &iam.DeleteRolePolicyOutput{}, nil
+}
+
+func (f rwIAM) DeleteRole(_ context.Context, in *iam.DeleteRoleInput, _ ...func(*iam.Options)) (*iam.DeleteRoleOutput, error) {
+	f.w.write(f.a.prefix + "iam:DeleteRole " + aws.ToString(in.RoleName))
+	f.a.role = false
+	return &iam.DeleteRoleOutput{}, nil
 }
 
 type rwS3 struct {
 	S3
 	w *rwWorld
+	a *rwAcct
 }
 
 func (f rwS3) HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
-	if f.w.bucket {
+	if f.a.bucket {
 		return &s3.HeadBucketOutput{}, nil
 	}
 	return nil, chkAPI("NotFound")
 }
 
 func (f rwS3) CreateBucket(context.Context, *s3.CreateBucketInput, ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
-	f.w.write("s3:CreateBucket")
-	f.w.bucket = true
+	f.w.write(f.a.prefix + "s3:CreateBucket")
+	f.a.bucket = true
 	return &s3.CreateBucketOutput{}, nil
 }
 
 func (f rwS3) PutBucketVersioning(context.Context, *s3.PutBucketVersioningInput, ...func(*s3.Options)) (*s3.PutBucketVersioningOutput, error) {
-	f.w.write("s3:PutBucketVersioning")
+	f.w.write(f.a.prefix + "s3:PutBucketVersioning")
 	return &s3.PutBucketVersioningOutput{}, nil
 }
 
 func (f rwS3) PutBucketEncryption(context.Context, *s3.PutBucketEncryptionInput, ...func(*s3.Options)) (*s3.PutBucketEncryptionOutput, error) {
-	f.w.write("s3:PutBucketEncryption")
+	f.w.write(f.a.prefix + "s3:PutBucketEncryption")
 	return &s3.PutBucketEncryptionOutput{}, nil
 }
 
 func (f rwS3) PutPublicAccessBlock(context.Context, *s3.PutPublicAccessBlockInput, ...func(*s3.Options)) (*s3.PutPublicAccessBlockOutput, error) {
-	f.w.write("s3:PutPublicAccessBlock")
+	f.w.write(f.a.prefix + "s3:PutPublicAccessBlock")
 	return &s3.PutPublicAccessBlockOutput{}, nil
 }
 
 func (f rwS3) PutBucketPolicy(context.Context, *s3.PutBucketPolicyInput, ...func(*s3.Options)) (*s3.PutBucketPolicyOutput, error) {
-	f.w.write("s3:PutBucketPolicy")
+	f.w.write(f.a.prefix + "s3:PutBucketPolicy")
 	return &s3.PutBucketPolicyOutput{}, nil
 }
 
 func (f rwS3) PutBucketLifecycleConfiguration(context.Context, *s3.PutBucketLifecycleConfigurationInput, ...func(*s3.Options)) (*s3.PutBucketLifecycleConfigurationOutput, error) {
-	f.w.write("s3:PutBucketLifecycleConfiguration")
+	f.w.write(f.a.prefix + "s3:PutBucketLifecycleConfiguration")
 	return &s3.PutBucketLifecycleConfigurationOutput{}, nil
 }
 
 func (f rwS3) PutBucketTagging(context.Context, *s3.PutBucketTaggingInput, ...func(*s3.Options)) (*s3.PutBucketTaggingOutput, error) {
-	f.w.write("s3:PutBucketTagging")
+	f.w.write(f.a.prefix + "s3:PutBucketTagging")
 	return &s3.PutBucketTaggingOutput{}, nil
 }
 
 func (f rwS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-	if !f.w.bucket {
+	if !f.a.bucket {
 		return nil, chkAPI("NoSuchBucket")
 	}
-	body, ok := f.w.objects[aws.ToString(in.Key)]
+	body, ok := f.a.objects[aws.ToString(in.Key)]
 	if !ok {
 		return nil, chkAPI("NoSuchKey")
 	}
@@ -412,17 +542,17 @@ func (f rwS3) PutObject(ctx context.Context, in *s3.PutObjectInput, _ ...func(*s
 	if err != nil {
 		return nil, err
 	}
-	f.w.write("s3:PutObject " + aws.ToString(in.Key))
-	f.w.objects[aws.ToString(in.Key)] = string(b)
+	f.w.write(f.a.prefix + "s3:PutObject " + aws.ToString(in.Key))
+	f.a.objects[aws.ToString(in.Key)] = string(b)
 	return &s3.PutObjectOutput{}, nil
 }
 
 func (f rwS3) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
-	if !f.w.bucket {
+	if !f.a.bucket {
 		return nil, chkAPI("NoSuchBucket")
 	}
 	out := &s3.ListObjectsV2Output{}
-	for _, k := range slices.Sorted(maps.Keys(f.w.objects)) {
+	for _, k := range slices.Sorted(maps.Keys(f.a.objects)) {
 		out.Contents = append(out.Contents, s3types.Object{Key: aws.String(k)})
 	}
 	return out, nil
@@ -431,6 +561,7 @@ func (f rwS3) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3
 type rwCB struct {
 	CodeBuild
 	w *rwWorld
+	a *rwAcct
 }
 
 func (f rwCB) ListCuratedEnvironmentImages(context.Context, *codebuild.ListCuratedEnvironmentImagesInput, ...func(*codebuild.Options)) (*codebuild.ListCuratedEnvironmentImagesOutput, error) {
@@ -438,74 +569,103 @@ func (f rwCB) ListCuratedEnvironmentImages(context.Context, *codebuild.ListCurat
 }
 
 func (f rwCB) BatchGetProjects(context.Context, *codebuild.BatchGetProjectsInput, ...func(*codebuild.Options)) (*codebuild.BatchGetProjectsOutput, error) {
-	if f.w.project {
-		return &codebuild.BatchGetProjectsOutput{Projects: []cbtypes.Project{{Name: aws.String("dmt-prod-install")}}}, nil
+	if f.a.project {
+		return &codebuild.BatchGetProjectsOutput{Projects: []cbtypes.Project{{Name: aws.String(f.a.name)}}}, nil
 	}
 	return &codebuild.BatchGetProjectsOutput{}, nil
 }
 
 func (f rwCB) CreateProject(context.Context, *codebuild.CreateProjectInput, ...func(*codebuild.Options)) (*codebuild.CreateProjectOutput, error) {
-	f.w.write("codebuild:CreateProject")
-	f.w.project = true
+	f.w.write(f.a.prefix + "codebuild:CreateProject")
+	f.a.project = true
 	return &codebuild.CreateProjectOutput{}, nil
 }
 
 func (f rwCB) UpdateProject(context.Context, *codebuild.UpdateProjectInput, ...func(*codebuild.Options)) (*codebuild.UpdateProjectOutput, error) {
-	f.w.write("codebuild:UpdateProject")
+	f.w.write(f.a.prefix + "codebuild:UpdateProject")
 	return &codebuild.UpdateProjectOutput{}, nil
+}
+
+func (f rwCB) DeleteProject(context.Context, *codebuild.DeleteProjectInput, ...func(*codebuild.Options)) (*codebuild.DeleteProjectOutput, error) {
+	f.w.write(f.a.prefix + "codebuild:DeleteProject")
+	f.a.project = false
+	return &codebuild.DeleteProjectOutput{}, nil
 }
 
 func (f rwCB) ListBuildsForProject(context.Context, *codebuild.ListBuildsForProjectInput, ...func(*codebuild.Options)) (*codebuild.ListBuildsForProjectOutput, error) {
 	var ids []string
-	for i := len(f.w.builds) - 1; i >= 0; i-- {
-		ids = append(ids, f.w.builds[i].id)
+	for i := len(f.a.builds) - 1; i >= 0; i-- {
+		ids = append(ids, f.a.builds[i].id)
 	}
 	return &codebuild.ListBuildsForProjectOutput{Ids: ids}, nil
 }
 
 func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInput, _ ...func(*codebuild.Options)) (*codebuild.BatchGetBuildsOutput, error) {
 	if len(in.Ids) == 1 {
-		if b := f.w.build(in.Ids[0]); b != nil && b.vars != nil && f.w.followErr[b.vars["ACTION"]] != nil {
-			return nil, f.w.followErr[b.vars["ACTION"]]
+		if b := f.a.build(in.Ids[0]); b != nil && b.vars != nil && f.a.followErr[b.vars["ACTION"]] != nil {
+			return nil, f.a.followErr[b.vars["ACTION"]]
 		}
 	}
 	out := &codebuild.BatchGetBuildsOutput{}
 	for _, id := range in.Ids {
-		b := f.w.build(id)
+		b := f.a.build(id)
 		if b == nil {
 			out.BuildsNotFound = append(out.BuildsNotFound, id)
 			continue
 		}
-		out.Builds = append(out.Builds, cbtypes.Build{Id: aws.String(b.id), BuildStatus: b.status, StartTime: aws.Time(b.start), CurrentPhase: aws.String("BUILD"),
-			Logs: &cbtypes.LogsLocation{GroupName: aws.String("/aws/codebuild/dmt-prod-install"), StreamName: aws.String(b.id)}})
+		vars := b.vars
+		if vars == nil {
+			vars = b.env
+		}
+		env := &cbtypes.ProjectEnvironment{}
+		for _, k := range slices.Sorted(maps.Keys(vars)) {
+			env.EnvironmentVariables = append(env.EnvironmentVariables, cbtypes.EnvironmentVariable{Name: aws.String(k), Value: aws.String(vars[k])})
+		}
+		out.Builds = append(out.Builds, cbtypes.Build{Id: aws.String(b.id), BuildStatus: b.state(f.w.clock), StartTime: aws.Time(b.start), CurrentPhase: aws.String("BUILD"),
+			Environment: env, Logs: &cbtypes.LogsLocation{GroupName: aws.String("/aws/codebuild/" + f.a.name), StreamName: aws.String(b.id)}})
 	}
 	return out, nil
 }
 
-// StartBuild runs the build at once: it ends as ends says (SUCCEEDED by default); a plan that succeeds writes its
-// plan.json, an apply its applied.json and outputs.json.
+// StartBuild runs the build: it ends as ends says (SUCCEEDED by default), at once unless runFor. A manager's plan that
+// succeeds writes its plan.json, an apply its applied.json and outputs.json; the organization's build says each account's
+// roles and writes roles.json, the accounts in failing failed.
 func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
 	vars := map[string]string{}
 	for _, v := range in.EnvironmentVariablesOverride {
 		vars[aws.ToString(v.Name)] = aws.ToString(v.Value)
 	}
 	action := vars["ACTION"]
-	f.w.write("codebuild:StartBuild " + action)
-	b := &rwBuild{id: fmt.Sprintf("dmt-prod-install:b%d", len(f.w.started())+1), vars: vars, status: cbtypes.StatusTypeSucceeded, start: f.w.clock,
-		log: []string{"dormeto: terraform " + action, "dormeto: done"}}
-	if end, ok := f.w.ends[action]; ok {
+	f.w.write(f.a.prefix + "codebuild:StartBuild " + action)
+	b := &rwBuild{id: fmt.Sprintf("%s:b%d", f.a.name, len(f.a.started())+1), vars: vars, status: cbtypes.StatusTypeSucceeded, start: f.w.clock,
+		until: f.w.clock.Add(f.a.runFor), log: []string{"dormeto: terraform " + action, "dormeto: done"}}
+	if end, ok := f.a.ends[action]; ok {
 		b.status = end
 	}
 	switch {
 	case b.status == cbtypes.StatusTypeFailed:
 		b.log = []string{"dormeto: terraform " + action, "Error: creating the user pool: AccessDenied"}
+	case strings.HasSuffix(f.a.name, "-organization"):
+		var roles strings.Builder
+		b.log = []string{"dormeto: putting the delegation policy"}
+		for _, account := range strings.Fields(vars["ACCOUNTS"]) {
+			if e, failed := f.w.failing[account]; failed {
+				roles.WriteString(`{"account":"` + account + `","ok":false,"error":"` + e + `"}` + "\n")
+				b.log = append(b.log, "dormeto: roles of "+account+": failed")
+			} else {
+				roles.WriteString(`{"account":"` + account + `","ok":true}` + "\n")
+				b.log = append(b.log, "dormeto: roles of "+account+": ok")
+			}
+		}
+		b.log = append(b.log, "dormeto: done")
+		f.a.objects["prod/organization/roles.json"] = roles.String()
 	case b.status == cbtypes.StatusTypeSucceeded && action == "plan":
-		f.w.objects["prod/plans/"+b.id+"/plan.json"] = f.w.plan
+		f.a.objects["prod/plans/"+b.id+"/plan.json"] = f.w.plan
 	case b.status == cbtypes.StatusTypeSucceeded && action == "apply":
-		f.w.objects["prod/applied.json"] = `{"version":"` + vars["RELEASE_VERSION"] + `","build":"` + b.id + `"}`
-		f.w.objects["prod/outputs.json"] = rwOutputs
+		f.a.objects["prod/applied.json"] = `{"version":"` + vars["RELEASE_VERSION"] + `","build":"` + b.id + `"}`
+		f.a.objects["prod/outputs.json"] = rwOutputs
 	}
-	f.w.builds = append(f.w.builds, b)
+	f.a.builds = append(f.a.builds, b)
 	if f.w.cancelOnStart {
 		f.w.cancel()
 	}
@@ -515,30 +675,37 @@ func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...
 type rwLogs struct {
 	Logs
 	w *rwWorld
+	a *rwAcct
 }
 
 func (f rwLogs) DescribeLogGroups(context.Context, *cloudwatchlogs.DescribeLogGroupsInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogGroupsOutput, error) {
-	if f.w.logGroup {
-		return &cloudwatchlogs.DescribeLogGroupsOutput{LogGroups: []cwtypes.LogGroup{{LogGroupName: aws.String("/aws/codebuild/dmt-prod-install")}}}, nil
+	if f.a.logGroup {
+		return &cloudwatchlogs.DescribeLogGroupsOutput{LogGroups: []cwtypes.LogGroup{{LogGroupName: aws.String("/aws/codebuild/" + f.a.name)}}}, nil
 	}
 	return &cloudwatchlogs.DescribeLogGroupsOutput{}, nil
 }
 
 func (f rwLogs) CreateLogGroup(context.Context, *cloudwatchlogs.CreateLogGroupInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.CreateLogGroupOutput, error) {
-	f.w.write("logs:CreateLogGroup")
-	f.w.logGroup = true
+	f.w.write(f.a.prefix + "logs:CreateLogGroup")
+	f.a.logGroup = true
 	return &cloudwatchlogs.CreateLogGroupOutput{}, nil
 }
 
 func (f rwLogs) PutRetentionPolicy(context.Context, *cloudwatchlogs.PutRetentionPolicyInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.PutRetentionPolicyOutput, error) {
-	f.w.write("logs:PutRetentionPolicy")
+	f.w.write(f.a.prefix + "logs:PutRetentionPolicy")
 	return &cloudwatchlogs.PutRetentionPolicyOutput{}, nil
+}
+
+func (f rwLogs) DeleteLogGroup(context.Context, *cloudwatchlogs.DeleteLogGroupInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.DeleteLogGroupOutput, error) {
+	f.w.write(f.a.prefix + "logs:DeleteLogGroup")
+	f.a.logGroup = false
+	return &cloudwatchlogs.DeleteLogGroupOutput{}, nil
 }
 
 // GetLogEvents is the build's whole log in one page, then nothing more.
 func (f rwLogs) GetLogEvents(_ context.Context, in *cloudwatchlogs.GetLogEventsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetLogEventsOutput, error) {
 	out := &cloudwatchlogs.GetLogEventsOutput{NextForwardToken: aws.String("end")}
-	if b := f.w.build(aws.ToString(in.LogStreamName)); b != nil && in.NextToken == nil {
+	if b := f.a.build(aws.ToString(in.LogStreamName)); b != nil && in.NextToken == nil {
 		for _, l := range b.log {
 			out.Events = append(out.Events, cwtypes.OutputLogEvent{Message: aws.String(l), Timestamp: aws.Int64(b.start.UnixMilli())})
 		}

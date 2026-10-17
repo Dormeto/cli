@@ -256,8 +256,12 @@ func surveyPolicy(ctx context.Context, mgmt Clients, a Access, cs []Check, templ
 	if err != nil {
 		return a, append(cs, failure(name, err)), nil
 	}
-	detail := map[string]string{"new": "new", "updated": delegationSid + " gets this manager", "actions": delegationSid + " gets the release's actions", "unchanged": "already names this manager"}[a.PolicyChange]
-	return a, append(cs, Check{name, detail, OK}), nil
+	return a, append(cs, Check{name, policyDetail(a.PolicyChange), OK}), nil
+}
+
+// policyDetail says what the merge does to the delegation policy (MergePolicy's change).
+func policyDetail(change string) string {
+	return map[string]string{"new": "new", "updated": delegationSid + " gets this manager", "actions": delegationSid + " gets the release's actions", "unchanged": "already names this manager"}[change]
 }
 
 // policyDoc is a policy document whose statements stay as they were written.
