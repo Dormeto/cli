@@ -153,6 +153,19 @@ func trustPolicy(p Project) string {
 // ensureBuildRole creates the build role (administrator access: Terraform creates the manager's resources with it) or
 // brings an existing one to the expected trust, and returns its ARN.
 func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) {
+	arn, err := ensureRole(ctx, c, p, "Dormeto install: what CodeBuild runs Terraform with")
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.IAM.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil {
+		return "", fmt.Errorf("attach AdministratorAccess to role %s: %w", p.Role, err)
+	}
+	return arn, nil
+}
+
+// ensureRole creates the project's role under /dormeto/ with the CodeBuild trust, or brings an existing one to that trust,
+// and returns the ARN the API gives. Its permissions are the caller's.
+func ensureRole(ctx context.Context, c Clients, p Project, description string) (string, error) {
 	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &p.Role})
 	var arn string
 	switch {
@@ -170,7 +183,7 @@ func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) 
 			tags = append(tags, iamtypes.Tag{Key: aws.String(k), Value: aws.String(p.Tags()[k])})
 		}
 		created, err := c.IAM.CreateRole(ctx, &iam.CreateRoleInput{RoleName: &p.Role, Path: aws.String(rolePath), AssumeRolePolicyDocument: aws.String(trustPolicy(p)),
-			MaxSessionDuration: aws.Int32(3600), Tags: tags, Description: aws.String("Dormeto install: what CodeBuild runs Terraform with")})
+			MaxSessionDuration: aws.Int32(3600), Tags: tags, Description: aws.String(description)})
 		if err != nil {
 			return "", fmt.Errorf("create role %s: %w", p.Role, err)
 		}
@@ -179,9 +192,6 @@ func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) 
 		}
 	default:
 		return "", fmt.Errorf("check role %s: %w", p.Role, err)
-	}
-	if _, err := c.IAM.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil {
-		return "", fmt.Errorf("attach AdministratorAccess to role %s: %w", p.Role, err)
 	}
 	return arn, nil
 }

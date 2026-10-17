@@ -153,6 +153,14 @@ func (f bootIAM) DetachRolePolicy(_ context.Context, in *iam.DetachRolePolicyInp
 	f.w.rec("iam.DetachRolePolicy", in)
 	return &iam.DetachRolePolicyOutput{}, nil
 }
+func (f bootIAM) PutRolePolicy(_ context.Context, in *iam.PutRolePolicyInput, _ ...func(*iam.Options)) (*iam.PutRolePolicyOutput, error) {
+	f.w.rec("iam.PutRolePolicy", in)
+	return &iam.PutRolePolicyOutput{}, nil
+}
+func (f bootIAM) DeleteRolePolicy(_ context.Context, in *iam.DeleteRolePolicyInput, _ ...func(*iam.Options)) (*iam.DeleteRolePolicyOutput, error) {
+	f.w.rec("iam.DeleteRolePolicy", in)
+	return &iam.DeleteRolePolicyOutput{}, nil
+}
 func (f bootIAM) DeleteRole(_ context.Context, in *iam.DeleteRoleInput, _ ...func(*iam.Options)) (*iam.DeleteRoleOutput, error) {
 	f.w.rec("iam.DeleteRole", in)
 	return &iam.DeleteRoleOutput{}, nil
