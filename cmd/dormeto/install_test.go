@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,5 +181,17 @@ func TestInstallRealDependenciesWithoutATerminal(t *testing.T) {
 	}
 	if _, err := d.Prompter.Ask("Region", "eu-west-1"); err != install.ErrNoTerminal {
 		t.Errorf("Ask without a terminal: %v", err)
+	}
+}
+
+// stdin from /dev/null (a Kubernetes Job, systemd, docker run without -i) is a character device, not a terminal to ask.
+func TestDevNullIsNotATerminal(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if isTerminal(f) {
+		t.Error("/dev/null is taken for a terminal")
 	}
 }

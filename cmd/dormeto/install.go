@@ -164,7 +164,7 @@ func (f *installFlags) request(c *cobra.Command) (install.Request, error) {
 // timeout, the prompts when stdin is a terminal, the status line when stdout is one (not with --verbose).
 func installDeps(c *cobra.Command, verbose bool) install.Deps {
 	in, out := c.InOrStdin(), c.OutOrStdout()
-	terminal := isCharDevice(in)
+	terminal := isTerminal(in)
 	status := cli.StatusOf(out)
 	if verbose {
 		status = nil
@@ -191,12 +191,17 @@ func installDeps(c *cobra.Command, verbose bool) install.Deps {
 	}
 }
 
-// isCharDevice tells whether r is a terminal to ask: a file that is a character device.
-func isCharDevice(r io.Reader) bool {
+// isTerminal tells whether r is a terminal to ask: a file that is a character device, but not the null device (stdin
+// of a Kubernetes Job, of systemd, of docker run without -i).
+func isTerminal(r io.Reader) bool {
 	f, ok := r.(*os.File)
 	if !ok {
 		return false
 	}
 	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(fi, null)
 }
