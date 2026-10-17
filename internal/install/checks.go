@@ -331,7 +331,7 @@ func checkRoles(ctx context.Context, c Clients, s Settings, w Where, f Found) Ch
 	case f.Saved != nil:
 		return Check{name, "this install's", OK}
 	case len(roles) > 0 && staleOnly(trusted):
-		return Check{name, strings.Join(found, ", ") + " exist, trusting " + strings.Join(trusted, ", ") + ": a manager's deleted role (the install rewrites the trust)", OK}
+		return Check{name, strings.Join(found, ", ") + " exist, trusting a deleted role: left by an earlier manager; delete them before installing", Fail}
 	}
 	d := strings.Join(found, ", ") + " exist"
 	if len(trusted) > 0 {

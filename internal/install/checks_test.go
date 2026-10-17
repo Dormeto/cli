@@ -464,9 +464,9 @@ func TestChecksDormetoRolesStaleUniqueID(t *testing.T) {
 		}
 		return nil, chkNoEntity()
 	}
-	if c := chkRow(t, x.run(), "Dormeto roles"); c.Verdict == Fail {
-		t.Errorf("roles = %d %q", c.Verdict, c.Detail)
-	}
+	chkWant(t, x, "Dormeto roles", Fail, "DmtDiscoveryRole exist, trusting a deleted role: left by an earlier manager; delete them before installing")
+	x.f.Saved = &Settings{Installed: "0.10.0"}
+	chkWant(t, x, "Dormeto roles", OK, "this install's")
 }
 
 func TestChecksDormetoRolesNamesAndBoundary(t *testing.T) {
