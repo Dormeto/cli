@@ -327,9 +327,13 @@ func TestSurveyNoneReachable(t *testing.T) {
 	if len(a.Accounts()) != 0 || len(a.Ready)+len(a.Foreign) != 0 {
 		t.Errorf("a = %+v", a)
 	}
-	c := orgRow(t, cs, "member role")
-	if c.Verdict != Fail || !strings.HasPrefix(c.Detail, "OrganizationAccountAccessRole: assumed in 0 of 5 accounts") {
-		t.Errorf("member role = %+v", c)
+	// No account reachable: a warning (spec §5: organization access without the roles), the delegation policy still
+	// planned.
+	orgWant(t, cs, "member role", Warn, "OrganizationAccountAccessRole: assumed in 0 of 5 accounts: no roles, the delegation policy only; "+
+		"unreachable: 444444444444, 555555555555, 666666666666, 777777777777, 888888888888 (the procedure for them: https://dormeto.com/organization-access.html)")
+	orgWant(t, cs, "delegation policy", OK, "new")
+	if a.PolicyChange != "new" || len(a.Policy) == 0 {
+		t.Errorf("a = %+v", a)
 	}
 }
 

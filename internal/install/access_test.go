@@ -122,6 +122,39 @@ func TestInstallOrganizationAccessAFailedAccount(t *testing.T) {
 	}
 }
 
+// No member account reachable: a warning, the manager installed all the same, then organization access deploys the
+// delegation policy alone (planned and confirmed), the roles left to their procedure.
+func TestInstallNoAccountReachableDeploysTheDelegationPolicyOnly(t *testing.T) {
+	w := rwNew(t)
+	w.rwOrganization()
+	for id, a := range w.members {
+		a.unreach, a.discovery, a.boundary = "AccessDenied: not authorized to perform sts:AssumeRole", nil, false
+		w.members[id] = a
+	}
+	code, out, asked := w.run(Install, rwMgmtFlags(), true, "y", "y", "y")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "questions", asked, []string{rwWarned, "Apply this plan? [y/N]", "Deploy organization access? [y/N]"})
+	rwInOrder(t, out,
+		"  ! member role: OrganizationAccountAccessRole: assumed in 0 of 4 accounts: no roles, the delegation policy only; unreachable: "+
+			"444444444444, 555555555555, 666666666666, 777777777777 (the procedure for them: https://dormeto.com/organization-access.html)\n",
+		"  ✓ delegation policy: new\n",
+		"  ✓ applied: 3 added, 0 changed, 0 destroyed\n",
+		"\nPlan (organization access)\n",
+		"  delegation policy: new\n",
+		"  roles: none, the member role reaches no account (the procedure for them: https://dormeto.com/organization-access.html)\n",
+		"  left out: 4 unreachable (444444444444, 555555555555, 666666666666, 777777777777), 0 another manager's\n",
+		"  ✓ organization access: delegation policy created; roles in 0 accounts\n",
+	)
+	if b := w.mgmt.started(); len(b) != 1 || b[0].vars["ACCOUNTS"] != "" {
+		t.Errorf("organization builds: %v", w.mgmt.actions())
+	}
+	if p := w.mgmt.objects["prod/organization/policy.json"]; !strings.Contains(p, rwMine) {
+		t.Errorf("policy.json %s", p)
+	}
+}
+
 func TestInstallOrganizationAccessNotConfirmed(t *testing.T) {
 	w := rwNew(t)
 	w.rwOrganization()

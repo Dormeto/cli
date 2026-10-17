@@ -259,7 +259,11 @@ func (x *run) accessSteps(s Settings, rel Release, confirmed bool) error {
 func (x *run) showAccessPlan(a Access) {
 	x.say("\nPlan (organization access)")
 	x.say("  delegation policy: %s", policyDetail(a.PolicyChange))
-	x.say("  roles: %d updated, %d created in %s (%d discovery only)", len(a.Ready), len(a.Missing), accounts(len(a.Accounts())), len(a.DiscoveryOnly))
+	if len(a.Unreachable) > 0 && len(a.Ready)+len(a.Missing)+len(a.Foreign) == 0 {
+		x.say("  roles: none, the member role reaches no account (the procedure for them: %s)", organizationProcedure)
+	} else {
+		x.say("  roles: %d updated, %d created in %s (%d discovery only)", len(a.Ready), len(a.Missing), accounts(len(a.Accounts())), len(a.DiscoveryOnly))
+	}
 	if len(a.Unreachable)+len(a.Foreign) > 0 {
 		x.say("  left out: %s, %s", counted(a.Unreachable, "unreachable"), counted(a.Foreign, "another manager's"))
 	}

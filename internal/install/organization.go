@@ -111,9 +111,6 @@ func Survey(ctx context.Context, mgmt Clients, assume func(account string) (Clie
 	}
 
 	cs = append(cs, memberRoleCheck(s, len(ids), a))
-	if len(a.Unreachable) == len(ids) && len(ids) > 0 {
-		return a, cs, nil
-	}
 	cs = append(cs, Check{"member accounts", memberAccountsDetail(a), memberAccountsVerdict(a)})
 	return surveyPolicy(ctx, mgmt, a, cs, template, manager.Account, s.Env)
 }
@@ -133,6 +130,8 @@ func memberAccountsDetail(a Access) string {
 	return d
 }
 
+// memberRoleCheck is the member role's row: a warning when an account is unreachable, left out with its procedure; none
+// reachable leaves organization access the delegation policy only (spec §5, §9), the manager installed all the same.
 func memberRoleCheck(s Settings, total int, a Access) Check {
 	const name = "member role"
 	if total == 0 {
@@ -143,7 +142,7 @@ func memberRoleCheck(s Settings, total int, a Access) Check {
 	case len(a.Unreachable) == 0:
 		return Check{name, d, OK}
 	case len(a.Unreachable) == total:
-		return Check{name, d + unreachableDetail(a), Fail}
+		d += ": no roles, the delegation policy only"
 	}
 	return Check{name, d + unreachableDetail(a), Warn}
 }
