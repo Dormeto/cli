@@ -1,6 +1,6 @@
 # Shared cases
 
-Manager 0.10.0, router 0.29.0, manager commit `580867f1891c87a400abc51d2938c4d6deb1c0da`.
+Manager 0.11.0, router 0.29.0, manager commit `2bd9134394f306cd4bbf3b8eba736885e837279f`.
 
 Written by the manager's `scripts/parity/export.mjs`: the product's Node functions run over the corpus of
 `scripts/parity/cases/`, each case's input and output as JSON. Do not edit these files: export them again in the
@@ -9,9 +9,10 @@ manager (`npm ci`, then `node scripts/parity/export.mjs --out ../cli/testdata/pa
 ## Files
 
 - `<topic>.json`: `{"manager", "router", "commit", "cases": [{"name", "input", "output"}]}`, one per topic below
-  (`internal/parity` `Load`).
+  (`internal/parity` `Load`); `estimate.json` is frozen, see below.
 - `versions.json`: `{"manager", "router", "commit"}` (`dormeto version`).
-- `cache/`: the cache directory the Node estimate wrote for the first `estimate` case (its `cacheRoot`, same layout:
+- `cache/`: frozen, no longer exported (manager 0.10.0, commit 580867f; see `estimate` below): the cache directory the
+  Node estimate wrote for the first `estimate` case (its `cacheRoot`, same layout:
   `<organization>/regions/<account>.json`, `discovery/<account>-<region>.json`, `requests/…`, `uptime/…`,
   `prices.json`; each file but `prices.json` is `{"writtenAt": <ms>, "value": …}`).
 
@@ -342,6 +343,8 @@ Cases (29):
 - strategyCounts: a desired count of 0
 
 ## `estimate`
+
+Frozen: this section, `estimate.json` and `cache/` were written by the manager's last export with the Node estimate (manager 0.10.0, commit 580867f), are kept in Dormeto/cli as they are and are no longer exported (the Node estimate is replaced by the Dormeto CLI). The Go tests still read them: their format stays documented here.
 
 The Node estimate end to end (`packages/estimate/src/cli.ts` `main`; Go `cli.Main` and the packages under it),
 on a recorded world: organization `o-a1b2c3d4e5` (management account `111111111111`, the profile's; member `222222222222` reached
