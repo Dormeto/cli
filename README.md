@@ -375,6 +375,9 @@ Without a terminal, `dormeto uninstall` stops after each plan: `dormeto install 
 `--profile`, `--region`, `--env`, `--verbose` and `--yes`, which here answers that event-driven refresh is off and
 keeps the bootstrap; it never confirms a plan.
 
+The plans of `uninstall` run with the version installed, not with a later plan's (an upgrade not applied). When that
+version came from a local release, `--release <dir>` gives that release's directory again.
+
 ### Permissions to install
 
 The install's profile needs administrator rights in the manager's account: the checks simulate the actions of the

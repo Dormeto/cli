@@ -227,15 +227,15 @@ func TestDevNullIsNotATerminal(t *testing.T) {
 }
 
 func TestUninstallFlagsMakeTheRequest(t *testing.T) {
-	calls, _, errs, exit := installed(t, 0, "uninstall", "--profile", "p", "--region", "eu-west-1", "--env", "dev", "--yes", "--verbose")
+	calls, _, errs, exit := installed(t, 0, "uninstall", "--profile", "p", "--region", "eu-west-1", "--env", "dev", "--yes", "--verbose", "--release", "rel")
 	if exit != 0 || errs != "" {
 		t.Fatalf("exit %d, errors %q", exit, errs)
 	}
 	c := only(t, calls)
 	want := install.Request{
-		Profile: "p", Region: "eu-west-1", Yes: true, Verbose: true,
+		Profile: "p", Region: "eu-west-1", Release: "rel", Yes: true, Verbose: true,
 		Flags: install.Settings{Env: "dev", Region: "eu-west-1"},
-		Set:   map[string]bool{"profile": true, "region": true, "env": true, "yes": true, "verbose": true},
+		Set:   map[string]bool{"profile": true, "region": true, "env": true, "yes": true, "verbose": true, "release": true},
 	}
 	if c.command != "uninstall" || !reflect.DeepEqual(c.r, want) {
 		t.Errorf("%s: request\n%+v\nwant\n%+v", c.command, c.r, want)
@@ -275,7 +275,7 @@ func TestUninstallHelpListsTheFlags(t *testing.T) {
 	if exit != 0 || !strings.Contains(out, "Remove the Dormeto manager that dormeto install installed") {
 		t.Fatalf("exit %d:\n%s", exit, out)
 	}
-	for _, f := range []string{"--profile", "--region", "--env", "--yes", "--verbose", "apply", "dormeto uninstall apply", "dormeto install apply",
+	for _, f := range []string{"--profile", "--region", "--env", "--release", "--yes", "--verbose", "apply", "dormeto uninstall apply", "dormeto install apply",
 		"https://dormeto.com/organization-access.html"} {
 		if !strings.Contains(out, f) {
 			t.Errorf("the usage lacks %s:\n%s", f, out)

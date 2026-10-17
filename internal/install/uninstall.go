@@ -119,11 +119,14 @@ func (x *run) installed() (*Settings, *Applied, bool, error) {
 	return saved, applied, resources, err
 }
 
-// removeManager destroys the manager applied (s its settings, applied its applied.json, nil when none): refused while
-// routers are installed or event-driven refresh is not off; the deletion protection lifted first; then the destroy
-// plan, shown, confirmed in a terminal and applied. Without a terminal it stops after a plan, with the command that
+// removeManager destroys the manager applied (s its settings, applied its applied.json, nil when none) with the release
+// installed: refused while routers are installed or event-driven refresh is not off; the deletion protection lifted
+// first; then the destroy plan, shown, confirmed in a terminal and applied. Without a terminal it stops after a plan, with the command that
 // applies it.
 func (x *run) removeManager(s Settings, applied *Applied) error {
+	if err := x.installedRelease(&s, applied); err != nil {
+		return err
+	}
 	if err := x.noRouters(true); err != nil {
 		return err
 	}
@@ -160,6 +163,40 @@ func (x *run) removeManager(s Settings, applied *Applied) error {
 		return err
 	}
 	return x.applyDestroy(s, sum)
+}
+
+// installedRelease makes s's version and release those of the manager installed, which the protection and destroy plans
+// run with: install.json's are the last plan's (a declined upgrade's). applied.json's version, with install.json's
+// release when it is the same version, else that version's on releases.dormeto.com, or the local release given
+// (--release) of that version, uploaded to the install's bucket; without applied.json (a first apply that failed),
+// install.json's.
+func (x *run) installedRelease(s *Settings, applied *Applied) error {
+	if applied == nil || applied.Version == "" || applied.Version == s.Version {
+		return nil
+	}
+	installed := applied.Version
+	if x.r.Release == "" {
+		rel, err := Resolve(x.ctx, x.d.HTTP, installed, "")
+		if err != nil {
+			return &stop{1, fmt.Sprintf("manager %s is installed, install.json names %s (a later plan's): %s; give its local release: dormeto uninstall %s --release <the directory of release %s>",
+				installed, s.Version, err, x.args(), installed)}
+		}
+		s.Version, s.ReleaseBase = rel.Version, rel.Base
+		return nil
+	}
+	rel, err := Resolve(x.ctx, x.d.HTTP, "", x.r.Release)
+	if err != nil {
+		return err
+	}
+	if rel.Version != installed {
+		return &stop{1, fmt.Sprintf("manager %s is installed: --release %s is release %s", installed, x.r.Release, rel.Version)}
+	}
+	base, err := UploadRelease(x.ctx, x.c, x.p, rel)
+	if err != nil {
+		return err
+	}
+	s.Version, s.ReleaseBase = rel.Version, base
+	return nil
 }
 
 // noRouters refuses while routers are installed, or while the manager's own region could not be checked (ruling

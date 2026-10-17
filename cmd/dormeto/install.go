@@ -128,7 +128,8 @@ func newInstall(runs installRuns) *cobra.Command {
 	return cmd
 }
 
-// newUninstall is `dormeto uninstall` and its subcommand apply, with the flags that name the install.
+// newUninstall is `dormeto uninstall` and its subcommand apply, with the flags that name the install and --release (the
+// manager installed from a local release).
 func newUninstall(runs installRuns) *cobra.Command {
 	f := &installFlags{}
 	cmd := f.command("uninstall", "Remove the Dormeto manager that dormeto install installed",
@@ -145,6 +146,7 @@ func newUninstall(runs installRuns) *cobra.Command {
 			"applied and followed; the install's bucket, role, log group and project are kept (dormeto uninstall removes them).\n"+
 			"Running this command is the confirmation.", runs.uninstallApply))
 	f.profileFlags(cmd, "answer that event-driven refresh is off and keep the bootstrap, without asking; never confirms a plan")
+	cmd.PersistentFlags().StringVar(&f.release, "release", "", "the local release directory of the manager installed, when it is not on releases.dormeto.com")
 	return cmd
 }
 

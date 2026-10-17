@@ -223,6 +223,67 @@ func TestUninstallLiftsTheProtectionThenDestroys(t *testing.T) {
 	}
 }
 
+// install.json's version and release are the last plan's: after a declined upgrade, the newer one. The protection and
+// destroy plans run with what is installed (applied.json's version, its release on releases.dormeto.com).
+func TestUninstallPlansWithTheInstalledVersion(t *testing.T) {
+	w := unNew(t)
+	w.release("0.12.0", true)
+	s := w.saved()
+	s.Version, s.ReleaseBase = "0.12.0", ReleasesURL+"/0.12.0" // a plan of 0.12.0, not applied
+	w.save(s)
+	code, out, _ := w.run(Uninstall, unRequest, true, "y", "y", "y", "n")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwInOrder(t, out, "Plan (build dmt-prod-install:b1)\n  manager 0.11.0: 0 to add, 2 to change, 0 to destroy\n",
+		"Plan (build dmt-prod-install:b3)\n  manager 0.11.0: 0 to add, 0 to change, 3 to destroy\n")
+	base := ReleasesURL + "/0.11.0"
+	for _, b := range w.started() {
+		if b.vars["RELEASE_VERSION"] != "0.11.0" || b.vars["RELEASE_BASE"] != base {
+			t.Errorf("%s build's variables %v", b.vars["ACTION"], b.vars)
+		}
+	}
+	if s := w.saved(); s.Version != "0.11.0" || s.ReleaseBase != base {
+		t.Errorf("install.json: %+v", s)
+	}
+}
+
+// The version installed from a local release, install.json naming a later plan's: its release is asked for (--release),
+// then uploaded to the install's bucket for the plans.
+func TestUninstallALocalInstalledVersionNeedsItsRelease(t *testing.T) {
+	w := unNew(t)
+	w.objects["prod/applied.json"] = `{"version":"0.11.0-dev","build":"dmt-prod-install:a0"}`
+	local := "s3://dmt-install-532105290256-eu-west-1/prod/release"
+	s := w.saved()
+	s.Version, s.ReleaseBase = "0.11.1-dev", local
+	w.save(s)
+	code, out, _ := w.run(Uninstall, unRequest, false)
+	if code != 1 || !strings.HasSuffix(out, "manager 0.11.0-dev is installed, install.json names 0.11.1-dev (a later plan's): manager 0.11.0-dev is not "+
+		"published on releases.dormeto.com; give its local release: dormeto uninstall "+rwArgs+" --release <the directory of release 0.11.0-dev>\n") ||
+		len(w.writes) != 0 {
+		t.Fatalf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+
+	// A release of another version is refused.
+	r := unRequest
+	r.Release = writeLocal(t, "0.11.1-dev", nil)
+	if code, out, _ = w.run(Uninstall, r, false); code != 1 || !strings.Contains(out, "0.11.0-dev") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+
+	r.Release = writeLocal(t, "0.11.0-dev", nil)
+	code, out, _ = w.run(Uninstall, r, false)
+	if code != 0 || !strings.Contains(out, "  manager 0.11.0-dev: 0 to add, 2 to change, 0 to destroy\n") {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	if b := w.started(); len(b) != 1 || b[0].vars["RELEASE_VERSION"] != "0.11.0-dev" || b[0].vars["RELEASE_BASE"] != local {
+		t.Errorf("builds %v", w.actions())
+	}
+	if w.objects["prod/release/terraform-aws-dormeto-0.11.0-dev.zip"] != "content of terraform-aws-dormeto-0.11.0-dev.zip" {
+		t.Errorf("the local release not uploaded: %v", w.writes)
+	}
+}
+
 // The protection lifted in install.json, its plan applied, then the destroy: each written as it is.
 func TestUninstallWritesTheProtectionOffThenForgetsTheDestroyPlan(t *testing.T) {
 	w := unNew(t)
