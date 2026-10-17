@@ -61,6 +61,7 @@ case "$1 $2" in
   case " ${FAKE_ASSUME_FAIL:-} " in
   *" $a "*) echo "An error occurred (AccessDenied) when calling the AssumeRole operation: not \"allowed\"" >&2; exit 254 ;;
   esac
+  [ -z "${FAKE_ASSUME_WARN:-}" ] || echo "WARNING: the CLI warns on stderr" >&2
   printf 'AK%s\tSK\tTK\n' "$a" ;;
 *) echo "fake aws: unexpected $*" >&2; exit 99 ;;
 esac

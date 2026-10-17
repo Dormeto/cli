@@ -56,11 +56,12 @@ fi
 say "putting the delegation policy"
 aws organizations put-resource-policy --content file://policy.json
 
-# access ACCOUNT: the account's roles, with the member role's credentials; its output is the job's log.
+# access ACCOUNT: the account's roles, with the member role's credentials; its output is the job's log. What the AWS CLI
+# writes on stderr is kept apart from the credentials, said only when the role cannot be assumed.
 access() {
   creds=$(aws sts assume-role --role-arn "arn:aws:iam::$1:role/$MEMBER_ROLE" --role-session-name "dmt-$ENV-organization" \
-    --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text 2>&1) || {
-    echo "$creds"
+    --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text 2>"assume.$1.err") || {
+    cat "assume.$1.err"
     return 1
   }
   # shellcheck disable=SC2086
@@ -95,8 +96,14 @@ flush() {
   wait
   for a in $batch; do
     cat "res.$a" >>roles.json
-    # the CLI counts these lines: the accounts done out of the total
-    if grep -q '"ok":true' "res.$a"; then say "roles of $a: ok"; else say "roles of $a: failed"; fi
+    # the CLI counts these lines: the accounts done out of the total; a failed account's whole output comes first, each
+    # line prefixed with the account
+    if grep -q '"ok":true' "res.$a"; then
+      say "roles of $a: ok"
+    else
+      sed "s/^/dormeto: $a: /" "out.$a"
+      say "roles of $a: failed"
+    fi
   done
   aws s3 cp --only-show-errors roles.json "$S3/roles.json"
   batch=

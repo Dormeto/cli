@@ -113,6 +113,50 @@ func TestOrganizationRoleNames(t *testing.T) {
 	}
 }
 
+// What the AWS CLI writes on stderr while assuming the member role is not taken for the credentials.
+func TestOrganizationAssumeRoleStderrKeptApart(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	env := orgEnv()
+	env["FAKE_ASSUME_WARN"] = "1"
+	if out, err := s.run("organization.sh", env); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if log := s.log(); !has(log, "access ACCOUNT=111111111111 ") || !strings.HasSuffix(log[index(log, "access ACCOUNT=111111111111 ")], " KEY=AK111111111111") {
+		t.Errorf("log:\n%s", strings.Join(log, "\n"))
+	}
+	roles, _ := s.uploaded(ob + "roles.json")
+	if !strings.Contains(roles, `{"account":"111111111111","ok":true}`) {
+		t.Errorf("roles.json:\n%s", roles)
+	}
+}
+
+// A failed account's whole output reaches the build's log, each line prefixed with the account; a good one's does not.
+func TestOrganizationFailedAccountsOutputInTheLog(t *testing.T) {
+	s := newSandbox(t)
+	mustPut(t, s, "policy-base.json", "")
+	mustPut(t, s, "policy.json", `{}`)
+	env := orgEnv()
+	env["FAKE_ACCESS_FAIL"] = "222222222222"
+	env["FAKE_ASSUME_FAIL"] = "333333333333"
+	out, err := s.run("organization.sh", env)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"dormeto: 222222222222: line one\ndormeto: 222222222222: boom \"quoted\" \\ here\ndormeto: roles of 222222222222: failed\n",
+		"dormeto: 333333333333: An error occurred (AccessDenied) when calling the AssumeRole operation: not \"allowed\"\ndormeto: roles of 333333333333: failed\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "dormeto: 111111111111: ") {
+		t.Errorf("a good account's output printed:\n%s", out)
+	}
+}
+
 // The CLI counts the accounts done from the log: one line per account, once its result is in roles.json.
 func TestOrganizationSaysEachAccountsRoles(t *testing.T) {
 	s := newSandbox(t)
