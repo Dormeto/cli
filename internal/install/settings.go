@@ -46,8 +46,9 @@ type Settings struct {
 	ExcludeAccounts []string                   `json:"excludeAccounts,omitempty"`
 	DiscoveryOnly   []string                   `json:"discoveryOnly,omitempty"`
 	BuildRole       string                     `json:"buildRole,omitempty"`
-	Installed       string                     `json:"installed,omitempty"` // the version applied
-	LastPlan        string                     `json:"lastPlan,omitempty"`  // build ids
+	ReleaseBase     string                     `json:"releaseBase,omitempty"` // the base the plan used, for a later install apply
+	Installed       string                     `json:"installed,omitempty"`   // the version applied
+	LastPlan        string                     `json:"lastPlan,omitempty"`    // build ids
 	LastApply       string                     `json:"lastApply,omitempty"`
 }
 
@@ -66,11 +67,11 @@ var (
 
 // Validate checks the settings and returns the first failure, its message beginning with the flag it is about.
 func (s Settings) Validate() error {
-	if !envRe.MatchString(s.Env) {
-		return fmt.Errorf("--env: %q is not 1 to 10 lowercase letters, digits or inner hyphens", s.Env)
+	if err := validEnv(s.Env); err != nil {
+		return err
 	}
-	if !regionRe.MatchString(s.Region) {
-		return fmt.Errorf("--region: %q is not an AWS region (for example eu-west-1)", s.Region)
+	if err := validRegion(s.Region); err != nil {
+		return err
 	}
 	if s.Version != "" && !versionRe.MatchString(s.Version) {
 		return fmt.Errorf("--version: %q is not a version (for example 0.11.0)", s.Version)
@@ -127,6 +128,22 @@ func (s Settings) Validate() error {
 	}
 	if s.BuildRole != "" && !buildRoleRe.MatchString(s.BuildRole) {
 		return fmt.Errorf("--build-role: %q is not an IAM role ARN", s.BuildRole)
+	}
+	return nil
+}
+
+// validEnv checks an env (it names the install's keys and resources), its message beginning with --env.
+func validEnv(env string) error {
+	if !envRe.MatchString(env) {
+		return fmt.Errorf("--env: %q is not 1 to 10 lowercase letters, digits or inner hyphens", env)
+	}
+	return nil
+}
+
+// validRegion checks a region, its message beginning with --region.
+func validRegion(region string) error {
+	if !regionRe.MatchString(region) {
+		return fmt.Errorf("--region: %q is not an AWS region (for example eu-west-1)", region)
 	}
 	return nil
 }

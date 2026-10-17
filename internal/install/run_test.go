@@ -1,0 +1,933 @@
+package install
+
+// The commands' runs (run.go) through fakes of every port: one account's world (its organization, the install's
+// bucket, role, log group, project and builds, a started build running at once), a scripted prompter, the releases on a
+// fake HTTP, a fake clock.
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"maps"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/aws/aws-sdk-go-v2/service/codebuild"
+	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
+	cogtypes "github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/aws-sdk-go-v2/service/organizations"
+	orgtypes "github.com/aws/aws-sdk-go-v2/service/organizations/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+)
+
+const (
+	rwAccount   = "532105290256"
+	rwRole      = "AWSReservedSSO_Admin_a15b943a5b9a9846"
+	rwDashboard = "https://d1a2b3c4.cloudfront.net"
+	rwArgs      = "--profile p --region eu-west-1 --env prod"
+)
+
+var rwT0 = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+// The plans a plan build writes: three resources created; nothing changed; one updated and one replaced.
+const (
+	rwPlan = `{"format_version":"1.2","resource_changes":[` +
+		`{"address":"module.dormeto.aws_cloudfront_distribution.dashboard","type":"aws_cloudfront_distribution","change":{"actions":["create"]}},` +
+		`{"address":"module.dormeto.aws_cognito_user_pool.users","type":"aws_cognito_user_pool","change":{"actions":["create"]}},` +
+		`{"address":"module.dormeto.aws_lambda_function.api","type":"aws_lambda_function","change":{"actions":["create"]}}]}`
+	rwEmpty = `{"format_version":"1.2","resource_changes":[` +
+		`{"address":"module.dormeto.aws_lambda_function.api","type":"aws_lambda_function","change":{"actions":["no-op"]}}]}`
+	rwReplace = `{"format_version":"1.2","resource_changes":[` +
+		`{"address":"module.dormeto.aws_lambda_function.api","type":"aws_lambda_function","change":{"actions":["update"]}},` +
+		`{"address":"module.dormeto.aws_dynamodb_table.events","type":"aws_dynamodb_table","change":{"actions":["delete","create"]}}]}`
+	rwOutputs = `{"dashboard_url":{"value":"` + rwDashboard + `"},"user_pool_id":{"value":"eu-west-1_abc"},"version":{"value":"0.11.0"}}`
+)
+
+// rwBuild is a build of the project: vars is nil for a build the run did not start.
+type rwBuild struct {
+	id     string
+	vars   map[string]string
+	status cbtypes.StatusType
+	start  time.Time
+	log    []string
+}
+
+// rwWorld is one account in eu-west-1, member of an organization with all features unless org is nil.
+type rwWorld struct {
+	t                               *testing.T
+	org                             *Organization
+	region                          string            // the profile's region; "": none
+	objects                         map[string]string // the install's bucket, by key
+	bucket, role, project, logGroup bool              // the bootstrap's resources exist
+	builds                          []*rwBuild        // oldest first
+	ends                            map[string]cbtypes.StatusType
+	plan                            string // the plan.json a plan build writes
+	simDenied                       bool   // iam:SimulatePrincipalPolicy refused: a warning
+	writes                          []string
+	readOnly                        bool
+	clock                           time.Time
+	detach                          bool // following a running build: Ctrl-C
+	cancel                          context.CancelFunc
+	http                            fakeHTTP
+}
+
+func rwNew(t *testing.T) *rwWorld {
+	w := &rwWorld{
+		t: t, region: "eu-west-1", objects: map[string]string{}, ends: map[string]cbtypes.StatusType{}, plan: rwPlan, clock: rwT0,
+		org:  &Organization{ID: "o-vvk0115ixn", Management: "809706483662", AllFeatures: true},
+		http: fakeHTTP{bodies: map[string]string{rwDashboard: "ok"}},
+	}
+	w.release("0.11.0", true)
+	return w
+}
+
+// release publishes a manager version on releases.dormeto.com; latest: latest.json names it.
+func (w *rwWorld) release(v string, latest bool) {
+	w.http.bodies[ReleasesURL+"/"+v+"/SHA256SUMS"] = sumsFor(v, releaseFiles(v)...)
+	if latest {
+		w.http.bodies[ReleasesURL+"/latest.json"] = `{"version":"` + v + `"}`
+	}
+}
+
+// installed is prod installed at version: the bootstrap, install.json (its plan p0), applied.json (the apply a0, after
+// p0) and outputs.json.
+func (w *rwWorld) installed(version string) {
+	w.bucket, w.role, w.project, w.logGroup = true, true, true, true
+	w.save(Settings{Env: "prod", Region: "eu-west-1", Version: version, Mode: "organization", AdminEmails: []string{"you@example.com"},
+		OrganizationID: "o-vvk0115ixn", ReleaseBase: ReleasesURL + "/" + version, LastPlan: "dmt-prod-install:p0"})
+	w.objects["prod/applied.json"] = `{"version":"` + version + `","build":"dmt-prod-install:a0"}`
+	w.objects["prod/outputs.json"] = rwOutputs
+	w.objects["prod/plans/dmt-prod-install:p0/plan.json"] = rwPlan
+	w.builds = append(w.builds,
+		&rwBuild{id: "dmt-prod-install:p0", status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-2 * time.Hour)},
+		&rwBuild{id: "dmt-prod-install:a0", status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-time.Hour)})
+}
+
+func (w *rwWorld) save(s Settings) {
+	b, err := s.JSON()
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	w.objects["prod/install.json"] = string(b)
+}
+
+// saved is prod's install.json.
+func (w *rwWorld) saved() Settings {
+	w.t.Helper()
+	s, err := ParseSettings([]byte(w.objects["prod/install.json"]))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return s
+}
+
+func (w *rwWorld) write(call string) {
+	if w.readOnly {
+		w.t.Errorf("a write in a read-only run: %s", call)
+	}
+	w.writes = append(w.writes, call)
+}
+
+// started are the builds the run started.
+func (w *rwWorld) started() []*rwBuild {
+	var out []*rwBuild
+	for _, b := range w.builds {
+		if b.vars != nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// actions are the ACTION of each build the run started.
+func (w *rwWorld) actions() []string {
+	var out []string
+	for _, b := range w.started() {
+		out = append(out, b.vars["ACTION"])
+	}
+	return out
+}
+
+func (w *rwWorld) build(id string) *rwBuild {
+	for _, b := range w.builds {
+		if b.id == id {
+			return b
+		}
+	}
+	return nil
+}
+
+func (w *rwWorld) now() time.Time { return w.clock }
+
+// every advances the clock and answers at once; with detach, it is Ctrl-C instead (the run cancelled, no tick).
+func (w *rwWorld) every(d time.Duration) <-chan time.Time {
+	w.clock = w.clock.Add(d)
+	if w.detach {
+		w.cancel()
+		return make(chan time.Time)
+	}
+	c := make(chan time.Time)
+	close(c)
+	return c
+}
+
+func (w *rwWorld) clients() Clients {
+	return Clients{
+		STS: rwSTS{w: w}, IAM: rwIAM{w: w}, S3: rwS3{w: w}, CodeBuild: rwCB{w: w}, Logs: rwLogs{w: w},
+		Organizations: rwOrgs{w: w}, EC2: &chkEC2{status: "opt-in-not-required"},
+		ACM:     chkACM{status: "ISSUED", names: []string{"dormeto.example.com", "*.dormeto.example.com"}},
+		Route53: chkR53{name: "example.com."}, SESv2: chkSES{verified: true, production: true},
+		Lambda: chkLambda{}, Cognito: rwCognito{},
+	}
+}
+
+// run runs a command; answers are the person's, in order: "" takes the suggestion, "^C" is Ctrl-C at that prompt.
+func (w *rwWorld) run(cmd func(context.Context, Deps, Request) int, r Request, terminal bool, answers ...string) (code int, out string, asked []string) {
+	w.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.cancel = cancel
+	p := &rwPrompter{t: w.t, answers: answers, cancel: cancel}
+	var b bytes.Buffer
+	code = cmd(ctx, Deps{
+		Clients: func(_ context.Context, profile, region string) (Clients, error) {
+			if profile != "p" || region != "eu-west-1" {
+				w.t.Errorf("clients of profile %q in %q", profile, region)
+			}
+			return w.clients(), nil
+		},
+		Region:   func(context.Context, string) (string, error) { return w.region, nil },
+		HTTP:     w.http,
+		Prompter: p,
+		Out:      &b,
+		Terminal: terminal,
+		Now:      w.now,
+		Every:    w.every,
+	}, r)
+	if len(p.answers) > 0 {
+		w.t.Errorf("answers left: %q", p.answers)
+	}
+	return code, b.String(), p.asked
+}
+
+// rwPrompter answers from a script and records each question with its suggestion.
+type rwPrompter struct {
+	t       *testing.T
+	answers []string
+	asked   []string
+	cancel  context.CancelFunc
+}
+
+func (p *rwPrompter) next(suggestion string) (string, error) {
+	if len(p.answers) == 0 {
+		p.t.Errorf("unexpected question %q", p.asked[len(p.asked)-1])
+		return "", io.EOF
+	}
+	a := p.answers[0]
+	p.answers = p.answers[1:]
+	switch a {
+	case "^C":
+		p.cancel()
+		return "", context.Canceled
+	case "":
+		return suggestion, nil
+	}
+	return a, nil
+}
+
+func (p *rwPrompter) Ask(question, suggestion string) (string, error) {
+	if suggestion != "" {
+		p.asked = append(p.asked, question+" ["+suggestion+"]")
+	} else {
+		p.asked = append(p.asked, question)
+	}
+	return p.next(suggestion)
+}
+
+func (p *rwPrompter) Confirm(question string) (bool, error) {
+	p.asked = append(p.asked, question+" [y/N]")
+	a, err := p.next("")
+	return a == "y", err
+}
+
+type rwSTS struct {
+	STS
+	w *rwWorld
+}
+
+func (f rwSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+	return &sts.GetCallerIdentityOutput{Account: aws.String(rwAccount), Arn: aws.String("arn:aws:sts::" + rwAccount + ":assumed-role/" + rwRole + "/you@example.com")}, nil
+}
+
+type rwOrgs struct {
+	Organizations
+	w *rwWorld
+}
+
+func (f rwOrgs) DescribeOrganization(context.Context, *organizations.DescribeOrganizationInput, ...func(*organizations.Options)) (*organizations.DescribeOrganizationOutput, error) {
+	o := f.w.org
+	if o == nil {
+		return nil, &orgtypes.AWSOrganizationsNotInUseException{Message: aws.String("not in use")}
+	}
+	features := orgtypes.OrganizationFeatureSetConsolidatedBilling
+	if o.AllFeatures {
+		features = orgtypes.OrganizationFeatureSetAll
+	}
+	return &organizations.DescribeOrganizationOutput{Organization: &orgtypes.Organization{Id: aws.String(o.ID), MasterAccountId: aws.String(o.Management), FeatureSet: features}}, nil
+}
+
+type rwIAM struct {
+	IAM
+	w *rwWorld
+}
+
+func (f rwIAM) ListAccountAliases(context.Context, *iam.ListAccountAliasesInput, ...func(*iam.Options)) (*iam.ListAccountAliasesOutput, error) {
+	return &iam.ListAccountAliasesOutput{AccountAliases: []string{"sandbox"}}, nil
+}
+
+func (f rwIAM) GetRole(_ context.Context, in *iam.GetRoleInput, _ ...func(*iam.Options)) (*iam.GetRoleOutput, error) {
+	switch name := aws.ToString(in.RoleName); {
+	case name == rwRole:
+		return &iam.GetRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + rwAccount + ":role/aws-reserved/sso.amazonaws.com/eu-west-1/" + name)}}, nil
+	case name == "dmt-prod-install" && f.w.role:
+		return &iam.GetRoleOutput{Role: &iamtypes.Role{RoleName: aws.String(name), Path: aws.String("/dormeto/"),
+			Arn: aws.String("arn:aws:iam::" + rwAccount + ":role/dormeto/" + name), Tags: []iamtypes.Tag{{Key: aws.String("managed-by"), Value: aws.String("dormeto-cli")}}}}, nil
+	}
+	return nil, chkNoEntity()
+}
+
+func (f rwIAM) SimulatePrincipalPolicy(_ context.Context, in *iam.SimulatePrincipalPolicyInput, _ ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error) {
+	if f.w.simDenied {
+		return nil, chkAPI("AccessDenied")
+	}
+	return chkIAM{}.SimulatePrincipalPolicy(context.Background(), in)
+}
+
+func (f rwIAM) GetPolicy(context.Context, *iam.GetPolicyInput, ...func(*iam.Options)) (*iam.GetPolicyOutput, error) {
+	return nil, chkNoEntity()
+}
+
+func (f rwIAM) CreateRole(_ context.Context, in *iam.CreateRoleInput, _ ...func(*iam.Options)) (*iam.CreateRoleOutput, error) {
+	f.w.write("iam:CreateRole " + aws.ToString(in.RoleName))
+	f.w.role = true
+	return &iam.CreateRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + rwAccount + ":role/dormeto/" + aws.ToString(in.RoleName))}}, nil
+}
+
+func (f rwIAM) UpdateAssumeRolePolicy(context.Context, *iam.UpdateAssumeRolePolicyInput, ...func(*iam.Options)) (*iam.UpdateAssumeRolePolicyOutput, error) {
+	f.w.write("iam:UpdateAssumeRolePolicy")
+	return &iam.UpdateAssumeRolePolicyOutput{}, nil
+}
+
+func (f rwIAM) AttachRolePolicy(context.Context, *iam.AttachRolePolicyInput, ...func(*iam.Options)) (*iam.AttachRolePolicyOutput, error) {
+	f.w.write("iam:AttachRolePolicy")
+	return &iam.AttachRolePolicyOutput{}, nil
+}
+
+type rwS3 struct {
+	S3
+	w *rwWorld
+}
+
+func (f rwS3) HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
+	if f.w.bucket {
+		return &s3.HeadBucketOutput{}, nil
+	}
+	return nil, chkAPI("NotFound")
+}
+
+func (f rwS3) CreateBucket(context.Context, *s3.CreateBucketInput, ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
+	f.w.write("s3:CreateBucket")
+	f.w.bucket = true
+	return &s3.CreateBucketOutput{}, nil
+}
+
+func (f rwS3) PutBucketVersioning(context.Context, *s3.PutBucketVersioningInput, ...func(*s3.Options)) (*s3.PutBucketVersioningOutput, error) {
+	f.w.write("s3:PutBucketVersioning")
+	return &s3.PutBucketVersioningOutput{}, nil
+}
+
+func (f rwS3) PutBucketEncryption(context.Context, *s3.PutBucketEncryptionInput, ...func(*s3.Options)) (*s3.PutBucketEncryptionOutput, error) {
+	f.w.write("s3:PutBucketEncryption")
+	return &s3.PutBucketEncryptionOutput{}, nil
+}
+
+func (f rwS3) PutPublicAccessBlock(context.Context, *s3.PutPublicAccessBlockInput, ...func(*s3.Options)) (*s3.PutPublicAccessBlockOutput, error) {
+	f.w.write("s3:PutPublicAccessBlock")
+	return &s3.PutPublicAccessBlockOutput{}, nil
+}
+
+func (f rwS3) PutBucketPolicy(context.Context, *s3.PutBucketPolicyInput, ...func(*s3.Options)) (*s3.PutBucketPolicyOutput, error) {
+	f.w.write("s3:PutBucketPolicy")
+	return &s3.PutBucketPolicyOutput{}, nil
+}
+
+func (f rwS3) PutBucketLifecycleConfiguration(context.Context, *s3.PutBucketLifecycleConfigurationInput, ...func(*s3.Options)) (*s3.PutBucketLifecycleConfigurationOutput, error) {
+	f.w.write("s3:PutBucketLifecycleConfiguration")
+	return &s3.PutBucketLifecycleConfigurationOutput{}, nil
+}
+
+func (f rwS3) PutBucketTagging(context.Context, *s3.PutBucketTaggingInput, ...func(*s3.Options)) (*s3.PutBucketTaggingOutput, error) {
+	f.w.write("s3:PutBucketTagging")
+	return &s3.PutBucketTaggingOutput{}, nil
+}
+
+func (f rwS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if !f.w.bucket {
+		return nil, chkAPI("NoSuchBucket")
+	}
+	body, ok := f.w.objects[aws.ToString(in.Key)]
+	if !ok {
+		return nil, chkAPI("NoSuchKey")
+	}
+	return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func (f rwS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	b, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	f.w.write("s3:PutObject " + aws.ToString(in.Key))
+	f.w.objects[aws.ToString(in.Key)] = string(b)
+	return &s3.PutObjectOutput{}, nil
+}
+
+func (f rwS3) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	if !f.w.bucket {
+		return nil, chkAPI("NoSuchBucket")
+	}
+	out := &s3.ListObjectsV2Output{}
+	for _, k := range slices.Sorted(maps.Keys(f.w.objects)) {
+		out.Contents = append(out.Contents, s3types.Object{Key: aws.String(k)})
+	}
+	return out, nil
+}
+
+type rwCB struct {
+	CodeBuild
+	w *rwWorld
+}
+
+func (f rwCB) ListCuratedEnvironmentImages(context.Context, *codebuild.ListCuratedEnvironmentImagesInput, ...func(*codebuild.Options)) (*codebuild.ListCuratedEnvironmentImagesOutput, error) {
+	return chkCB{images: []string{buildImage}}.ListCuratedEnvironmentImages(context.Background(), nil)
+}
+
+func (f rwCB) BatchGetProjects(context.Context, *codebuild.BatchGetProjectsInput, ...func(*codebuild.Options)) (*codebuild.BatchGetProjectsOutput, error) {
+	if f.w.project {
+		return &codebuild.BatchGetProjectsOutput{Projects: []cbtypes.Project{{Name: aws.String("dmt-prod-install")}}}, nil
+	}
+	return &codebuild.BatchGetProjectsOutput{}, nil
+}
+
+func (f rwCB) CreateProject(context.Context, *codebuild.CreateProjectInput, ...func(*codebuild.Options)) (*codebuild.CreateProjectOutput, error) {
+	f.w.write("codebuild:CreateProject")
+	f.w.project = true
+	return &codebuild.CreateProjectOutput{}, nil
+}
+
+func (f rwCB) UpdateProject(context.Context, *codebuild.UpdateProjectInput, ...func(*codebuild.Options)) (*codebuild.UpdateProjectOutput, error) {
+	f.w.write("codebuild:UpdateProject")
+	return &codebuild.UpdateProjectOutput{}, nil
+}
+
+func (f rwCB) ListBuildsForProject(context.Context, *codebuild.ListBuildsForProjectInput, ...func(*codebuild.Options)) (*codebuild.ListBuildsForProjectOutput, error) {
+	var ids []string
+	for i := len(f.w.builds) - 1; i >= 0; i-- {
+		ids = append(ids, f.w.builds[i].id)
+	}
+	return &codebuild.ListBuildsForProjectOutput{Ids: ids}, nil
+}
+
+func (f rwCB) BatchGetBuilds(_ context.Context, in *codebuild.BatchGetBuildsInput, _ ...func(*codebuild.Options)) (*codebuild.BatchGetBuildsOutput, error) {
+	out := &codebuild.BatchGetBuildsOutput{}
+	for _, id := range in.Ids {
+		b := f.w.build(id)
+		if b == nil {
+			out.BuildsNotFound = append(out.BuildsNotFound, id)
+			continue
+		}
+		out.Builds = append(out.Builds, cbtypes.Build{Id: aws.String(b.id), BuildStatus: b.status, StartTime: aws.Time(b.start), CurrentPhase: aws.String("BUILD"),
+			Logs: &cbtypes.LogsLocation{GroupName: aws.String("/aws/codebuild/dmt-prod-install"), StreamName: aws.String(b.id)}})
+	}
+	return out, nil
+}
+
+// StartBuild runs the build at once: it ends as ends says (SUCCEEDED by default); a plan that succeeds writes its
+// plan.json, an apply its applied.json and outputs.json.
+func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...func(*codebuild.Options)) (*codebuild.StartBuildOutput, error) {
+	vars := map[string]string{}
+	for _, v := range in.EnvironmentVariablesOverride {
+		vars[aws.ToString(v.Name)] = aws.ToString(v.Value)
+	}
+	action := vars["ACTION"]
+	f.w.write("codebuild:StartBuild " + action)
+	b := &rwBuild{id: fmt.Sprintf("dmt-prod-install:b%d", len(f.w.started())+1), vars: vars, status: cbtypes.StatusTypeSucceeded, start: f.w.clock,
+		log: []string{"dormeto: terraform " + action, "dormeto: done"}}
+	if end, ok := f.w.ends[action]; ok {
+		b.status = end
+	}
+	switch {
+	case b.status == cbtypes.StatusTypeFailed:
+		b.log = []string{"dormeto: terraform " + action, "Error: creating the user pool: AccessDenied"}
+	case b.status == cbtypes.StatusTypeSucceeded && action == "plan":
+		f.w.objects["prod/plans/"+b.id+"/plan.json"] = f.w.plan
+	case b.status == cbtypes.StatusTypeSucceeded && action == "apply":
+		f.w.objects["prod/applied.json"] = `{"version":"` + vars["RELEASE_VERSION"] + `","build":"` + b.id + `"}`
+		f.w.objects["prod/outputs.json"] = rwOutputs
+	}
+	f.w.builds = append(f.w.builds, b)
+	return &codebuild.StartBuildOutput{Build: &cbtypes.Build{Id: aws.String(b.id)}}, nil
+}
+
+type rwLogs struct {
+	Logs
+	w *rwWorld
+}
+
+func (f rwLogs) DescribeLogGroups(context.Context, *cloudwatchlogs.DescribeLogGroupsInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogGroupsOutput, error) {
+	if f.w.logGroup {
+		return &cloudwatchlogs.DescribeLogGroupsOutput{LogGroups: []cwtypes.LogGroup{{LogGroupName: aws.String("/aws/codebuild/dmt-prod-install")}}}, nil
+	}
+	return &cloudwatchlogs.DescribeLogGroupsOutput{}, nil
+}
+
+func (f rwLogs) CreateLogGroup(context.Context, *cloudwatchlogs.CreateLogGroupInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.CreateLogGroupOutput, error) {
+	f.w.write("logs:CreateLogGroup")
+	f.w.logGroup = true
+	return &cloudwatchlogs.CreateLogGroupOutput{}, nil
+}
+
+func (f rwLogs) PutRetentionPolicy(context.Context, *cloudwatchlogs.PutRetentionPolicyInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.PutRetentionPolicyOutput, error) {
+	f.w.write("logs:PutRetentionPolicy")
+	return &cloudwatchlogs.PutRetentionPolicyOutput{}, nil
+}
+
+// GetLogEvents is the build's whole log in one page, then nothing more.
+func (f rwLogs) GetLogEvents(_ context.Context, in *cloudwatchlogs.GetLogEventsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetLogEventsOutput, error) {
+	out := &cloudwatchlogs.GetLogEventsOutput{NextForwardToken: aws.String("end")}
+	if b := f.w.build(aws.ToString(in.LogStreamName)); b != nil && in.NextToken == nil {
+		for _, l := range b.log {
+			out.Events = append(out.Events, cwtypes.OutputLogEvent{Message: aws.String(l), Timestamp: aws.Int64(b.start.UnixMilli())})
+		}
+	}
+	return out, nil
+}
+
+type rwCognito struct{ Cognito }
+
+func (rwCognito) ListUserPools(context.Context, *cognitoidentityprovider.ListUserPoolsInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ListUserPoolsOutput, error) {
+	return &cognitoidentityprovider.ListUserPoolsOutput{}, nil
+}
+
+func (rwCognito) ListUsers(context.Context, *cognitoidentityprovider.ListUsersInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ListUsersOutput, error) {
+	return &cognitoidentityprovider.ListUsersOutput{Users: []cogtypes.UserType{{UserStatus: cogtypes.UserStatusTypeForceChangePassword}}}, nil
+}
+
+// rwFlags is a request whose flags give every answer.
+func rwFlags() Request {
+	return Request{Profile: "p", Region: "eu-west-1",
+		Flags: Settings{Env: "prod", Version: "0.11.0", Mode: "organization", AdminEmails: []string{"you@example.com"}},
+		Set:   map[string]bool{"region": true, "env": true, "version": true, "mode": true, "admin-emails": true, "domain": true, "ses-identity": true, "email-from": true}}
+}
+
+// rwInOrder fails unless each part appears in out after the previous one.
+func rwInOrder(t *testing.T, out string, parts ...string) {
+	t.Helper()
+	rest := out
+	for _, p := range parts {
+		i := strings.Index(rest, p)
+		if i < 0 {
+			t.Fatalf("%q missing, or out of order, in:\n%s", p, out)
+		}
+		rest = rest[i+len(p):]
+	}
+}
+
+func rwEqual(t *testing.T, what string, got, want any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("%s = %#v, want %#v", what, got, want)
+	}
+}
+
+func TestInstallGuidedFirstInstall(t *testing.T) {
+	w := rwNew(t)
+	w.region = "" // the profile names none: asked
+	code, out, asked := w.run(Install, Request{Profile: "p"}, true, "", "", "", "you@example.com", "", "", "", "y")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "questions", asked, []string{
+		"Region [eu-west-1]",
+		"Environment [prod]",
+		"Manager release [0.11.0]",
+		"Administrators (emails, comma-separated)",
+		"Mode: organization (the manager reads every account of o-vvk0115ixn) or account [organization]",
+		"Custom domain [none]",
+		"SES identity [none]",
+		"Apply this plan? [y/N]",
+	})
+	rwInOrder(t, out,
+		"Profile p: account 532105290256 (sandbox) in the organization o-vvk0115ixn (management 809706483662)\n",
+		"\nChecks\n",
+		"  ✓ credentials: "+rwRole+" in 532105290256\n",
+		"  ✓ existing install: none: a first install of env prod\n",
+		"  ✓ release: manager 0.11.0\n",
+		"  ✓ administrators: you@example.com\n",
+		"  ! organization access: not deployed (no management profile)\n",
+		"    Organization access needs the management account 809706483662; without its profile (--management-profile) it is not deployed.\n",
+		"    The procedure: https://dormeto.com/organization-access.html\n",
+		"    Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
+		"\nBootstrap (API calls): bucket dmt-install-532105290256-eu-west-1, role dmt-prod-install, project dmt-prod-install\n",
+		"Plan (build dmt-prod-install:b1…)  succeeded",
+		"Plan (build dmt-prod-install:b1)\n",
+		"  manager 0.11.0: 3 to add, 0 to change, 0 to destroy\n",
+		"      1 aws_cloudfront_distribution\n",
+		"Apply (build dmt-prod-install:b2…)  succeeded",
+		"  ✓ applied: 3 added, 0 changed, 0 destroyed\n",
+		"  ✓ dashboard: "+rwDashboard+" answers\n",
+		"  ✓ administrators: invitation sent to you@example.com (valid 7 days)\n",
+		"Next: sign in at "+rwDashboard+"; in Discovery, Perimeter settings, add a filter, then Run now.\n",
+	)
+	if strings.Contains(out, "destroys or replaces") || strings.Contains(out, "Continue despite") {
+		t.Errorf("unexpected line in:\n%s", out)
+	}
+	b := w.started()
+	rwEqual(t, "builds", w.actions(), []string{"plan", "apply"})
+	base := ReleasesURL + "/0.11.0"
+	rwEqual(t, "plan's variables", b[0].vars, map[string]string{"ACTION": "plan", "RELEASE_BASE": base, "RELEASE_VERSION": "0.11.0"})
+	rwEqual(t, "apply's variables", b[1].vars, map[string]string{"ACTION": "apply", "PLAN_BUILD": "dmt-prod-install:b1", "RELEASE_BASE": base, "RELEASE_VERSION": "0.11.0"})
+
+	s := w.saved()
+	want := Settings{Env: "prod", Region: "eu-west-1", Version: "0.11.0", Mode: "organization", AdminEmails: []string{"you@example.com"},
+		OrganizationID: "o-vvk0115ixn", ReleaseBase: base, LastPlan: "dmt-prod-install:b1"}
+	rwEqual(t, "install.json", s, want)
+	cfg := w.objects["prod/config/main.tf.json"]
+	if !strings.Contains(cfg, `"discovery_mode": "organization"`) || !strings.Contains(cfg, `"you@example.com"`) {
+		t.Errorf("main.tf.json:\n%s", cfg)
+	}
+	// The configuration and the answers are written before the plan starts, the plan's id once it has.
+	at := func(call string, last bool) int {
+		i := slices.Index(w.writes, call)
+		if last {
+			for j, c := range w.writes {
+				if c == call {
+					i = j
+				}
+			}
+		}
+		if i < 0 {
+			t.Fatalf("no %s in %v", call, w.writes)
+		}
+		return i
+	}
+	if !(at("s3:PutObject prod/config/main.tf.json", false) < at("s3:PutObject prod/install.json", false) &&
+		at("s3:PutObject prod/install.json", false) < at("codebuild:StartBuild plan", false) &&
+		at("codebuild:StartBuild plan", false) < at("s3:PutObject prod/install.json", true) &&
+		at("s3:PutObject prod/install.json", true) < at("codebuild:StartBuild apply", false)) {
+		t.Errorf("writes out of order: %v", w.writes)
+	}
+	if at("iam:CreateRole dmt-prod-install", false) > at("codebuild:CreateProject", false) {
+		t.Errorf("the project before its role: %v", w.writes)
+	}
+}
+
+func TestInstallWithoutATerminalStopsAfterThePlan(t *testing.T) {
+	w := rwNew(t)
+	code, out, asked := w.run(Install, rwFlags(), false)
+	if code != 0 || len(asked) != 0 {
+		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	if !strings.HasSuffix(out, "  manager 0.11.0: 3 to add, 0 to change, 0 to destroy\n      1 aws_cloudfront_distribution\n      1 aws_cognito_user_pool\n      1 aws_lambda_function\n"+
+		"Plan saved. Apply it: dormeto install apply "+rwArgs+"\n") {
+		t.Errorf("output:\n%s", out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+	if w.saved().LastPlan != "dmt-prod-install:b1" {
+		t.Errorf("install.json: %s", w.objects["prod/install.json"])
+	}
+}
+
+func TestInstallWithoutATerminalAMissingAnswerNamesItsFlag(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		edit func(w *rwWorld, r *Request)
+		flag string
+	}{
+		{"administrators", func(_ *rwWorld, r *Request) { delete(r.Set, "admin-emails"); r.Flags.AdminEmails = nil }, "--admin-emails"},
+		{"region", func(w *rwWorld, r *Request) { w.region, r.Region = "", ""; delete(r.Set, "region") }, "--region"},
+		{"version", func(_ *rwWorld, r *Request) { delete(r.Set, "version"); r.Flags.Version = "" }, "--version"},
+		{"mode", func(_ *rwWorld, r *Request) { delete(r.Set, "mode"); r.Flags.Mode = "" }, "--mode"},
+		{"domain", func(_ *rwWorld, r *Request) { delete(r.Set, "domain") }, "--domain"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := rwNew(t)
+			r := rwFlags()
+			c.edit(w, &r)
+			code, out, _ := w.run(Install, r, false)
+			if code != 2 || !strings.HasSuffix(out, c.flag+": needed\n") {
+				t.Errorf("exit code %d:\n%s", code, out)
+			}
+			if len(w.writes) != 0 {
+				t.Errorf("created: %v", w.writes)
+			}
+		})
+	}
+}
+
+func TestInstallYesTakesTheSuggestionsAndNeverConfirms(t *testing.T) {
+	r := Request{Profile: "p", Region: "eu-west-1", Yes: true, Flags: Settings{AdminEmails: []string{"you@example.com"}}, Set: map[string]bool{"admin-emails": true}}
+
+	w := rwNew(t)
+	code, out, asked := w.run(Install, r, false)
+	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwArgs+"\n") {
+		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+	s := w.saved()
+	if s.Version != "0.11.0" || s.Mode != "organization" || s.Domain != nil || s.SESIdentity != "" || s.Env != "prod" {
+		t.Errorf("install.json: %+v", s)
+	}
+
+	// In a terminal, the plan is still asked about.
+	w = rwNew(t)
+	code, out, asked = w.run(Install, r, true, "n")
+	rwEqual(t, "questions", asked, []string{"Apply this plan? [y/N]"})
+	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+
+	// No suggestion for the administrators.
+	w = rwNew(t)
+	r.Flags.AdminEmails, r.Set = nil, nil
+	code, out, _ = w.run(Install, r, true)
+	if code != 2 || !strings.HasSuffix(out, "--admin-emails: needed\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+func TestInstallAFailedCheckCreatesNothing(t *testing.T) {
+	w := rwNew(t)
+	w.bucket = true
+	w.objects["dev/install.json"] = "{}"
+	code, out, _ := w.run(Install, rwFlags(), true)
+	if code != 1 {
+		t.Errorf("exit code %d", code)
+	}
+	rwInOrder(t, out, "  ✗ another environment: one environment per account: dev installed here\n", "Nothing was created.\n")
+	if len(w.writes) != 0 {
+		t.Errorf("created: %v", w.writes)
+	}
+}
+
+func TestInstallWarningsAreAskedAboutOnce(t *testing.T) {
+	w := rwNew(t)
+	w.simDenied = true
+	code, out, asked := w.run(Install, rwFlags(), true, "n")
+	rwEqual(t, "questions", asked, []string{"Continue despite the warnings? [y/N]"})
+	if code != 1 || !strings.Contains(out, "  ! administrator rights: not checked (iam:SimulatePrincipalPolicy refused)\n") || !strings.HasSuffix(out, "Nothing was created.\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if len(w.writes) != 0 {
+		t.Errorf("created: %v", w.writes)
+	}
+
+	// --yes, or no terminal: the warnings do not stop the install.
+	for _, terminal := range []bool{true, false} {
+		w = rwNew(t)
+		w.simDenied = true
+		r := rwFlags()
+		r.Yes = terminal
+		var answers []string
+		if terminal {
+			answers = []string{"n"}
+		}
+		code, _, asked := w.run(Install, r, terminal, answers...)
+		if code != 0 || slices.Contains(asked, "Continue despite the warnings? [y/N]") {
+			t.Errorf("terminal %v: exit code %d, asked %q", terminal, code, asked)
+		}
+		rwEqual(t, "builds", w.actions(), []string{"plan"})
+	}
+}
+
+func TestInstallNoAtTheConfirmationKeepsThePlan(t *testing.T) {
+	w := rwNew(t)
+	code, out, asked := w.run(Install, rwFlags(), true, "n")
+	rwEqual(t, "questions", asked, []string{"Apply this plan? [y/N]"})
+	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+	if w.saved().LastPlan != "dmt-prod-install:b1" {
+		t.Errorf("install.json: %s", w.objects["prod/install.json"])
+	}
+}
+
+func TestInstallUpgradeAsksNothing(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.release("0.12.0", true)
+	w.plan = rwReplace
+	code, out, asked := w.run(Install, Request{Profile: "p", Region: "eu-west-1"}, true, "y")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "questions", asked, []string{"Apply this plan? [y/N]"})
+	rwInOrder(t, out,
+		"  ✓ existing install: upgrade: 0.11.0 → 0.12.0\n",
+		"  ✓ another install: none\n",
+		"  ✓ release: manager 0.12.0\n",
+		"  manager 0.12.0: 1 to add, 1 to change, 1 to destroy\n",
+		"    replaced: module.dormeto.aws_dynamodb_table.events\n",
+		"  ! this plan destroys or replaces resources (above)\n",
+		"  ✓ applied: 1 added, 1 changed, 1 destroyed\n",
+		"Next: sign in at ",
+	)
+	b := w.started()
+	rwEqual(t, "builds", w.actions(), []string{"plan", "apply"})
+	if b[0].vars["RELEASE_VERSION"] != "0.12.0" || b[1].vars["PLAN_BUILD"] != b[0].id || b[1].vars["RELEASE_BASE"] != ReleasesURL+"/0.12.0" {
+		t.Errorf("builds' variables: %v, %v", b[0].vars, b[1].vars)
+	}
+	for _, c := range w.writes {
+		if strings.HasPrefix(c, "iam:CreateRole") || c == "s3:CreateBucket" || c == "codebuild:CreateProject" {
+			t.Errorf("the bootstrap created %s again", c)
+		}
+	}
+	if s := w.saved(); s.Version != "0.12.0" || s.AdminEmails[0] != "you@example.com" {
+		t.Errorf("install.json: %+v", s)
+	}
+}
+
+func TestInstallNothingToChange(t *testing.T) {
+	w := rwNew(t)
+	w.plan = rwEmpty
+	code, out, asked := w.run(Install, rwFlags(), true)
+	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, "Nothing to change: manager 0.11.0 is installed.\n") {
+		t.Errorf("exit code %d, asked %q:\n%s", code, asked, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+}
+
+func TestInstallARunningBuildStopsThePlan(t *testing.T) {
+	w := rwNew(t)
+	w.builds = []*rwBuild{{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)}}
+	code, out, _ := w.run(Install, rwFlags(), true)
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	if len(w.actions()) != 0 {
+		t.Errorf("started %v", w.actions())
+	}
+}
+
+func TestInstallAFailedPlan(t *testing.T) {
+	w := rwNew(t)
+	w.ends["plan"] = cbtypes.StatusTypeFailed
+	code, out, asked := w.run(Install, rwFlags(), true)
+	if code != 1 || len(asked) != 0 {
+		t.Errorf("exit code %d, asked %q", code, asked)
+	}
+	rwInOrder(t, out, "Plan failed\n", "  Error: creating the user pool: AccessDenied\n", ConsoleURL(Names(rwAccount, "eu-west-1", "prod"), "dmt-prod-install:b1"))
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+}
+
+func TestInstallCtrlCAtTheConfirmationAppliesNothing(t *testing.T) {
+	w := rwNew(t)
+	code, out, _ := w.run(Install, rwFlags(), true, "^C")
+	if code != 130 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan"})
+}
+
+func TestInstallCtrlCAtAQuestionCreatesNothing(t *testing.T) {
+	w := rwNew(t)
+	w.region = ""
+	code, out, _ := w.run(Install, Request{Profile: "p"}, true, "^C")
+	if code != 130 || !strings.HasSuffix(out, "Interrupted: nothing was created.\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+func TestInstallCtrlCWhileABuildRunsDetaches(t *testing.T) {
+	w := rwNew(t)
+	w.ends["plan"] = cbtypes.StatusTypeInProgress
+	w.detach = true
+	code, out, _ := w.run(Install, rwFlags(), true)
+	if code != 130 || !strings.HasSuffix(out, "Detached: the plan goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+
+		"; apply it once done: dormeto install apply "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+
+	w = rwNew(t)
+	w.ends["apply"] = cbtypes.StatusTypeInProgress
+	w.detach = true
+	code, out, _ = w.run(Install, rwFlags(), true, "y")
+	if code != 130 || !strings.HasSuffix(out, "Detached: the apply goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+"\n") {
+		t.Errorf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "builds", w.actions(), []string{"plan", "apply"})
+}
+
+func TestInstallDomainAndSESQuestions(t *testing.T) {
+	w := rwNew(t)
+	r := rwFlags()
+	delete(r.Set, "domain")
+	delete(r.Set, "ses-identity")
+	delete(r.Set, "email-from")
+	code, out, asked := w.run(Install, r, true, "dormeto.example.com", "arn:aws:acm:us-east-1:532105290256:certificate/x", "Z1", "example.com", "dmt@example.com", "n")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "questions", asked, []string{
+		"Custom domain [none]", "Certificate ARN (us-east-1)", "Route 53 zone id", "SES identity [none]", "Sender (email_from) [none]", "Apply this plan? [y/N]",
+	})
+	s := w.saved()
+	rwEqual(t, "domain", s.Domain, &Domain{Dashboard: "dormeto.example.com", CertificateARN: "arn:aws:acm:us-east-1:532105290256:certificate/x", ZoneID: "Z1"})
+	if s.SESIdentity != "example.com" || s.EmailFrom != "dmt@example.com" {
+		t.Errorf("install.json: %+v", s)
+	}
+	rwInOrder(t, out, "  ✓ domain: dormeto.example.com, auth.dormeto.example.com: certificate and zone\n", "  ✓ SES: example.com verified for sending\n")
+}
+
+func TestInstallABadAnswerNamesItsFlag(t *testing.T) {
+	w := rwNew(t)
+	r := rwFlags()
+	delete(r.Set, "admin-emails")
+	code, out, _ := w.run(Install, r, true, "not-an-email")
+	if code != 2 || !strings.HasSuffix(out, `--admin-emails: "not-an-email" is not an email address`+"\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
+func TestInstallOutsideAnOrganizationIsAnAccountDeployment(t *testing.T) {
+	w := rwNew(t)
+	w.org = nil
+	r := rwFlags()
+	delete(r.Set, "mode")
+	code, out, asked := w.run(Install, r, true, "n")
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwEqual(t, "questions", asked, []string{"Apply this plan? [y/N]"})
+	if s := w.saved(); s.Mode != "account" || s.OrganizationID != "" {
+		t.Errorf("install.json: %+v", s)
+	}
+	rwInOrder(t, out, "Profile p: account 532105290256 (sandbox), not in an organization\n", "  ✓ organization: account deployment\n")
+	if strings.Contains(out, "organization access") {
+		t.Errorf("organization access in an account deployment:\n%s", out)
+	}
+}
