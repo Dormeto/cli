@@ -95,6 +95,14 @@ func TestResolvePublished(t *testing.T) {
 	if _, err := Resolve(context.Background(), h, "0.13.0", ""); err == nil || !strings.Contains(err.Error(), "manager 0.13.0 is not published on releases.dormeto.com") {
 		t.Fatalf("got %v", err)
 	}
+	// releases.dormeto.com is a private bucket behind CloudFront: a missing file answers 403, also "not published", with
+	// how to install a release built locally
+	h.status = map[string]int{ReleasesURL + "/0.14.0/SHA256SUMS": 403}
+	_, err = Resolve(context.Background(), h, "0.14.0", "")
+	if err == nil || !strings.Contains(err.Error(), "manager 0.14.0 is not published on releases.dormeto.com") || !strings.Contains(err.Error(), "--release <dir>") {
+		t.Fatalf("403: got %v", err)
+	}
+	h.status = nil
 
 	// another status names the URL and status
 	h.status = map[string]int{url: 500}

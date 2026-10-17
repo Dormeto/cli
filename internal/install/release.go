@@ -48,7 +48,9 @@ func get(ctx context.Context, h HTTP, url string) (body []byte, notFound bool, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode == http.StatusNotFound, fmt.Errorf("GET %s: %d %s", url, resp.StatusCode, http.StatusText(resp.StatusCode))
+		// releases.dormeto.com is a private bucket behind CloudFront: a file it does not have answers 403, not 404.
+		missing := resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden
+		return nil, missing, fmt.Errorf("GET %s: %d %s", url, resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	body, err = io.ReadAll(resp.Body)
 	if err != nil {
@@ -97,6 +99,19 @@ func Resolve(ctx context.Context, h HTTP, version, local string) (Release, error
 	return r, nil
 }
 
+// NotPublishedError is a version releases.dormeto.com does not have; its message says how to install a release built
+// locally instead.
+type NotPublishedError struct{ Version string }
+
+// Short is the fact alone, for a caller that gives its own advice.
+func (e *NotPublishedError) Short() string {
+	return fmt.Sprintf("manager %s is not published on releases.dormeto.com", e.Version)
+}
+
+func (e *NotPublishedError) Error() string {
+	return fmt.Sprintf("%s: for a release built locally, --release <dir> (in the manager: node scripts/release/release.mjs --version %s --out <dir>)", e.Short(), e.Version)
+}
+
 func resolvePublished(ctx context.Context, h HTTP, version string) (Release, error) {
 	if !managerVersionRe.MatchString(version) {
 		return Release{}, fmt.Errorf("%q is not a manager version (like 0.11.0)", version)
@@ -104,7 +119,7 @@ func resolvePublished(ctx context.Context, h HTTP, version string) (Release, err
 	base := ReleasesURL + "/" + version
 	body, notFound, err := get(ctx, h, base+"/SHA256SUMS")
 	if notFound {
-		return Release{}, fmt.Errorf("manager %s is not published on releases.dormeto.com", version)
+		return Release{}, &NotPublishedError{Version: version}
 	}
 	if err != nil {
 		return Release{}, err

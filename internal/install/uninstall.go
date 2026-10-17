@@ -180,8 +180,13 @@ func (x *run) installedRelease(s *Settings, applied *Applied) error {
 	if x.r.Release == "" {
 		rel, err := Resolve(x.ctx, x.d.HTTP, installed, "")
 		if err != nil {
+			why := err.Error()
+			var np *NotPublishedError
+			if errors.As(err, &np) {
+				why = np.Short()
+			}
 			return &stop{1, fmt.Sprintf("manager %s is installed, install.json names %s (a later plan's): %s; give its local release: dormeto uninstall %s --release <the directory of release %s>",
-				installed, s.Version, err, x.args(), installed)}
+				installed, s.Version, why, x.args(), installed)}
 		}
 		s.Version, s.ReleaseBase = rel.Version, rel.Base
 		return nil
