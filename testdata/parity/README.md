@@ -1,6 +1,6 @@
 # Shared cases
 
-Manager 0.11.0, router 0.29.0, manager commit `2bd9134394f306cd4bbf3b8eba736885e837279f`.
+Manager 0.12.0, router 0.29.0, manager commit `9cb11344656a7e402b552bd6ce1ddeab3ef01b9f`.
 
 Written by the manager's `scripts/parity/export.mjs`: the product's Node functions run over the corpus of
 `scripts/parity/cases/`, each case's input and output as JSON. Do not edit these files: export them again in the
