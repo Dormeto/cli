@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `dormeto install` and `dormeto uninstall`: the Dormeto manager installed in an AWS account by CodeBuild, guided. The
   CLI suggests organization or account mode, asks what it needs (each answer has a flag), checks the prerequisites
