@@ -268,6 +268,9 @@ func checkExisting(s Settings, f Found) Check {
 		version = f.Release.Version
 	}
 	switch installed := f.Saved.Installed; {
+	case installed != "" && version == "":
+		// An unreadable release names no version: the release row says why.
+		return Check{name, installed + " is installed; the release's version is unknown (see release)", Skip}
 	case installed == "":
 		return Check{name, "recorded for env " + s.Env + ", nothing applied yet: " + version, OK}
 	case CompareVersions(installed, version) > 0:

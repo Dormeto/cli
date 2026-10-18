@@ -399,6 +399,10 @@ func TestChecksExistingInstall(t *testing.T) {
 	chkWant(t, x, "existing install", OK, "upgrade: 0.10.0 → 0.11.1")
 	x.f.Saved = &Settings{Installed: "0.12.0"}
 	chkWant(t, x, "existing install", Fail, "0.12.0 is installed, newer than 0.11.1")
+	// An unreadable release names no version: the release row says why, this one only what is installed.
+	x.s.Version = ""
+	x.f.Release.Version = ""
+	chkWant(t, x, "existing install", Skip, "0.12.0 is installed; the release's version is unknown (see release)")
 }
 
 func TestChecksAnotherInstall(t *testing.T) {
