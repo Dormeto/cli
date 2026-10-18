@@ -11,6 +11,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/acm"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -33,6 +34,13 @@ func TestClientsRegionsAndRetries(t *testing.T) {
 	}
 	if got := acmo.Retryer.MaxAttempts(); got != 5 {
 		t.Errorf("acm attempts %d", got)
+	}
+	ebo := c.EventBridge.(*eventbridge.Client).Options()
+	if ebo.Region != "eu-west-1" {
+		t.Errorf("eventbridge region %q", ebo.Region)
+	}
+	if got := ebo.Retryer.MaxAttempts(); got != 5 {
+		t.Errorf("eventbridge attempts %d", got)
 	}
 }
 

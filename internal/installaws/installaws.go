@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
@@ -76,6 +77,9 @@ func Clients(cfg awssdk.Config, region string) install.Clients {
 			o.Region, o.Retryer, o.RetryMode, o.RetryMaxAttempts = region, standard(attempts), awssdk.RetryModeStandard, 0
 		}),
 		DynamoDB: dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+			o.Region, o.Retryer, o.RetryMode, o.RetryMaxAttempts = region, standard(attempts), awssdk.RetryModeStandard, 0
+		}),
+		EventBridge: eventbridge.NewFromConfig(cfg, func(o *eventbridge.Options) {
 			o.Region, o.Retryer, o.RetryMode, o.RetryMaxAttempts = region, standard(attempts), awssdk.RetryModeStandard, 0
 		}),
 	}

@@ -20,6 +20,7 @@ func TestNames(t *testing.T) {
 		Account: "532105290256", Region: "eu-west-1", Env: "prod",
 		Bucket: "dmt-install-532105290256-eu-west-1", Name: "dmt-prod-install", Role: "dmt-prod-install",
 		LogGroup: "/aws/codebuild/dmt-prod-install",
+		Rule:     "dmt-prod-install-requests", EventsRole: "dmt-prod-install-events",
 	}
 	if p != want {
 		t.Fatalf("Names = %+v, want %+v", p, want)

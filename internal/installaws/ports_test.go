@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
@@ -32,4 +33,5 @@ var (
 	_ install.Lambda        = (*lambda.Client)(nil)
 	_ install.Cognito       = (*cognitoidentityprovider.Client)(nil)
 	_ install.DynamoDB      = (*dynamodb.Client)(nil)
+	_ install.EventBridge   = (*eventbridge.Client)(nil)
 )

@@ -9,6 +9,8 @@ type Project struct {
 	Name                 string // dmt-<env>-install (the CodeBuild project)
 	Role                 string // dmt-<env>-install (its role)
 	LogGroup             string // /aws/codebuild/dmt-<env>-install
+	Rule                 string // dmt-<env>-install-requests (the EventBridge rule)
+	EventsRole           string // dmt-<env>-install-events (the rule's role)
 }
 
 // Names is the project of an account, a region and an env.
@@ -16,10 +18,12 @@ func Names(account, region, env string) Project {
 	name := "dmt-" + env + "-install"
 	return Project{
 		Account: account, Region: region, Env: env,
-		Bucket:   "dmt-install-" + account + "-" + region,
-		Name:     name,
-		Role:     name,
-		LogGroup: "/aws/codebuild/" + name,
+		Bucket:     "dmt-install-" + account + "-" + region,
+		Name:       name,
+		Role:       name,
+		LogGroup:   "/aws/codebuild/" + name,
+		Rule:       name + "-requests",
+		EventsRole: "dmt-" + env + "-install-events",
 	}
 }
 
