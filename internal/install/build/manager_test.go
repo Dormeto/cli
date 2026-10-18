@@ -306,11 +306,10 @@ func (s *sandbox) installed(version string) {
 	s.put("config/main.tf.json", "cli-config")
 }
 
-// prepared is the plan a dashboard plan request left, of version, made when appliedBuild was applied.
-func (s *sandbox) prepared(version, appliedBuild string) {
+// prepared is the plan a dashboard plan request left, of version from base, made when appliedBuild was applied.
+func (s *sandbox) prepared(version, base, appliedBuild string) {
 	p := "plans/" + planBuild + "/"
-	// a base no apply uses: it derives its own from the version
-	s.put(p+"release.json", `{"version":"`+version+`","base":"https://evil.example/manager/`+version+`","request":"`+requestKey+`","appliedBuild":"`+appliedBuild+`"}`)
+	s.put(p+"release.json", `{"version":"`+version+`","base":"`+base+`","request":"`+requestKey+`","appliedBuild":"`+appliedBuild+`"}`)
 	s.put(p+"main.tf.json", "applied-config")
 	s.put(p+".terraform.lock.hcl", "applied-lock")
 	s.put(p+"tfplan", "saved-plan")
@@ -667,7 +666,7 @@ func TestManagerRequestFieldsRefused(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			s := newSandbox(t)
 			s.installed("0.11.0")
-			s.prepared("0.12.0", "dmt-prod-install:build-2")
+			s.prepared("0.12.0", releases+"0.12.0", "dmt-prod-install:build-2")
 			s.request(c.body)
 			out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0", releases+"0.13.0"))
 			if err == nil || !strings.Contains(out, "dormeto: "+c.message+"\n") {
@@ -718,7 +717,7 @@ func TestManagerRequestWithoutAppliedConfiguration(t *testing.T) {
 func TestManagerRequestApply(t *testing.T) {
 	s := newSandbox(t)
 	s.installed("0.11.0")
-	s.prepared("0.12.0", "dmt-prod-install:build-2")
+	s.prepared("0.12.0", releases+"0.12.0", "dmt-prod-install:build-2")
 	s.request(`{"action":"apply","version":"0.12.0","planBuild":"` + planBuild + `"}`)
 	out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0"))
 	if err != nil {
@@ -734,11 +733,6 @@ func TestManagerRequestApply(t *testing.T) {
 	}
 	if !has(log, "curl -fsSL -o terraform-aws-dormeto-0.12.0.zip "+releases+"0.12.0/terraform-aws-dormeto-0.12.0.zip") {
 		t.Errorf("the release not derived from the version:\n%s", strings.Join(log, "\n"))
-	}
-	for _, l := range log {
-		if strings.Contains(l, "evil.example") {
-			t.Errorf("the plan's base used: %s", l)
-		}
 	}
 	a, _ := s.uploaded(mb + "applied.json")
 	if want := `{"version":"0.12.0","build":"dmt-prod-install:build-3"}`; strings.TrimSpace(a) != want {
@@ -762,7 +756,7 @@ func TestManagerRequestApplyRefused(t *testing.T) {
 			s := newSandbox(t)
 			s.installed("0.11.0")
 			if c.planVersion != "" {
-				s.prepared(c.planVersion, c.appliedBuild)
+				s.prepared(c.planVersion, releases+c.planVersion, c.appliedBuild)
 			}
 			if strings.HasSuffix(c.message, "has no configuration") {
 				if err := os.Remove(filepath.Join(s.fake, "s3", mb+"plans/"+planBuild+"/main.tf.json")); err != nil {
@@ -776,6 +770,43 @@ func TestManagerRequestApplyRefused(t *testing.T) {
 			}
 			s.checkNoTerraform()
 			s.checkResults(requestID, running, outcome("failed", c.message, "apply", c.version))
+		})
+	}
+}
+
+// An apply derives the release base from the version again, never from the plan's release.json, and refuses when it
+// differs from the base the plan was made with: the release changed since (published then, only staged now, or the
+// reverse), or the plan holds a base no derivation gives.
+func TestManagerRequestApplyReleaseChanged(t *testing.T) {
+	for _, c := range []struct {
+		name, planBase string
+		published      []string
+		staged         bool
+	}{
+		{"published at plan time, only staged now", releases + "0.12.0", nil, true},
+		{"staged at plan time, published now", stagedBase, []string{releases + "0.12.0"}, true},
+		{"a base no derivation gives", "https://evil.example/manager/0.12.0", []string{releases + "0.12.0"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed("0.11.0")
+			if c.staged {
+				s.put("release/SHA256SUMS", "good  terraform-aws-dormeto-0.12.0.zip\n")
+			}
+			s.prepared("0.12.0", c.planBase, "dmt-prod-install:build-2")
+			s.request(`{"action":"apply","version":"0.12.0","planBuild":"` + planBuild + `"}`)
+			out, err := s.run("manager.sh", s.requestEnv(c.published...))
+			want := "the release of manager 0.12.0 changed since the plan: prepare again"
+			if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+			for _, l := range s.log() {
+				if strings.Contains(l, "evil.example") {
+					t.Errorf("the plan's base used: %s", l)
+				}
+			}
+			s.checkNoTerraform()
+			s.checkResults(requestID, running, outcome("failed", want, "apply", "0.12.0"))
 		})
 	}
 }

@@ -178,6 +178,10 @@ take_request() {
     aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/release.json" release.json
     [ "$(jq -r '.version // ""' release.json)" = "$RELEASE_VERSION" ] ||
       die "the plan of $PLAN_BUILD is not manager $RELEASE_VERSION"
+    # the release the plan was made with, derived again (never taken from release.json): published then and only staged
+    # now, or the reverse, it may not be the same archive
+    [ "$(jq -r '.base // ""' release.json)" = "$RELEASE_BASE" ] ||
+      die "the release of manager $RELEASE_VERSION changed since the plan: prepare again"
     # nothing applied since the plan was made (Terraform also refuses a saved plan its state has moved past)
     [ "$(jq -r '.appliedBuild // ""' release.json)" = "$APPLIED_BUILD" ] || die "the plan is stale: prepare again"
   fi
