@@ -47,7 +47,9 @@ type bootWorld struct {
 	deleted     [][]string                     // each DeleteObjects' keys
 	noProject   bool                           // DeleteProject answers not found
 	noRule      bool                           // RemoveTargets and DeleteRule answer not found
-	failed      bool                           // PutTargets answers a failed entry
+	targetErr   func(n int) error              // the nth PutTargets error
+	targets     int
+	failed      bool // PutTargets answers a failed entry
 }
 
 func (w *bootWorld) rec(name string, in any) {
@@ -145,6 +147,12 @@ func (f bootEvents) PutRule(_ context.Context, in *eventbridge.PutRuleInput, _ .
 }
 func (f bootEvents) PutTargets(_ context.Context, in *eventbridge.PutTargetsInput, _ ...func(*eventbridge.Options)) (*eventbridge.PutTargetsOutput, error) {
 	f.w.rec("events.PutTargets", in)
+	f.w.targets++
+	if f.w.targetErr != nil {
+		if err := f.w.targetErr(f.w.targets); err != nil {
+			return nil, err
+		}
+	}
 	if f.w.failed {
 		return &eventbridge.PutTargetsOutput{FailedEntryCount: 1, FailedEntries: []ebtypes.PutTargetsResultEntry{
 			{TargetId: aws.String("install-build"), ErrorCode: aws.String("ValidationException"), ErrorMessage: aws.String("bad role")}}}, nil
@@ -865,5 +873,34 @@ func TestBootstrapEventsRoleOutsideDormetoIsRefused(t *testing.T) {
 	}
 	if slices.Contains(w.calls, "events.PutRule") || slices.Contains(w.calls, "s3.PutBucketNotificationConfiguration") {
 		t.Errorf("went on: %v", w.calls)
+	}
+}
+
+func TestBootstrapWaitsForTheEventsRoleToBeUsable(t *testing.T) {
+	slept := bootClock(t)
+	w := &bootWorld{targetErr: func(n int) error {
+		if n == 1 {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: "Provided role arn:aws:iam::123456789012:role/dormeto/dmt-prod-install-events cannot be assumed by principal 'events.amazonaws.com'."}
+		}
+		return nil
+	}}
+	if err := Bootstrap(context.Background(), w.clients(), bootP, ""); err != nil {
+		t.Fatal(err)
+	}
+	if w.targets != 2 || len(*slept) != 1 || (*slept)[0] != 5*time.Second {
+		t.Errorf("PutTargets %d, sleeps %v", w.targets, *slept)
+	}
+}
+
+func TestBootstrapOtherTargetErrorsAreNotRetried(t *testing.T) {
+	slept := bootClock(t)
+	w := &bootWorld{targetErr: func(int) error {
+		return &smithy.GenericAPIError{Code: "ValidationException", Message: "Target Arn is invalid"}
+	}}
+	if err := Bootstrap(context.Background(), w.clients(), bootP, ""); err == nil {
+		t.Fatal("no error")
+	}
+	if w.targets != 1 || len(*slept) != 0 {
+		t.Errorf("PutTargets %d, sleeps %v", w.targets, *slept)
 	}
 }

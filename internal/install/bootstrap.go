@@ -263,18 +263,20 @@ func ensureRequestRule(ctx context.Context, c Clients, p Project) error {
 		Description: aws.String("Dormeto install: starts the install build for a dashboard request"), Tags: tags}); err != nil {
 		return fmt.Errorf("put rule %s: %w", p.Rule, err)
 	}
-	out, err := c.EventBridge.PutTargets(ctx, &eventbridge.PutTargetsInput{Rule: &p.Rule, Targets: []ebtypes.Target{{
-		Id: aws.String(requestTarget), Arn: aws.String(p.projectARN()), RoleArn: &roleARN,
-		InputTransformer: &ebtypes.InputTransformer{InputPathsMap: map[string]string{"key": "$.detail.object.key"}, InputTemplate: aws.String(requestInput)},
-		RetryPolicy:      &ebtypes.RetryPolicy{MaximumRetryAttempts: aws.Int32(0), MaximumEventAgeInSeconds: aws.Int32(60)},
-	}}})
-	if err != nil {
-		return fmt.Errorf("put the target of rule %s: %w", p.Rule, err)
-	}
-	if out.FailedEntryCount > 0 && len(out.FailedEntries) > 0 {
-		return fmt.Errorf("put the target of rule %s: %s: %s", p.Rule, aws.ToString(out.FailedEntries[0].ErrorCode), aws.ToString(out.FailedEntries[0].ErrorMessage))
-	}
-	return nil
+	return retryWhile(func() error {
+		out, err := c.EventBridge.PutTargets(ctx, &eventbridge.PutTargetsInput{Rule: &p.Rule, Targets: []ebtypes.Target{{
+			Id: aws.String(requestTarget), Arn: aws.String(p.projectARN()), RoleArn: &roleARN,
+			InputTransformer: &ebtypes.InputTransformer{InputPathsMap: map[string]string{"key": "$.detail.object.key"}, InputTemplate: aws.String(requestInput)},
+			RetryPolicy:      &ebtypes.RetryPolicy{MaximumRetryAttempts: aws.Int32(0), MaximumEventAgeInSeconds: aws.Int32(60)},
+		}}})
+		if err != nil {
+			return err
+		}
+		if out.FailedEntryCount > 0 && len(out.FailedEntries) > 0 {
+			return fmt.Errorf("%s: %s", aws.ToString(out.FailedEntries[0].ErrorCode), aws.ToString(out.FailedEntries[0].ErrorMessage))
+		}
+		return nil
+	}, "put the target of rule "+p.Rule, roleNotYetUsable)
 }
 
 func ensureLogGroup(ctx context.Context, c Clients, p Project) error {
@@ -345,11 +347,24 @@ func ensureProject(ctx context.Context, c Clients, p Project, roleARN, script st
 
 // untilUsable runs do, again every 5 s for up to 60 s while CodeBuild refuses the role that IAM has not yet spread.
 func untilUsable(do func() error, what string) error {
+	return retryWhile(do, what, func(err error) bool {
+		var invalid *cbtypes.InvalidInputException
+		return errors.As(err, &invalid) && strings.Contains(invalid.ErrorMessage(), "not authorized to perform: sts:AssumeRole")
+	})
+}
+
+// roleNotYetUsable tells EventBridge's refusal of a role that IAM has not yet spread (a failed entry or the call's error).
+func roleNotYetUsable(err error) bool {
+	return strings.Contains(err.Error(), "cannot be assumed") || strings.Contains(err.Error(), "not authorized to perform: sts:AssumeRole")
+}
+
+// retryWhile runs do, again every 5 s for up to 60 s while retry says its error is IAM's eventual consistency; any other
+// error ends it at once.
+func retryWhile(do func() error, what string, retry func(error) bool) error {
 	start := bootNow()
 	for {
 		err := do()
-		var invalid *cbtypes.InvalidInputException
-		if err == nil || !errors.As(err, &invalid) || !strings.Contains(invalid.ErrorMessage(), "not authorized to perform: sts:AssumeRole") {
+		if err == nil || !retry(err) {
 			if err != nil {
 				return fmt.Errorf("%s: %w", what, err)
 			}

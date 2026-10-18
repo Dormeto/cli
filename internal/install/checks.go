@@ -82,6 +82,7 @@ var rightsActions = []string{
 	"iam:CreateRole", "iam:AttachRolePolicy", "iam:PassRole", "iam:TagRole",
 	"codebuild:CreateProject", "codebuild:StartBuild", "codebuild:BatchGetBuilds",
 	"logs:CreateLogGroup", "logs:GetLogEvents",
+	"iam:PutRolePolicy", "s3:PutBucketNotification", "events:PutRule", "events:PutTargets",
 }
 
 // Checks runs every prerequisite of the manager's own account, read-only, and returns the rows in a fixed order. An

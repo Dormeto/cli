@@ -292,7 +292,7 @@ func TestChecksRights(t *testing.T) {
 	if aws.ToString(got.PolicySourceArn) != "arn:aws:iam::532105290256:role/aws-reserved/sso.amazonaws.com/eu-west-1/AWSReservedSSO_Admin_a15b943a5b9a9846" {
 		t.Errorf("source = %s", aws.ToString(got.PolicySourceArn))
 	}
-	if len(got.ActionNames) != 13 || got.ActionNames[0] != "s3:CreateBucket" || got.ActionNames[12] != "logs:GetLogEvents" || got.ResourceArns[0] != "*" {
+	if len(got.ActionNames) != 17 || got.ActionNames[0] != "s3:CreateBucket" || got.ActionNames[12] != "logs:GetLogEvents" || got.ActionNames[16] != "events:PutTargets" || got.ResourceArns[0] != "*" {
 		t.Errorf("input = %+v", got)
 	}
 }

@@ -381,7 +381,7 @@ version came from a local release, `--release <dir>` gives that release's direct
 ### Permissions to install
 
 The install's profile needs administrator rights in the manager's account: the checks simulate the actions of the
-bootstrap (the bucket, the role, the project, the log group) and `iam:PassRole`, and the install is refused when one is
+bootstrap (the bucket, the role, the project, the log group, and the rule that starts the install build on a dashboard request with its own role) and `iam:PassRole`, and the install is refused when one is
 denied. The build role the install creates gets the `AdministratorAccess` managed policy in that account only, since the
 manager module creates IAM roles, Lambda functions, a user pool, a distribution and tables; it is trusted by CodeBuild
 for the install's project only. `--build-role` gives your own role instead, and `dormeto uninstall` removes the one the
