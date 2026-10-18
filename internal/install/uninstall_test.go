@@ -219,6 +219,7 @@ func TestUninstallLiftsTheProtectionThenDestroys(t *testing.T) {
 		"codebuild:StartBuild apply",
 		"s3:PutObject prod/install.json", "codebuild:StartBuild plan-destroy", "s3:PutObject prod/install.json",
 		"codebuild:StartBuild apply-destroy", "s3:PutObject prod/install.json",
+		"events:RemoveTargets dmt-prod-install-requests", "events:DeleteRule dmt-prod-install-requests",
 		"codebuild:DeleteProject", "iam:DetachRolePolicy", "iam:DeleteRole dmt-prod-install", "logs:DeleteLogGroup", "s3:DeleteObjects", "s3:DeleteBucket",
 	})
 	if !w.gone() || len(w.objects) != 0 {

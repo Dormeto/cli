@@ -462,7 +462,7 @@ func OrgBootstrap(ctx context.Context, mgmt Clients, p Project, memberRole, orga
 	if err := ensureBucket(ctx, mgmt, p); err != nil {
 		return err
 	}
-	roleARN, err := ensureRole(ctx, mgmt, p, "Dormeto install: what CodeBuild gives the organization's accounts their roles with")
+	roleARN, err := ensureRole(ctx, mgmt, p, p.Role, trustPolicy(p), "Dormeto install: what CodeBuild gives the organization's accounts their roles with")
 	if err != nil {
 		return err
 	}

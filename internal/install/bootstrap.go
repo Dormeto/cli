@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -41,7 +43,8 @@ const (
 
 // Bootstrap creates, or updates to what this version expects, the install's own resources in the account: the state
 // bucket, the build role (unless buildRole, an ARN, is given: it is used as is), the log group, the scripts and the
-// CodeBuild project. Running it again is safe.
+// CodeBuild project, then, unless buildRole is given (the dashboard's update is not set up then), the rule that starts
+// the project on a request, its role and the bucket's EventBridge events. Running it again is safe.
 func Bootstrap(ctx context.Context, c Clients, p Project, buildRole string) error {
 	if err := ensureBucket(ctx, c, p); err != nil {
 		return err
@@ -59,7 +62,13 @@ func Bootstrap(ctx context.Context, c Clients, p Project, buildRole string) erro
 	if err := uploadScripts(ctx, c, p); err != nil {
 		return err
 	}
-	return ensureProject(ctx, c, p, roleARN, "manager.sh")
+	if err := ensureProject(ctx, c, p, roleARN, "manager.sh"); err != nil {
+		return err
+	}
+	if buildRole != "" {
+		return nil
+	}
+	return ensureRequestRule(ctx, c, p)
 }
 
 func ensureBucket(ctx context.Context, c Clients, p Project) error {
@@ -153,7 +162,7 @@ func trustPolicy(p Project) string {
 // ensureBuildRole creates the build role (administrator access: Terraform creates the manager's resources with it) or
 // brings an existing one to the expected trust, and returns its ARN.
 func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) {
-	arn, err := ensureRole(ctx, c, p, "Dormeto install: what CodeBuild runs Terraform with")
+	arn, err := ensureRole(ctx, c, p, p.Role, trustPolicy(p), "Dormeto install: what CodeBuild runs Terraform with")
 	if err != nil {
 		return "", err
 	}
@@ -163,38 +172,38 @@ func ensureBuildRole(ctx context.Context, c Clients, p Project) (string, error) 
 	return arn, nil
 }
 
-// ensureRole creates the project's role under /dormeto/ with the CodeBuild trust, or brings an existing one to that trust,
+// ensureRole creates the role name under /dormeto/ with the trust document, or brings an existing one to that trust,
 // and returns the ARN the API gives. Its permissions are the caller's.
-func ensureRole(ctx context.Context, c Clients, p Project, description string) (string, error) {
-	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &p.Role})
+func ensureRole(ctx context.Context, c Clients, p Project, name, trust, description string) (string, error) {
+	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &name})
 	var arn string
 	switch {
 	case err == nil:
 		if got.Role == nil || aws.ToString(got.Role.Path) != rolePath {
-			return "", fmt.Errorf("role %s exists outside %s: not this install's", p.Role, rolePath)
+			return "", fmt.Errorf("role %s exists outside %s: not this install's", name, rolePath)
 		}
 		if !hasCLITag(got.Role.Tags) {
-			return "", fmt.Errorf("role %s exists without the managed-by=dormeto-cli tag: not this install's", p.Role)
+			return "", fmt.Errorf("role %s exists without the managed-by=dormeto-cli tag: not this install's", name)
 		}
 		arn = aws.ToString(got.Role.Arn)
-		if _, err := c.IAM.UpdateAssumeRolePolicy(ctx, &iam.UpdateAssumeRolePolicyInput{RoleName: &p.Role, PolicyDocument: aws.String(trustPolicy(p))}); err != nil {
-			return "", fmt.Errorf("update role %s: %w", p.Role, err)
+		if _, err := c.IAM.UpdateAssumeRolePolicy(ctx, &iam.UpdateAssumeRolePolicyInput{RoleName: &name, PolicyDocument: aws.String(trust)}); err != nil {
+			return "", fmt.Errorf("update role %s: %w", name, err)
 		}
 	case isNotFound(err, "NoSuchEntity"):
 		var tags []iamtypes.Tag
 		for _, k := range sortedKeys(p.Tags()) {
 			tags = append(tags, iamtypes.Tag{Key: aws.String(k), Value: aws.String(p.Tags()[k])})
 		}
-		created, err := c.IAM.CreateRole(ctx, &iam.CreateRoleInput{RoleName: &p.Role, Path: aws.String(rolePath), AssumeRolePolicyDocument: aws.String(trustPolicy(p)),
+		created, err := c.IAM.CreateRole(ctx, &iam.CreateRoleInput{RoleName: &name, Path: aws.String(rolePath), AssumeRolePolicyDocument: aws.String(trust),
 			MaxSessionDuration: aws.Int32(3600), Tags: tags, Description: aws.String(description)})
 		if err != nil {
-			return "", fmt.Errorf("create role %s: %w", p.Role, err)
+			return "", fmt.Errorf("create role %s: %w", name, err)
 		}
 		if created.Role != nil {
 			arn = aws.ToString(created.Role.Arn)
 		}
 	default:
-		return "", fmt.Errorf("check role %s: %w", p.Role, err)
+		return "", fmt.Errorf("check role %s: %w", name, err)
 	}
 	return arn, nil
 }
@@ -204,6 +213,68 @@ func hasCLITag(tags []iamtypes.Tag) bool {
 	return slices.ContainsFunc(tags, func(t iamtypes.Tag) bool {
 		return aws.ToString(t.Key) == "managed-by" && aws.ToString(t.Value) == "dormeto-cli"
 	})
+}
+
+const (
+	eventsPolicyName = "StartInstallBuild"
+	requestTarget    = "install-build"
+	// What EventBridge sends StartBuild: <key> is the InputPathsMap key "key".
+	requestInput = `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_KEY","value":"<key>","type":"PLAINTEXT"}]}`
+)
+
+func eventsTrust(p Project) string {
+	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"sts:AssumeRole",`+
+		`"Condition":{"StringEquals":{"aws:SourceAccount":"%s"},"ArnLike":{"aws:SourceArn":"arn:aws:events:%s:%s:rule/%s"}}}]}`,
+		p.Account, p.Region, p.Account, p.Rule)
+}
+
+func (p Project) projectARN() string {
+	return fmt.Sprintf("arn:aws:codebuild:%s:%s:project/%s", p.Region, p.Account, p.Name)
+}
+
+// requestPattern matches the objects the manager's API creates under <env>/requests/ (a wildcard, not a prefix: only .json).
+func requestPattern(p Project) string {
+	return fmt.Sprintf(`{"source":["aws.s3"],"detail-type":["Object Created"],"detail":{"bucket":{"name":["%s"]},"object":{"key":[{"wildcard":"%s/requests/*.json"}]}}}`,
+		p.Bucket, p.Env)
+}
+
+// ensureRequestRule turns on the bucket's EventBridge events and makes the rule that starts the install project for each
+// request the dashboard drops under <env>/requests/, through a role that may start that project only.
+func ensureRequestRule(ctx context.Context, c Clients, p Project) error {
+	roleARN, err := ensureRole(ctx, c, p, p.EventsRole, eventsTrust(p), "Dormeto install: what EventBridge starts the install build with")
+	if err != nil {
+		return err
+	}
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"codebuild:StartBuild","Resource":"%s"}]}`, p.projectARN())
+	if _, err := c.IAM.PutRolePolicy(ctx, &iam.PutRolePolicyInput{RoleName: &p.EventsRole, PolicyName: aws.String(eventsPolicyName), PolicyDocument: &policy}); err != nil {
+		return fmt.Errorf("put the policy of role %s: %w", p.EventsRole, err)
+	}
+	// The bucket carries no other notification: the configuration is replaced as a whole.
+	if _, err := c.S3.PutBucketNotificationConfiguration(ctx, &s3.PutBucketNotificationConfigurationInput{Bucket: &p.Bucket,
+		NotificationConfiguration: &s3types.NotificationConfiguration{EventBridgeConfiguration: &s3types.EventBridgeConfiguration{}}}); err != nil {
+		return fmt.Errorf("turn on EventBridge events of bucket %s: %w", p.Bucket, err)
+	}
+	var tags []ebtypes.Tag
+	for _, k := range sortedKeys(p.Tags()) {
+		tags = append(tags, ebtypes.Tag{Key: aws.String(k), Value: aws.String(p.Tags()[k])})
+	}
+	// Tags of a rule that exists are ignored by PutRule.
+	if _, err := c.EventBridge.PutRule(ctx, &eventbridge.PutRuleInput{Name: &p.Rule, State: ebtypes.RuleStateEnabled, EventPattern: aws.String(requestPattern(p)),
+		Description: aws.String("Dormeto install: starts the install build for a dashboard request"), Tags: tags}); err != nil {
+		return fmt.Errorf("put rule %s: %w", p.Rule, err)
+	}
+	out, err := c.EventBridge.PutTargets(ctx, &eventbridge.PutTargetsInput{Rule: &p.Rule, Targets: []ebtypes.Target{{
+		Id: aws.String(requestTarget), Arn: aws.String(p.projectARN()), RoleArn: &roleARN,
+		InputTransformer: &ebtypes.InputTransformer{InputPathsMap: map[string]string{"key": "$.detail.object.key"}, InputTemplate: aws.String(requestInput)},
+		RetryPolicy:      &ebtypes.RetryPolicy{MaximumRetryAttempts: aws.Int32(0), MaximumEventAgeInSeconds: aws.Int32(60)},
+	}}})
+	if err != nil {
+		return fmt.Errorf("put the target of rule %s: %w", p.Rule, err)
+	}
+	if out.FailedEntryCount > 0 && len(out.FailedEntries) > 0 {
+		return fmt.Errorf("put the target of rule %s: %s: %s", p.Rule, aws.ToString(out.FailedEntries[0].ErrorCode), aws.ToString(out.FailedEntries[0].ErrorMessage))
+	}
+	return nil
 }
 
 func ensureLogGroup(ctx context.Context, c Clients, p Project) error {
@@ -291,9 +362,14 @@ func untilUsable(do func() error, what string) error {
 	}
 }
 
-// Teardown deletes the install's project, its role (only the one this install created, under /dormeto/), its log group
+// Teardown deletes the install's request rule and its role (unless buildRole is given: none was made then), project, its role (only the one this install created, under /dormeto/), its log group
 // and, with bucket, the state bucket with every version in it. What is already gone is not an error.
-func Teardown(ctx context.Context, c Clients, p Project, bucket bool) error {
+func Teardown(ctx context.Context, c Clients, p Project, buildRole string, bucket bool) error {
+	if buildRole == "" {
+		if err := deleteRequestRule(ctx, c, p); err != nil {
+			return err
+		}
+	}
 	if _, err := c.CodeBuild.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: &p.Name}); err != nil && !isNotFound(err, "ResourceNotFoundException") {
 		return fmt.Errorf("delete project %s: %w", p.Name, err)
 	}
@@ -309,24 +385,56 @@ func Teardown(ctx context.Context, c Clients, p Project, bucket bool) error {
 	return nil
 }
 
-// deleteBuildRole deletes p.Role when it is under /dormeto/ and tagged managed-by=dormeto-cli (GetRole returns the
-// tags): a role of that name elsewhere, or not made by the CLI, is not the install's.
+// deleteRequestRule deletes the rule, its target and the events role (policy included). The bucket's notification
+// configuration stays: EventBridge delivery to no rule is free.
+func deleteRequestRule(ctx context.Context, c Clients, p Project) error {
+	out, err := c.EventBridge.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{Rule: &p.Rule, Ids: []string{requestTarget}})
+	switch {
+	case isNotFound(err, "ResourceNotFoundException"):
+	case err != nil:
+		return fmt.Errorf("remove the target of rule %s: %w", p.Rule, err)
+	case out.FailedEntryCount > 0 && len(out.FailedEntries) > 0:
+		return fmt.Errorf("remove the target of rule %s: %s: %s", p.Rule, aws.ToString(out.FailedEntries[0].ErrorCode), aws.ToString(out.FailedEntries[0].ErrorMessage))
+	}
+	if _, err := c.EventBridge.DeleteRule(ctx, &eventbridge.DeleteRuleInput{Name: &p.Rule}); err != nil && !isNotFound(err, "ResourceNotFoundException") {
+		return fmt.Errorf("delete rule %s: %w", p.Rule, err)
+	}
+	return deleteRole(ctx, c, p.EventsRole, func() error {
+		if _, err := c.IAM.DeleteRolePolicy(ctx, &iam.DeleteRolePolicyInput{RoleName: &p.EventsRole, PolicyName: aws.String(eventsPolicyName)}); err != nil && !isNotFound(err, "NoSuchEntity") {
+			return fmt.Errorf("delete the policy of role %s: %w", p.EventsRole, err)
+		}
+		return nil
+	})
+}
+
 func deleteBuildRole(ctx context.Context, c Clients, p Project) error {
-	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &p.Role})
+	return deleteRole(ctx, c, p.Role, func() error {
+		if _, err := c.IAM.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil && !isNotFound(err, "NoSuchEntity") {
+			return fmt.Errorf("detach AdministratorAccess from role %s: %w", p.Role, err)
+		}
+		return nil
+	})
+}
+
+// deleteRole deletes the role name when it is under /dormeto/ and tagged managed-by=dormeto-cli (GetRole returns the
+// tags): a role of that name elsewhere, or not made by the CLI, is not the install's and is left alone. detach runs
+// first, to remove what the role carries.
+func deleteRole(ctx context.Context, c Clients, name string, detach func() error) error {
+	got, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: &name})
 	if isNotFound(err, "NoSuchEntity") {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("check role %s: %w", p.Role, err)
+		return fmt.Errorf("check role %s: %w", name, err)
 	}
 	if got.Role == nil || aws.ToString(got.Role.Path) != rolePath || !hasCLITag(got.Role.Tags) {
 		return nil
 	}
-	if _, err := c.IAM.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: &p.Role, PolicyArn: aws.String(adminPolicyARN)}); err != nil && !isNotFound(err, "NoSuchEntity") {
-		return fmt.Errorf("detach AdministratorAccess from role %s: %w", p.Role, err)
+	if err := detach(); err != nil {
+		return err
 	}
-	if _, err := c.IAM.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: &p.Role}); err != nil && !isNotFound(err, "NoSuchEntity") {
-		return fmt.Errorf("delete role %s: %w", p.Role, err)
+	if _, err := c.IAM.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: &name}); err != nil && !isNotFound(err, "NoSuchEntity") {
+		return fmt.Errorf("delete role %s: %w", name, err)
 	}
 	return nil
 }

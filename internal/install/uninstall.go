@@ -464,7 +464,7 @@ func (x *run) removeBootstrap(s Settings, ask bool) (kept bool, err error) {
 			return true, err
 		}
 		if ok {
-			if err := Teardown(context.WithoutCancel(x.ctx), x.c, x.p, true); err != nil {
+			if err := Teardown(context.WithoutCancel(x.ctx), x.c, x.p, s.BuildRole, true); err != nil {
 				return true, err
 			}
 			role := ", the role " + x.p.Role

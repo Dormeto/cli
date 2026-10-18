@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +16,8 @@ import (
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
 	cbtypes "github.com/aws/aws-sdk-go-v2/service/codebuild/types"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -28,18 +32,22 @@ import (
 type bootWorld struct {
 	calls []string
 	in    map[string]any
+	all   map[string][]any // every input of each call, in order (in keeps the last)
 
-	bucket    error // HeadBucket's answer
-	role      bool  // the role exists
-	rolePath  string
-	untagged  bool // the existing role lacks managed-by=dormeto-cli
-	logGroup  bool
-	project   bool
-	cbErr     func(n int) error // the nth CreateProject/UpdateProject
-	cbCalls   int
-	versions  []*s3.ListObjectVersionsOutput // the pages
-	deleted   [][]string                     // each DeleteObjects' keys
-	noProject bool                           // DeleteProject answers not found
+	bucket      error // HeadBucket's answer
+	role        bool  // the role exists
+	rolePath    string
+	rolePathFor map[string]string // a path per role name, over rolePath
+	untagged    bool              // the existing role lacks managed-by=dormeto-cli
+	logGroup    bool
+	project     bool
+	cbErr       func(n int) error // the nth CreateProject/UpdateProject
+	cbCalls     int
+	versions    []*s3.ListObjectVersionsOutput // the pages
+	deleted     [][]string                     // each DeleteObjects' keys
+	noProject   bool                           // DeleteProject answers not found
+	noRule      bool                           // RemoveTargets and DeleteRule answer not found
+	failed      bool                           // PutTargets answers a failed entry
 }
 
 func (w *bootWorld) rec(name string, in any) {
@@ -48,10 +56,14 @@ func (w *bootWorld) rec(name string, in any) {
 	}
 	w.calls = append(w.calls, name)
 	w.in[name] = in
+	if w.all == nil {
+		w.all = map[string][]any{}
+	}
+	w.all[name] = append(w.all[name], in)
 }
 
 func (w *bootWorld) clients() Clients {
-	return Clients{S3: bootS3{w: w}, IAM: bootIAM{w: w}, Logs: bootLogs{w: w}, CodeBuild: bootCB{w: w}}
+	return Clients{S3: bootS3{w: w}, IAM: bootIAM{w: w}, Logs: bootLogs{w: w}, CodeBuild: bootCB{w: w}, EventBridge: bootEvents{w: w}}
 }
 
 type bootS3 struct {
@@ -117,6 +129,43 @@ func (f bootS3) DeleteBucket(_ context.Context, in *s3.DeleteBucketInput, _ ...f
 	return &s3.DeleteBucketOutput{}, nil
 }
 
+func (f bootS3) PutBucketNotificationConfiguration(_ context.Context, in *s3.PutBucketNotificationConfigurationInput, _ ...func(*s3.Options)) (*s3.PutBucketNotificationConfigurationOutput, error) {
+	f.w.rec("s3.PutBucketNotificationConfiguration", in)
+	return &s3.PutBucketNotificationConfigurationOutput{}, nil
+}
+
+type bootEvents struct {
+	EventBridge
+	w *bootWorld
+}
+
+func (f bootEvents) PutRule(_ context.Context, in *eventbridge.PutRuleInput, _ ...func(*eventbridge.Options)) (*eventbridge.PutRuleOutput, error) {
+	f.w.rec("events.PutRule", in)
+	return &eventbridge.PutRuleOutput{}, nil
+}
+func (f bootEvents) PutTargets(_ context.Context, in *eventbridge.PutTargetsInput, _ ...func(*eventbridge.Options)) (*eventbridge.PutTargetsOutput, error) {
+	f.w.rec("events.PutTargets", in)
+	if f.w.failed {
+		return &eventbridge.PutTargetsOutput{FailedEntryCount: 1, FailedEntries: []ebtypes.PutTargetsResultEntry{
+			{TargetId: aws.String("install-build"), ErrorCode: aws.String("ValidationException"), ErrorMessage: aws.String("bad role")}}}, nil
+	}
+	return &eventbridge.PutTargetsOutput{}, nil
+}
+func (f bootEvents) RemoveTargets(_ context.Context, in *eventbridge.RemoveTargetsInput, _ ...func(*eventbridge.Options)) (*eventbridge.RemoveTargetsOutput, error) {
+	f.w.rec("events.RemoveTargets", in)
+	if f.w.noRule {
+		return nil, &ebtypes.ResourceNotFoundException{Message: aws.String("no rule")}
+	}
+	return &eventbridge.RemoveTargetsOutput{}, nil
+}
+func (f bootEvents) DeleteRule(_ context.Context, in *eventbridge.DeleteRuleInput, _ ...func(*eventbridge.Options)) (*eventbridge.DeleteRuleOutput, error) {
+	f.w.rec("events.DeleteRule", in)
+	if f.w.noRule {
+		return nil, &ebtypes.ResourceNotFoundException{Message: aws.String("no rule")}
+	}
+	return &eventbridge.DeleteRuleOutput{}, nil
+}
+
 type bootIAM struct {
 	IAM
 	w *bootWorld
@@ -128,6 +177,9 @@ func (f bootIAM) GetRole(_ context.Context, in *iam.GetRoleInput, _ ...func(*iam
 		return nil, chkNoEntity()
 	}
 	path := f.w.rolePath
+	if p, ok := f.w.rolePathFor[aws.ToString(in.RoleName)]; ok {
+		path = p
+	}
 	if path == "" {
 		path = "/dormeto/"
 	}
@@ -261,6 +313,7 @@ func TestBootstrapFreshAccount(t *testing.T) {
 		"logs.DescribeLogGroups", "logs.CreateLogGroup", "logs.PutRetentionPolicy",
 		"s3.PutObject prod/build/manager.sh", "s3.PutObject prod/build/organization.sh",
 		"codebuild.BatchGetProjects", "codebuild.CreateProject",
+		"iam.GetRole", "iam.CreateRole", "iam.PutRolePolicy", "s3.PutBucketNotificationConfiguration", "events.PutRule", "events.PutTargets",
 	}
 	if !slices.Equal(w.calls, want) {
 		t.Fatalf("calls:\n%s\nwant\n%s", strings.Join(w.calls, "\n"), strings.Join(want, "\n"))
@@ -271,6 +324,7 @@ func TestBootstrapFreshAccount(t *testing.T) {
 	}
 	checkBucketSettings(t, w)
 	checkRole(t, w)
+	checkEvents(t, w)
 
 	lg := w.in["logs.CreateLogGroup"].(*cloudwatchlogs.CreateLogGroupInput)
 	if aws.ToString(lg.LogGroupName) != "/aws/codebuild/dmt-prod-install" || lg.Tags["managed-by"] != "dormeto-cli" || lg.Tags["dormeto:env"] != "prod" || lg.Tags["project"] != "dormeto" {
@@ -335,9 +389,19 @@ func checkBucketSettings(t *testing.T, w *bootWorld) {
 
 const wantTrust = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"codebuild.amazonaws.com"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"aws:SourceAccount":"123456789012"},"ArnLike":{"aws:SourceArn":"arn:aws:codebuild:eu-west-1:123456789012:project/dmt-prod-install"}}}]}`
 
+// first is the first input of a call (the build role's: it is ensured before the events role).
+func first[T any](w *bootWorld, call string) (T, bool) {
+	var zero T
+	if len(w.all[call]) == 0 {
+		return zero, false
+	}
+	v, ok := w.all[call][0].(T)
+	return v, ok
+}
+
 func checkRole(t *testing.T, w *bootWorld) {
 	t.Helper()
-	if c, ok := w.in["iam.CreateRole"].(*iam.CreateRoleInput); ok {
+	if c, ok := first[*iam.CreateRoleInput](w, "iam.CreateRole"); ok {
 		if aws.ToString(c.RoleName) != "dmt-prod-install" || aws.ToString(c.Path) != "/dormeto/" || aws.ToString(c.AssumeRolePolicyDocument) != wantTrust || aws.ToInt32(c.MaxSessionDuration) != 3600 {
 			t.Errorf("CreateRole = %+v", c)
 		}
@@ -349,7 +413,7 @@ func checkRole(t *testing.T, w *bootWorld) {
 			t.Errorf("role tags = %v", got)
 		}
 	}
-	if u, ok := w.in["iam.UpdateAssumeRolePolicy"].(*iam.UpdateAssumeRolePolicyInput); ok && aws.ToString(u.PolicyDocument) != wantTrust {
+	if u, ok := first[*iam.UpdateAssumeRolePolicyInput](w, "iam.UpdateAssumeRolePolicy"); ok && aws.ToString(u.PolicyDocument) != wantTrust {
 		t.Errorf("UpdateAssumeRolePolicy = %+v", u)
 	}
 	a := w.in["iam.AttachRolePolicy"].(*iam.AttachRolePolicyInput)
@@ -441,6 +505,11 @@ func TestBootstrapBuildRole(t *testing.T) {
 	if cp := w.in["codebuild.CreateProject"].(*codebuild.CreateProjectInput); aws.ToString(cp.ServiceRole) != arn {
 		t.Errorf("service role = %v", cp.ServiceRole)
 	}
+	for _, c := range w.calls {
+		if strings.HasPrefix(c, "events.") || c == "s3.PutBucketNotificationConfiguration" {
+			t.Errorf("the update was set up with --build-role: %s", c)
+		}
+	}
 }
 
 func TestBootstrapBucketOfAnotherAccount(t *testing.T) {
@@ -514,21 +583,74 @@ func TestBootstrapOtherProjectErrorsAreNotRetried(t *testing.T) {
 
 func TestTeardownKeepingTheBucket(t *testing.T) {
 	w := &bootWorld{role: true}
-	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"codebuild.DeleteProject", "iam.GetRole", "iam.DetachRolePolicy", "iam.DeleteRole", "logs.DeleteLogGroup"}
+	want := []string{"events.RemoveTargets", "events.DeleteRule", "iam.GetRole", "iam.DeleteRolePolicy", "iam.DeleteRole",
+		"codebuild.DeleteProject", "iam.GetRole", "iam.DetachRolePolicy", "iam.DeleteRole", "logs.DeleteLogGroup"}
 	if !slices.Equal(w.calls, want) {
 		t.Errorf("calls %v, want %v", w.calls, want)
 	}
 	if d := w.in["iam.DetachRolePolicy"].(*iam.DetachRolePolicyInput); aws.ToString(d.PolicyArn) != "arn:aws:iam::aws:policy/AdministratorAccess" {
 		t.Errorf("detached %v", d.PolicyArn)
 	}
+	rt := w.in["events.RemoveTargets"].(*eventbridge.RemoveTargetsInput)
+	if aws.ToString(rt.Rule) != "dmt-prod-install-requests" || !slices.Equal(rt.Ids, []string{"install-build"}) {
+		t.Errorf("RemoveTargets = %+v", rt)
+	}
+	if dr := w.in["events.DeleteRule"].(*eventbridge.DeleteRuleInput); aws.ToString(dr.Name) != "dmt-prod-install-requests" {
+		t.Errorf("DeleteRule = %+v", dr)
+	}
+	if dp := w.in["iam.DeleteRolePolicy"].(*iam.DeleteRolePolicyInput); aws.ToString(dp.RoleName) != "dmt-prod-install-events" || aws.ToString(dp.PolicyName) != "StartInstallBuild" {
+		t.Errorf("DeleteRolePolicy = %+v", dp)
+	}
+	if dr := w.all["iam.DeleteRole"][0].(*iam.DeleteRoleInput); aws.ToString(dr.RoleName) != "dmt-prod-install-events" {
+		t.Errorf("first DeleteRole = %+v", dr)
+	}
+}
+
+func TestTeardownToleratesAMissingRule(t *testing.T) {
+	w := &bootWorld{noRule: true}
+	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTeardownWithABuildRoleMakesNoEventsCall(t *testing.T) {
+	w := &bootWorld{role: true}
+	if err := Teardown(context.Background(), w.clients(), bootP, "arn:aws:iam::123456789012:role/team/our-build-role", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range w.calls {
+		if strings.HasPrefix(c, "events.") {
+			t.Errorf("events call with --build-role: %s", c)
+		}
+	}
+	if len(w.all["iam.GetRole"]) != 1 {
+		t.Errorf("the events role was looked up: %v", w.calls)
+	}
+}
+
+func TestTeardownKeepsAnEventsRoleOutsideDormetoOrUntagged(t *testing.T) {
+	for name, w := range map[string]*bootWorld{
+		"path":     {role: true, rolePath: "/team/"},
+		"untagged": {role: true, untagged: true},
+	} {
+		if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DeleteRolePolicy") {
+			t.Errorf("%s: deleted a role that is not the install's: %v", name, w.calls)
+		}
+		if !slices.Contains(w.calls, "events.DeleteRule") {
+			t.Errorf("%s: the rule stays: %v", name, w.calls)
+		}
+	}
 }
 
 func TestTeardownToleratesWhatIsGone(t *testing.T) {
 	w := &bootWorld{noProject: true} // no role either
-	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.DeleteRole") {
@@ -538,7 +660,7 @@ func TestTeardownToleratesWhatIsGone(t *testing.T) {
 
 func TestTeardownNeverDeletesARoleOutsideDormetoPath(t *testing.T) {
 	w := &bootWorld{role: true, rolePath: "/team/"}
-	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DetachRolePolicy") {
@@ -555,7 +677,7 @@ func TestTeardownEmptiesTheBucket(t *testing.T) {
 		},
 		{Versions: []s3types.ObjectVersion{{Key: aws.String("c"), VersionId: aws.String("v3")}}},
 	}}
-	if err := Teardown(context.Background(), w.clients(), bootP, true); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, "", true); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.deleted) != 2 || !slices.Equal(w.deleted[0], []string{"a@v1", "b@v2", "a@d1"}) || !slices.Equal(w.deleted[1], []string{"c@v3"}) {
@@ -567,7 +689,7 @@ func TestTeardownEmptiesTheBucket(t *testing.T) {
 	if l := w.in["s3.ListObjectVersions"].(*s3.ListObjectVersionsInput); aws.ToString(l.KeyMarker) != "b" || aws.ToString(l.VersionIdMarker) != "v2" {
 		t.Errorf("second page markers = %v %v", l.KeyMarker, l.VersionIdMarker)
 	}
-	order := []string{"codebuild.DeleteProject", "iam.GetRole", "logs.DeleteLogGroup", "s3.ListObjectVersions"}
+	order := []string{"events.DeleteRule", "codebuild.DeleteProject", "logs.DeleteLogGroup", "s3.ListObjectVersions"}
 	last := -1
 	for _, c := range order {
 		i := slices.Index(w.calls, c)
@@ -584,7 +706,7 @@ func TestTeardownDeletesByThousand(t *testing.T) {
 		vs = append(vs, s3types.ObjectVersion{Key: aws.String("k"), VersionId: aws.String(string(rune('a' + i%26)))})
 	}
 	w := &bootWorld{versions: []*s3.ListObjectVersionsOutput{{Versions: vs}}}
-	if err := Teardown(context.Background(), w.clients(), bootP, true); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, "", true); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.deleted) != 3 || len(w.deleted[0]) != 1000 || len(w.deleted[2]) != 500 {
@@ -623,7 +745,7 @@ func TestBootstrapUsesTheARNTheAPIReturns(t *testing.T) {
 
 func TestTeardownKeepsARoleNotTaggedAsTheCLIs(t *testing.T) {
 	w := &bootWorld{role: true, untagged: true}
-	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DetachRolePolicy") {
@@ -639,5 +761,109 @@ func TestBootstrapRefusesUntaggedRole(t *testing.T) {
 	}
 	if slices.Contains(w.calls, "iam.UpdateAssumeRolePolicy") || slices.Contains(w.calls, "iam.AttachRolePolicy") {
 		t.Errorf("calls = %v", w.calls)
+	}
+}
+
+const (
+	wantEventsTrust  = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"aws:SourceAccount":"123456789012"},"ArnLike":{"aws:SourceArn":"arn:aws:events:eu-west-1:123456789012:rule/dmt-prod-install-requests"}}}]}`
+	wantEventsPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"codebuild:StartBuild","Resource":"arn:aws:codebuild:eu-west-1:123456789012:project/dmt-prod-install"}]}`
+	wantPattern      = `{"source":["aws.s3"],"detail-type":["Object Created"],"detail":{"bucket":{"name":["dmt-install-123456789012-eu-west-1"]},"object":{"key":[{"wildcard":"prod/requests/*.json"}]}}}`
+)
+
+// sameJSON compares two JSON documents by value.
+func sameJSON(t *testing.T, what, got, want string) {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Errorf("%s is not JSON: %v\n%s", what, err, got)
+		return
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(g, w) {
+		t.Errorf("%s = %s\nwant %s", what, got, want)
+	}
+}
+
+func checkEvents(t *testing.T, w *bootWorld) {
+	t.Helper()
+	cr := w.all["iam.CreateRole"][1].(*iam.CreateRoleInput)
+	if aws.ToString(cr.RoleName) != "dmt-prod-install-events" || aws.ToString(cr.Path) != "/dormeto/" || aws.ToString(cr.AssumeRolePolicyDocument) != wantEventsTrust {
+		t.Errorf("events CreateRole = %+v", cr)
+	}
+	tags := map[string]string{}
+	for _, tg := range cr.Tags {
+		tags[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+	}
+	if len(tags) != 3 || tags["managed-by"] != "dormeto-cli" || tags["dormeto:env"] != "prod" || tags["project"] != "dormeto" {
+		t.Errorf("events role tags = %v", tags)
+	}
+	pr := w.in["iam.PutRolePolicy"].(*iam.PutRolePolicyInput)
+	if aws.ToString(pr.RoleName) != "dmt-prod-install-events" || aws.ToString(pr.PolicyName) != "StartInstallBuild" || aws.ToString(pr.PolicyDocument) != wantEventsPolicy {
+		t.Errorf("PutRolePolicy = %+v", pr)
+	}
+	nc := w.in["s3.PutBucketNotificationConfiguration"].(*s3.PutBucketNotificationConfigurationInput)
+	if aws.ToString(nc.Bucket) != bootP.Bucket || nc.NotificationConfiguration == nil || nc.NotificationConfiguration.EventBridgeConfiguration == nil {
+		t.Errorf("PutBucketNotificationConfiguration = %+v", nc)
+	}
+
+	rule := w.in["events.PutRule"].(*eventbridge.PutRuleInput)
+	if aws.ToString(rule.Name) != "dmt-prod-install-requests" || rule.State != ebtypes.RuleStateEnabled {
+		t.Errorf("PutRule = %+v", rule)
+	}
+	sameJSON(t, "the rule's pattern", aws.ToString(rule.EventPattern), wantPattern)
+	rt := map[string]string{}
+	for _, tg := range rule.Tags {
+		rt[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+	}
+	if len(rt) != 3 || rt["managed-by"] != "dormeto-cli" || rt["dormeto:env"] != "prod" || rt["project"] != "dormeto" {
+		t.Errorf("rule tags = %v", rt)
+	}
+
+	pt := w.in["events.PutTargets"].(*eventbridge.PutTargetsInput)
+	if aws.ToString(pt.Rule) != "dmt-prod-install-requests" || len(pt.Targets) != 1 {
+		t.Fatalf("PutTargets = %+v", pt)
+	}
+	tg := pt.Targets[0]
+	if aws.ToString(tg.Id) != "install-build" || aws.ToString(tg.Arn) != "arn:aws:codebuild:eu-west-1:123456789012:project/dmt-prod-install" ||
+		aws.ToString(tg.RoleArn) != "arn:aws:iam::123456789012:role/dormeto/dmt-prod-install-events" {
+		t.Errorf("target = %+v", tg)
+	}
+	if tg.RetryPolicy == nil || aws.ToInt32(tg.RetryPolicy.MaximumRetryAttempts) != 0 || aws.ToInt32(tg.RetryPolicy.MaximumEventAgeInSeconds) != 60 {
+		t.Errorf("retry policy = %+v", tg.RetryPolicy)
+	}
+	it := tg.InputTransformer
+	if it == nil || !maps.Equal(it.InputPathsMap, map[string]string{"key": "$.detail.object.key"}) {
+		t.Fatalf("input transformer = %+v", it)
+	}
+	// EventBridge fills <key> from InputPathsMap; the result must be the StartBuild overrides, as JSON.
+	filled := strings.ReplaceAll(aws.ToString(it.InputTemplate), "<key>", "prod/requests/x.json")
+	sameJSON(t, "the input", filled, `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_KEY","value":"prod/requests/x.json","type":"PLAINTEXT"}]}`)
+	if aws.ToString(it.InputTemplate) != `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_KEY","value":"<key>","type":"PLAINTEXT"}]}` {
+		t.Errorf("template = %s", aws.ToString(it.InputTemplate))
+	}
+}
+
+func TestBootstrapFailedTargetIsAnError(t *testing.T) {
+	bootClock(t)
+	w := &bootWorld{failed: true}
+	err := Bootstrap(context.Background(), w.clients(), bootP, "")
+	if err == nil || !strings.Contains(err.Error(), "ValidationException") || !strings.Contains(err.Error(), "bad role") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBootstrapEventsRoleOutsideDormetoIsRefused(t *testing.T) {
+	bootClock(t)
+	// the build role is fine, the events role of that name is another's
+	w := &bootWorld{role: true}
+	w.rolePathFor = map[string]string{"dmt-prod-install-events": "/team/"}
+	err := Bootstrap(context.Background(), w.clients(), bootP, "")
+	if err == nil || err.Error() != "role dmt-prod-install-events exists outside /dormeto/: not this install's" {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.Contains(w.calls, "events.PutRule") || slices.Contains(w.calls, "s3.PutBucketNotificationConfiguration") {
+		t.Errorf("went on: %v", w.calls)
 	}
 }

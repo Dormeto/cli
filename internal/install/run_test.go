@@ -31,6 +31,7 @@ import (
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
@@ -296,7 +297,7 @@ func (w *rwWorld) clients() Clients { return w.clientsOf(&w.rwAcct) }
 // clientsOf are the fakes of account a.
 func (w *rwWorld) clientsOf(a *rwAcct) Clients {
 	return Clients{
-		STS: rwSTS{w: w, a: a}, IAM: rwIAM{w: w, a: a}, S3: rwS3{w: w, a: a}, CodeBuild: rwCB{w: w, a: a}, Logs: rwLogs{w: w, a: a},
+		STS: rwSTS{w: w, a: a}, IAM: rwIAM{w: w, a: a}, S3: rwS3{w: w, a: a}, CodeBuild: rwCB{w: w, a: a}, EventBridge: rwEvents{w: w, a: a}, Logs: rwLogs{w: w, a: a},
 		Organizations: rwOrgs{w: w}, EC2: rwEC2{w: w},
 		ACM:     chkACM{status: "ISSUED", names: []string{"dormeto.example.com", "*.dormeto.example.com"}},
 		Route53: chkR53{name: "example.com."}, SESv2: chkSES{verified: true, production: true},
@@ -535,6 +536,33 @@ func (f rwIAM) DeleteRole(_ context.Context, in *iam.DeleteRoleInput, _ ...func(
 	return &iam.DeleteRoleOutput{}, nil
 }
 
+// rwEvents are the rule's calls; the world records its writes.
+type rwEvents struct {
+	EventBridge
+	w *rwWorld
+	a *rwAcct
+}
+
+func (f rwEvents) PutRule(_ context.Context, in *eventbridge.PutRuleInput, _ ...func(*eventbridge.Options)) (*eventbridge.PutRuleOutput, error) {
+	f.w.write(f.a.prefix + "events:PutRule " + aws.ToString(in.Name))
+	return &eventbridge.PutRuleOutput{}, nil
+}
+
+func (f rwEvents) PutTargets(_ context.Context, in *eventbridge.PutTargetsInput, _ ...func(*eventbridge.Options)) (*eventbridge.PutTargetsOutput, error) {
+	f.w.write(f.a.prefix + "events:PutTargets " + aws.ToString(in.Rule))
+	return &eventbridge.PutTargetsOutput{}, nil
+}
+
+func (f rwEvents) RemoveTargets(_ context.Context, in *eventbridge.RemoveTargetsInput, _ ...func(*eventbridge.Options)) (*eventbridge.RemoveTargetsOutput, error) {
+	f.w.write(f.a.prefix + "events:RemoveTargets " + aws.ToString(in.Rule))
+	return &eventbridge.RemoveTargetsOutput{}, nil
+}
+
+func (f rwEvents) DeleteRule(_ context.Context, in *eventbridge.DeleteRuleInput, _ ...func(*eventbridge.Options)) (*eventbridge.DeleteRuleOutput, error) {
+	f.w.write(f.a.prefix + "events:DeleteRule " + aws.ToString(in.Name))
+	return &eventbridge.DeleteRuleOutput{}, nil
+}
+
 type rwS3 struct {
 	S3
 	w *rwWorld
@@ -577,6 +605,11 @@ func (f rwS3) PutBucketPolicy(context.Context, *s3.PutBucketPolicyInput, ...func
 func (f rwS3) PutBucketLifecycleConfiguration(context.Context, *s3.PutBucketLifecycleConfigurationInput, ...func(*s3.Options)) (*s3.PutBucketLifecycleConfigurationOutput, error) {
 	f.w.write(f.a.prefix + "s3:PutBucketLifecycleConfiguration")
 	return &s3.PutBucketLifecycleConfigurationOutput{}, nil
+}
+
+func (f rwS3) PutBucketNotificationConfiguration(context.Context, *s3.PutBucketNotificationConfigurationInput, ...func(*s3.Options)) (*s3.PutBucketNotificationConfigurationOutput, error) {
+	f.w.write(f.a.prefix + "s3:PutBucketNotificationConfiguration")
+	return &s3.PutBucketNotificationConfigurationOutput{}, nil
 }
 
 func (f rwS3) PutBucketTagging(context.Context, *s3.PutBucketTaggingInput, ...func(*s3.Options)) (*s3.PutBucketTaggingOutput, error) {
@@ -1191,7 +1224,7 @@ func TestInstallUpgradeAsksNothing(t *testing.T) {
 		t.Errorf("builds' variables: %v, %v", b[0].vars, b[1].vars)
 	}
 	for _, c := range w.writes {
-		if strings.HasPrefix(c, "iam:CreateRole") || c == "s3:CreateBucket" || c == "codebuild:CreateProject" {
+		if c == "iam:CreateRole dmt-prod-install" || c == "s3:CreateBucket" || c == "codebuild:CreateProject" {
 			t.Errorf("the bootstrap created %s again", c)
 		}
 	}
