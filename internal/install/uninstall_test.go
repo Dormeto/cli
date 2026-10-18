@@ -49,7 +49,7 @@ const (
 	unBootstrap = "Remove the install's bucket (its state and answers), role, log group and project too? [y/N]"
 	unWarning   = "! Event-driven refresh must be off (Discovery, Perimeter settings), with a discovery run since: its forwarders in member accounts are removed only by a run.\n"
 	unKept      = "Kept the bucket dmt-install-532105290256-eu-west-1 (its answers serve a reinstall) and the project; dormeto uninstall " + rwArgs + " again in a terminal removes them.\n"
-	unRemoved   = "Removed the bucket dmt-install-532105290256-eu-west-1, the role dmt-prod-install, the log group /aws/codebuild/dmt-prod-install and the project dmt-prod-install.\n"
+	unRemoved   = "Removed the bucket dmt-install-532105290256-eu-west-1, the role dmt-prod-install, the log group /aws/codebuild/dmt-prod-install, the project dmt-prod-install, the rule dmt-prod-install-requests and its role dmt-prod-install-events.\n"
 	unAccess    = "Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: https://dormeto.com/organization-access.html\n"
 	// unLeftover is said while the bucket is kept: install status needs install.json.
 	unLeftover = "A detached organization access run's build role and project in the management account: dormeto install status --management-profile <profile> " +
@@ -459,6 +459,28 @@ func TestUninstallNothingAppliedGoesToTheBootstrap(t *testing.T) {
 	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, unKept+unAccess+unLeftover) || w.gone() || len(w.writes) != 0 {
 		t.Errorf("exit code %d, asked %q, writes %v:\n%s", code, asked, w.writes, out)
 	}
+}
+
+// An install whose settings name a build role may still hold the request rule and its role (made by a first run without
+// --build-role): uninstall removes them too, and names them; the role given is not named, not being the install's.
+func TestUninstallWithABuildRoleRemovesTheRequestRule(t *testing.T) {
+	w := unNew(t)
+	s := w.saved()
+	s.BuildRole = "arn:aws:iam::532105290256:role/team/our-build-role"
+	w.save(s)
+	w.role = false
+	delete(w.objects, "prod/manager.tfstate")
+	code, out, asked := w.run(Uninstall, unRequest, true, "y")
+	rwEqual(t, "questions", asked, []string{unBootstrap})
+	removed := "Removed the bucket dmt-install-532105290256-eu-west-1, the log group /aws/codebuild/dmt-prod-install, the project dmt-prod-install, " +
+		"the rule dmt-prod-install-requests and its role dmt-prod-install-events.\n"
+	if code != 0 || !strings.HasSuffix(out, removed+unAccess) || !w.gone() {
+		t.Errorf("exit code %d, gone %v:\n%s", code, w.gone(), out)
+	}
+	rwEqual(t, "writes", w.writes, []string{
+		"events:RemoveTargets dmt-prod-install-requests", "events:DeleteRule dmt-prod-install-requests",
+		"codebuild:DeleteProject", "logs:DeleteLogGroup", "s3:DeleteObjects", "s3:DeleteBucket",
+	})
 }
 
 // The bucket removed, install status cannot run: the line naming it is not said.

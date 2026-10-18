@@ -591,7 +591,7 @@ func TestBootstrapOtherProjectErrorsAreNotRetried(t *testing.T) {
 
 func TestTeardownKeepingTheBucket(t *testing.T) {
 	w := &bootWorld{role: true}
-	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"events.RemoveTargets", "events.DeleteRule", "iam.GetRole", "iam.DeleteRolePolicy", "iam.DeleteRole",
@@ -619,23 +619,8 @@ func TestTeardownKeepingTheBucket(t *testing.T) {
 
 func TestTeardownToleratesAMissingRule(t *testing.T) {
 	w := &bootWorld{noRule: true}
-	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestTeardownWithABuildRoleMakesNoEventsCall(t *testing.T) {
-	w := &bootWorld{role: true}
-	if err := Teardown(context.Background(), w.clients(), bootP, "arn:aws:iam::123456789012:role/team/our-build-role", false); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range w.calls {
-		if strings.HasPrefix(c, "events.") {
-			t.Errorf("events call with --build-role: %s", c)
-		}
-	}
-	if len(w.all["iam.GetRole"]) != 1 {
-		t.Errorf("the events role was looked up: %v", w.calls)
 	}
 }
 
@@ -644,7 +629,7 @@ func TestTeardownKeepsAnEventsRoleOutsideDormetoOrUntagged(t *testing.T) {
 		"path":     {role: true, rolePath: "/team/"},
 		"untagged": {role: true, untagged: true},
 	} {
-		if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+		if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DeleteRolePolicy") {
@@ -658,7 +643,7 @@ func TestTeardownKeepsAnEventsRoleOutsideDormetoOrUntagged(t *testing.T) {
 
 func TestTeardownToleratesWhatIsGone(t *testing.T) {
 	w := &bootWorld{noProject: true} // no role either
-	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.DeleteRole") {
@@ -668,7 +653,7 @@ func TestTeardownToleratesWhatIsGone(t *testing.T) {
 
 func TestTeardownNeverDeletesARoleOutsideDormetoPath(t *testing.T) {
 	w := &bootWorld{role: true, rolePath: "/team/"}
-	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DetachRolePolicy") {
@@ -685,7 +670,7 @@ func TestTeardownEmptiesTheBucket(t *testing.T) {
 		},
 		{Versions: []s3types.ObjectVersion{{Key: aws.String("c"), VersionId: aws.String("v3")}}},
 	}}
-	if err := Teardown(context.Background(), w.clients(), bootP, "", true); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.deleted) != 2 || !slices.Equal(w.deleted[0], []string{"a@v1", "b@v2", "a@d1"}) || !slices.Equal(w.deleted[1], []string{"c@v3"}) {
@@ -714,7 +699,7 @@ func TestTeardownDeletesByThousand(t *testing.T) {
 		vs = append(vs, s3types.ObjectVersion{Key: aws.String("k"), VersionId: aws.String(string(rune('a' + i%26)))})
 	}
 	w := &bootWorld{versions: []*s3.ListObjectVersionsOutput{{Versions: vs}}}
-	if err := Teardown(context.Background(), w.clients(), bootP, "", true); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.deleted) != 3 || len(w.deleted[0]) != 1000 || len(w.deleted[2]) != 500 {
@@ -753,7 +738,7 @@ func TestBootstrapUsesTheARNTheAPIReturns(t *testing.T) {
 
 func TestTeardownKeepsARoleNotTaggedAsTheCLIs(t *testing.T) {
 	w := &bootWorld{role: true, untagged: true}
-	if err := Teardown(context.Background(), w.clients(), bootP, "", false); err != nil {
+	if err := Teardown(context.Background(), w.clients(), bootP, false); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(w.calls, "iam.DeleteRole") || slices.Contains(w.calls, "iam.DetachRolePolicy") {

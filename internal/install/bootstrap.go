@@ -379,13 +379,13 @@ func retryWhile(do func() error, what string, retry func(error) bool) error {
 	}
 }
 
-// Teardown deletes the install's request rule and its role (unless buildRole is given: none was made then), project, its role (only the one this install created, under /dormeto/), its log group
-// and, with bucket, the state bucket with every version in it. What is already gone is not an error.
-func Teardown(ctx context.Context, c Clients, p Project, buildRole string, bucket bool) error {
-	if buildRole == "" {
-		if err := deleteRequestRule(ctx, c, p); err != nil {
-			return err
-		}
+// Teardown deletes the install's request rule, its project, its log group, its two roles (the build role and the
+// rule's, each only when this install created it: under /dormeto/ and tagged) and, with bucket, the state bucket with
+// every version in it. The rule and its role go whatever the build role now: a first run without --build-role made
+// them. What is already gone is not an error.
+func Teardown(ctx context.Context, c Clients, p Project, bucket bool) error {
+	if err := deleteRequestRule(ctx, c, p); err != nil {
+		return err
 	}
 	if _, err := c.CodeBuild.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: &p.Name}); err != nil && !isNotFound(err, "ResourceNotFoundException") {
 		return fmt.Errorf("delete project %s: %w", p.Name, err)

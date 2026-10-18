@@ -453,10 +453,10 @@ func (x *run) applyDestroy(s Settings, sum PlanSummary) error {
 	return WriteSettings(context.WithoutCancel(x.ctx), x.c, x.p, s)
 }
 
-// removeBootstrap removes the install's bucket (its state and answers), role, log group and project once the person
-// asks (ask: in a terminal, without --yes, whose answer is no); otherwise they are kept (kept), and how to remove them
-// is said. Once started, the removal is not cancelled: a bucket left half emptied would have lost install.json, which
-// names the install to remove.
+// removeBootstrap removes the install's bucket (its state and answers), role, log group, project and request rule (with
+// its role) once the person asks (ask: in a terminal, without --yes, whose answer is no); otherwise they are kept
+// (kept), and how to remove them is said. Once started, the removal is not cancelled: a bucket left half emptied would
+// have lost install.json, which names the install to remove.
 func (x *run) removeBootstrap(s Settings, ask bool) (kept bool, err error) {
 	if ask && x.d.Terminal && !x.r.Yes {
 		ok, err := x.confirm("Remove the install's bucket (its state and answers), role, log group and project too?")
@@ -464,14 +464,15 @@ func (x *run) removeBootstrap(s Settings, ask bool) (kept bool, err error) {
 			return true, err
 		}
 		if ok {
-			if err := Teardown(context.WithoutCancel(x.ctx), x.c, x.p, s.BuildRole, true); err != nil {
+			if err := Teardown(context.WithoutCancel(x.ctx), x.c, x.p, true); err != nil {
 				return true, err
 			}
 			role := ", the role " + x.p.Role
 			if s.BuildRole != "" { // the role given is not the install's to remove
 				role = ""
 			}
-			x.say("Removed the bucket %s%s, the log group %s and the project %s.", x.p.Bucket, role, x.p.LogGroup, x.p.Name)
+			x.say("Removed the bucket %s%s, the log group %s, the project %s, the rule %s and its role %s.", x.p.Bucket, role, x.p.LogGroup, x.p.Name,
+				x.p.Rule, x.p.EventsRole)
 			return false, nil
 		}
 	}
