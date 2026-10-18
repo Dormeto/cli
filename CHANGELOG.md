@@ -14,6 +14,13 @@
   protection lifted, the destroy plan confirmed) and, on request, the bootstrap. Manager 0.11.0 or later. The README
   has the section "Install the manager", its flags and its permissions; the Privacy section names what the install
   downloads.
+- The dashboard can update the manager (from manager 0.12.0): `dormeto install` sets up a rule
+  (`dmt-<env>-install-requests`) that starts the install project when the manager's API drops a request in the install
+  bucket (bucket events on), through a role (`dmt-<env>-install-events`) that may start that project only;
+  `--build-role` leaves it off and `dormeto uninstall` removes it. The build takes a request (plan of a newer version,
+  then the apply of that plan), checks it, plans with the configuration last applied (`applied/`) and writes its result
+  under `results/`. The CLI records its version in `<env>/cli.json` and passes the module's `install` input from manager
+  0.12.0. `dormeto install status` shows the last dashboard update. The README has "Updating from the dashboard".
 - `--ecs-uptime` counts each ECS service's tasks (CloudWatch `LiveTaskCount`) and prices the service at its average
   number of tasks while it ran, instead of its desired count when discovered: a service stopped at night by a schedule
   (found at 0, priced as one task before) or autoscaled is priced as it ran. The Uptime column and the JSON

@@ -69,7 +69,7 @@ var (
 	roleNameRe   = regexp.MustCompile(`^([A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]{1,64}$`)
 	accountIDRe  = regexp.MustCompile(`^\d{12}$`)
 	buildRoleRe  = regexp.MustCompile(`^arn:aws[a-z-]*:iam::\d{12}:role/.+$`)
-	reservedVars = []string{"env", "organization_id", "discovery_mode", "admin_emails", "domain", "ses_identity", "email_from"}
+	reservedVars = []string{"env", "organization_id", "discovery_mode", "admin_emails", "domain", "ses_identity", "email_from", "install"}
 )
 
 // Validate checks the settings and returns the first failure, its message beginning with the flag it is about.

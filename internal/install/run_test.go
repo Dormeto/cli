@@ -364,6 +364,7 @@ func (w *rwWorld) run(cmd func(context.Context, Deps, Request) int, r Request, t
 		Terminal: terminal,
 		Now:      w.now,
 		Every:    w.every,
+		Version:  "0.2.0",
 	}
 	if w.status != nil {
 		d.Status = w.status
@@ -1035,6 +1036,10 @@ func TestInstallGuidedFirstInstall(t *testing.T) {
 		at("codebuild:StartBuild plan", false) < at("s3:PutObject prod/install.json", true) &&
 		at("s3:PutObject prod/install.json", true) < at("codebuild:StartBuild apply", false)) {
 		t.Errorf("writes out of order: %v", w.writes)
+	}
+	if w.objects["prod/cli.json"] != `{"version":"0.2.0"}` || at("events:PutTargets dmt-prod-install-requests", false) > at("s3:PutObject prod/cli.json", false) ||
+		at("s3:PutObject prod/cli.json", false) > at("s3:PutObject prod/config/main.tf.json", false) {
+		t.Errorf("cli.json = %q, writes %v", w.objects["prod/cli.json"], w.writes)
 	}
 	if at("iam:CreateRole dmt-prod-install", false) > at("codebuild:CreateProject", false) {
 		t.Errorf("the project before its role: %v", w.writes)

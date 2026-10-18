@@ -378,6 +378,22 @@ keeps the bootstrap; it never confirms a plan.
 The plans of `uninstall` run with the version installed, not with a later plan's (an upgrade not applied). When that
 version came from a local release, `--release <dir>` gives that release's directory again.
 
+### Updating from the dashboard
+
+A manager installed by CLI 0.2.0 or later with manager 0.12.0 or later can be updated from its dashboard, by its
+administrators. The install sets up an EventBridge rule, `dmt-<env>-install-requests`, that starts the install project
+when the manager's API drops a request in the install bucket (`<env>/requests/`), through a role,
+`dmt-<env>-install-events`, that may start that project only. The rule passes nothing the API wrote: the build reads
+its request itself and checks it. The dashboard can request a plan of a newer published version, or of a version staged
+by the CLI (`--release`), with the configuration last applied (`applied/`), then the apply of that plan. The build
+checks every request (its fields, its version, that the plan it applies is the current one) and refuses what does not
+pass; `dormeto install status` shows the dashboard's builds as the last dashboard update. The CLI records its version
+in `<env>/cli.json`, which the dashboard reads to know the install can be updated.
+
+`--build-role` leaves it off: the rule, its role and the manager's access to the bucket are not created, and the
+dashboard says the install cannot be updated there. `dormeto uninstall` removes the rule and its role. An install made
+with an older CLI gets it by running `dormeto install` once more with this one.
+
 ### Permissions to install
 
 The install's profile needs administrator rights in the manager's account: the checks simulate the actions of the

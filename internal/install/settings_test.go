@@ -42,7 +42,9 @@ func TestValidate(t *testing.T) {
 		{"emails none", func(s *Settings) { s.AdminEmails = nil }, "--admin-emails"},
 		{"emails bad", func(s *Settings) { s.AdminEmails = []string{"a@example.com", "nope"} }, "--admin-emails"},
 		{"domain nil", func(s *Settings) { s.Domain = nil }, ""},
-		{"domain ok", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: certARN, ZoneID: "Z1"} }, ""},
+		{"domain ok", func(s *Settings) {
+			s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: certARN, ZoneID: "Z1"}
+		}, ""},
 		{"domain no dashboard", func(s *Settings) { s.Domain = &Domain{CertificateARN: certARN, ZoneID: "Z1"} }, "--domain"},
 		{"domain no certificate", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", ZoneID: "Z1"} }, "--certificate-arn"},
 		{"domain no zone", func(s *Settings) { s.Domain = &Domain{Dashboard: "d.example.com", CertificateARN: certARN} }, "--zone-id"},
@@ -53,6 +55,7 @@ func TestValidate(t *testing.T) {
 		{"email-from with identity", func(s *Settings) { s.SESIdentity = "example.com"; s.EmailFrom = "x@example.com" }, ""},
 		{"var ok", func(s *Settings) { s.Vars = map[string]json.RawMessage{"log_level": json.RawMessage(`"debug"`)} }, ""},
 		{"var reserved", func(s *Settings) { s.Vars = map[string]json.RawMessage{"env": json.RawMessage(`"x"`)} }, "--var"},
+		{"var reserved install", func(s *Settings) { s.Vars = map[string]json.RawMessage{"install": json.RawMessage(`null`)} }, "--var"},
 		{"var reserved domain", func(s *Settings) { s.Vars = map[string]json.RawMessage{"domain": json.RawMessage(`{}`)} }, "--var"},
 		{"var bad name", func(s *Settings) { s.Vars = map[string]json.RawMessage{"Log-Level": json.RawMessage(`1`)} }, "--var"},
 		{"var bad json", func(s *Settings) { s.Vars = map[string]json.RawMessage{"x": json.RawMessage(`{oops`)} }, "--var"},

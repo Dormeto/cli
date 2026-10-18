@@ -60,6 +60,9 @@ func TestConfig(t *testing.T) {
 	esc.SESIdentity = "id"
 	esc.Vars = map[string]json.RawMessage{"description": json.RawMessage(`{"a": ["${y}"]}`)}
 
+	selfUpdate := base("account")
+	selfUpdate.Version = "0.12.0"
+
 	cases := []struct {
 		name string
 		s    Settings
@@ -71,6 +74,7 @@ func TestConfig(t *testing.T) {
 		{"domain", domain, where(nil)},
 		{"vars", vars, where(nil)},
 		{"escaping", esc, where(nil)},
+		{"self-update", selfUpdate, where(nil)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -107,6 +111,29 @@ func TestConfig(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("install input", func(t *testing.T) {
+		p := Names("532105290256", "eu-west-1", "prod")
+		has := func(s Settings) bool {
+			got, err := Config(s, where(nil), p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return strings.Contains(string(got), `"install": {`)
+		}
+		for v, want := range map[string]bool{"": false, "0.11.0": false, "0.12.0": true, "0.12.0-dev.1": true, "0.13.1": true} {
+			s := base("account")
+			s.Version = v
+			if has(s) != want {
+				t.Errorf("version %q: install = %v, want %v", v, !want, want)
+			}
+		}
+		s := base("account")
+		s.Version, s.BuildRole = "0.12.0", "arn:aws:iam::532105290256:role/mine"
+		if has(s) {
+			t.Error("--build-role: install passed")
+		}
+	})
 
 	t.Run("escaping content", func(t *testing.T) {
 		got, err := Config(esc, where(nil), Names("532105290256", "eu-west-1", "prod"))

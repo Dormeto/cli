@@ -26,6 +26,7 @@ type Deps struct {
 	Terminal bool            // stdin is a terminal: the guide may ask
 	Now      func() time.Time
 	Every    func(time.Duration) <-chan time.Time
+	Version  string // the CLI's own version, recorded in <env>/cli.json
 }
 
 // Request is a command line: its profile, region and release, the flags' settings and which flags were given.
@@ -594,6 +595,9 @@ func (x *run) install() error {
 
 	x.interrupted = "Interrupted before the plan started: run dormeto install again."
 	if err := Bootstrap(x.ctx, x.c, x.p, s.BuildRole); err != nil {
+		return err
+	}
+	if err := WriteCLI(x.ctx, x.c, x.p, x.d.Version); err != nil {
 		return err
 	}
 	role := x.p.Role

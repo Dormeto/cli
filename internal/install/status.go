@@ -21,7 +21,7 @@ import (
 const maxLastBuilds = 100
 
 // buildLabels are the follow's label of each action of the manager's project.
-var buildLabels = map[string]string{"plan": "Plan", "apply": "Apply", "plan-destroy": "Destroy plan", "apply-destroy": "Destroy"}
+var buildLabels = map[string]string{"plan": "Plan", "apply": "Apply", "plan-destroy": "Destroy plan", "apply-destroy": "Destroy", "request": "Dashboard update"}
 
 // Status is `dormeto install status`. Exit codes: 0; 1 when a check fails, the last build failed or AWS refuses; 130
 // when ctx is cancelled (a followed build goes on).
@@ -176,7 +176,7 @@ func (x *run) lastBuilds() (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("list builds of %s: %w", x.p.Name, err)
 	}
-	var plan, apply *cbtypes.Build
+	var plan, apply, request *cbtypes.Build
 	if ids := list.Ids[:min(len(list.Ids), maxLastBuilds)]; len(ids) > 0 {
 		got, err := x.c.CodeBuild.BatchGetBuilds(x.ctx, &codebuild.BatchGetBuildsInput{Ids: ids})
 		if err != nil {
@@ -195,6 +195,10 @@ func (x *run) lastBuilds() (string, bool, error) {
 			case string(ActionPlan), string(ActionPlanDestroy):
 				if plan == nil {
 					plan = &b
+				}
+			case "request":
+				if request == nil {
+					request = &b
 				}
 			case string(ActionApply), string(ActionApplyDestroy):
 				if apply == nil {
@@ -215,7 +219,11 @@ func (x *run) lastBuilds() (string, bool, error) {
 		last = apply
 	}
 	lastFailed := last != nil && last.BuildStatus != cbtypes.StatusTypeSucceeded && last.BuildStatus != cbtypes.StatusTypeInProgress
-	return "  " + describe("plan", plan) + "; " + describe("apply", apply), lastFailed, nil
+	line := "  " + describe("plan", plan) + "; " + describe("apply", apply)
+	if request != nil { // only when the dashboard made one
+		line += "; " + describe("dashboard update", request)
+	}
+	return line, lastFailed, nil
 }
 
 // accessStatus says where organization access stands: not used in an account deployment; with a management profile, a

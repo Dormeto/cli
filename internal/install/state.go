@@ -157,6 +157,20 @@ func PutConfig(ctx context.Context, c Clients, p Project, mainTF []byte) error {
 	return putObject(ctx, c, p, p.Key("config", "main.tf.json"), mainTF)
 }
 
+// WriteCLI writes <env>/cli.json, the version of the CLI that installed: the dashboard reads it to know whether the
+// install can be updated from there.
+func WriteCLI(ctx context.Context, c Clients, p Project, version string) error {
+	b, err := json.Marshal(map[string]string{"version": version})
+	if err != nil {
+		return err
+	}
+	if _, err := c.S3.PutObject(ctx, &s3.PutObjectInput{Bucket: &p.Bucket, Key: aws.String(p.Key("cli.json")), Body: bytes.NewReader(b),
+		ContentType: aws.String("application/json")}); err != nil {
+		return fmt.Errorf("write s3://%s/%s: %w", p.Bucket, p.Key("cli.json"), err)
+	}
+	return nil
+}
+
 // UploadRelease puts a local release's files under <env>/release/ and returns that base, s3://<bucket>/<env>/release.
 func UploadRelease(ctx context.Context, c Clients, p Project, r Release) (string, error) {
 	for _, name := range r.Files() {

@@ -41,7 +41,7 @@ func installed(t *testing.T, code int, args ...string) (calls []ran, stdout, std
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
 	runs := installRuns{install: fake("install"), check: fake("check"), apply: fake("apply"), status: fake("status"),
 		uninstall: fake("uninstall"), uninstallApply: fake("uninstall apply")}
-	root.AddCommand(newInstall(runs), newUninstall(runs))
+	root.AddCommand(newInstall(runs, "0.2.0"), newUninstall(runs, "0.2.0"))
 	var out, errs bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errs)
@@ -297,7 +297,7 @@ func TestUninstallHelpListsTheFlags(t *testing.T) {
 // the persistent ones its subcommands share (help left out): none missing, none extra.
 func TestReadmeInstallFlagsAreTheCommandsFlags(t *testing.T) {
 	root := &cobra.Command{Use: "dormeto"}
-	root.AddCommand(newInstall(installRuns{}))
+	root.AddCommand(newInstall(installRuns{}, "dev"))
 	cmd, _, err := root.Find([]string{"install"})
 	if err != nil {
 		t.Fatal(err)

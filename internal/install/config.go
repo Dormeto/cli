@@ -34,6 +34,9 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 		}
 		module["domain"] = domain
 	}
+	if AtLeast(s.Version, SelfUpdateVersion) && s.BuildRole == "" { // the dashboard's updates; a custom build role has no rule
+		module["install"] = map[string]any{"bucket": p.Bucket, "project": p.Name, "log_group": p.LogGroup}
+	}
 	if s.SESIdentity != "" {
 		module["ses_identity"] = esc(s.SESIdentity)
 	}

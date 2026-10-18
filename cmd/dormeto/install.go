@@ -82,7 +82,7 @@ func (f *installFlags) profileFlags(cmd *cobra.Command, yes string) {
 	p.BoolVar(&f.verbose, "verbose", false, "print Terraform's lines instead of the status line")
 }
 
-func newInstall(runs installRuns) *cobra.Command {
+func newInstall(runs installRuns, version string) *cobra.Command {
 	f := &installFlags{}
 	command := f.command
 	cmd := command("install", "Install the Dormeto manager in an AWS account, with CodeBuild",
@@ -130,7 +130,7 @@ func newInstall(runs installRuns) *cobra.Command {
 
 // newUninstall is `dormeto uninstall` and its subcommand apply, with the flags that name the install and --release (the
 // manager installed from a local release).
-func newUninstall(runs installRuns) *cobra.Command {
+func newUninstall(runs installRuns, version string) *cobra.Command {
 	f := &installFlags{}
 	cmd := f.command("uninstall", "Remove the Dormeto manager that dormeto install installed",
 		"Remove the Dormeto manager that dormeto install installed, in this order: refused while routers are installed\n"+
@@ -168,7 +168,7 @@ func (f *installFlags) run(c *cobra.Command, run installRun) error {
 	}
 	ctx, signalled, stop := interruptible(c.Context())
 	defer stop()
-	code := run(ctx, installDeps(c, f.verbose, f.env), r)
+	code := run(ctx, installDeps(c, f.verbose, f.env, version), r)
 	if s := signalled(); s != nil {
 		code = signalCode(s)
 	}
@@ -226,7 +226,7 @@ func items(values []string) []string {
 // installDeps are the real dependencies: each profile's configuration loaded once (its credentials shared by the
 // install's clients and the member roles assumed with them, session dmt-<env>-install), HTTPS with a 30 s timeout, the
 // prompts when stdin is a terminal, the status line when stdout is one (not with --verbose).
-func installDeps(c *cobra.Command, verbose bool, env string) install.Deps {
+func installDeps(c *cobra.Command, verbose bool, env, version string) install.Deps {
 	in, out := c.InOrStdin(), c.OutOrStdout()
 	terminal := isTerminal(in)
 	status := cli.StatusOf(out)
@@ -274,6 +274,7 @@ func installDeps(c *cobra.Command, verbose bool, env string) install.Deps {
 		Terminal: terminal,
 		Now:      time.Now,
 		Every:    time.After,
+		Version:  version,
 	}
 }
 

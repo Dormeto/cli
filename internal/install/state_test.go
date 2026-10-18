@@ -241,6 +241,16 @@ func TestPutConfig(t *testing.T) {
 	}
 }
 
+func TestWriteCLI(t *testing.T) {
+	f := &stS3{}
+	if err := WriteCLI(context.Background(), stClients(f), bootP, "0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.puts["dmt-install-123456789012-eu-west-1/prod/cli.json"]; got != `{"version":"0.2.0"}` {
+		t.Fatalf("puts = %v", f.puts)
+	}
+}
+
 func TestUploadRelease(t *testing.T) {
 	dir := writeLocal(t, "0.11.0-dev", nil)
 	r, err := Resolve(context.Background(), nil, "", dir)

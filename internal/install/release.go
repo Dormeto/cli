@@ -22,6 +22,9 @@ const ReleasesURL = "https://releases.dormeto.com/manager"
 // MinVersion is the first manager release `dormeto install` can install.
 const MinVersion = "0.11.0"
 
+// SelfUpdateVersion is the first manager release with the module's install input (the dashboard's updates).
+const SelfUpdateVersion = "0.12.0"
+
 // Release is the manager release to install, resolved and checked against its SHA256SUMS.
 type Release struct {
 	Version string            // 0.11.0, or 0.11.0-dev for a local build

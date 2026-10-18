@@ -63,7 +63,7 @@ func TestInstallSIGTERMExitCode143(t *testing.T) {
 		}
 		return 130
 	}
-	root.AddCommand(newInstall(installRuns{install: run, check: run, apply: run}))
+	root.AddCommand(newInstall(installRuns{install: run, check: run, apply: run}, "dev"))
 	root.SetArgs([]string{"install", "apply"})
 	root.SetIn(strings.NewReader(""))
 	root.SetOut(io.Discard)
