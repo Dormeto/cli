@@ -42,6 +42,9 @@ func (x *run) uninstall() error {
 		return err
 	}
 	s := *saved
+	if err := x.adoptionPending(s, applied, resources); err != nil {
+		return err
+	}
 	if resources {
 		if err := x.removeManager(s, applied); err != nil {
 			return err
@@ -70,6 +73,9 @@ func (x *run) uninstallApply() error {
 		return err
 	}
 	s := *saved
+	if err := x.adoptionPending(s, applied, resources); err != nil {
+		return err
+	}
 	switch {
 	case s.LastPlan == "":
 		return &stop{1, "no destroy plan: run dormeto uninstall"}

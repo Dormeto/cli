@@ -674,3 +674,69 @@ func TestCheckLineAndHelpers(t *testing.T) {
 		t.Error("Failed missed a Fail")
 	}
 }
+
+// chkAdopted is an adoption of env dev's manager whose state passed its checks.
+func chkAdopted() *Adoption {
+	return &Adoption{File: "manager.tfstate", Module: "manager",
+		Moved: Moved{Resources: 9, Terraform: "1.16.2", Left: []string{"aws_acm_certificate.edge", "aws_route53_record.certificate_validation"}}}
+}
+
+// An adoption adds its row after the existing install's: what moves and what stays, or why the state is refused.
+func TestChecksAdoptedState(t *testing.T) {
+	x := chkNew()
+	x.f.Adoption = chkAdopted()
+	cs := x.run()
+	var names []string
+	for _, c := range cs {
+		names = append(names, c.Name)
+	}
+	if want := "credentials,administrator rights,region,organization,existing install,adopted state,another install,another environment,Dormeto roles," +
+		"release,administrators,domain,SES"; strings.Join(names, ",") != want {
+		t.Errorf("rows = %v", names)
+	}
+	chkWant(t, x, "adopted state", OK, "module.manager of manager.tfstate (Terraform 1.16.2): 9 resources to module.dormeto; "+
+		"left in the source: aws_acm_certificate.edge, aws_route53_record.certificate_validation")
+	x.f.Adoption.Left = nil
+	if c := chkRow(t, x.run(), "adopted state"); c.Detail != "module.manager of manager.tfstate (Terraform 1.16.2): 9 resources to module.dormeto" {
+		t.Errorf("adopted state = %q", c.Detail)
+	}
+	x.f.Adoption = &Adoption{File: "manager.tfstate", Module: "manager", Err: errors.New("state format version 3, not 4")}
+	chkWant(t, x, "adopted state", Fail, "manager.tfstate: state format version 3, not 4")
+}
+
+// The manager found is the one adopted: the another install check passes, unless the state was refused.
+func TestChecksAnotherInstallAdopted(t *testing.T) {
+	x := chkNew()
+	x.lam = chkLambda{found: map[string]bool{"dmt-dev-manager-api": true}}
+	x.f.Adoption = chkAdopted()
+	chkWant(t, x, "another install", OK, "dmt-dev-manager: the manager adopted")
+	x.f.Adoption.Err = errors.New("refused")
+	chkWant(t, x, "another install", Fail, "dmt-dev-manager resources exist without dormeto install's record")
+}
+
+// Dormeto's roles trusting this env's manager alone are the adopted manager's; another manager's still fail.
+func TestChecksDormetoRolesAdopted(t *testing.T) {
+	x := chkNew()
+	x.iam.getRole = func(name string) (*iam.GetRoleOutput, error) {
+		switch name {
+		case "DmtDiscoveryRole":
+			return releaseTrust("532105290256", "discovery", "dev"), nil
+		case "DmtCommandRole":
+			return releaseTrust("532105290256", "operations", "dev"), nil
+		}
+		return nil, chkNoEntity()
+	}
+	x.f.Adoption = chkAdopted()
+	chkWant(t, x, "Dormeto roles", OK, "DmtDiscoveryRole, DmtCommandRole: the adopted manager's")
+	x.f.Adoption.Err = errors.New("refused")
+	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
+
+	x.f.Adoption = chkAdopted()
+	x.iam.getRole = func(name string) (*iam.GetRoleOutput, error) {
+		if name == "DmtDiscoveryRole" {
+			return releaseTrust("532105290256", "discovery", "dev", "prd"), nil
+		}
+		return nil, chkNoEntity()
+	}
+	chkWant(t, x, "Dormeto roles", Fail, "another manager's (decision 15)")
+}

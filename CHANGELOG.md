@@ -21,6 +21,14 @@
   then the apply of that plan), checks it, plans with the configuration last applied (`applied/`) and writes its result
   under `results/`. The CLI records its version in `<env>/cli.json` and passes the module's `install` input from manager
   0.12.0. `dormeto install status` shows the last dashboard update. The README has "Updating from the dashboard".
+- `dormeto install --adopt-state <file>` takes over a manager installed with the Terraform module directly, from its
+  state (`terraform state pull`): the module's resources (`--adopt-module`, `manager` by default) move to the install's
+  state, nothing recreated, and the resources outside it stay in the source, listed. The state is checked first (format
+  version 4, a Terraform no newer than the install's, this environment's manager in the profile's account and region;
+  refused once the environment has an `install.json`); the original is kept in the install's bucket (`<env>/adopted/`),
+  the moved state written only where there is none, and `install.json` records `adoptedFrom` and `adoptedModule`. After
+  the first apply the CLI says how to detach the manager from its source; until then `dormeto uninstall` refuses. The
+  README has "Adopting a manager installed with Terraform".
 - `--ecs-uptime` counts each ECS service's tasks (CloudWatch `LiveTaskCount`) and prices the service at its average
   number of tasks while it ran, instead of its desired count when discovered: a service stopped at night by a schedule
   (found at 0, priced as one task before) or autoscaled is priced as it ran. The Uptime column and the JSON

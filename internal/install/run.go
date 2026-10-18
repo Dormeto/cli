@@ -37,6 +37,9 @@ type Request struct {
 	Set                      map[string]bool // the flags given (Merge's keys)
 	Yes, Verbose             bool
 	Access                   bool // --access: organization access alone, the manager installed
+	// --adopt-state and --adopt-module: a manager installed with Terraform taken over by a first install, from its state
+	// file and its module's name in it ("": manager).
+	AdoptState, AdoptModule string
 }
 
 // exitInterrupted is the exit code of a run Ctrl-C stopped: 128 + SIGINT.
@@ -68,6 +71,7 @@ type run struct {
 	w           Where
 	p           Project
 	surveyed    *surveyed // organization access's survey of the prerequisite checks, for after the manager's apply
+	adoption    *Adoption // --adopt-state's; nil: not adopting
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {
@@ -340,7 +344,7 @@ func (x *run) checks(s Settings, saved *Settings, applied *Applied, rel Release,
 	if err != nil {
 		return nil, err
 	}
-	return Checks(x.ctx, x.c, s, x.w, Found{Saved: recorded(saved, applied), OtherEnvs: others, Release: rel, ReleaseErr: relErr}), nil
+	return Checks(x.ctx, x.c, s, x.w, Found{Saved: recorded(saved, applied), OtherEnvs: others, Release: rel, ReleaseErr: relErr, Adoption: x.adoption}), nil
 }
 
 // showChecks prints the checks and, in organization mode without a management profile, that organization access is not
@@ -525,12 +529,22 @@ func Install(ctx context.Context, d Deps, r Request) int {
 }
 
 func (x *run) install() error {
+	source, err := x.adoptSource()
+	if err != nil {
+		return err
+	}
 	if err := x.locate(); err != nil {
 		return err
 	}
 	saved, err := x.environment(!x.r.Access)
 	if err != nil {
 		return err
+	}
+	if source != nil {
+		if saved != nil {
+			return &stop{1, fmt.Sprintf("env %s is already installed with the CLI: --adopt-state is for a first install", x.env)}
+		}
+		x.adoption = x.adopting(source)
 	}
 	applied, err := ReadApplied(x.ctx, x.c, x.p)
 	if err != nil {
@@ -609,6 +623,11 @@ func (x *run) install() error {
 		role = s.BuildRole
 	}
 	x.say("\nBootstrap (API calls): bucket %s, role %s, project %s", x.p.Bucket, role, x.p.Name)
+	if x.adoption != nil {
+		if err := x.adopt(&s); err != nil {
+			return err
+		}
+	}
 	s.ReleaseBase = rel.Base
 	if rel.Local != "" {
 		if s.ReleaseBase, err = UploadRelease(x.ctx, x.c, x.p, rel); err != nil {
@@ -638,7 +657,7 @@ func (x *run) install() error {
 	if err := CheckPlan(x.ctx, x.c, s.LastPlan, applied); err != nil {
 		return err
 	}
-	if err := x.apply(s, sum); err != nil {
+	if err := x.apply(s, sum, applied); err != nil {
 		return err
 	}
 	return x.thenAccess(s, rel, false)
@@ -714,11 +733,13 @@ func (x *run) applyInstall(s Settings, sum PlanSummary, then string) error {
 	return nil
 }
 
-// apply applies the saved plan s.LastPlan with s's release, follows it, then checks the dashboard and the invitations.
-func (x *run) apply(s Settings, sum PlanSummary) error {
+// apply applies the saved plan s.LastPlan with s's release, follows it (an adopted manager's first apply, applied nil,
+// saying how to detach it from its source), then checks the dashboard and the invitations.
+func (x *run) apply(s Settings, sum PlanSummary, applied *Applied) error {
 	if err := x.applyInstall(s, sum, ""); err != nil {
 		return err
 	}
+	x.detach(s, applied)
 	x.interrupted = "Interrupted: the manager is installed; dormeto install status checks it."
 	out, err := ReadOutputs(x.ctx, x.c, x.p)
 	if err != nil {
@@ -871,7 +892,7 @@ func (x *run) applyLast() error {
 		x.say("Nothing to change: manager %s is installed.", saved.Version)
 	} else {
 		x.showPlan(saved.LastPlan, saved.Version, sum)
-		if err := x.apply(*saved, sum); err != nil {
+		if err := x.apply(*saved, sum, applied); err != nil {
 			return err
 		}
 	}

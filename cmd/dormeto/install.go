@@ -45,6 +45,7 @@ type installFlags struct {
 	domain, certificateARN, zoneID             string
 	sesIdentity, emailFrom, buildRole, release string
 	managementProfile, memberRole              string
+	adoptState, adoptModule                    string
 	adminEmails, vars                          []string
 	accounts, excludeAccounts, discoveryOnly   []string
 	yes, verbose, access                       bool
@@ -54,7 +55,7 @@ type installFlags struct {
 var (
 	installFlagNames = []string{"profile", "region", "env", "version", "admin-emails", "mode", "domain", "certificate-arn", "zone-id",
 		"ses-identity", "email-from", "var", "build-role", "release", "yes", "verbose",
-		"management-profile", "member-role", "accounts", "exclude-accounts", "discovery-only", "access"}
+		"management-profile", "member-role", "accounts", "exclude-accounts", "discovery-only", "access", "adopt-state", "adopt-module"}
 	domainFlags = []string{"domain", "certificate-arn", "zone-id"}
 )
 
@@ -92,7 +93,9 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 			"apply applies it. --yes takes the suggested answers; it never confirms a plan.\n\n"+
 			"In organization mode, with the management account's profile (--management-profile, or --profile when it is the\n"+
 			"management account's), organization access follows the manager: the delegation policy and the member accounts'\n"+
-			"roles, shown, confirmed, then deployed by a CodeBuild project of the management account removed once it ends.", runs.install)
+			"roles, shown, confirmed, then deployed by a CodeBuild project of the management account removed once it ends.\n\n"+
+			"--adopt-state takes over a manager installed with the Terraform module directly: its state (terraform state pull)\n"+
+			"becomes this first install's, the resources kept, and the plan shows what the flags change.", runs.install)
 	cmd.AddCommand(
 		command("check", "Check the prerequisites of the install (read-only)",
 			"Check the prerequisites of the install, read-only: nothing is created, nothing is asked but the region.", runs.check),
@@ -125,6 +128,9 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 	p.StringSliceVar(&f.excludeAccounts, "exclude-accounts", nil, "member accounts left out, comma-separated")
 	p.StringSliceVar(&f.discoveryOnly, "discovery-only", nil, "member accounts without the command role, comma-separated")
 	p.BoolVar(&f.access, "access", false, "run organization access alone, the manager installed (needs the management account's profile)")
+	l := cmd.Flags() // a first install's only: its subcommands do not take them
+	l.StringVar(&f.adoptState, "adopt-state", "", "the state file (terraform state pull) of a manager installed with Terraform, taken over by this first install")
+	l.StringVar(&f.adoptModule, "adopt-module", "", "the manager module's name in that state (default manager)")
 	return cmd
 }
 
@@ -191,7 +197,7 @@ func (f *installFlags) request(c *cobra.Command) (install.Request, error) {
 	}
 	r := install.Request{
 		Profile: f.profile, Region: f.region, Release: f.release, ManagementProfile: f.managementProfile, Set: set,
-		Yes: f.yes, Verbose: f.verbose, Access: f.access,
+		Yes: f.yes, Verbose: f.verbose, Access: f.access, AdoptState: f.adoptState, AdoptModule: f.adoptModule,
 		Flags: install.Settings{Env: f.env, Region: f.region, Version: f.version, Mode: f.mode, SESIdentity: f.sesIdentity,
 			EmailFrom: f.emailFrom, BuildRole: f.buildRole, MemberRole: f.memberRole, AdminEmails: items(f.adminEmails),
 			Accounts: items(f.accounts), ExcludeAccounts: items(f.excludeAccounts), DiscoveryOnly: items(f.discoveryOnly)},

@@ -69,6 +69,7 @@ type Found struct {
 	OtherEnvs  []string
 	Release    Release
 	ReleaseErr error
+	Adoption   *Adoption // --adopt-state's; nil: not adopting
 }
 
 const (
@@ -88,21 +89,29 @@ var rightsActions = []string{
 // Checks runs every prerequisite of the manager's own account, read-only, and returns the rows in a fixed order. An
 // unexpected error in a row fails that row with AWS's message.
 func Checks(ctx context.Context, c Clients, s Settings, w Where, f Found) []Check {
-	return []Check{
+	cs := []Check{
 		checkCredentials(w),
 		checkRights(ctx, c, w),
 		checkRegion(ctx, c, s),
 		checkOrganization(s, w),
 		checkExisting(s, f),
+	}
+	if f.Adoption != nil {
+		cs = append(cs, checkAdoption(f.Adoption))
+	}
+	return append(cs,
 		checkAnotherInstall(ctx, c, s, f),
 		checkAnotherEnv(f),
 		checkRoles(ctx, c, s, w, f),
 		checkRelease(f),
-		{"administrators", strings.Join(s.AdminEmails, ", "), OK},
+		Check{"administrators", strings.Join(s.AdminEmails, ", "), OK},
 		checkDomain(ctx, c, s),
 		checkSES(ctx, c, s),
-	}
+	)
 }
+
+// adopting tells an adoption whose state passed its checks: the manager found is the one adopted.
+func (f Found) adopting() bool { return f.Adoption != nil && f.Adoption.Err == nil }
 
 // apiCode is the AWS error code of err, or empty.
 func apiCode(err error) string {
@@ -270,12 +279,29 @@ func checkExisting(s Settings, f Found) Check {
 	}
 }
 
+// checkAdoption is the adopted state's row: what moves to the install's module and what stays in the source, or why it
+// cannot be adopted.
+func checkAdoption(a *Adoption) Check {
+	const name = "adopted state"
+	if a.Err != nil {
+		return Check{name, a.File + ": " + a.Err.Error(), Fail}
+	}
+	d := fmt.Sprintf("module.%s of %s (Terraform %s): %d resources to module.%s", a.Module, a.File, a.Terraform, a.Resources, installModule)
+	if len(a.Left) > 0 {
+		d += "; left in the source: " + strings.Join(a.Left, ", ")
+	}
+	return Check{name, d, OK}
+}
+
 func checkAnotherInstall(ctx context.Context, c Clients, s Settings, f Found) Check {
 	const name = "another install"
 	if f.Saved != nil { // the manager found is this install's
 		return Check{name, "none", OK}
 	}
 	prefix := "dmt-" + s.Env + "-manager"
+	if f.adopting() {
+		return Check{name, prefix + ": the manager adopted", OK}
+	}
 	found := false
 	if _, err := c.Lambda.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(prefix + "-api")}); err == nil {
 		found = true
@@ -346,6 +372,9 @@ func checkRoles(ctx context.Context, c Clients, s Settings, w Where, f Found) Ch
 	}
 	mine := managerRoles(w.Account, s.Env)
 	if len(trusted) > 0 && !slices.ContainsFunc(trusted, func(p string) bool { return !slices.Contains(mine, p) }) {
+		if f.adopting() { // the adopted state holds them
+			return Check{name, strings.Join(found, ", ") + ": the adopted manager's", OK}
+		}
 		return Check{name, d + ": env " + s.Env + "'s manager without dormeto install's record (installed by other means, or left by an earlier one); " +
 			"delete them before installing (decision 15)", Fail}
 	}

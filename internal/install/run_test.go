@@ -176,6 +176,8 @@ type rwWorld struct {
 	routers      int                 // the router items in the manager's table
 	lambdaDenied map[string]bool     // the regions whose functions cannot be listed
 	noTable      bool                // the manager's table does not exist
+	found        map[string]bool     // the functions GetFunction finds (a manager installed by other means)
+	conditional  []string            // the keys put only where there was none (If-None-Match: *)
 }
 
 func rwNew(t *testing.T) *rwWorld {
@@ -301,7 +303,7 @@ func (w *rwWorld) clientsOf(a *rwAcct) Clients {
 		Organizations: rwOrgs{w: w}, EC2: rwEC2{w: w},
 		ACM:     chkACM{status: "ISSUED", names: []string{"dormeto.example.com", "*.dormeto.example.com"}},
 		Route53: chkR53{name: "example.com."}, SESv2: chkSES{verified: true, production: true},
-		Lambda: rwLambda{w: w, region: "eu-west-1"}, Cognito: rwCognito{}, DynamoDB: rwDDB{w: w},
+		Lambda: rwLambda{chkLambda: chkLambda{found: w.found}, w: w, region: "eu-west-1"}, Cognito: rwCognito{}, DynamoDB: rwDDB{w: w},
 	}
 }
 
@@ -639,6 +641,12 @@ func (f rwS3) PutObject(ctx context.Context, in *s3.PutObjectInput, _ ...func(*s
 	}
 	if err := f.w.failed(f.a.prefix + "s3:PutObject " + aws.ToString(in.Key)); err != nil {
 		return nil, err
+	}
+	if aws.ToString(in.IfNoneMatch) == "*" { // put only where there is none
+		if _, ok := f.a.objects[aws.ToString(in.Key)]; ok {
+			return nil, chkAPI("PreconditionFailed")
+		}
+		f.w.conditional = append(f.w.conditional, aws.ToString(in.Key))
 	}
 	f.w.write(f.a.prefix + "s3:PutObject " + aws.ToString(in.Key))
 	f.a.objects[aws.ToString(in.Key)] = string(b)

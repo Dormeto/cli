@@ -51,6 +51,14 @@ type Settings struct {
 	LastPlan        string                     `json:"lastPlan,omitempty"`     // build ids
 	LastPlanKind    string                     `json:"lastPlanKind,omitempty"` // planApply or planDestroy; "": planApply
 	LastApply       string                     `json:"lastApply,omitempty"`
+	AdoptedFrom     *AdoptedFrom               `json:"adoptedFrom,omitempty"`   // the state adopted (--adopt-state)
+	AdoptedModule   string                     `json:"adoptedModule,omitempty"` // its module's name in that state
+}
+
+// AdoptedFrom is the state file an install adopted: its base name and its SHA-256.
+type AdoptedFrom struct {
+	File   string `json:"file"`
+	SHA256 string `json:"sha256"`
 }
 
 // The kinds of the last plan (Settings.LastPlanKind): each explicit apply applies its own kind only (ruling R15).

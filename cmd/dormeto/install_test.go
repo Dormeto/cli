@@ -100,6 +100,29 @@ func TestInstallOrganizationAccessFlags(t *testing.T) {
 	}
 }
 
+// --adopt-state and --adopt-module are install's own: its subcommands do not take them.
+func TestInstallAdoptFlags(t *testing.T) {
+	calls, _, errs, exit := installed(t, 0, "install", "--adopt-state", "manager.tfstate", "--adopt-module", "platform")
+	if exit != 0 || errs != "" {
+		t.Fatalf("exit %d, errors %q", exit, errs)
+	}
+	r := only(t, calls).r
+	want := install.Request{AdoptState: "manager.tfstate", AdoptModule: "platform", Set: map[string]bool{"adopt-state": true, "adopt-module": true}}
+	if !reflect.DeepEqual(r, want) {
+		t.Errorf("request\n%+v\nwant\n%+v", r, want)
+	}
+	for _, sub := range []string{"check", "apply", "status"} {
+		calls, _, errs, exit := installed(t, 0, "install", sub, "--adopt-state", "manager.tfstate")
+		if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "unknown flag: --adopt-state") {
+			t.Errorf("%s: exit %d, calls %d, errors %q", sub, exit, len(calls), errs)
+		}
+	}
+	if _, out, _, _ := installed(t, 0, "install", "--help"); !strings.Contains(out, "--adopt-state") || !strings.Contains(out, "--adopt-module") ||
+		!strings.Contains(out, "(default manager)") {
+		t.Errorf("the usage:\n%s", out)
+	}
+}
+
 func TestInstallWithoutFlagsSetsNothing(t *testing.T) {
 	calls, _, _, exit := installed(t, 0, "install")
 	if exit != 0 || len(calls) != 1 {

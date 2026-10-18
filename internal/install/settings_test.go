@@ -104,6 +104,7 @@ func TestMerge(t *testing.T) {
 		Vars:       map[string]json.RawMessage{"a": json.RawMessage(`1`), "b": json.RawMessage(`2`)},
 		MemberRole: "OldRole", Accounts: []string{"111111111111"}, BuildRole: "arn:aws:iam::111111111111:role/B",
 		Installed: "0.10.0", LastPlan: "plan-1", LastApply: "apply-1",
+		AdoptedFrom: &AdoptedFrom{File: "manager.tfstate", SHA256: "ab"}, AdoptedModule: "manager",
 	}
 	flags := Settings{
 		Env: "dev", Region: "us-east-1", Version: "0.11.0", Mode: "account", AdminEmails: []string{"new@example.com"},
@@ -112,6 +113,7 @@ func TestMerge(t *testing.T) {
 		MemberRole: "NewRole", Accounts: []string{"222222222222"}, ExcludeAccounts: []string{"333333333333"},
 		DiscoveryOnly: []string{"444444444444"}, BuildRole: "arn:aws:iam::222222222222:role/B",
 		Installed: "9.9.9", LastPlan: "x", LastApply: "y",
+		AdoptedFrom: &AdoptedFrom{File: "other.tfstate", SHA256: "cd"}, AdoptedModule: "other",
 	}
 
 	t.Run("nothing set keeps saved", func(t *testing.T) {
@@ -129,6 +131,7 @@ func TestMerge(t *testing.T) {
 		want := flags
 		want.Vars = map[string]json.RawMessage{"a": json.RawMessage(`1`), "b": json.RawMessage(`3`), "c": json.RawMessage(`4`)}
 		want.Installed, want.LastPlan, want.LastApply = "0.10.0", "plan-1", "apply-1"
+		want.AdoptedFrom, want.AdoptedModule = saved.AdoptedFrom, saved.AdoptedModule
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %+v\nwant %+v", got, want)
 		}
@@ -162,6 +165,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	s.Vars = map[string]json.RawMessage{"x": json.RawMessage(`{"a":1}`)}
 	s.Accounts = []string{"123456789012"}
 	s.Installed = "0.11.0"
+	s.AdoptedFrom, s.AdoptedModule = &AdoptedFrom{File: "manager.tfstate", SHA256: "ab"}, "manager"
 	b, err := s.JSON()
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +199,7 @@ func TestJSONOmitsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"organizationId", "domain", "sesIdentity", "emailFrom", "vars", "memberRole", "accounts",
-		"excludeAccounts", "discoveryOnly", "buildRole", "installed", "lastPlan", "lastApply"} {
+		"excludeAccounts", "discoveryOnly", "buildRole", "installed", "lastPlan", "lastApply", "adoptedFrom", "adoptedModule"} {
 		if strings.Contains(string(b), `"`+k+`"`) {
 			t.Errorf("%s not omitted: %s", k, b)
 		}

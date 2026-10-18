@@ -282,7 +282,8 @@ follows the build. It refuses a plan made for an uninstall. `--yes` takes the su
 
 ### Flags
 
-`dormeto install check`, `apply` and `status` take the same flags. `dormeto install --help` prints them.
+`dormeto install check`, `apply` and `status` take the same flags, except `--adopt-state` and `--adopt-module`.
+`dormeto install --help` prints them.
 
 - `--profile <profile>`: the AWS profile (the SDK's default, such as `AWS_PROFILE`, when absent).
 - `--region <region>`: the manager's region (the profile's, else asked, with `eu-west-1` suggested).
@@ -311,6 +312,9 @@ follows the build. It refuses a plan made for an uninstall. `--yes` takes the su
 - `--discovery-only <id>[,<id>...]`: member accounts that get the discovery role but not the command role: the manager
   reads them, and cannot put their workloads to sleep.
 - `--access`: runs organization access alone, the manager being installed (needs the management account's profile).
+- `--adopt-state <file>`: the state of a manager installed with the Terraform module directly (`terraform state pull`),
+  taken over by a first install: see [Adopting a manager installed with Terraform](#adopting-a-manager-installed-with-terraform).
+- `--adopt-module <name>`: the manager module's name in that state (`manager` by default, as `module "manager"`).
 - `--yes`: takes the suggested answers without asking; never confirms a plan.
 - `--verbose`: prints Terraform's lines instead of the status line.
 
@@ -393,6 +397,38 @@ in `<env>/cli.json`, which the dashboard reads to know the install can be update
 `--build-role` leaves it off: the rule, its role and the manager's access to the bucket are not created, and the
 dashboard says the install cannot be updated there. `dormeto uninstall` removes the rule and its role. An install made
 with an older CLI gets it by running `dormeto install` once more with this one.
+
+### Adopting a manager installed with Terraform
+
+A manager deployed with the Terraform module directly can become an install of the CLI without being recreated: its
+users, its history and the registration of its routers stay. The CLI takes the manager module's part of that
+configuration's state and makes it the install's own state; Terraform then plans the difference between the resources as
+they are and the CLI's configuration.
+
+```sh
+terraform -chdir=<the configuration that installed it> state pull > manager.tfstate
+dormeto install --profile <profile> --region <region> --env <env> --adopt-state manager.tfstate \
+  --admin-emails you@example.com --domain <host> --certificate-arn <arn> --zone-id <id> --var name=<JSON>
+```
+
+- Give the inputs of that configuration with the flags and `--var`: the CLI does not read its variables. Read the first
+  plan before applying it: it shows any difference, and flags what it replaces or destroys.
+- `--adopt-module <name>` names the module in that state when it is not `module "manager"`.
+- The checks refuse an environment already installed with the CLI (it has an `install.json`), a state that is not of
+  format version 4 or that a Terraform newer than the install's wrote, and a state whose module does not hold this
+  environment's manager (its function `dmt-<env>-manager-api`) in the profile's account and region. The manager found is
+  then the one adopted, not another install.
+- The resources of the module, and of the modules in it, move to the install's module; the resources outside it (a
+  certificate, for example) stay in the source and are listed. Its outputs and check results are left out.
+- After the bootstrap, before the plan, the install's bucket gets the state as it was read (a backup,
+  `<env>/adopted/<UTC time>.tfstate`), then the moved state (`<env>/manager.tfstate`, only when there is none), and
+  `install.json` records where it came from (`adoptedFrom`: the file's name and SHA-256; `adoptedModule`).
+- The CLI never reads or writes the source's backend. After the first apply, it says how to detach the manager from the
+  source: `terraform state rm module.<name>` there, then remove the module from that configuration. While both states
+  name the resources, applying the source configuration again would fight the install.
+- Until the first apply, `dormeto uninstall` refuses: destroying would delete the adopted manager. To abandon the
+  adoption instead, remove `<env>/install.json` and `<env>/manager.tfstate` from the install's bucket; the source state
+  is untouched, and the bootstrap can stay or be removed by hand.
 
 ### Permissions to install
 
