@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - `dormeto install --tag key=value` (repeatable): the customer's tags join the fixed ones in the AWS provider's
   `default_tags` of the manager's Terraform configuration. The tags given replace the install's tags (`--tag ''` alone
   removes them all; without `--tag`, the stored ones are kept), are kept in `install.json` and by the dashboard's
-  updates, and are shown by `dormeto install status`. The bootstrap's resources keep the fixed tags.
+  updates, and are shown by `dormeto install status`. Keys are compared without case, as IAM does; `aws:`, `dormeto:`,
+  `project` and `managed-by` are refused. The bootstrap's resources keep the fixed tags.
+- An unreadable local release no longer fails the existing-install check with an empty version: the release row says
+  why.
 
 ## 0.2.0
 
