@@ -168,9 +168,9 @@ func versionsLine(applied *Applied, latest string, latestErr error) string {
 	return line + latest
 }
 
-// lastBuilds is the line of the project's last plan and last apply, each's status and start time (local), and whether
-// the later of them failed. They are the newest of each kind (by their ACTION) among its latest builds: applied.json
-// knows only the applies that succeeded.
+// lastBuilds is the line of the project's last plan, last apply and last dashboard update, each's status and start time
+// (local), and whether the latest of them failed. They are the newest of each kind (by their ACTION) among its latest
+// builds: applied.json knows only the applies that succeeded.
 func (x *run) lastBuilds() (string, bool, error) {
 	list, err := x.c.CodeBuild.ListBuildsForProject(x.ctx, &codebuild.ListBuildsForProjectInput{ProjectName: &x.p.Name, SortOrder: cbtypes.SortOrderTypeDescending})
 	if err != nil {
@@ -214,9 +214,11 @@ func (x *run) lastBuilds() (string, bool, error) {
 		status := strings.ReplaceAll(strings.ToLower(string(b.BuildStatus)), "_", " ")
 		return fmt.Sprintf("last %s %s: %s %s", kind, aws.ToString(b.Id), status, aws.ToTime(b.StartTime).Local().Format("2006-01-02 15:04"))
 	}
-	last := plan
-	if last == nil || (apply != nil && aws.ToTime(apply.StartTime).After(aws.ToTime(plan.StartTime))) {
-		last = apply
+	var last *cbtypes.Build
+	for _, b := range []*cbtypes.Build{plan, apply, request} {
+		if b != nil && (last == nil || aws.ToTime(b.StartTime).After(aws.ToTime(last.StartTime))) {
+			last = b
+		}
 	}
 	lastFailed := last != nil && last.BuildStatus != cbtypes.StatusTypeSucceeded && last.BuildStatus != cbtypes.StatusTypeInProgress
 	line := "  " + describe("plan", plan) + "; " + describe("apply", apply)

@@ -206,15 +206,47 @@ func TestStatusAFailedApply(t *testing.T) {
 	}
 }
 
-// A build the dashboard's update request started is shown as the last dashboard update, after the plan and the apply.
+// A build the dashboard's update request started is shown as the last dashboard update, after the plan and the apply;
+// failed and the last build, it fails status.
 func TestStatusADashboardUpdate(t *testing.T) {
 	w := rwNew(t)
 	w.installed("0.11.0")
 	w.builds = append(w.builds,
 		&rwBuild{id: "dmt-prod-install:d1", env: map[string]string{"ACTION": "request"}, status: cbtypes.StatusTypeFailed, start: rwT0.Add(-5 * time.Minute)})
 	code, out, _ := w.run(Status, rwStatus, false)
-	if code != 0 || !strings.Contains(out, "; last apply dmt-prod-install:a0: succeeded "+rwLocal(rwT0.Add(-time.Hour))+
+	if code != 1 || !strings.Contains(out, "; last apply dmt-prod-install:a0: succeeded "+rwLocal(rwT0.Add(-time.Hour))+
 		"; last dashboard update dmt-prod-install:d1: failed "+rwLocal(rwT0.Add(-5*time.Minute))+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+// The exit code follows the last build of all, the dashboard's among them: a failed build followed by one that
+// succeeded does not fail status.
+func TestStatusTheLastBuildDecidesTheExitCode(t *testing.T) {
+	for name, c := range map[string]struct {
+		builds []*rwBuild
+		code   int
+	}{
+		"a failed plan, then a dashboard update that succeeded": {[]*rwBuild{
+			{id: "dmt-prod-install:p1", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeFailed, start: rwT0.Add(-20 * time.Minute)},
+			{id: "dmt-prod-install:d1", env: map[string]string{"ACTION": "request"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-10 * time.Minute)},
+		}, 0},
+		"a failed dashboard update, then a plan that succeeded": {[]*rwBuild{
+			{id: "dmt-prod-install:d1", env: map[string]string{"ACTION": "request"}, status: cbtypes.StatusTypeFailed, start: rwT0.Add(-20 * time.Minute)},
+			{id: "dmt-prod-install:p1", env: map[string]string{"ACTION": "plan"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-10 * time.Minute)},
+		}, 0},
+		"a dashboard update that succeeded, then one stopped": {[]*rwBuild{
+			{id: "dmt-prod-install:d1", env: map[string]string{"ACTION": "request"}, status: cbtypes.StatusTypeSucceeded, start: rwT0.Add(-20 * time.Minute)},
+			{id: "dmt-prod-install:d2", env: map[string]string{"ACTION": "request"}, status: cbtypes.StatusTypeStopped, start: rwT0.Add(-10 * time.Minute)},
+		}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := rwNew(t)
+			w.installed("0.11.0")
+			w.builds = append(w.builds, c.builds...)
+			if code, out, _ := w.run(Status, rwStatus, false); code != c.code {
+				t.Errorf("exit code %d, want %d:\n%s", code, c.code, out)
+			}
+		})
 	}
 }
