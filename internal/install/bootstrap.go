@@ -218,8 +218,10 @@ func hasCLITag(tags []iamtypes.Tag) bool {
 const (
 	eventsPolicyName = "StartInstallBuild"
 	requestTarget    = "install-build"
-	// What EventBridge sends StartBuild: <key> is the InputPathsMap key "key".
-	requestInput = `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_KEY","value":"<key>","type":"PLAINTEXT"}]}`
+	// What EventBridge sends StartBuild: <etag> is the InputPathsMap key "etag", the created object's ETag. Not its key:
+	// EventBridge fills the template without escaping, and the key is text the manager's API chooses, which could close
+	// the JSON string and add overrides (RELEASES_URL, a buildspec). The build finds the request by its ETag.
+	requestInput = `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_ETAG","value":"<etag>","type":"PLAINTEXT"}]}`
 )
 
 func eventsTrust(p Project) string {
@@ -266,7 +268,7 @@ func ensureRequestRule(ctx context.Context, c Clients, p Project) error {
 	return retryWhile(func() error {
 		out, err := c.EventBridge.PutTargets(ctx, &eventbridge.PutTargetsInput{Rule: &p.Rule, Targets: []ebtypes.Target{{
 			Id: aws.String(requestTarget), Arn: aws.String(p.projectARN()), RoleArn: &roleARN,
-			InputTransformer: &ebtypes.InputTransformer{InputPathsMap: map[string]string{"key": "$.detail.object.key"}, InputTemplate: aws.String(requestInput)},
+			InputTransformer: &ebtypes.InputTransformer{InputPathsMap: map[string]string{"etag": "$.detail.object.etag"}, InputTemplate: aws.String(requestInput)},
 			RetryPolicy:      &ebtypes.RetryPolicy{MaximumRetryAttempts: aws.Int32(0), MaximumEventAgeInSeconds: aws.Int32(60)},
 		}}})
 		if err != nil {

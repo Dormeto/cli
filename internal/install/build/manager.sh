@@ -2,10 +2,11 @@
 # Dormeto install: Terraform with the manager release, run by CodeBuild (buildspec.yml).
 # Inputs: ACTION (plan | plan-destroy | apply | apply-destroy | request), BUCKET, ENV, TF_VERSION, RELEASE_BASE
 # (https://... or s3://...), RELEASE_VERSION, PLAN_BUILD (apply actions), CODEBUILD_BUILD_ID (set by CodeBuild).
-# ACTION=request is a dashboard update, started by the rule on an object under $ENV/requests/: it takes REQUEST_KEY
-# (that object's key) instead of RELEASE_BASE, RELEASE_VERSION and PLAN_BUILD, which it derives from the request once
-# checked, and writes its outcome to $ENV/results/<request id>.json. RELEASES_URL overrides the published releases
-# (tests only).
+# ACTION=request is a dashboard update, started by the rule for an object created under $ENV/requests/: it takes
+# REQUEST_ETAG (that object's ETag, the only value of the event the rule passes on) instead of RELEASE_BASE,
+# RELEASE_VERSION and PLAN_BUILD. It takes the oldest request with that ETag and no final result, derives those from it
+# once checked, and writes its outcome to $ENV/results/<request id>.json and $ENV/results/<build id>.json.
+# RELEASES_URL overrides the published releases (tests only).
 set -eu
 
 REASON=
@@ -17,9 +18,10 @@ die() {
 }
 need() { eval "[ -n \"\${$1:-}\" ]" || die "$1 is not set"; }
 
-# matches VALUE CHARS ERE: VALUE is not empty, holds only CHARS (a bracket expression's, so never a new line) and
-# matches the extended regular expression ERE
+# matches VALUE CHARS ERE: VALUE is not empty, at most 64 characters, holds only CHARS (a bracket expression's, so
+# never a new line) and matches the extended regular expression ERE
 matches() {
+  [ "${#1}" -le 64 ] || return 1
   case $1 in "" | *[!$2]*) return 1 ;; esac
   printf '%s\n' "$1" | LC_ALL=C grep -Eq "$3"
 }
@@ -46,14 +48,20 @@ older() {
     }'
 }
 
-# field NAME: the request's field NAME when it is a string of printable ASCII characters, empty otherwise
-field() { jq -r --arg f "$1" '.[$f] | select(type == "string" and all(explode[]; . > 31 and . < 127))' request.json; }
+# field NAME: sets FIELD to the request's field NAME when it is a string of printable ASCII characters, empty
+# otherwise; one longer than 64 characters is refused before any command reads it
+field() {
+  FIELD=$(jq -r --arg f "$1" '.[$f] | select(type == "string" and all(explode[]; . > 31 and . < 127))' request.json)
+  [ "${#FIELD}" -le 64 ] || die "the request $REQUEST_ID: its $1 is longer than 64 characters"
+}
 
-# result STATUS MESSAGE: the request's outcome, which the dashboard reads, with its action and version once checked
+# result STATUS MESSAGE: the request's outcome, with its action and version once checked, under the request's id and
+# under the build's, which the dashboard reads
 result() {
   jq -nc --arg build "$CODEBUILD_BUILD_ID" --arg status "$1" --arg message "$2" --arg action "$REQUEST_ACTION" \
     --arg version "$REQUEST_VERSION" '{build: $build, status: $status, message: $message, action: $action, version: $version}' >result.json
   aws s3 cp --only-show-errors result.json "$S3/results/$REQUEST_ID.json"
+  aws s3 cp --only-show-errors result.json "$S3/results/$CODEBUILD_BUILD_ID.json"
 }
 
 # finish: the request's result, from the build's exit status
@@ -70,17 +78,38 @@ finish() {
   exit "$code"
 }
 
-# take_request: checks the request at REQUEST_KEY, trusting nothing in it beyond these checks, and sets ACTION,
-# RELEASE_BASE, RELEASE_VERSION and PLAN_BUILD from it
+# take_request: finds the request of the event's ETag, checks it, trusting nothing in it beyond these checks, and sets
+# ACTION, RELEASE_BASE, RELEASE_VERSION and PLAN_BUILD from it
 take_request() {
-  for v in BUCKET ENV CODEBUILD_BUILD_ID REQUEST_KEY; do need "$v"; done
-  # a key that is not a request of this environment stops at once: no download, and no id to write a result under
+  for v in BUCKET ENV CODEBUILD_BUILD_ID REQUEST_ETAG; do need "$v"; done
+  # what is not an environment or an ETag stops at once: no download, and no id to write a result under
   matches "$ENV" 'a-z0-9-' '^[a-z0-9-]+$' || die "ENV is not an environment name: stopped"
-  matches "$REQUEST_KEY" 'a-z0-9/TZ.-' "^$ENV/requests/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\\.json\$" ||
-    die "REQUEST_KEY is not a request of $ENV: stopped"
-  REQUEST_ID=${REQUEST_KEY##*/}
-  REQUEST_ID=${REQUEST_ID%.json}
+  matches "$REQUEST_ETAG" '0-9a-f-' '^[0-9a-f]{32}(-[0-9]+)?$' || die "REQUEST_ETAG is not an ETag: stopped"
   S3="s3://$BUCKET/$ENV"
+
+  # the oldest request (by name) of this environment with that ETag and no final result: a request replayed after its
+  # result has the same content, so the same ETag, and is not taken again
+  aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "$ENV/requests/" --output json >requests.json
+  jq -r --arg etag "$REQUEST_ETAG" '.Contents[]?
+    | select((.ETag | type) == "string" and (.ETag | ltrimstr("\"") | rtrimstr("\"")) == $etag)
+    | .Key | select(type == "string" and all(explode[]; . > 32 and . < 127))' requests.json | LC_ALL=C sort >requests.txt
+  REQUEST_KEY=
+  while IFS= read -r k; do
+    matches "$k" 'a-z0-9/TZ.-' "^$ENV/requests/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\\.json\$" || continue
+    id=${k##*/}
+    id=${id%.json}
+    if exists "results/$id.json" "the result of the request $id"; then
+      aws s3 cp --only-show-errors "$S3/results/$id.json" earlier.json
+      [ "$(jq -r '.status // ""' earlier.json)" = running ] || continue
+    fi
+    REQUEST_KEY=$k
+    REQUEST_ID=$id
+    break
+  done <requests.txt
+  if [ -z "$REQUEST_KEY" ]; then
+    say "no request to take for this event"
+    exit 0
+  fi
   trap finish EXIT
   result running ""
 
@@ -88,28 +117,32 @@ take_request() {
   aws s3 cp --only-show-errors "$S3/requests/$REQUEST_ID.json" request.json
   jq -e -s 'length == 1 and (.[0] | type == "object")' request.json >/dev/null 2>&1 ||
     die "the request $REQUEST_ID is not a JSON object"
-  v=$(field action)
-  case $v in plan | apply) ;; *) die "the request $REQUEST_ID asks for neither a plan nor an apply" ;; esac
-  ACTION=$v
-  REQUEST_ACTION=$v
-  v=$(field version)
-  matches "$v" '0-9A-Za-z.-' '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' ||
+  field action
+  case $FIELD in plan | apply) ;; *) die "the request $REQUEST_ID asks for neither a plan nor an apply" ;; esac
+  ACTION=$FIELD
+  REQUEST_ACTION=$FIELD
+  field version
+  matches "$FIELD" '0-9A-Za-z.-' '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' ||
     die "the request $REQUEST_ID has no version of the form x.y.z"
-  RELEASE_VERSION=$v
-  REQUEST_VERSION=$v
+  RELEASE_VERSION=$FIELD
+  REQUEST_VERSION=$FIELD
   PLAN_BUILD=
   if [ "$ACTION" = apply ]; then
-    v=$(field planBuild)
-    case $v in "dmt-$ENV-install:"*) ;; *) v= ;; esac # this project's own builds only
-    matches "$v" 'a-z0-9:-' '^dmt-[a-z0-9-]+-install:[0-9a-f-]{36}$' ||
+    field planBuild
+    case $FIELD in "dmt-$ENV-install:"*) ;; *) FIELD= ;; esac # this project's own builds only
+    matches "$FIELD" 'a-z0-9:-' '^dmt-[a-z0-9-]+-install:[0-9a-f-]{36}$' ||
       die "the request $REQUEST_ID has no plan build of $ENV"
-    PLAN_BUILD=$v
+    PLAN_BUILD=$FIELD
   fi
 
-  # the release base comes from the version, never from the request
-  if curl -fsS -o /dev/null "$RELEASES_URL/$RELEASE_VERSION/SHA256SUMS"; then
+  # the release base comes from the version, never from the request; only an HTTP error (22) means not published
+  status=0
+  curl -fsS --max-time 30 -o /dev/null "$RELEASES_URL/$RELEASE_VERSION/SHA256SUMS" || status=$?
+  if [ "$status" -eq 0 ]; then
     RELEASE_BASE=$RELEASES_URL/$RELEASE_VERSION
     say "manager $RELEASE_VERSION: published"
+  elif [ "$status" -ne 22 ]; then
+    die "releases.dormeto.com cannot be reached: stopped"
   else
     RELEASE_BASE=
     if exists release/SHA256SUMS "the staged release"; then
@@ -140,6 +173,8 @@ take_request() {
     say "checking the plan of build $PLAN_BUILD"
     exists "plans/$PLAN_BUILD/release.json" "the plan of build $PLAN_BUILD" ||
       die "the plan of $PLAN_BUILD was not prepared from the dashboard"
+    exists "plans/$PLAN_BUILD/main.tf.json" "the plan of build $PLAN_BUILD" ||
+      die "the plan of $PLAN_BUILD has no configuration"
     aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/release.json" release.json
     [ "$(jq -r '.version // ""' release.json)" = "$RELEASE_VERSION" ] ||
       die "the plan of $PLAN_BUILD is not manager $RELEASE_VERSION"
@@ -149,6 +184,7 @@ take_request() {
 }
 
 REQUEST_ID=
+REQUEST_KEY=
 REQUEST_ACTION=
 REQUEST_VERSION=
 RELEASES_URL=${RELEASES_URL:-https://releases.dormeto.com/manager}
@@ -194,9 +230,11 @@ export PATH CHECKPOINT_DISABLE TF_IN_AUTOMATION TF_CLI_ARGS
 
 case $ACTION in
 apply*)
-  # the plan's own configuration; config/'s for a plan made before plans kept theirs
+  # the plan's own configuration; config/'s for a plan the CLI made before plans kept theirs, never for a request
   CONFIG=config
-  if exists "plans/$PLAN_BUILD/main.tf.json" "the configuration of the plan"; then CONFIG=plans/$PLAN_BUILD; fi
+  if [ -n "$REQUEST_ID" ] || exists "plans/$PLAN_BUILD/main.tf.json" "the configuration of the plan"; then
+    CONFIG=plans/$PLAN_BUILD
+  fi
   say "reading the configuration of the plan of build $PLAN_BUILD"
   aws s3 cp --only-show-errors "$S3/$CONFIG/main.tf.json" main.tf.json
   aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/.terraform.lock.hcl" .terraform.lock.hcl

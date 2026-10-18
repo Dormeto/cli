@@ -842,13 +842,14 @@ func checkEvents(t *testing.T, w *bootWorld) {
 		t.Errorf("retry policy = %+v", tg.RetryPolicy)
 	}
 	it := tg.InputTransformer
-	if it == nil || !maps.Equal(it.InputPathsMap, map[string]string{"key": "$.detail.object.key"}) {
+	// only the object's ETag crosses the rule: EventBridge does not escape what it fills in, and the key is the API's text
+	if it == nil || !maps.Equal(it.InputPathsMap, map[string]string{"etag": "$.detail.object.etag"}) {
 		t.Fatalf("input transformer = %+v", it)
 	}
-	// EventBridge fills <key> from InputPathsMap; the result must be the StartBuild overrides, as JSON.
-	filled := strings.ReplaceAll(aws.ToString(it.InputTemplate), "<key>", "prod/requests/x.json")
-	sameJSON(t, "the input", filled, `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_KEY","value":"prod/requests/x.json","type":"PLAINTEXT"}]}`)
-	if aws.ToString(it.InputTemplate) != `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_KEY","value":"<key>","type":"PLAINTEXT"}]}` {
+	// EventBridge fills <etag> from InputPathsMap; the result must be the StartBuild overrides, as JSON.
+	filled := strings.ReplaceAll(aws.ToString(it.InputTemplate), "<etag>", "d41d8cd98f00b204e9800998ecf8427e")
+	sameJSON(t, "the input", filled, `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_ETAG","value":"d41d8cd98f00b204e9800998ecf8427e","type":"PLAINTEXT"}]}`)
+	if aws.ToString(it.InputTemplate) != `{"environmentVariablesOverride":[{"name":"ACTION","value":"request","type":"PLAINTEXT"},{"name":"REQUEST_ETAG","value":"<etag>","type":"PLAINTEXT"}]}` {
 		t.Errorf("template = %s", aws.ToString(it.InputTemplate))
 	}
 }

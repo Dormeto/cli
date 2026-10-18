@@ -20,6 +20,8 @@ sums() {
     case " ${FAKE_BAD:-} " in *" $n "*) echo "bad  $n";; *) echo "good  $n";; esac
   done
 }
+# etag FILE: its S3 ETag, the MD5 of its content
+etag() { if command -v md5sum >/dev/null 2>&1; then md5sum < "$1" | cut -c1-32; else /sbin/md5 -q "$1"; fi; }
 `
 
 var fakeTools = map[string]string{
@@ -46,8 +48,8 @@ case "$1 $2" in
     fi ;;
   *)
     f="$FAKE/s3/${dst#s3://}"; mkdir -p "$(dirname "$f")"; cp "$src" "$f"
-    # the results written, in order, a body per line
-    case $dst in */results/*) cat "$src" >> "$FAKE/results" ;; esac ;;
+    # the results written, in order: a line "<name> <body>" each
+    case $dst in */results/*) printf '%s %s\n' "${dst##*/results/}" "$(cat "$src")" >> "$FAKE/results" ;; esac ;;
   esac ;;
 "s3api head-object")
   b=; k=
@@ -55,6 +57,16 @@ case "$1 $2" in
   if [ -f "$FAKE/s3/$b/$k" ]; then echo '{}'
   elif [ -n "${FAKE_HEAD_ERR:-}" ]; then echo "An error occurred (403) when calling the HeadObject operation: Forbidden" >&2; exit 254
   else echo "An error occurred (404) when calling the HeadObject operation: Not Found" >&2; exit 254; fi ;;
+"s3api list-objects-v2")
+  # the objects directly under the prefix, with their quoted ETags as S3 lists them; $FAKE/listing.json instead when
+  # a test wrote one
+  b=; pfx=
+  while [ $# -gt 0 ]; do case $1 in --bucket) b=$2 ;; --prefix) pfx=$2 ;; esac; shift; done
+  if [ -f "$FAKE/listing.json" ]; then cat "$FAKE/listing.json"; exit 0; fi
+  for f in "$FAKE/s3/$b/$pfx"*; do
+    [ -f "$f" ] || continue
+    jq -n --arg k "${f#"$FAKE/s3/$b/"}" --arg e "\"$(etag "$f")\"" '{Key: $k, ETag: $e}'
+  done | jq -s '{Contents: .}' ;;
 "s3 rm")
   shift 2
   while [ "${1#--}" != "$1" ]; do shift; done
@@ -92,9 +104,14 @@ esac
 echo "curl $*" >> "$FAKE/log"
 out=; url=
 while [ $# -gt 0 ]; do
-  case $1 in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac
+  case $1 in -o) out=$2; shift ;; --max-time) shift ;; -*) ;; *) url=$1 ;; esac
   shift
 done
+# FAKE_CURL_FAIL is the exit status of a curl that cannot reach releases.dormeto.com
+case $url in
+https://releases.hashicorp.com/*) ;;
+*) if [ -n "${FAKE_CURL_FAIL:-}" ]; then echo "curl: ($FAKE_CURL_FAIL) Connection timed out after 30002 milliseconds" >&2; exit "$FAKE_CURL_FAIL"; fi ;;
+esac
 # when FAKE_PUBLISHED is set, only the releases under its URLs are published: others fail like curl -f
 case $url in
 https://releases.hashicorp.com/*) ;;
@@ -204,7 +221,7 @@ func index(lines []string, prefix string) int {
 
 func has(lines []string, prefix string) bool { return index(lines, prefix) >= 0 }
 
-// results are the bodies the script wrote to results/, in order.
+// results are the results the script wrote, in order: a line "<name under results/> <body>" each.
 func (s *sandbox) results() []string {
 	b, err := os.ReadFile(filepath.Join(s.fake, "results"))
 	if err != nil {

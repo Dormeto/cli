@@ -1,7 +1,10 @@
 package build
 
 import (
+	"crypto/md5"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -265,24 +268,31 @@ func TestManagerApplyRecordsItsConfiguration(t *testing.T) {
 	})
 }
 
-// A dashboard request: the rule starts the build with ACTION=request and REQUEST_KEY besides the project's variables.
+// A dashboard request: the rule starts the build with ACTION=request and REQUEST_ETAG besides the project's variables.
 
 const (
 	requestID  = "20261018T100000Z-0123abcd"
 	requestKey = "prod/requests/" + requestID + ".json"
+	olderID    = "20261018T090000Z-89abcdef"
+	build      = "dmt-prod-install:build-3"
 	planBuild  = "dmt-prod-install:6f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
 	releases   = "https://releases.dormeto.com/manager/"
 	stagedBase = "s3://dmt-install-123456789012-eu-west-1/prod/release"
 )
 
-// requestEnv is a request build's environment; published are the releases the fake curl serves.
-func requestEnv(published ...string) map[string]string {
+// requestEnv is the environment of the build the rule starts for the request at requestKey: the project's variables,
+// ACTION and REQUEST_ETAG (that object's ETag); published are the releases the fake curl serves.
+func (s *sandbox) requestEnv(published ...string) map[string]string {
+	body, _ := s.uploaded(mb + "requests/" + requestID + ".json")
 	return map[string]string{
-		"ACTION": "request", "REQUEST_KEY": requestKey, "BUCKET": "dmt-install-123456789012-eu-west-1", "ENV": "prod",
-		"TF_VERSION": "1.16.5", "SCRIPT": "manager.sh", "CODEBUILD_BUILD_ID": "dmt-prod-install:build-3",
+		"ACTION": "request", "REQUEST_ETAG": etagOf(body), "BUCKET": "dmt-install-123456789012-eu-west-1", "ENV": "prod",
+		"TF_VERSION": "1.16.5", "SCRIPT": "manager.sh", "CODEBUILD_BUILD_ID": build,
 		"FAKE_PUBLISHED": strings.Join(published, " "),
 	}
 }
+
+// etagOf is the ETag S3 gives an object of that body (one part): its MD5.
+func etagOf(body string) string { return fmt.Sprintf("%x", md5.Sum([]byte(body))) }
 
 func (s *sandbox) put(key, body string) { s.write2(filepath.Join(s.fake, "s3", mb+key), body) }
 
@@ -299,35 +309,53 @@ func (s *sandbox) installed(version string) {
 // prepared is the plan a dashboard plan request left, of version, made when appliedBuild was applied.
 func (s *sandbox) prepared(version, appliedBuild string) {
 	p := "plans/" + planBuild + "/"
-	s.put(p+"release.json", `{"version":"`+version+`","base":"`+releases+version+`","request":"`+requestKey+`","appliedBuild":"`+appliedBuild+`"}`)
+	// a base no apply uses: it derives its own from the version
+	s.put(p+"release.json", `{"version":"`+version+`","base":"https://evil.example/manager/`+version+`","request":"`+requestKey+`","appliedBuild":"`+appliedBuild+`"}`)
 	s.put(p+"main.tf.json", "applied-config")
 	s.put(p+".terraform.lock.hcl", "applied-lock")
 	s.put(p+"tfplan", "saved-plan")
 }
 
 func outcome(status, message, action, version string) map[string]string {
-	return map[string]string{"build": "dmt-prod-install:build-3", "status": status, "message": message, "action": action, "version": version}
+	return map[string]string{"build": build, "status": status, "message": message, "action": action, "version": version}
 }
 
 var running = outcome("running", "", "", "")
 
-// checkResults checks the results written, in order, and that the last one is results/<id>.json.
-func (s *sandbox) checkResults(want ...map[string]string) {
+// checkResults checks the results written, in order: each to results/<id>.json, then the same body to
+// results/<build id>.json, which both hold the last one.
+func (s *sandbox) checkResults(id string, want ...map[string]string) {
 	s.t.Helper()
+	lines := s.results()
 	var got []map[string]string
-	for _, r := range s.results() {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(r), &m); err != nil {
-			s.t.Fatalf("result %q: %v", r, err)
+	var last string
+	for i, l := range lines {
+		name, body, _ := strings.Cut(l, " ")
+		if i%2 == 1 {
+			if name != build+".json" || body != last {
+				s.t.Errorf("result %d = %s, want %s.json %s", i, l, build, last)
+			}
+			continue
 		}
-		got = append(got, m)
+		if name != id+".json" {
+			s.t.Errorf("result %d = %s, want %s.json first", i, l, id)
+		}
+		var m map[string]string
+		if err := json.Unmarshal([]byte(body), &m); err != nil {
+			s.t.Fatalf("result %q: %v", l, err)
+		}
+		got, last = append(got, m), body
+	}
+	if len(lines)%2 != 0 {
+		s.t.Errorf("a result written to one key only: %v", lines)
 	}
 	if !reflect.DeepEqual(got, want) {
 		s.t.Errorf("results = %v, want %v", got, want)
 	}
-	last, ok := s.uploaded(mb + "results/" + requestID + ".json")
-	if rs := s.results(); !ok || len(rs) == 0 || strings.TrimSpace(last) != rs[len(rs)-1] {
-		s.t.Errorf("results/%s.json = %q", requestID, last)
+	for _, k := range []string{id, build} {
+		if b, ok := s.uploaded(mb + "results/" + k + ".json"); !ok || strings.TrimSpace(b) != last {
+			s.t.Errorf("results/%s.json = %q, want %s", k, b, last)
+		}
 	}
 }
 
@@ -354,7 +382,7 @@ func TestManagerRequestPlanPublished(t *testing.T) {
 	s := newSandbox(t)
 	s.installed("0.11.0")
 	s.request(`{"action":"plan","version":"0.12.0","requestedBy":"alice@example.com","requestedAt":"2026-10-18T10:00:00Z"}`)
-	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0"))
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -393,7 +421,7 @@ func TestManagerRequestPlanPublished(t *testing.T) {
 		index(log, "aws s3 cp --only-show-errors s3://"+mb+"requests/"+requestID+".json"); w < 0 || r < w {
 		t.Errorf("the running result must come before the request is read:\n%s", strings.Join(log, "\n"))
 	}
-	s.checkResults(running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
+	s.checkResults(requestID, running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
 	for _, want := range []string{"dormeto: reading the request " + requestID + "\n", "dormeto: manager 0.12.0: published\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
@@ -405,7 +433,7 @@ func TestManagerRequestReleasesURL(t *testing.T) {
 	s := newSandbox(t)
 	s.installed("0.11.0")
 	s.request(`{"action":"plan","version":"0.12.0"}`)
-	env := requestEnv("https://releases.example/manager/0.12.0")
+	env := s.requestEnv("https://releases.example/manager/0.12.0")
 	env["RELEASES_URL"] = "https://releases.example/manager"
 	if out, err := s.run("manager.sh", env); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -421,7 +449,7 @@ func TestManagerRequestPlanStaged(t *testing.T) {
 	s.installed("0.11.0")
 	s.put("release/SHA256SUMS", "good  terraform-aws-dormeto-0.12.0.zip\n")
 	s.request(`{"action":"plan","version":"0.12.0"}`)
-	out, err := s.run("manager.sh", requestEnv())
+	out, err := s.run("manager.sh", s.requestEnv())
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -435,7 +463,7 @@ func TestManagerRequestPlanStaged(t *testing.T) {
 	if !strings.Contains(out, "dormeto: manager 0.12.0: staged\n") {
 		t.Errorf("output:\n%s", out)
 	}
-	s.checkResults(running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
+	s.checkResults(requestID, running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
 }
 
 func TestManagerRequestNeitherPublishedNorStaged(t *testing.T) {
@@ -443,12 +471,12 @@ func TestManagerRequestNeitherPublishedNorStaged(t *testing.T) {
 	s.installed("0.11.0")
 	s.put("release/SHA256SUMS", "good  terraform-aws-dormeto-0.12.0.zip\ngood  terraform-aws-dormeto-0.13.0.zip.old\n")
 	s.request(`{"action":"plan","version":"0.13.0"}`)
-	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0"))
 	if err == nil || !strings.Contains(out, "dormeto: manager 0.13.0 is neither published nor staged\n") {
 		t.Fatalf("err %v\n%s", err, out)
 	}
 	s.checkNoTerraform()
-	s.checkResults(running, outcome("failed", "manager 0.13.0 is neither published nor staged", "plan", "0.13.0"))
+	s.checkResults(requestID, running, outcome("failed", "manager 0.13.0 is neither published nor staged", "plan", "0.13.0"))
 }
 
 func TestManagerRequestNoDowngrade(t *testing.T) {
@@ -459,13 +487,13 @@ func TestManagerRequestNoDowngrade(t *testing.T) {
 			s := newSandbox(t)
 			s.installed(c.applied)
 			s.request(`{"action":"plan","version":"` + c.version + `"}`)
-			out, err := s.run("manager.sh", requestEnv(releases+c.version))
+			out, err := s.run("manager.sh", s.requestEnv(releases+c.version))
 			want := "manager " + c.version + " is older than the applied " + c.applied
 			if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") {
 				t.Fatalf("err %v\n%s", err, out)
 			}
 			s.checkNoTerraform()
-			s.checkResults(running, outcome("failed", want, "plan", c.version))
+			s.checkResults(requestID, running, outcome("failed", want, "plan", c.version))
 		})
 	}
 	for _, c := range []struct{ applied, version string }{
@@ -475,32 +503,33 @@ func TestManagerRequestNoDowngrade(t *testing.T) {
 			s := newSandbox(t)
 			s.installed(c.applied)
 			s.request(`{"action":"plan","version":"` + c.version + `"}`)
-			if out, err := s.run("manager.sh", requestEnv(releases+c.version)); err != nil {
+			if out, err := s.run("manager.sh", s.requestEnv(releases+c.version)); err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
-			s.checkResults(running, outcome("succeeded", "manager "+c.version+" planned", "plan", c.version))
+			s.checkResults(requestID, running, outcome("succeeded", "manager "+c.version+" planned", "plan", c.version))
 		})
 	}
 }
 
-func TestManagerRequestKeyStopsBeforeAnyDownload(t *testing.T) {
+func TestManagerRequestETagStopsBeforeAnyDownload(t *testing.T) {
+	etag := etagOf(`{"action":"plan","version":"0.12.0"}`)
 	for name, env := range map[string]map[string]string{
-		"another environment's":     {"REQUEST_KEY": "staging/requests/" + requestID + ".json"},
-		"outside requests/":         {"REQUEST_KEY": "prod/results/" + requestID + ".json"},
-		"with ..":                   {"REQUEST_KEY": "prod/requests/../requests/" + requestID + ".json"},
-		"with .. after the id":      {"REQUEST_KEY": requestKey + "/../../applied.json"},
-		"with a second line":        {"REQUEST_KEY": requestKey + "\nprod/requests/x.json"},
-		"a looser id":               {"REQUEST_KEY": "prod/requests/2026101810000000-0123abcd.json"},
-		"upper-case hexadecimal":    {"REQUEST_KEY": "prod/requests/20261018T100000Z-0123ABCD.json"},
-		"not .json":                 {"REQUEST_KEY": "prod/requests/" + requestID + ".txt"},
-		"empty":                     {"REQUEST_KEY": ""},
-		"an environment not a name": {"ENV": ".*"},
+		"with a quote":               {"REQUEST_ETAG": etag + `"`},
+		"with a slash":               {"REQUEST_ETAG": "../" + etag},
+		"closing the JSON string":    {"REQUEST_ETAG": etag + `","name":"RELEASES_URL","value":"https://evil.example`},
+		"upper-case hexadecimal":     {"REQUEST_ETAG": strings.ToUpper(etag)},
+		"too short":                  {"REQUEST_ETAG": etag[1:]},
+		"longer than 64 characters":  {"REQUEST_ETAG": etag + "-" + strings.Repeat("1", 40)},
+		"with a second line":         {"REQUEST_ETAG": etag + "\n" + etag},
+		"empty":                      {"REQUEST_ETAG": ""},
+		"an environment not a name":  {"ENV": ".*"},
+		"the key the rule once gave": {"REQUEST_ETAG": "", "REQUEST_KEY": requestKey},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newSandbox(t)
 			s.installed("0.11.0")
 			s.request(`{"action":"plan","version":"0.12.0"}`)
-			e := requestEnv(releases + "0.12.0")
+			e := s.requestEnv(releases + "0.12.0")
 			for k, v := range env {
 				e[k] = v
 			}
@@ -518,6 +547,96 @@ func TestManagerRequestKeyStopsBeforeAnyDownload(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestManagerRequestTakesTheEventsRequest(t *testing.T) {
+	body := `{"action":"plan","version":"0.12.0","requestedAt":"2026-10-18T10:00:00Z"}`
+	t.Run("among several requests, the one with the event's ETag", func(t *testing.T) {
+		s := newSandbox(t)
+		s.installed("0.11.0")
+		s.put("requests/"+olderID+".json", `{"action":"plan","version":"0.12.1","requestedAt":"2026-10-18T09:00:00Z"}`)
+		s.request(body)
+		s.put("requests/20261018T110000Z-fedcba98.json", `{"action":"plan","version":"0.12.2","requestedAt":"2026-10-18T11:00:00Z"}`)
+		out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0", releases+"0.12.1", releases+"0.12.2"))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		s.checkResults(requestID, running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
+		r, _ := s.uploaded(mb + "plans/" + build + "/release.json")
+		if got := jsonOf(t, r)["request"]; got != requestKey {
+			t.Errorf("release.json's request = %q", got)
+		}
+	})
+	for _, c := range []struct{ name, older, taken string }{
+		{"of two with the same content, the newer when the older succeeded", "succeeded", requestID},
+		{"of two with the same content, the newer when the older failed", "failed", requestID},
+		{"of two with the same content, the older while its result says running", "running", olderID},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed("0.11.0")
+			s.put("requests/"+olderID+".json", body)
+			s.put("results/"+olderID+".json", `{"build":"dmt-prod-install:build-1","status":"`+c.older+`","message":"","action":"plan","version":"0.12.0"}`)
+			s.request(body)
+			if out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0")); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			s.checkResults(c.taken, running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
+		})
+	}
+	nothing := func(t *testing.T, s *sandbox, env map[string]string) {
+		t.Helper()
+		out, err := s.run("manager.sh", env)
+		if err != nil || !strings.Contains(out, "dormeto: no request to take for this event\n") {
+			t.Fatalf("err %v\n%s", err, out)
+		}
+		if r := s.results(); r != nil {
+			t.Errorf("results written: %v", r)
+		}
+		for _, l := range s.log() {
+			if strings.HasPrefix(l, "aws s3 cp --only-show-errors s3://"+mb+"requests/") || strings.HasPrefix(l, "aws s3 cp --only-show-errors result.json") ||
+				strings.HasPrefix(l, "curl ") || strings.HasPrefix(l, "terraform") {
+				t.Errorf("went on: %s", l)
+			}
+		}
+	}
+	t.Run("a request replayed after its result: nothing to take, nothing written", func(t *testing.T) {
+		s := newSandbox(t)
+		s.installed("0.11.0")
+		s.request(body)
+		s.put("results/"+requestID+".json", `{"build":"dmt-prod-install:build-1","status":"succeeded","message":"manager 0.12.0 planned","action":"plan","version":"0.12.0"}`)
+		nothing(t, s, s.requestEnv(releases+"0.12.0"))
+	})
+	t.Run("no request with the event's ETag: nothing to take, nothing written", func(t *testing.T) {
+		s := newSandbox(t)
+		s.installed("0.11.0")
+		s.request(body)
+		env := s.requestEnv(releases + "0.12.0")
+		env["REQUEST_ETAG"] = etagOf("another body")
+		nothing(t, s, env)
+	})
+	t.Run("keys with the event's ETag that are not this environment's requests are never taken", func(t *testing.T) {
+		s := newSandbox(t)
+		s.installed("0.11.0")
+		s.request(body)
+		etag := etagOf(body)
+		var contents []map[string]string
+		for _, k := range []string{
+			"staging/requests/" + requestID + ".json", "prod/results/" + requestID + ".json",
+			"prod/requests/../requests/" + requestID + ".json", requestKey + "/../../applied.json",
+			requestKey + "\nprod/requests/x.json", "prod/requests/2026101810000000-0123abcd.json",
+			"prod/requests/20261018T100000Z-0123ABCD.json", "prod/requests/" + requestID + ".txt", requestKey + `"`,
+			"prod/requests/" + strings.Repeat("2", 60) + "T100000Z-0123abcd.json",
+		} {
+			contents = append(contents, map[string]string{"Key": k, "ETag": `"` + etag + `"`})
+		}
+		b, _ := json.Marshal(map[string]any{"Contents": contents})
+		s.write2(filepath.Join(s.fake, "listing.json"), string(b))
+		nothing(t, s, s.requestEnv(releases+"0.12.0"))
+		if has(s.log(), "aws s3api head-object") {
+			t.Errorf("a key that is not a request was looked at:\n%s", strings.Join(s.log(), "\n"))
+		}
+	})
 }
 
 func TestManagerRequestFieldsRefused(t *testing.T) {
@@ -550,7 +669,7 @@ func TestManagerRequestFieldsRefused(t *testing.T) {
 			s.installed("0.11.0")
 			s.prepared("0.12.0", "dmt-prod-install:build-2")
 			s.request(c.body)
-			out, err := s.run("manager.sh", requestEnv(releases+"0.12.0", releases+"0.13.0"))
+			out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0", releases+"0.13.0"))
 			if err == nil || !strings.Contains(out, "dormeto: "+c.message+"\n") {
 				t.Fatalf("err %v\n%s", err, out)
 			}
@@ -558,7 +677,7 @@ func TestManagerRequestFieldsRefused(t *testing.T) {
 				t.Errorf("the request's value printed:\n%s", out)
 			}
 			s.checkNoTerraform()
-			s.checkResults(running, outcome("failed", c.message, c.action, c.version))
+			s.checkResults(requestID, running, outcome("failed", c.message, c.action, c.version))
 		})
 	}
 }
@@ -567,7 +686,7 @@ func TestManagerRequestIgnoresOtherFields(t *testing.T) {
 	s := newSandbox(t)
 	s.installed("0.11.0")
 	s.request(`{"action":"plan","version":"0.12.0","releaseBase":"https://evil.example","planBuild":"dmt-prod-install:x"}`)
-	if out, err := s.run("manager.sh", requestEnv(releases+"0.12.0")); err != nil {
+	if out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0")); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	r, _ := s.uploaded(mb + "plans/dmt-prod-install:build-3/release.json")
@@ -587,13 +706,13 @@ func TestManagerRequestWithoutAppliedConfiguration(t *testing.T) {
 	s.put("applied.json", `{"version":"0.11.0","build":"dmt-prod-install:build-2"}`)
 	s.put("config/main.tf.json", "cli-config")
 	s.request(`{"action":"plan","version":"0.12.0"}`)
-	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0"))
 	want := "run `dormeto install` with the CLI 0.2.0 or later"
 	if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") {
 		t.Fatalf("err %v\n%s", err, out)
 	}
 	s.checkNoTerraform()
-	s.checkResults(running, outcome("failed", want, "plan", "0.12.0"))
+	s.checkResults(requestID, running, outcome("failed", want, "plan", "0.12.0"))
 }
 
 func TestManagerRequestApply(t *testing.T) {
@@ -601,7 +720,7 @@ func TestManagerRequestApply(t *testing.T) {
 	s.installed("0.11.0")
 	s.prepared("0.12.0", "dmt-prod-install:build-2")
 	s.request(`{"action":"apply","version":"0.12.0","planBuild":"` + planBuild + `"}`)
-	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0"))
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -616,6 +735,11 @@ func TestManagerRequestApply(t *testing.T) {
 	if !has(log, "curl -fsSL -o terraform-aws-dormeto-0.12.0.zip "+releases+"0.12.0/terraform-aws-dormeto-0.12.0.zip") {
 		t.Errorf("the release not derived from the version:\n%s", strings.Join(log, "\n"))
 	}
+	for _, l := range log {
+		if strings.Contains(l, "evil.example") {
+			t.Errorf("the plan's base used: %s", l)
+		}
+	}
 	a, _ := s.uploaded(mb + "applied.json")
 	if want := `{"version":"0.12.0","build":"dmt-prod-install:build-3"}`; strings.TrimSpace(a) != want {
 		t.Errorf("applied.json = %q, want %s", a, want)
@@ -623,11 +747,12 @@ func TestManagerRequestApply(t *testing.T) {
 	if got, _ := s.uploaded(mb + "applied/main.tf.json"); got != "applied-config" {
 		t.Errorf("applied/main.tf.json = %q", got)
 	}
-	s.checkResults(running, outcome("succeeded", "manager 0.12.0 applied", "apply", "0.12.0"))
+	s.checkResults(requestID, running, outcome("succeeded", "manager 0.12.0 applied", "apply", "0.12.0"))
 }
 
 func TestManagerRequestApplyRefused(t *testing.T) {
 	for _, c := range []struct{ name, planVersion, appliedBuild, version, message string }{
+		{"a plan without its configuration", "0.12.0", "dmt-prod-install:build-2", "0.12.0", "the plan of " + planBuild + " has no configuration"},
 		{"a plan of another version", "0.12.0", "dmt-prod-install:build-2", "0.12.1", "the plan of " + planBuild + " is not manager 0.12.1"},
 		{"a plan made before the last apply", "0.12.0", "dmt-prod-install:build-1", "0.12.0", "the plan is stale: prepare again"},
 		{"a plan made before the first apply", "0.12.0", "", "0.12.0", "the plan is stale: prepare again"},
@@ -639,13 +764,18 @@ func TestManagerRequestApplyRefused(t *testing.T) {
 			if c.planVersion != "" {
 				s.prepared(c.planVersion, c.appliedBuild)
 			}
+			if strings.HasSuffix(c.message, "has no configuration") {
+				if err := os.Remove(filepath.Join(s.fake, "s3", mb+"plans/"+planBuild+"/main.tf.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
 			s.request(`{"action":"apply","version":"` + c.version + `","planBuild":"` + planBuild + `"}`)
-			out, err := s.run("manager.sh", requestEnv(releases+"0.12.0", releases+"0.12.1"))
+			out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0", releases+"0.12.1"))
 			if err == nil || !strings.Contains(out, "dormeto: "+c.message+"\n") {
 				t.Fatalf("err %v\n%s", err, out)
 			}
 			s.checkNoTerraform()
-			s.checkResults(running, outcome("failed", c.message, "apply", c.version))
+			s.checkResults(requestID, running, outcome("failed", c.message, "apply", c.version))
 		})
 	}
 }
@@ -654,20 +784,65 @@ func TestManagerRequestFailureOutsideTheChecks(t *testing.T) {
 	s := newSandbox(t)
 	s.installed("0.11.0")
 	s.request(`{"action":"plan","version":"0.12.0"}`)
-	env := requestEnv(releases + "0.12.0")
+	env := s.requestEnv(releases + "0.12.0")
 	env["FAKE_BAD"] = "terraform-aws-dormeto-0.12.0.zip"
 	if out, err := s.run("manager.sh", env); err == nil {
 		t.Fatalf("no failure: %s", out)
 	}
-	s.checkResults(running, outcome("failed", "the checksum of terraform-aws-dormeto-0.12.0.zip does not match: stopped", "plan", "0.12.0"))
+	s.checkResults(requestID, running, outcome("failed", "the checksum of terraform-aws-dormeto-0.12.0.zip does not match: stopped", "plan", "0.12.0"))
 
 	s = newSandbox(t)
 	s.installed("0.11.0")
 	s.request(`{"action":"plan","version":"0.12.0"}`)
-	env = requestEnv(releases + "0.12.0")
+	env = s.requestEnv(releases + "0.12.0")
 	env["FAKE_TERRAFORM_FAIL"] = "plan"
 	if out, err := s.run("manager.sh", env); err == nil {
 		t.Fatalf("no failure: %s", out)
 	}
-	s.checkResults(running, outcome("failed", "the build failed: see its log", "plan", "0.12.0"))
+	s.checkResults(requestID, running, outcome("failed", "the build failed: see its log", "plan", "0.12.0"))
+}
+
+func TestManagerRequestFieldLongerThan64Characters(t *testing.T) {
+	huge := strings.Repeat("a", 200*1024)
+	for _, c := range []struct{ field, body, action, version string }{
+		{"action", `{"action":"` + huge + `","version":"0.12.0"}`, "", ""},
+		{"version", `{"action":"plan","version":"0.12.0-` + huge + `"}`, "plan", ""},
+		{"planBuild", `{"action":"apply","version":"0.12.0","planBuild":"` + planBuild + huge + `"}`, "apply", "0.12.0"},
+	} {
+		t.Run(c.field, func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed("0.11.0")
+			s.request(c.body)
+			out, err := s.run("manager.sh", s.requestEnv(releases+"0.12.0"))
+			want := "the request " + requestID + ": its " + c.field + " is longer than 64 characters"
+			if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") || len(out) > 2048 {
+				t.Fatalf("err %v\n%.4000s", err, out)
+			}
+			s.checkNoTerraform()
+			s.checkResults(requestID, running, outcome("failed", want, c.action, c.version))
+		})
+	}
+}
+
+func TestManagerRequestReleasesUnreachable(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.put("release/SHA256SUMS", "good  terraform-aws-dormeto-0.12.0.zip\n")
+	s.request(`{"action":"plan","version":"0.12.0"}`)
+	env := s.requestEnv(releases + "0.12.0")
+	env["FAKE_CURL_FAIL"] = "28"
+	out, err := s.run("manager.sh", env)
+	want := "releases.dormeto.com cannot be reached: stopped"
+	if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	log := s.log()
+	if !has(log, "curl -fsS --max-time 30 -o /dev/null "+releases+"0.12.0/SHA256SUMS") {
+		t.Errorf("the published check:\n%s", strings.Join(log, "\n"))
+	}
+	if has(log, "aws s3api head-object --bucket dmt-install-123456789012-eu-west-1 --key prod/release/SHA256SUMS") {
+		t.Error("a release that cannot be checked was taken for not published")
+	}
+	s.checkNoTerraform()
+	s.checkResults(requestID, running, outcome("failed", want, "plan", "0.12.0"))
 }
