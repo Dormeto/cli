@@ -678,7 +678,8 @@ func TestCheckLineAndHelpers(t *testing.T) {
 // chkAdopted is an adoption of env dev's manager whose state passed its checks.
 func chkAdopted() *Adoption {
 	return &Adoption{File: "manager.tfstate", Module: "manager",
-		Moved: Moved{Resources: 9, Terraform: "1.16.2", Left: []string{"aws_acm_certificate.edge", "aws_route53_record.certificate_validation"}}}
+		Moved: Moved{Resources: 9, Terraform: "1.16.2", Left: []string{"aws_acm_certificate.edge", "aws_route53_record.certificate_validation"},
+			IAMNames: []string{"dmt-dev-manager-api", "DmtRouterBoundary", "DmtDiscoveryRole", "DmtCommandRole"}}}
 }
 
 // An adoption adds its row after the existing install's: what moves and what stays, or why the state is refused.
@@ -729,6 +730,15 @@ func TestChecksDormetoRolesAdopted(t *testing.T) {
 	x.f.Adoption = chkAdopted()
 	chkWant(t, x, "Dormeto roles", OK, "DmtDiscoveryRole, DmtCommandRole: the adopted manager's")
 	x.f.Adoption.Err = errors.New("refused")
+	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
+
+	// Each one found must be a role or a policy the adopted state moves: the boundary too, when it exists.
+	x.f.Adoption = chkAdopted()
+	x.iam.policy = func(string) (*iam.GetPolicyOutput, error) { return &iam.GetPolicyOutput{}, nil }
+	chkWant(t, x, "Dormeto roles", OK, "DmtDiscoveryRole, DmtCommandRole, DmtRouterBoundary: the adopted manager's")
+	x.f.Adoption.IAMNames = []string{"dmt-dev-manager-api", "DmtDiscoveryRole", "DmtCommandRole"}
+	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
+	x.f.Adoption.IAMNames = []string{"DmtRouterBoundary", "DmtDiscoveryRole"}
 	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
 
 	x.f.Adoption = chkAdopted()

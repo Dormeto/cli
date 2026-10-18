@@ -414,10 +414,12 @@ dormeto install --profile <profile> --region <region> --env <env> --adopt-state 
 - Give the inputs of that configuration with the flags and `--var`: the CLI does not read its variables. Read the first
   plan before applying it: it shows any difference, and flags what it replaces or destroys.
 - `--adopt-module <name>` names the module in that state when it is not `module "manager"`.
-- The checks refuse an environment already installed with the CLI (it has an `install.json`), a state that is not of
-  format version 4 or that a Terraform newer than the install's wrote, and a state whose module does not hold this
-  environment's manager (its function `dmt-<env>-manager-api`) in the profile's account and region. The manager found is
-  then the one adopted, not another install.
+- The checks refuse an environment already installed with the CLI (it has an `install.json` or an `applied.json`), a
+  state that is not of format version 4 or that a Terraform newer than the install's wrote, and a state whose module
+  does not hold this environment's manager (its function `dmt-<env>-manager-api`) in the profile's account and region.
+  The manager found is then the one adopted, not another install; Dormeto's roles found are the adopted manager's when
+  the state moves each of them. Another state already at `<env>/manager.tfstate` (an earlier adoption, interrupted)
+  stops it too, with how to start over.
 - The resources of the module, and of the modules in it, move to the install's module; the resources outside it (a
   certificate, for example) stay in the source and are listed. Its outputs and check results are left out.
 - After the bootstrap, before the plan, the install's bucket gets the state as it was read (a backup,

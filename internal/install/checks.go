@@ -372,7 +372,8 @@ func checkRoles(ctx context.Context, c Clients, s Settings, w Where, f Found) Ch
 	}
 	mine := managerRoles(w.Account, s.Env)
 	if len(trusted) > 0 && !slices.ContainsFunc(trusted, func(p string) bool { return !slices.Contains(mine, p) }) {
-		if f.adopting() { // the adopted state holds them
+		// Adopted: each one found is a role or a policy the adopted state moves.
+		if f.adopting() && !slices.ContainsFunc(found, func(n string) bool { return !slices.Contains(f.Adoption.IAMNames, n) }) {
 			return Check{name, strings.Join(found, ", ") + ": the adopted manager's", OK}
 		}
 		return Check{name, d + ": env " + s.Env + "'s manager without dormeto install's record (installed by other means, or left by an earlier one); " +

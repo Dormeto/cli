@@ -40,6 +40,7 @@ type Moved struct {
 	Resources int      // the resources moved
 	Left      []string // the addresses of the resources left in the source, in its order
 	Terraform string   // the Terraform version that wrote the source
+	IAMNames  []string // the names of the IAM roles and policies moved, in the source's order
 }
 
 // Adoption is --adopt-state's: the source state's file (its base name and SHA-256), the module's name in it, the file as
@@ -133,6 +134,14 @@ func MoveState(source []byte, module string, p Project, terraform string) (Moved
 		}
 		if r.Module == from && r.Mode == "managed" && r.Type == "aws_lambda_function" && r.Name == "api" && len(r.Instances) > 0 {
 			api = &head.Resources[i]
+		}
+		if r.Mode == "managed" && (r.Type == "aws_iam_role" || r.Type == "aws_iam_policy") {
+			for _, in := range r.Instances {
+				var a struct{ Name string }
+				if json.Unmarshal(in.Attributes, &a) == nil && a.Name != "" {
+					m.IAMNames = append(m.IAMNames, a.Name)
+				}
+			}
 		}
 		res, err := moveResource(resources[i], to, rename)
 		if err != nil {
@@ -269,12 +278,35 @@ func (x *run) adoptSource() ([]byte, error) {
 	return b, nil
 }
 
-// adopting is the adoption of source, --adopt-state's file, by the run's install, with the build's Terraform.
-func (x *run) adopting(source []byte) *Adoption {
+// adopting is the adoption of source, --adopt-state's file, by the run's install, with the build's Terraform. It is
+// refused, before anything is written, for an env with install.json (saved) or applied.json (applied), and where another
+// state is at <env>/manager.tfstate already.
+func (x *run) adopting(source []byte, saved *Settings, applied *Applied) (*Adoption, error) {
+	switch {
+	case saved != nil:
+		return nil, &stop{1, fmt.Sprintf("env %s is already installed with the CLI: --adopt-state is for a first install", x.env)}
+	case applied != nil:
+		return nil, &stop{1, fmt.Sprintf("env %s has an applied version already (applied.json): --adopt-state is for a first install", x.env)}
+	}
 	sum := sha256.Sum256(source)
 	a := &Adoption{File: filepath.Base(x.r.AdoptState), SHA256: hex.EncodeToString(sum[:]), Module: cmp.Or(x.r.AdoptModule, defaultAdoptModule), Source: source}
-	a.Moved, a.Err = MoveState(source, a.Module, x.p, build.TerraformVersion)
-	return a
+	if a.Moved, a.Err = MoveState(source, a.Module, x.p, build.TerraformVersion); a.Err != nil {
+		return a, nil // the checks say why
+	}
+	there, err := getObject(x.ctx, x.c, x.p, x.p.StateKey())
+	switch {
+	case err != nil:
+		return nil, err
+	case there != nil && !bytes.Equal(there, a.State): // the same state is an adoption that stopped once it wrote it
+		return nil, stateThere(x.p)
+	}
+	return a, nil
+}
+
+// stateThere stops an adoption that finds another state where it would write its own.
+func stateThere(p Project) error {
+	return &stop{1, fmt.Sprintf("env %s has a Terraform state already (s3://%s/%s), maybe an earlier adoption's, interrupted: to start over, remove %s "+
+		"and %s from the bucket %s, then run the same command again. Nothing was adopted.", p.Env, p.Bucket, p.StateKey(), p.Key("install.json"), p.StateKey(), p.Bucket)}
 }
 
 // adopt writes the run's adoption, the bootstrap there and before the first plan: the source state kept as
@@ -301,8 +333,8 @@ func (x *run) adopt(s *Settings) error {
 }
 
 // putFirstState writes state as the manager's Terraform state, <env>/manager.tfstate, only where there is none (a
-// conditional put). A state there already stops the adoption, unless it is that same state: an adoption that stopped
-// once it wrote it.
+// conditional put). A state there already (written since adopting looked) stops the adoption, unless it is that same
+// state: an adoption that stopped once it wrote it.
 func putFirstState(ctx context.Context, c Clients, p Project, state []byte) error {
 	key := p.StateKey()
 	_, err := c.S3.PutObject(ctx, &s3.PutObjectInput{Bucket: &p.Bucket, Key: &key, Body: bytes.NewReader(state), IfNoneMatch: aws.String("*")})
@@ -316,7 +348,7 @@ func putFirstState(ctx context.Context, c Clients, p Project, state []byte) erro
 	if err != nil || bytes.Equal(there, state) {
 		return err
 	}
-	return &stop{1, fmt.Sprintf("env %s has a Terraform state already (s3://%s/%s): --adopt-state is for a first install; nothing was adopted", p.Env, p.Bucket, key)}
+	return stateThere(p)
 }
 
 // detach says, after an adopted manager's first apply (s its settings, applied the applied.json before it, nil: none),

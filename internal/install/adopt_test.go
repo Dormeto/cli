@@ -92,6 +92,7 @@ func TestMoveStateTakesTheManagerModule(t *testing.T) {
 	rwEqual(t, "left", m.Left, adLeft)
 	rwEqual(t, "resources", m.Resources, 9)
 	rwEqual(t, "terraform", m.Terraform, "1.16.2")
+	rwEqual(t, "IAM names", m.IAMNames, []string{"dmt-prod-manager-api", "DmtRouterBoundary", "DmtDiscoveryRole", "DmtCommandRole"})
 
 	got, was := adDecode(t, m.State), adDecode(t, src)
 	keys := slices.Sorted(func(yield func(string) bool) {
@@ -387,12 +388,8 @@ func TestInstallAdoptAStateAlreadyThere(t *testing.T) {
 	w.bucket = true
 	w.objects["prod/manager.tfstate"] = rwState
 	code, out, _ := w.run(Install, adRequest(), false)
-	if code != 1 || !strings.HasSuffix(out, "env prod has a Terraform state already (s3://dmt-install-532105290256-eu-west-1/prod/manager.tfstate): "+
-		"--adopt-state is for a first install; nothing was adopted\n") {
-		t.Errorf("exit code %d:\n%s", code, out)
-	}
-	if w.objects["prod/manager.tfstate"] != rwState || slices.Contains(w.writes, "s3:PutObject prod/install.json") || slices.Contains(w.actions(), "plan") {
-		t.Errorf("writes %v", w.writes)
+	if code != 1 || !strings.HasSuffix(out, adStateThere) || len(w.writes) != 0 || w.objects["prod/manager.tfstate"] != rwState {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 
 	w = adWorld(t)
@@ -404,6 +401,34 @@ func TestInstallAdoptAStateAlreadyThere(t *testing.T) {
 	w.objects["prod/manager.tfstate"] = string(moved.State)
 	if code, out, _ := w.run(Install, adRequest(), false); code != 0 || w.saved().AdoptedFrom == nil {
 		t.Errorf("exit code %d:\n%s", code, out)
+	}
+}
+
+// adStateThere is what an adoption says of another state already where it would write its own.
+const adStateThere = "env prod has a Terraform state already (s3://dmt-install-532105290256-eu-west-1/prod/manager.tfstate), maybe an earlier adoption's, " +
+	"interrupted: to start over, remove prod/install.json and prod/manager.tfstate from the bucket dmt-install-532105290256-eu-west-1, then run the same " +
+	"command again. Nothing was adopted.\n"
+
+// The conditional put finds another state written since the run looked (a run beside it): it says so and writes nothing.
+func TestPutFirstStateRefusesAnotherState(t *testing.T) {
+	w := adWorld(t)
+	w.bucket = true
+	w.objects["prod/manager.tfstate"] = rwState
+	err := putFirstState(t.Context(), w.clients(), adProject, []byte(`{"version":4}`))
+	if err == nil || err.Error()+"\n" != adStateThere || len(w.writes) != 0 || w.objects["prod/manager.tfstate"] != rwState {
+		t.Errorf("error %v, writes %v", err, w.writes)
+	}
+}
+
+// --adopt-state is refused where an apply is recorded (applied.json), even without install.json: its guards (the
+// uninstall's, the detach message) read it.
+func TestInstallAdoptRefusedWithAnAppliedVersion(t *testing.T) {
+	w := adWorld(t)
+	w.bucket = true
+	w.objects["prod/applied.json"] = `{"version":"0.11.0","build":"dmt-prod-install:a0"}`
+	code, out, _ := w.run(Install, adRequest(), false)
+	if code != 1 || !strings.HasSuffix(out, "env prod has an applied version already (applied.json): --adopt-state is for a first install\n") || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 }
 

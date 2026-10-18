@@ -25,7 +25,7 @@
   state (`terraform state pull`): the module's resources (`--adopt-module`, `manager` by default) move to the install's
   state, nothing recreated, and the resources outside it stay in the source, listed. The state is checked first (format
   version 4, a Terraform no newer than the install's, this environment's manager in the profile's account and region;
-  refused once the environment has an `install.json`); the original is kept in the install's bucket (`<env>/adopted/`),
+  refused once the environment has an `install.json`, an `applied.json` or another state); the original is kept in the install's bucket (`<env>/adopted/`),
   the moved state written only where there is none, and `install.json` records `adoptedFrom` and `adoptedModule`. After
   the first apply the CLI says how to detach the manager from its source; until then `dormeto uninstall` refuses. The
   README has "Adopting a manager installed with Terraform".

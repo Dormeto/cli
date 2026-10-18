@@ -540,15 +540,14 @@ func (x *run) install() error {
 	if err != nil {
 		return err
 	}
-	if source != nil {
-		if saved != nil {
-			return &stop{1, fmt.Sprintf("env %s is already installed with the CLI: --adopt-state is for a first install", x.env)}
-		}
-		x.adoption = x.adopting(source)
-	}
 	applied, err := ReadApplied(x.ctx, x.c, x.p)
 	if err != nil {
 		return err
+	}
+	if source != nil {
+		if x.adoption, err = x.adopting(source, saved, applied); err != nil {
+			return err
+		}
 	}
 	s := x.merged(saved)
 	if x.r.Access {
