@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `dormeto install --tag key=value` (repeatable): the customer's tags join the fixed ones in the AWS provider's
+  `default_tags` of the manager's Terraform configuration. The tags given replace the install's tags (`--tag ''` alone
+  removes them all; without `--tag`, the stored ones are kept), are kept in `install.json` and by the dashboard's
+  updates, and are shown by `dormeto install status`. The bootstrap's resources keep the fixed tags.
+
 ## 0.2.0
 
 - `dormeto install` and `dormeto uninstall`: the Dormeto manager installed in an AWS account by CodeBuild, guided. The

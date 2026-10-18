@@ -50,6 +50,30 @@ func TestStatusVersionsTheLastBuildsAndTheChecks(t *testing.T) {
 	}
 }
 
+func TestStatusShowsTheTagsSortedByKey(t *testing.T) {
+	w := rwNew(t)
+	w.installed("0.11.0")
+	s := w.saved()
+	s.Tags = map[string]string{"owner": "platform", "cost-center": "1234", "team": ""}
+	w.save(s)
+	code, out, _ := w.run(Status, rwStatus, false)
+	if code != 0 {
+		t.Fatalf("exit code %d:\n%s", code, out)
+	}
+	rwInOrder(t, out,
+		"Dormeto prod in 532105290256 eu-west-1\n",
+		"  manager 0.11.0; latest release 0.11.0\n",
+		"  tags: cost-center=1234, owner=platform, team=\n",
+		"  last plan ",
+	)
+
+	w = rwNew(t)
+	w.installed("0.11.0")
+	if _, out, _ := w.run(Status, rwStatus, false); strings.Contains(out, "tags:") {
+		t.Errorf("a tags line without tags:\n%s", out)
+	}
+}
+
 func TestStatusNotAppliedYet(t *testing.T) {
 	w := rwNew(t)
 	w.installed("0.11.0")

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -58,6 +59,9 @@ func (x *run) status() error {
 
 	x.say("Dormeto %s in %s %s", x.env, x.w.Account, x.region)
 	x.say("%s", versionsLine(applied, latest, latestErr))
+	if line := tagsLine(saved.Tags); line != "" {
+		x.say("%s", line)
+	}
 	builds, lastFailed, err := x.lastBuilds()
 	if err != nil {
 		return err
@@ -166,6 +170,18 @@ func versionsLine(applied *Applied, latest string, latestErr error) string {
 		return line + latest + ": an upgrade is available (dormeto install)"
 	}
 	return line + latest
+}
+
+// tagsLine is the install's tags, sorted by key; empty without tags.
+func tagsLine(tags map[string]string) string {
+	var l []string
+	for _, k := range slices.Sorted(maps.Keys(tags)) {
+		l = append(l, k+"="+tags[k])
+	}
+	if len(l) == 0 {
+		return ""
+	}
+	return "  tags: " + strings.Join(l, ", ")
 }
 
 // lastBuilds is the line of the project's last plan, last apply and last dashboard update, each's status and start time
