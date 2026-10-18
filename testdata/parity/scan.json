@@ -1,7 +1,7 @@
 {
-  "manager": "0.12.0",
+  "manager": "0.13.0",
   "router": "0.29.0",
-  "commit": "9cb11344656a7e402b552bd6ce1ddeab3ef01b9f",
+  "commit": "150b737083560cffc21f5852c4837fd9fa870414",
   "cases": [
     {
       "name": "scanRegion: the region of the router discovery cases: one candidate per application target group, one per rule forwarding to none",
