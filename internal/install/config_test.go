@@ -60,6 +60,9 @@ func TestConfig(t *testing.T) {
 	esc.SESIdentity = "id"
 	esc.Vars = map[string]json.RawMessage{"description": json.RawMessage(`{"a": ["${y}"]}`)}
 
+	tagged := base("account")
+	tagged.Tags = map[string]string{"owner": "platform", "cost-center": "1234", "team": ""}
+
 	selfUpdate := base("account")
 	selfUpdate.Version = "0.12.0"
 
@@ -74,6 +77,7 @@ func TestConfig(t *testing.T) {
 		{"domain", domain, where(nil)},
 		{"vars", vars, where(nil)},
 		{"escaping", esc, where(nil)},
+		{"tags", tagged, where(nil)},
 		{"self-update", selfUpdate, where(nil)},
 	}
 	for _, c := range cases {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -54,6 +55,12 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 		module[name] = v
 	}
 
+	tags := maps.Clone(s.Tags) // the install's tags; the fixed ones win, and Project.Tags stays the fixed set
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	maps.Copy(tags, p.Tags())
+
 	expr := func(name string) map[string]any {
 		return map[string]any{"value": "${module.dormeto." + name + "}"}
 	}
@@ -66,7 +73,7 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 		"module": map[string]any{"dormeto": module},
 		"provider": map[string]any{"aws": map[string]any{
 			"region":       p.Region,
-			"default_tags": map[string]any{"tags": p.Tags()},
+			"default_tags": map[string]any{"tags": tags},
 		}},
 		"terraform": map[string]any{"backend": map[string]any{"s3": map[string]any{
 			"bucket": p.Bucket, "key": p.StateKey(), "region": p.Region, "use_lockfile": true, "encrypt": true,
