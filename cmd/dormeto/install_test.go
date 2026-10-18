@@ -64,7 +64,7 @@ func TestInstallFlagsMakeTheRequest(t *testing.T) {
 	calls, _, errs, exit := installed(t, 0, "install", "--profile", "p", "--region", "eu-west-1", "--env", "dev", "--version", "0.12.0",
 		"--admin-emails", "a@x.io,b@y.io", "--mode", "account", "--ses-identity", "x.io", "--email-from", "d@x.io",
 		"--build-role", "arn:aws:iam::532105290256:role/ci", "--release", "./release", "--yes", "--verbose",
-		"--var", `alert_emails=["o@x.io"]`, "--var", "retention_days=30")
+		"--var", `alert_emails=["o@x.io"]`, "--var", "retention_days=30", "--tag", "cost-center=1234", "--tag", "expr=a=b")
 	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].command != "install" {
 		t.Fatalf("exit %d, errors %q, calls %+v", exit, errs, calls)
 	}
@@ -73,12 +73,32 @@ func TestInstallFlagsMakeTheRequest(t *testing.T) {
 		Profile: "p", Region: "eu-west-1", Release: "./release", Yes: true, Verbose: true,
 		Flags: install.Settings{Env: "dev", Region: "eu-west-1", Version: "0.12.0", Mode: "account", AdminEmails: []string{"a@x.io", "b@y.io"},
 			SESIdentity: "x.io", EmailFrom: "d@x.io", BuildRole: "arn:aws:iam::532105290256:role/ci",
-			Vars: map[string]json.RawMessage{"alert_emails": json.RawMessage(`["o@x.io"]`), "retention_days": json.RawMessage("30")}},
+			Vars: map[string]json.RawMessage{"alert_emails": json.RawMessage(`["o@x.io"]`), "retention_days": json.RawMessage("30")},
+			Tags: map[string]string{"cost-center": "1234", "expr": "a=b"}},
 		Set: map[string]bool{"profile": true, "region": true, "env": true, "version": true, "admin-emails": true, "mode": true,
-			"ses-identity": true, "email-from": true, "build-role": true, "release": true, "yes": true, "verbose": true, "var": true},
+			"ses-identity": true, "email-from": true, "build-role": true, "release": true, "yes": true, "verbose": true, "var": true, "tag": true},
 	}
 	if !reflect.DeepEqual(r, want) {
 		t.Errorf("request\n%+v\nwant\n%+v", r, want)
+	}
+}
+
+func TestInstallTagFlag(t *testing.T) {
+	calls, _, errs, exit := installed(t, 0, "install", "--tag", "")
+	if exit != 0 || errs != "" {
+		t.Fatalf("exit %d, errors %q", exit, errs)
+	}
+	if r := only(t, calls).r; !r.Set["tag"] || r.Flags.Tags == nil || len(r.Flags.Tags) != 0 {
+		t.Errorf("--tag '' alone must clear: %+v", r)
+	}
+	if _, out, _, _ := installed(t, 0, "install", "--help"); !strings.Contains(out, "--tag stringArray") ||
+		!strings.Contains(out, "replaces the install's tags") {
+		t.Errorf("the usage:\n%s", out)
+	}
+	for _, sub := range []string{"check", "apply", "status"} {
+		if calls, _, errs, exit := installed(t, 0, "install", sub, "--tag", "a=b"); exit != 0 || errs != "" || !only(t, calls).r.Set["tag"] {
+			t.Errorf("%s: exit %d, errors %q", sub, exit, errs)
+		}
 	}
 }
 
@@ -128,7 +148,7 @@ func TestInstallWithoutFlagsSetsNothing(t *testing.T) {
 	if exit != 0 || len(calls) != 1 {
 		t.Fatalf("exit %d, calls %+v", exit, calls)
 	}
-	if r := calls[0].r; len(r.Set) != 0 || r.Flags.Domain != nil || r.Flags.Vars != nil || r.Flags.AdminEmails != nil {
+	if r := calls[0].r; len(r.Set) != 0 || r.Flags.Domain != nil || r.Flags.Vars != nil || r.Flags.Tags != nil || r.Flags.AdminEmails != nil {
 		t.Errorf("request %+v", r)
 	}
 }
@@ -191,6 +211,9 @@ func TestInstallBadFlagsExitCode2(t *testing.T) {
 	}{
 		{[]string{"install", "--var", "nonsense"}, `--var: "nonsense" is not name=value`},
 		{[]string{"install", "--var", "=1"}, `--var: "=1" is not name=value`},
+		{[]string{"install", "--tag", "nonsense"}, `--tag: "nonsense" is not key=value`},
+		{[]string{"install", "--tag", "a=1", "--tag", ""}, "--tag '' removes every tag: give it alone"},
+		{[]string{"install", "--tag", "a=1", "--tag", "a=2"}, `--tag: the key "a" is given twice`},
 		{[]string{"install", "check", "--nope"}, "unknown flag: --nope"},
 		{[]string{"install", "--yes=maybe"}, `invalid argument "maybe" for "--yes"`},
 		{[]string{"install", "apply", "extra"}, `unexpected argument "extra"`},

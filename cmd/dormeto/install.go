@@ -46,7 +46,7 @@ type installFlags struct {
 	sesIdentity, emailFrom, buildRole, release string
 	managementProfile, memberRole              string
 	adoptState, adoptModule                    string
-	adminEmails, vars                          []string
+	adminEmails, vars, tags                    []string
 	accounts, excludeAccounts, discoveryOnly   []string
 	yes, verbose, access                       bool
 }
@@ -54,7 +54,7 @@ type installFlags struct {
 // installFlagNames are the flags, as Request.Set names them; the domain's three are one, "domain".
 var (
 	installFlagNames = []string{"profile", "region", "env", "version", "admin-emails", "mode", "domain", "certificate-arn", "zone-id",
-		"ses-identity", "email-from", "var", "build-role", "release", "yes", "verbose",
+		"ses-identity", "email-from", "var", "tag", "build-role", "release", "yes", "verbose",
 		"management-profile", "member-role", "accounts", "exclude-accounts", "discovery-only", "access", "adopt-state", "adopt-module"}
 	domainFlags = []string{"domain", "certificate-arn", "zone-id"}
 )
@@ -120,6 +120,7 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 	p.StringVar(&f.sesIdentity, "ses-identity", "", "the SES identity that sends the invitations (default: Cognito sends them)")
 	p.StringVar(&f.emailFrom, "email-from", "", "the invitations' sender, with --ses-identity")
 	p.StringArrayVar(&f.vars, "var", nil, "another input of the manager module, its value as JSON: name=value (repeatable)")
+	p.StringArrayVar(&f.tags, "tag", nil, "a tag of the manager's AWS resources, key=value (repeatable; replaces the install's tags; '' removes them all)")
 	p.StringVar(&f.buildRole, "build-role", "", "an existing role's ARN for CodeBuild (default: created by the install)")
 	p.StringVar(&f.release, "release", "", "a local release directory, uploaded to the install's bucket (an unreleased manager)")
 	p.StringVar(&f.managementProfile, "management-profile", "", "the management account's profile: organization access (organization mode)")
@@ -215,6 +216,11 @@ func (f *installFlags) request(c *cobra.Command) (install.Request, error) {
 		}
 		r.Flags.Vars[name] = json.RawMessage(value)
 	}
+	tags, err := install.ParseTags(f.tags)
+	if err != nil {
+		return install.Request{}, err
+	}
+	r.Flags.Tags = tags
 	return r, nil
 }
 

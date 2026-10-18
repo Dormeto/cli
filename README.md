@@ -303,6 +303,8 @@ follows the build. It refuses a plan made for an uninstall. `--yes` takes the su
   day), with `--email-from`. An identity not verified is a failure; an SES account still in its sandbox, a warning.
 - `--email-from <address>`: the invitations' sender, with `--ses-identity`.
 - `--var name=<JSON>`: another input of the manager module, its value as JSON; repeatable.
+- `--tag key=value`: a Terraform default tag of the manager's resources; repeatable. The tags given replace the
+  install's tags (`--tag ''` alone removes them all); without `--tag`, the stored ones are kept.
 - `--build-role <arn>`: an existing role for CodeBuild instead of the one the install creates; it must trust CodeBuild.
 - `--management-profile <profile>`: the management account's profile, for [organization access](#organization-access).
 - `--member-role <name>`: the role assumed in each member account from the management account
