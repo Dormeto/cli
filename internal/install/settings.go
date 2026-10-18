@@ -232,8 +232,8 @@ func validRegion(region string) error {
 }
 
 // Merge is the settings a run uses: saved (install.json, or zero on a first install), each field whose flag is in set
-// (the flag names) replaced by the flag's value. Vars merge key by key, a flag's key winning; Tags are replaced whole. The install's own state
-// (Installed, LastPlan, LastPlanKind, LastApply) is always saved's.
+// (the flag names) replaced by the flag's value. Vars merge key by key, a flag's key winning; Tags are replaced whole.
+// The install's own state (Installed, LastPlan, LastPlanKind, LastApply) is always saved's.
 func Merge(flags, saved Settings, set map[string]bool) Settings {
 	s := saved
 	if set["env"] {

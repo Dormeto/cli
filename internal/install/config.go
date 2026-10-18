@@ -55,10 +55,8 @@ func Config(s Settings, w Where, p Project) ([]byte, error) {
 		module[name] = v
 	}
 
-	tags := maps.Clone(s.Tags) // the install's tags; the fixed ones win, and Project.Tags stays the fixed set
-	if tags == nil {
-		tags = map[string]string{}
-	}
+	tags := map[string]string{} // the install's tags; the fixed ones win, and Project.Tags stays the fixed set
+	maps.Copy(tags, s.Tags)
 	maps.Copy(tags, p.Tags())
 
 	expr := func(name string) map[string]any {

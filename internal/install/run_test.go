@@ -1348,6 +1348,17 @@ func TestInstallABadAnswerNamesItsFlag(t *testing.T) {
 	}
 }
 
+func TestInstallATagAWSRefusesWritesNothing(t *testing.T) {
+	w := rwNew(t)
+	r := rwFlags()
+	r.Flags.Tags = map[string]string{"a,b": "1"} // parsed by ParseTags, refused by ValidateTags
+	r.Set["tag"] = true
+	code, out, _ := w.run(Install, r, false)
+	if code != 2 || !strings.Contains(out, `--tag: the key "a,b" has a character AWS does not allow`) || len(w.writes) != 0 {
+		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
+	}
+}
+
 func TestInstallOutsideAnOrganizationIsAnAccountDeployment(t *testing.T) {
 	w := rwNew(t)
 	w.org = nil
