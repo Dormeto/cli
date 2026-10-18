@@ -562,6 +562,10 @@ func (x *run) install() error {
 	rel, relErr := x.resolve(s.Version)
 	if relErr == nil {
 		s.Version = rel.Version
+		// The configuration depends on the version (the install input from 0.12.0): generate it with the resolved one.
+		if cfg, err = x.valid(s); err != nil {
+			return err
+		}
 	}
 	cs, err := x.checks(s, saved, applied, rel, relErr)
 	if err != nil {

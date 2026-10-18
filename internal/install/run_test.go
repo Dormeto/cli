@@ -1627,3 +1627,40 @@ func TestInstallAnEmptyAnswerIsAskedAgain(t *testing.T) {
 		}
 	}
 }
+
+// The configuration is generated with the resolved version, not the one the command line gave: the install input
+// (manager 0.12.0 or later) is in what the plan runs when the version came from the latest release or a local one.
+func TestInstallConfigFollowsTheResolvedVersion(t *testing.T) {
+	hasInstall := func(w *rwWorld) bool { return strings.Contains(w.objects["prod/config/main.tf.json"], `"install": {`) }
+
+	w := rwNew(t)
+	w.installed("0.11.0")
+	w.release("0.12.0", true)
+	if code, out, _ := w.run(Install, Request{Profile: "p", Region: "eu-west-1"}, true, "y"); code != 0 {
+		t.Fatalf("upgrade: exit code %d:\n%s", code, out)
+	}
+	if !hasInstall(w) {
+		t.Errorf("upgrade to 0.12.0 without --version: no install input:\n%s", w.objects["prod/config/main.tf.json"])
+	}
+
+	dir := writeLocal(t, "0.12.0-dev.1", nil)
+	w = rwNew(t)
+	r := rwFlags()
+	delete(r.Set, "version")
+	r.Flags.Version, r.Release = "", dir
+	if code, out, _ := w.run(Install, r, false); code != 0 {
+		t.Fatalf("local release: exit code %d:\n%s", code, out)
+	}
+	if !hasInstall(w) {
+		t.Errorf("local 0.12.0-dev.1: no install input:\n%s", w.objects["prod/config/main.tf.json"])
+	}
+
+	w = rwNew(t)
+	w.installed("0.11.0")
+	if code, out, _ := w.run(Install, Request{Profile: "p", Region: "eu-west-1"}, true, "y"); code != 0 {
+		t.Fatalf("0.11.0: exit code %d:\n%s", code, out)
+	}
+	if hasInstall(w) {
+		t.Errorf("0.11.0 got the install input:\n%s", w.objects["prod/config/main.tf.json"])
+	}
+}
