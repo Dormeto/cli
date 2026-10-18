@@ -1,6 +1,9 @@
 package build
 
 import (
+	"encoding/json"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,10 +24,13 @@ func TestManagerPlanUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, k := range []string{"plans/dmt-prod-install:build-2/tfplan", "plans/dmt-prod-install:build-2/plan.json", "plans/dmt-prod-install:build-2/.terraform.lock.hcl", "config/.terraform.lock.hcl"} {
+	for _, k := range []string{"plans/dmt-prod-install:build-2/tfplan", "plans/dmt-prod-install:build-2/plan.json", "plans/dmt-prod-install:build-2/.terraform.lock.hcl", "plans/dmt-prod-install:build-2/main.tf.json", "config/.terraform.lock.hcl"} {
 		if _, ok := s.uploaded(mb + k); !ok {
 			t.Errorf("%s not uploaded\n%s", k, strings.Join(s.log(), "\n"))
 		}
+	}
+	if _, ok := s.uploaded(mb + "plans/dmt-prod-install:build-2/release.json"); ok {
+		t.Error("a CLI plan has a release.json")
 	}
 	if j, _ := s.uploaded(mb + "plans/dmt-prod-install:build-2/plan.json"); !strings.Contains(j, `"plan"`) {
 		t.Errorf("plan.json = %q", j)
@@ -130,6 +136,8 @@ func TestManagerPlanDestroy(t *testing.T) {
 
 func TestManagerApplyDestroy(t *testing.T) {
 	s := newSandbox(t)
+	s.put("applied/main.tf.json", "applied-config")
+	s.put("applied/.terraform.lock.hcl", "applied-lock")
 	if out, err := s.run("manager.sh", managerEnv("apply-destroy")); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -144,6 +152,11 @@ func TestManagerApplyDestroy(t *testing.T) {
 	}
 	if _, ok := s.uploaded(mb + "applied.json"); ok {
 		t.Error("applied.json written by a destroy")
+	}
+	for _, k := range []string{"applied/main.tf.json", "applied/.terraform.lock.hcl"} {
+		if _, ok := s.uploaded(mb + k); ok {
+			t.Errorf("%s kept by a destroy:\n%s", k, strings.Join(log, "\n"))
+		}
 	}
 }
 
@@ -209,4 +222,452 @@ func TestManagerLockFileHeadObject(t *testing.T) {
 			t.Error("init after an unreadable lock check")
 		}
 	})
+}
+
+func TestManagerApplyRecordsItsConfiguration(t *testing.T) {
+	plan := "plans/dmt-prod-install:plan-1/"
+	t.Run("the plan's configuration and lock, copied to applied/ before applied.json", func(t *testing.T) {
+		s := newSandbox(t)
+		s.put("config/main.tf.json", "cli-config") // a later CLI run's, not applied
+		s.put(plan+"main.tf.json", "plan-config")
+		s.put(plan+".terraform.lock.hcl", "plan-lock")
+		if out, err := s.run("manager.sh", managerEnv("apply")); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		log := s.log()
+		if !has(log, "config apply plan-config") || has(log, "aws s3 cp --only-show-errors s3://"+mb+"config/main.tf.json") {
+			t.Errorf("the apply must run the plan's configuration:\n%s", strings.Join(log, "\n"))
+		}
+		for k, want := range map[string]string{"applied/main.tf.json": "plan-config", "applied/.terraform.lock.hcl": "plan-lock"} {
+			if got, _ := s.uploaded(mb + k); got != want {
+				t.Errorf("%s = %q, want %q", k, got, want)
+			}
+		}
+		config := index(log, "aws s3 cp --only-show-errors main.tf.json s3://"+mb+"applied/main.tf.json")
+		lock := index(log, "aws s3 cp --only-show-errors .terraform.lock.hcl s3://"+mb+"applied/.terraform.lock.hcl")
+		applied := index(log, "aws s3 cp --only-show-errors applied.json s3://"+mb+"applied.json")
+		if config < 0 || lock < 0 || applied < config || applied < lock {
+			t.Errorf("applied/ must be written before applied.json:\n%s", strings.Join(log, "\n"))
+		}
+	})
+	t.Run("a plan made before plans kept their configuration: config/'s", func(t *testing.T) {
+		s := newSandbox(t)
+		s.put("config/main.tf.json", "cli-config")
+		if out, err := s.run("manager.sh", managerEnv("apply")); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !has(s.log(), "config apply cli-config") {
+			t.Errorf("log:\n%s", strings.Join(s.log(), "\n"))
+		}
+		if got, _ := s.uploaded(mb + "applied/main.tf.json"); got != "cli-config" {
+			t.Errorf("applied/main.tf.json = %q", got)
+		}
+	})
+}
+
+// A dashboard request: the rule starts the build with ACTION=request and REQUEST_KEY besides the project's variables.
+
+const (
+	requestID  = "20261018T100000Z-0123abcd"
+	requestKey = "prod/requests/" + requestID + ".json"
+	planBuild  = "dmt-prod-install:6f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"
+	releases   = "https://releases.dormeto.com/manager/"
+	stagedBase = "s3://dmt-install-123456789012-eu-west-1/prod/release"
+)
+
+// requestEnv is a request build's environment; published are the releases the fake curl serves.
+func requestEnv(published ...string) map[string]string {
+	return map[string]string{
+		"ACTION": "request", "REQUEST_KEY": requestKey, "BUCKET": "dmt-install-123456789012-eu-west-1", "ENV": "prod",
+		"TF_VERSION": "1.16.5", "SCRIPT": "manager.sh", "CODEBUILD_BUILD_ID": "dmt-prod-install:build-3",
+		"FAKE_PUBLISHED": strings.Join(published, " "),
+	}
+}
+
+func (s *sandbox) put(key, body string) { s.write2(filepath.Join(s.fake, "s3", mb+key), body) }
+
+func (s *sandbox) request(body string) { s.put("requests/"+requestID+".json", body) }
+
+// installed is what an install the CLI applied leaves, with a configuration a later CLI run wrote without applying it.
+func (s *sandbox) installed(version string) {
+	s.put("applied.json", `{"version":"`+version+`","build":"dmt-prod-install:build-2"}`)
+	s.put("applied/main.tf.json", "applied-config")
+	s.put("applied/.terraform.lock.hcl", "applied-lock")
+	s.put("config/main.tf.json", "cli-config")
+}
+
+// prepared is the plan a dashboard plan request left, of version, made when appliedBuild was applied.
+func (s *sandbox) prepared(version, appliedBuild string) {
+	p := "plans/" + planBuild + "/"
+	s.put(p+"release.json", `{"version":"`+version+`","base":"`+releases+version+`","request":"`+requestKey+`","appliedBuild":"`+appliedBuild+`"}`)
+	s.put(p+"main.tf.json", "applied-config")
+	s.put(p+".terraform.lock.hcl", "applied-lock")
+	s.put(p+"tfplan", "saved-plan")
+}
+
+func outcome(status, message, action, version string) map[string]string {
+	return map[string]string{"build": "dmt-prod-install:build-3", "status": status, "message": message, "action": action, "version": version}
+}
+
+var running = outcome("running", "", "", "")
+
+// checkResults checks the results written, in order, and that the last one is results/<id>.json.
+func (s *sandbox) checkResults(want ...map[string]string) {
+	s.t.Helper()
+	var got []map[string]string
+	for _, r := range s.results() {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(r), &m); err != nil {
+			s.t.Fatalf("result %q: %v", r, err)
+		}
+		got = append(got, m)
+	}
+	if !reflect.DeepEqual(got, want) {
+		s.t.Errorf("results = %v, want %v", got, want)
+	}
+	last, ok := s.uploaded(mb + "results/" + requestID + ".json")
+	if rs := s.results(); !ok || len(rs) == 0 || strings.TrimSpace(last) != rs[len(rs)-1] {
+		s.t.Errorf("results/%s.json = %q", requestID, last)
+	}
+}
+
+// checkNoTerraform checks that the build stopped before Terraform was downloaded.
+func (s *sandbox) checkNoTerraform() {
+	s.t.Helper()
+	for _, l := range s.log() {
+		if strings.HasPrefix(l, "terraform") || strings.Contains(l, "releases.hashicorp.com") {
+			s.t.Errorf("went on to Terraform: %s", l)
+		}
+	}
+}
+
+func jsonOf(t *testing.T, s string) map[string]string {
+	t.Helper()
+	var m map[string]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		t.Fatalf("%q: %v", s, err)
+	}
+	return m
+}
+
+func TestManagerRequestPlanPublished(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.request(`{"action":"plan","version":"0.12.0","requestedBy":"alice@example.com","requestedAt":"2026-10-18T10:00:00Z"}`)
+	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	p := mb + "plans/dmt-prod-install:build-3/"
+	r, _ := s.uploaded(p + "release.json")
+	want := map[string]string{"version": "0.12.0", "base": releases + "0.12.0", "request": requestKey, "appliedBuild": "dmt-prod-install:build-2"}
+	if got := jsonOf(t, r); !reflect.DeepEqual(got, want) {
+		t.Errorf("release.json = %v, want %v", got, want)
+	}
+	for k, want := range map[string]string{"main.tf.json": "applied-config", ".terraform.lock.hcl": "applied-lock", "tfplan": "plan\n"} {
+		if got, _ := s.uploaded(p + k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	log := s.log()
+	for _, want := range []string{
+		"config plan applied-config", "terraform plan -input=false -out=tfplan",
+		"curl -fsSL -o terraform-aws-dormeto-0.12.0.zip " + releases + "0.12.0/terraform-aws-dormeto-0.12.0.zip",
+	} {
+		if !has(log, want) {
+			t.Errorf("no %q in\n%s", want, strings.Join(log, "\n"))
+		}
+	}
+	if has(log, "terraform apply") {
+		t.Error("a plan request applied")
+	}
+	for _, l := range log {
+		if strings.Contains(l, "prod/config/") {
+			t.Errorf("config/ touched: %s", l)
+		}
+	}
+	if _, ok := s.uploaded(mb + "config/.terraform.lock.hcl"); ok {
+		t.Error("config/.terraform.lock.hcl written")
+	}
+	if w, r := index(log, "aws s3 cp --only-show-errors result.json s3://"+mb+"results/"+requestID+".json"),
+		index(log, "aws s3 cp --only-show-errors s3://"+mb+"requests/"+requestID+".json"); w < 0 || r < w {
+		t.Errorf("the running result must come before the request is read:\n%s", strings.Join(log, "\n"))
+	}
+	s.checkResults(running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
+	for _, want := range []string{"dormeto: reading the request " + requestID + "\n", "dormeto: manager 0.12.0: published\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}
+
+func TestManagerRequestReleasesURL(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.request(`{"action":"plan","version":"0.12.0"}`)
+	env := requestEnv("https://releases.example/manager/0.12.0")
+	env["RELEASES_URL"] = "https://releases.example/manager"
+	if out, err := s.run("manager.sh", env); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	r, _ := s.uploaded(mb + "plans/dmt-prod-install:build-3/release.json")
+	if got := jsonOf(t, r)["base"]; got != "https://releases.example/manager/0.12.0" {
+		t.Errorf("base = %q", got)
+	}
+}
+
+func TestManagerRequestPlanStaged(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.put("release/SHA256SUMS", "good  terraform-aws-dormeto-0.12.0.zip\n")
+	s.request(`{"action":"plan","version":"0.12.0"}`)
+	out, err := s.run("manager.sh", requestEnv())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	r, _ := s.uploaded(mb + "plans/dmt-prod-install:build-3/release.json")
+	if got := jsonOf(t, r)["base"]; got != stagedBase {
+		t.Errorf("base = %q, want %s", got, stagedBase)
+	}
+	if !has(s.log(), "aws s3 cp --only-show-errors "+stagedBase+"/terraform-aws-dormeto-0.12.0.zip terraform-aws-dormeto-0.12.0.zip") {
+		t.Errorf("the archive not fetched from the staged release:\n%s", strings.Join(s.log(), "\n"))
+	}
+	if !strings.Contains(out, "dormeto: manager 0.12.0: staged\n") {
+		t.Errorf("output:\n%s", out)
+	}
+	s.checkResults(running, outcome("succeeded", "manager 0.12.0 planned", "plan", "0.12.0"))
+}
+
+func TestManagerRequestNeitherPublishedNorStaged(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.put("release/SHA256SUMS", "good  terraform-aws-dormeto-0.12.0.zip\ngood  terraform-aws-dormeto-0.13.0.zip.old\n")
+	s.request(`{"action":"plan","version":"0.13.0"}`)
+	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	if err == nil || !strings.Contains(out, "dormeto: manager 0.13.0 is neither published nor staged\n") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	s.checkNoTerraform()
+	s.checkResults(running, outcome("failed", "manager 0.13.0 is neither published nor staged", "plan", "0.13.0"))
+}
+
+func TestManagerRequestNoDowngrade(t *testing.T) {
+	for _, c := range []struct{ applied, version string }{
+		{"0.11.0", "0.10.0"}, {"0.12.0", "0.12.0-dev.1"}, {"0.12.0-dev.2", "0.12.0-dev.10"}, {"1.0.0", "0.99.99"},
+	} {
+		t.Run(c.version+" after "+c.applied+": refused", func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed(c.applied)
+			s.request(`{"action":"plan","version":"` + c.version + `"}`)
+			out, err := s.run("manager.sh", requestEnv(releases+c.version))
+			want := "manager " + c.version + " is older than the applied " + c.applied
+			if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+			s.checkNoTerraform()
+			s.checkResults(running, outcome("failed", want, "plan", c.version))
+		})
+	}
+	for _, c := range []struct{ applied, version string }{
+		{"0.11.0", "0.11.0"}, {"0.9.0", "0.10.0"}, {"0.12.0-dev.1", "0.12.0-dev.2"}, {"0.12.0-dev.2", "0.12.0"},
+	} {
+		t.Run(c.version+" after "+c.applied+": planned", func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed(c.applied)
+			s.request(`{"action":"plan","version":"` + c.version + `"}`)
+			if out, err := s.run("manager.sh", requestEnv(releases+c.version)); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			s.checkResults(running, outcome("succeeded", "manager "+c.version+" planned", "plan", c.version))
+		})
+	}
+}
+
+func TestManagerRequestKeyStopsBeforeAnyDownload(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"another environment's":     {"REQUEST_KEY": "staging/requests/" + requestID + ".json"},
+		"outside requests/":         {"REQUEST_KEY": "prod/results/" + requestID + ".json"},
+		"with ..":                   {"REQUEST_KEY": "prod/requests/../requests/" + requestID + ".json"},
+		"with .. after the id":      {"REQUEST_KEY": requestKey + "/../../applied.json"},
+		"with a second line":        {"REQUEST_KEY": requestKey + "\nprod/requests/x.json"},
+		"a looser id":               {"REQUEST_KEY": "prod/requests/2026101810000000-0123abcd.json"},
+		"upper-case hexadecimal":    {"REQUEST_KEY": "prod/requests/20261018T100000Z-0123ABCD.json"},
+		"not .json":                 {"REQUEST_KEY": "prod/requests/" + requestID + ".txt"},
+		"empty":                     {"REQUEST_KEY": ""},
+		"an environment not a name": {"ENV": ".*"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed("0.11.0")
+			s.request(`{"action":"plan","version":"0.12.0"}`)
+			e := requestEnv(releases + "0.12.0")
+			for k, v := range env {
+				e[k] = v
+			}
+			out, err := s.run("manager.sh", e)
+			if err == nil || !strings.Contains(out, "dormeto: ") {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+			for _, l := range s.log() {
+				if strings.HasPrefix(l, "aws ") || strings.HasPrefix(l, "curl ") {
+					t.Errorf("went on: %s", l)
+				}
+			}
+			if r := s.results(); r != nil {
+				t.Errorf("results written: %v", r)
+			}
+		})
+	}
+}
+
+func TestManagerRequestFieldsRefused(t *testing.T) {
+	notObject := "the request " + requestID + " is not a JSON object"
+	noAction := "the request " + requestID + " asks for neither a plan nor an apply"
+	noVersion := "the request " + requestID + " has no version of the form x.y.z"
+	noPlan := "the request " + requestID + " has no plan build of prod"
+	for _, c := range []struct{ name, body, message, action, version string }{
+		{"not JSON", `nope`, notObject, "", ""},
+		{"an array", `[{"action":"plan","version":"0.12.0"}]`, notObject, "", ""},
+		{"two objects", `{"action":"plan","version":"0.12.0"} {"action":"apply"}`, notObject, "", ""},
+		{"another action", `{"action":"destroy","version":"0.12.0"}`, noAction, "", ""},
+		{"an action not a string", `{"action":["plan"],"version":"0.12.0"}`, noAction, "", ""},
+		{"an action with a second line", `{"action":"plan\napply","version":"0.12.0"}`, noAction, "", ""},
+		{"no action", `{"version":"0.12.0"}`, noAction, "", ""},
+		{"a version with a second line", `{"action":"plan","version":"0.12.0\n0.13.0"}`, noVersion, "plan", ""},
+		{"a version with a trailing new line", `{"action":"plan","version":"0.12.0\n"}`, noVersion, "plan", ""},
+		{"a version not a string", `{"action":"plan","version":12}`, noVersion, "plan", ""},
+		{"a version of two numbers", `{"action":"plan","version":"0.12"}`, noVersion, "plan", ""},
+		{"a version with a v", `{"action":"plan","version":"v0.12.0"}`, noVersion, "plan", ""},
+		{"a version with build metadata", `{"action":"plan","version":"0.12.0+abc"}`, noVersion, "plan", ""},
+		{"a version with a path", `{"action":"plan","version":"0.12.0/../0.13.0"}`, noVersion, "plan", ""},
+		{"an apply without a plan build", `{"action":"apply","version":"0.12.0"}`, noPlan, "apply", "0.12.0"},
+		{"another environment's plan build", `{"action":"apply","version":"0.12.0","planBuild":"dmt-staging-install:6f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b"}`, noPlan, "apply", "0.12.0"},
+		{"a plan build of another form", `{"action":"apply","version":"0.12.0","planBuild":"dmt-prod-install:plan-1"}`, noPlan, "apply", "0.12.0"},
+		{"a plan build with a second line", `{"action":"apply","version":"0.12.0","planBuild":"` + planBuild + `\n` + planBuild + `"}`, noPlan, "apply", "0.12.0"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed("0.11.0")
+			s.prepared("0.12.0", "dmt-prod-install:build-2")
+			s.request(c.body)
+			out, err := s.run("manager.sh", requestEnv(releases+"0.12.0", releases+"0.13.0"))
+			if err == nil || !strings.Contains(out, "dormeto: "+c.message+"\n") {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+			if strings.Contains(out, "0.13.0") {
+				t.Errorf("the request's value printed:\n%s", out)
+			}
+			s.checkNoTerraform()
+			s.checkResults(running, outcome("failed", c.message, c.action, c.version))
+		})
+	}
+}
+
+func TestManagerRequestIgnoresOtherFields(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.request(`{"action":"plan","version":"0.12.0","releaseBase":"https://evil.example","planBuild":"dmt-prod-install:x"}`)
+	if out, err := s.run("manager.sh", requestEnv(releases+"0.12.0")); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	r, _ := s.uploaded(mb + "plans/dmt-prod-install:build-3/release.json")
+	if got := jsonOf(t, r)["base"]; got != releases+"0.12.0" {
+		t.Errorf("base = %q", got)
+	}
+	for _, l := range s.log() {
+		if strings.Contains(l, "evil.example") {
+			t.Errorf("the request's base used: %s", l)
+		}
+	}
+}
+
+func TestManagerRequestWithoutAppliedConfiguration(t *testing.T) {
+	// an install applied before plans kept their configuration: applied.json, no applied/
+	s := newSandbox(t)
+	s.put("applied.json", `{"version":"0.11.0","build":"dmt-prod-install:build-2"}`)
+	s.put("config/main.tf.json", "cli-config")
+	s.request(`{"action":"plan","version":"0.12.0"}`)
+	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	want := "run `dormeto install` with the CLI 0.2.0 or later"
+	if err == nil || !strings.Contains(out, "dormeto: "+want+"\n") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	s.checkNoTerraform()
+	s.checkResults(running, outcome("failed", want, "plan", "0.12.0"))
+}
+
+func TestManagerRequestApply(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.prepared("0.12.0", "dmt-prod-install:build-2")
+	s.request(`{"action":"apply","version":"0.12.0","planBuild":"` + planBuild + `"}`)
+	out, err := s.run("manager.sh", requestEnv(releases+"0.12.0"))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	log := s.log()
+	plan := index(log, "aws s3 cp --only-show-errors s3://"+mb+"plans/"+planBuild+"/tfplan tfplan")
+	if plan < 0 || index(log, "terraform apply -input=false tfplan") < plan || !has(log, "config apply applied-config") {
+		t.Errorf("the apply must run the saved plan with its configuration:\n%s", strings.Join(log, "\n"))
+	}
+	if has(log, "terraform plan") {
+		t.Error("an apply request planned")
+	}
+	if !has(log, "curl -fsSL -o terraform-aws-dormeto-0.12.0.zip "+releases+"0.12.0/terraform-aws-dormeto-0.12.0.zip") {
+		t.Errorf("the release not derived from the version:\n%s", strings.Join(log, "\n"))
+	}
+	a, _ := s.uploaded(mb + "applied.json")
+	if want := `{"version":"0.12.0","build":"dmt-prod-install:build-3"}`; strings.TrimSpace(a) != want {
+		t.Errorf("applied.json = %q, want %s", a, want)
+	}
+	if got, _ := s.uploaded(mb + "applied/main.tf.json"); got != "applied-config" {
+		t.Errorf("applied/main.tf.json = %q", got)
+	}
+	s.checkResults(running, outcome("succeeded", "manager 0.12.0 applied", "apply", "0.12.0"))
+}
+
+func TestManagerRequestApplyRefused(t *testing.T) {
+	for _, c := range []struct{ name, planVersion, appliedBuild, version, message string }{
+		{"a plan of another version", "0.12.0", "dmt-prod-install:build-2", "0.12.1", "the plan of " + planBuild + " is not manager 0.12.1"},
+		{"a plan made before the last apply", "0.12.0", "dmt-prod-install:build-1", "0.12.0", "the plan is stale: prepare again"},
+		{"a plan made before the first apply", "0.12.0", "", "0.12.0", "the plan is stale: prepare again"},
+		{"a plan the CLI made", "", "", "0.12.0", "the plan of " + planBuild + " was not prepared from the dashboard"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSandbox(t)
+			s.installed("0.11.0")
+			if c.planVersion != "" {
+				s.prepared(c.planVersion, c.appliedBuild)
+			}
+			s.request(`{"action":"apply","version":"` + c.version + `","planBuild":"` + planBuild + `"}`)
+			out, err := s.run("manager.sh", requestEnv(releases+"0.12.0", releases+"0.12.1"))
+			if err == nil || !strings.Contains(out, "dormeto: "+c.message+"\n") {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+			s.checkNoTerraform()
+			s.checkResults(running, outcome("failed", c.message, "apply", c.version))
+		})
+	}
+}
+
+func TestManagerRequestFailureOutsideTheChecks(t *testing.T) {
+	s := newSandbox(t)
+	s.installed("0.11.0")
+	s.request(`{"action":"plan","version":"0.12.0"}`)
+	env := requestEnv(releases + "0.12.0")
+	env["FAKE_BAD"] = "terraform-aws-dormeto-0.12.0.zip"
+	if out, err := s.run("manager.sh", env); err == nil {
+		t.Fatalf("no failure: %s", out)
+	}
+	s.checkResults(running, outcome("failed", "the checksum of terraform-aws-dormeto-0.12.0.zip does not match: stopped", "plan", "0.12.0"))
+
+	s = newSandbox(t)
+	s.installed("0.11.0")
+	s.request(`{"action":"plan","version":"0.12.0"}`)
+	env = requestEnv(releases + "0.12.0")
+	env["FAKE_TERRAFORM_FAIL"] = "plan"
+	if out, err := s.run("manager.sh", env); err == nil {
+		t.Fatalf("no failure: %s", out)
+	}
+	s.checkResults(running, outcome("failed", "the build failed: see its log", "plan", "0.12.0"))
 }

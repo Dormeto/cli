@@ -12,9 +12,11 @@ import (
 // arguments to $FAKE/log. Nothing leaves the machine.
 
 const fakeLib = `
-# names the release publishes: a line "good  name" per file, "bad" when FAKE_BAD names it
+# names the release publishes: a line "good  name" per file, "bad" when FAKE_BAD names it; $1 is the release's version
+# (RELEASE_VERSION when not given)
 sums() {
-  for n in "terraform_${TF_VERSION:-0}_linux_amd64.zip" "terraform-aws-dormeto-${RELEASE_VERSION:-0}.zip" "dormeto-access-commands-${RELEASE_VERSION:-0}.sh"; do
+  v=${1:-${RELEASE_VERSION:-0}}
+  for n in "terraform_${TF_VERSION:-0}_linux_amd64.zip" "terraform-aws-dormeto-$v.zip" "dormeto-access-commands-$v.sh"; do
     case " ${FAKE_BAD:-} " in *" $n "*) echo "bad  $n";; *) echo "good  $n";; esac
   done
 }
@@ -35,13 +37,17 @@ case "$1 $2" in
     if [ -f "$f" ]; then cp "$f" "$dst"
     else
       case $src in
+      */requests/* | */results/* | */applied/* | */applied.json | */release.json | */plans/*/main.tf.json)
+        echo "fatal error: An error occurred (404) when calling the HeadObject operation: Key \"${src#s3://*/}\" does not exist" >&2; exit 1 ;;
       */dormeto-access-commands-*) cp "$FAKE/access.sh" "$dst" ;;
       */SHA256SUMS) sums > "$dst" ;;
       *) echo "fake $src" > "$dst" ;;
       esac
     fi ;;
   *)
-    f="$FAKE/s3/${dst#s3://}"; mkdir -p "$(dirname "$f")"; cp "$src" "$f" ;;
+    f="$FAKE/s3/${dst#s3://}"; mkdir -p "$(dirname "$f")"; cp "$src" "$f"
+    # the results written, in order, a body per line
+    case $dst in */results/*) cat "$src" >> "$FAKE/results" ;; esac ;;
   esac ;;
 "s3api head-object")
   b=; k=
@@ -49,7 +55,10 @@ case "$1 $2" in
   if [ -f "$FAKE/s3/$b/$k" ]; then echo '{}'
   elif [ -n "${FAKE_HEAD_ERR:-}" ]; then echo "An error occurred (403) when calling the HeadObject operation: Forbidden" >&2; exit 254
   else echo "An error occurred (404) when calling the HeadObject operation: Not Found" >&2; exit 254; fi ;;
-"s3 rm") ;;
+"s3 rm")
+  shift 2
+  while [ "${1#--}" != "$1" ]; do shift; done
+  rm -rf "$FAKE/s3/${1#s3://}" ;;
 "organizations describe-resource-policy")
   if [ -f "$FAKE/policy" ]; then cat "$FAKE/policy"
   else echo "An error occurred (ResourcePolicyNotFoundException) when calling the DescribeResourcePolicy operation" >&2; exit 254; fi ;;
@@ -69,9 +78,11 @@ esac
 	"terraform": `#!/bin/sh
 echo "terraform $*" >> "$FAKE/log"
 echo "env CHECKPOINT_DISABLE=${CHECKPOINT_DISABLE:-} TF_IN_AUTOMATION=${TF_IN_AUTOMATION:-} TF_CLI_ARGS=${TF_CLI_ARGS:-}" >> "$FAKE/log"
+case " ${FAKE_TERRAFORM_FAIL:-} " in *" $1 "*) echo "fake terraform: $1 failed" >&2; exit 1 ;; esac
 case $1 in
 init) [ -f .terraform.lock.hcl ] || echo lock-from-init > .terraform.lock.hcl ;;
-plan) for a in "$@"; do case $a in -out=*) echo plan > "${a#-out=}" ;; esac; done ;;
+plan) echo "config plan $(cat main.tf.json)" >> "$FAKE/log"; for a in "$@"; do case $a in -out=*) echo plan > "${a#-out=}" ;; esac; done ;;
+apply) echo "config apply $(cat main.tf.json)" >> "$FAKE/log" ;;
 show) echo '{"plan":true}' ;;
 output) echo '{"o":1}' ;;
 esac
@@ -84,7 +95,18 @@ while [ $# -gt 0 ]; do
   case $1 in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac
   shift
 done
+# when FAKE_PUBLISHED is set, only the releases under its URLs are published: others fail like curl -f
 case $url in
+https://releases.hashicorp.com/*) ;;
+*)
+  if [ -n "${FAKE_PUBLISHED+set}" ]; then
+    ok=
+    for p in $FAKE_PUBLISHED; do case $url in "$p"/*) ok=1 ;; esac; done
+    if [ -z "$ok" ]; then echo "curl: (22) The requested URL returned error: 403" >&2; exit 22; fi
+  fi ;;
+esac
+case $url in
+*/SHA256SUMS) v=${url%/SHA256SUMS}; sums "${v##*/}" > "$out" ;;
 *SHA256SUMS) sums > "$out" ;;
 */dormeto-access-commands-*) cp "$FAKE/access.sh" "$out" ;;
 *) echo "fake $url" > "$out" ;;
@@ -181,6 +203,15 @@ func index(lines []string, prefix string) int {
 }
 
 func has(lines []string, prefix string) bool { return index(lines, prefix) >= 0 }
+
+// results are the bodies the script wrote to results/, in order.
+func (s *sandbox) results() []string {
+	b, err := os.ReadFile(filepath.Join(s.fake, "results"))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+}
 
 func (s *sandbox) write2(path, body string) {
 	s.t.Helper()

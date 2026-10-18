@@ -1,12 +1,159 @@
 #!/bin/sh
 # Dormeto install: Terraform with the manager release, run by CodeBuild (buildspec.yml).
-# Inputs: ACTION (plan | plan-destroy | apply | apply-destroy), BUCKET, ENV, TF_VERSION, RELEASE_BASE (https://... or
-# s3://...), RELEASE_VERSION, PLAN_BUILD (apply actions), CODEBUILD_BUILD_ID (set by CodeBuild).
+# Inputs: ACTION (plan | plan-destroy | apply | apply-destroy | request), BUCKET, ENV, TF_VERSION, RELEASE_BASE
+# (https://... or s3://...), RELEASE_VERSION, PLAN_BUILD (apply actions), CODEBUILD_BUILD_ID (set by CodeBuild).
+# ACTION=request is a dashboard update, started by the rule on an object under $ENV/requests/: it takes REQUEST_KEY
+# (that object's key) instead of RELEASE_BASE, RELEASE_VERSION and PLAN_BUILD, which it derives from the request once
+# checked, and writes its outcome to $ENV/results/<request id>.json. RELEASES_URL overrides the published releases
+# (tests only).
 set -eu
 
+REASON=
 say() { echo "dormeto: $*"; }
-die() { echo "dormeto: $*" >&2; exit 1; }
+die() {
+  REASON=$*
+  echo "dormeto: $*" >&2
+  exit 1
+}
 need() { eval "[ -n \"\${$1:-}\" ]" || die "$1 is not set"; }
+
+# matches VALUE CHARS ERE: VALUE is not empty, holds only CHARS (a bracket expression's, so never a new line) and
+# matches the extended regular expression ERE
+matches() {
+  case $1 in "" | *[!$2]*) return 1 ;; esac
+  printf '%s\n' "$1" | LC_ALL=C grep -Eq "$3"
+}
+
+# exists KEY WHAT: whether $ENV/KEY is in the bucket; only a 404 means it is not, any other error stops
+exists() {
+  if aws s3api head-object --bucket "$BUCKET" --key "$ENV/$1" >/dev/null 2>head.err; then return 0; fi
+  if grep -q -e '(404)' -e 'Not Found' head.err; then return 1; fi
+  cat head.err >&2
+  die "cannot check $2: stopped"
+}
+
+# older A B: whether version A sorts before version B: the three numbers, then a pre-release before its release, two
+# pre-releases as text (the CLI's CompareVersions)
+older() {
+  LC_ALL=C awk -v a="$1" -v b="$2" '
+    function core(v) { return index(v, "-") ? substr(v, 1, index(v, "-") - 1) : v }
+    function pre(v) { return index(v, "-") ? substr(v, index(v, "-") + 1) : "" }
+    BEGIN {
+      split(core(a), x, "."); split(core(b), y, ".")
+      for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 < y[i] + 0)
+      p = pre(a); q = pre(b)
+      exit !(p != q && p != "" && (q == "" || p < q))
+    }'
+}
+
+# field NAME: the request's field NAME when it is a string of printable ASCII characters, empty otherwise
+field() { jq -r --arg f "$1" '.[$f] | select(type == "string" and all(explode[]; . > 31 and . < 127))' request.json; }
+
+# result STATUS MESSAGE: the request's outcome, which the dashboard reads, with its action and version once checked
+result() {
+  jq -nc --arg build "$CODEBUILD_BUILD_ID" --arg status "$1" --arg message "$2" --arg action "$REQUEST_ACTION" \
+    --arg version "$REQUEST_VERSION" '{build: $build, status: $status, message: $message, action: $action, version: $version}' >result.json
+  aws s3 cp --only-show-errors result.json "$S3/results/$REQUEST_ID.json"
+}
+
+# finish: the request's result, from the build's exit status
+finish() {
+  code=$?
+  trap - EXIT
+  if [ "$code" -ne 0 ]; then
+    result failed "${REASON:-the build failed: see its log}"
+  elif [ "$ACTION" = plan ]; then
+    result succeeded "manager $RELEASE_VERSION planned"
+  else
+    result succeeded "manager $RELEASE_VERSION applied"
+  fi
+  exit "$code"
+}
+
+# take_request: checks the request at REQUEST_KEY, trusting nothing in it beyond these checks, and sets ACTION,
+# RELEASE_BASE, RELEASE_VERSION and PLAN_BUILD from it
+take_request() {
+  for v in BUCKET ENV CODEBUILD_BUILD_ID REQUEST_KEY; do need "$v"; done
+  # a key that is not a request of this environment stops at once: no download, and no id to write a result under
+  matches "$ENV" 'a-z0-9-' '^[a-z0-9-]+$' || die "ENV is not an environment name: stopped"
+  matches "$REQUEST_KEY" 'a-z0-9/TZ.-' "^$ENV/requests/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\\.json\$" ||
+    die "REQUEST_KEY is not a request of $ENV: stopped"
+  REQUEST_ID=${REQUEST_KEY##*/}
+  REQUEST_ID=${REQUEST_ID%.json}
+  S3="s3://$BUCKET/$ENV"
+  trap finish EXIT
+  result running ""
+
+  say "reading the request $REQUEST_ID"
+  aws s3 cp --only-show-errors "$S3/requests/$REQUEST_ID.json" request.json
+  jq -e -s 'length == 1 and (.[0] | type == "object")' request.json >/dev/null 2>&1 ||
+    die "the request $REQUEST_ID is not a JSON object"
+  v=$(field action)
+  case $v in plan | apply) ;; *) die "the request $REQUEST_ID asks for neither a plan nor an apply" ;; esac
+  ACTION=$v
+  REQUEST_ACTION=$v
+  v=$(field version)
+  matches "$v" '0-9A-Za-z.-' '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' ||
+    die "the request $REQUEST_ID has no version of the form x.y.z"
+  RELEASE_VERSION=$v
+  REQUEST_VERSION=$v
+  PLAN_BUILD=
+  if [ "$ACTION" = apply ]; then
+    v=$(field planBuild)
+    case $v in "dmt-$ENV-install:"*) ;; *) v= ;; esac # this project's own builds only
+    matches "$v" 'a-z0-9:-' '^dmt-[a-z0-9-]+-install:[0-9a-f-]{36}$' ||
+      die "the request $REQUEST_ID has no plan build of $ENV"
+    PLAN_BUILD=$v
+  fi
+
+  # the release base comes from the version, never from the request
+  if curl -fsS -o /dev/null "$RELEASES_URL/$RELEASE_VERSION/SHA256SUMS"; then
+    RELEASE_BASE=$RELEASES_URL/$RELEASE_VERSION
+    say "manager $RELEASE_VERSION: published"
+  else
+    RELEASE_BASE=
+    if exists release/SHA256SUMS "the staged release"; then
+      aws s3 cp --only-show-errors "$S3/release/SHA256SUMS" staged.sums
+      if awk -v n="terraform-aws-dormeto-$RELEASE_VERSION.zip" '$2 == n { found = 1 } END { exit !found }' staged.sums; then
+        RELEASE_BASE=$S3/release
+      fi
+    fi
+    [ -n "$RELEASE_BASE" ] || die "manager $RELEASE_VERSION is neither published nor staged"
+    say "manager $RELEASE_VERSION: staged"
+  fi
+
+  APPLIED_BUILD=
+  if exists applied.json "the applied version"; then
+    aws s3 cp --only-show-errors "$S3/applied.json" applied.json
+    applied=$(jq -r '.version // ""' applied.json)
+    APPLIED_BUILD=$(jq -r '.build // ""' applied.json)
+    if older "$RELEASE_VERSION" "$applied"; then die "manager $RELEASE_VERSION is older than the applied $applied"; fi
+  fi
+
+  if [ "$ACTION" = plan ]; then
+    # a dashboard plan changes the version only: the configuration last applied, never one a CLI run wrote since
+    if ! exists applied/main.tf.json "the applied configuration" ||
+      ! exists applied/.terraform.lock.hcl "the applied configuration"; then
+      die "run \`dormeto install\` with the CLI 0.2.0 or later"
+    fi
+  else
+    say "checking the plan of build $PLAN_BUILD"
+    exists "plans/$PLAN_BUILD/release.json" "the plan of build $PLAN_BUILD" ||
+      die "the plan of $PLAN_BUILD was not prepared from the dashboard"
+    aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/release.json" release.json
+    [ "$(jq -r '.version // ""' release.json)" = "$RELEASE_VERSION" ] ||
+      die "the plan of $PLAN_BUILD is not manager $RELEASE_VERSION"
+    # nothing applied since the plan was made (Terraform also refuses a saved plan its state has moved past)
+    [ "$(jq -r '.appliedBuild // ""' release.json)" = "$APPLIED_BUILD" ] || die "the plan is stale: prepare again"
+  fi
+}
+
+REQUEST_ID=
+REQUEST_ACTION=
+REQUEST_VERSION=
+RELEASES_URL=${RELEASES_URL:-https://releases.dormeto.com/manager}
+need ACTION
+if [ "$ACTION" = request ]; then take_request; fi
 
 for v in ACTION BUCKET ENV TF_VERSION RELEASE_BASE RELEASE_VERSION CODEBUILD_BUILD_ID; do need "$v"; done
 case $ACTION in
@@ -45,17 +192,29 @@ TF_IN_AUTOMATION=1
 TF_CLI_ARGS=-no-color
 export PATH CHECKPOINT_DISABLE TF_IN_AUTOMATION TF_CLI_ARGS
 
-say "reading the configuration of $ENV"
-aws s3 cp --only-show-errors "$S3/config/main.tf.json" main.tf.json
 case $ACTION in
-apply*) aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/.terraform.lock.hcl" .terraform.lock.hcl ;;
-*) # a kept lock keeps the providers: only a 404 means there is none, any other error stops
-  if aws s3api head-object --bucket "$BUCKET" --key "$ENV/config/.terraform.lock.hcl" >/dev/null 2>lock.err; then
-    aws s3 cp --only-show-errors "$S3/config/.terraform.lock.hcl" .terraform.lock.hcl
-  elif ! grep -q -e '(404)' -e 'Not Found' lock.err; then
-    cat lock.err >&2
-    die "cannot check the lock file of the providers: stopped"
-  fi ;;
+apply*)
+  # the plan's own configuration; config/'s for a plan made before plans kept theirs
+  CONFIG=config
+  if exists "plans/$PLAN_BUILD/main.tf.json" "the configuration of the plan"; then CONFIG=plans/$PLAN_BUILD; fi
+  say "reading the configuration of the plan of build $PLAN_BUILD"
+  aws s3 cp --only-show-errors "$S3/$CONFIG/main.tf.json" main.tf.json
+  aws s3 cp --only-show-errors "$S3/plans/$PLAN_BUILD/.terraform.lock.hcl" .terraform.lock.hcl
+  ;;
+*)
+  if [ -n "$REQUEST_ID" ]; then
+    say "reading the configuration last applied to $ENV"
+    aws s3 cp --only-show-errors "$S3/applied/main.tf.json" main.tf.json
+    aws s3 cp --only-show-errors "$S3/applied/.terraform.lock.hcl" .terraform.lock.hcl
+  else
+    say "reading the configuration of $ENV"
+    aws s3 cp --only-show-errors "$S3/config/main.tf.json" main.tf.json
+    # a kept lock keeps the providers
+    if exists config/.terraform.lock.hcl "the lock file of the providers"; then
+      aws s3 cp --only-show-errors "$S3/config/.terraform.lock.hcl" .terraform.lock.hcl
+    fi
+  fi
+  ;;
 esac
 
 say "downloading the manager release $RELEASE_VERSION and checking it"
@@ -77,10 +236,17 @@ plan | plan-destroy)
   fi
   terraform show -json tfplan >plan.json
   say "keeping the plan as build $CODEBUILD_BUILD_ID"
-  for f in tfplan plan.json .terraform.lock.hcl; do
+  for f in tfplan plan.json .terraform.lock.hcl main.tf.json; do
     aws s3 cp --only-show-errors "$f" "$S3/plans/$CODEBUILD_BUILD_ID/$f"
   done
-  aws s3 cp --only-show-errors .terraform.lock.hcl "$S3/config/.terraform.lock.hcl"
+  if [ -n "$REQUEST_ID" ]; then
+    # what an apply request checks: the version, and that nothing was applied since
+    jq -nc --arg version "$RELEASE_VERSION" --arg base "$RELEASE_BASE" --arg request "$REQUEST_KEY" \
+      --arg appliedBuild "$APPLIED_BUILD" '{version: $version, base: $base, request: $request, appliedBuild: $appliedBuild}' >release.json
+    aws s3 cp --only-show-errors release.json "$S3/plans/$CODEBUILD_BUILD_ID/release.json"
+  else
+    aws s3 cp --only-show-errors .terraform.lock.hcl "$S3/config/.terraform.lock.hcl"
+  fi
   ;;
 apply | apply-destroy)
   say "applying the plan of build $PLAN_BUILD"
@@ -88,14 +254,19 @@ apply | apply-destroy)
   # a saved plan needs no approval flag: it is the plan that was read
   terraform apply -input=false tfplan
   if [ "$ACTION" = apply ]; then
-    say "recording the outputs and the applied version"
+    say "recording the outputs, the applied version and its configuration"
     terraform output -json >outputs.json
     aws s3 cp --only-show-errors outputs.json "$S3/outputs.json"
+    # the configuration before the version that names it: a dashboard plan reads both
+    for f in main.tf.json .terraform.lock.hcl; do
+      aws s3 cp --only-show-errors "$f" "$S3/applied/$f"
+    done
     printf '{"version":"%s","build":"%s"}\n' "$RELEASE_VERSION" "$CODEBUILD_BUILD_ID" >applied.json
     aws s3 cp --only-show-errors applied.json "$S3/applied.json"
   else
-    say "removing the applied version and the outputs"
+    say "removing the applied version, its configuration and the outputs"
     aws s3 rm --only-show-errors "$S3/applied.json"
+    aws s3 rm --only-show-errors --recursive "$S3/applied/"
     aws s3 rm --only-show-errors "$S3/outputs.json"
   fi
   ;;
