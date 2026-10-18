@@ -9,6 +9,8 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strings"
+	"unicode/utf8"
 )
 
 // Domain is the custom domain of the dashboard and its sign-in page.
@@ -41,6 +43,7 @@ type Settings struct {
 	SESIdentity     string                     `json:"sesIdentity,omitempty"`
 	EmailFrom       string                     `json:"emailFrom,omitempty"`
 	Vars            map[string]json.RawMessage `json:"vars,omitempty"`
+	Tags            map[string]string          `json:"tags,omitempty"` // the Terraform default tags, after the fixed ones
 	MemberRole      string                     `json:"memberRole,omitempty"`
 	Accounts        []string                   `json:"accounts,omitempty"`
 	ExcludeAccounts []string                   `json:"excludeAccounts,omitempty"`
@@ -77,6 +80,7 @@ var (
 	roleNameRe   = regexp.MustCompile(`^([A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]{1,64}$`)
 	accountIDRe  = regexp.MustCompile(`^\d{12}$`)
 	buildRoleRe  = regexp.MustCompile(`^arn:aws[a-z-]*:iam::\d{12}:role/.+$`)
+	tagCharsRe   = regexp.MustCompile(`^[\p{L}\p{Z}\p{N}_.:/=+\-@]*$`)
 	reservedVars = []string{"env", "organization_id", "discovery_mode", "admin_emails", "domain", "ses_identity", "email_from", "install"}
 )
 
@@ -128,6 +132,9 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("--var: the value of %q is not valid JSON", name)
 		}
 	}
+	if err := ValidateTags(s.Tags); err != nil {
+		return err
+	}
 	if s.MemberRole != "" && !roleNameRe.MatchString(s.MemberRole) {
 		return fmt.Errorf("--member-role: %q is not an IAM role name", s.MemberRole)
 	}
@@ -147,6 +154,67 @@ func (s Settings) Validate() error {
 	return nil
 }
 
+// maxTags is how many tags the install adds: AWS allows 50 per resource, the fixed three and room for tags set on a
+// resource itself stay.
+const maxTags = 40
+
+// fixedTagKeys are the keys of Project.Tags, which the install's tags cannot take.
+var fixedTagKeys = []string{"project", "managed-by"}
+
+// ValidateTags checks the install's tags (--tag), its message beginning with --tag and naming the faulty tag.
+func ValidateTags(tags map[string]string) error {
+	if len(tags) > maxTags {
+		return fmt.Errorf("--tag: %d tags given, at most %d", len(tags), maxTags)
+	}
+	for _, key := range slices.Sorted(maps.Keys(tags)) {
+		lower := strings.ToLower(key)
+		switch n := utf8.RuneCountInString(key); {
+		case n < 1 || n > 128:
+			return fmt.Errorf("--tag: the key %q is not 1 to 128 characters", key)
+		case !tagCharsRe.MatchString(key):
+			return fmt.Errorf("--tag: the key %q has a character AWS does not allow (letters, digits, spaces and _ . : / = + - @)", key)
+		case strings.HasPrefix(lower, "aws:"):
+			return fmt.Errorf("--tag: %q begins with aws:, which is AWS's", key)
+		case strings.HasPrefix(lower, "dormeto:"):
+			return fmt.Errorf("--tag: %q begins with dormeto:, which is Dormeto's", key)
+		case slices.Contains(fixedTagKeys, key):
+			return fmt.Errorf("--tag: %q is set by the install", key)
+		}
+		if v := tags[key]; utf8.RuneCountInString(v) > 256 {
+			return fmt.Errorf("--tag: the value of %q is longer than 256 characters", key)
+		} else if !tagCharsRe.MatchString(v) {
+			return fmt.Errorf("--tag: the value of %q has a character AWS does not allow (letters, digits, spaces and _ . : / = + - @)", key)
+		}
+	}
+	return nil
+}
+
+// ParseTags reads the --tag values (key=value, the value up to the end after the first =). Nothing given is nil; "" alone
+// is an empty map, which removes every tag.
+func ParseTags(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	tags := map[string]string{}
+	for _, v := range values {
+		if v == "" {
+			if len(values) > 1 {
+				return nil, fmt.Errorf("--tag '' removes every tag: give it alone")
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(v, "=")
+		if !ok {
+			return nil, fmt.Errorf("--tag: %q is not key=value", v)
+		}
+		if _, dup := tags[key]; dup {
+			return nil, fmt.Errorf("--tag: the key %q is given twice", key)
+		}
+		tags[key] = value
+	}
+	return tags, nil
+}
+
 // validEnv checks an env (it names the install's keys and resources), its message beginning with --env.
 func validEnv(env string) error {
 	if !envRe.MatchString(env) {
@@ -164,7 +232,7 @@ func validRegion(region string) error {
 }
 
 // Merge is the settings a run uses: saved (install.json, or zero on a first install), each field whose flag is in set
-// (the flag names) replaced by the flag's value. Vars merge key by key, a flag's key winning. The install's own state
+// (the flag names) replaced by the flag's value. Vars merge key by key, a flag's key winning; Tags are replaced whole. The install's own state
 // (Installed, LastPlan, LastPlanKind, LastApply) is always saved's.
 func Merge(flags, saved Settings, set map[string]bool) Settings {
 	s := saved
@@ -199,6 +267,9 @@ func Merge(flags, saved Settings, set map[string]bool) Settings {
 		}
 		maps.Copy(vars, flags.Vars)
 		s.Vars = vars
+	}
+	if set["tag"] {
+		s.Tags = flags.Tags // the whole set, as the administrators: a tag is removed by leaving it out
 	}
 	if set["member-role"] {
 		s.MemberRole = flags.MemberRole

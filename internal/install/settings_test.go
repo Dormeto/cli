@@ -3,6 +3,7 @@ package install
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -150,6 +151,20 @@ func TestMerge(t *testing.T) {
 			t.Fatalf("got %+v", got)
 		}
 	})
+	t.Run("tags", func(t *testing.T) {
+		withTags := saved
+		withTags.Tags = map[string]string{"owner": "old", "team": "x"}
+		given := Settings{Tags: map[string]string{"owner": "platform"}}
+		if got := Merge(given, withTags, nil); !reflect.DeepEqual(got.Tags, withTags.Tags) {
+			t.Errorf("kept: %v", got.Tags)
+		}
+		if got := Merge(given, withTags, map[string]bool{"tag": true}); !reflect.DeepEqual(got.Tags, given.Tags) {
+			t.Errorf("replaced: %v", got.Tags)
+		}
+		if got := Merge(Settings{Tags: map[string]string{}}, withTags, map[string]bool{"tag": true}); len(got.Tags) != 0 {
+			t.Errorf("cleared: %v", got.Tags)
+		}
+	})
 	t.Run("saved vars not modified", func(t *testing.T) {
 		Merge(flags, saved, map[string]bool{"var": true})
 		if len(saved.Vars) != 2 || string(saved.Vars["b"]) != "2" {
@@ -164,6 +179,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	s.Domain = &Domain{Dashboard: "d.example.com", Auth: "auth.d.example.com", CertificateARN: certARN, ZoneID: "Z1"}
 	s.Vars = map[string]json.RawMessage{"x": json.RawMessage(`{"a":1}`)}
 	s.Accounts = []string{"123456789012"}
+	s.Tags = map[string]string{"cost-center": "1234", "team": ""}
 	s.Installed = "0.11.0"
 	s.AdoptedFrom, s.AdoptedModule = &AdoptedFrom{File: "manager.tfstate", SHA256: "ab"}, "manager"
 	b, err := s.JSON()
@@ -199,7 +215,7 @@ func TestJSONOmitsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"organizationId", "domain", "sesIdentity", "emailFrom", "vars", "memberRole", "accounts",
-		"excludeAccounts", "discoveryOnly", "buildRole", "installed", "lastPlan", "lastApply", "adoptedFrom", "adoptedModule"} {
+		"excludeAccounts", "discoveryOnly", "buildRole", "tags", "installed", "lastPlan", "lastApply", "adoptedFrom", "adoptedModule"} {
 		if strings.Contains(string(b), `"`+k+`"`) {
 			t.Errorf("%s not omitted: %s", k, b)
 		}
@@ -214,5 +230,93 @@ func TestJSONOmitsEmpty(t *testing.T) {
 func TestParseSettingsInvalid(t *testing.T) {
 	if _, err := ParseSettings([]byte("{nope")); err == nil {
 		t.Fatal("want an error")
+	}
+}
+
+func TestParseTags(t *testing.T) {
+	got, err := ParseTags([]string{"cost-center=1234", "owner=platform"})
+	if want := map[string]string{"cost-center": "1234", "owner": "platform"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("two items: %v, %v", got, err)
+	}
+	if got, err = ParseTags([]string{"team="}); err != nil || !reflect.DeepEqual(got, map[string]string{"team": ""}) {
+		t.Errorf("empty value: %v, %v", got, err)
+	}
+	if got, err = ParseTags([]string{"expr=a=b"}); err != nil || got["expr"] != "a=b" {
+		t.Errorf("value with =: %v, %v", got, err)
+	}
+	if got, err = ParseTags([]string{""}); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("remove all: %#v, %v", got, err)
+	}
+	if got, err = ParseTags(nil); err != nil || got != nil {
+		t.Errorf("none: %#v, %v", got, err)
+	}
+	for _, c := range []struct {
+		values []string
+		want   string
+	}{
+		{[]string{"a=1", ""}, "--tag '' removes every tag: give it alone"},
+		{[]string{"", "a=1"}, "--tag '' removes every tag: give it alone"},
+		{[]string{"nonsense"}, `--tag: "nonsense" is not key=value`},
+		{[]string{"a=1", "a=2"}, `--tag: the key "a" is given twice`},
+	} {
+		if _, err := ParseTags(c.values); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v, want %q", c.values, err, c.want)
+		}
+	}
+}
+
+func TestValidateTags(t *testing.T) {
+	many := func(n int) map[string]string {
+		m := map[string]string{}
+		for i := range n {
+			m[fmt.Sprintf("k%02d", i)] = "v"
+		}
+		return m
+	}
+	cases := []struct {
+		name string
+		tags map[string]string
+		want string // empty: passes
+	}{
+		{"none", nil, ""},
+		{"plain", map[string]string{"cost-center": "1234", "team": ""}, ""},
+		{"allowed characters", map[string]string{"a_b.c:d/e=f+g-h@i": "x y_.:/=+-@"}, ""},
+		{"unicode and spaces", map[string]string{"équipe de Zoë": "日本 語"}, ""},
+		{"key 128", map[string]string{strings.Repeat("é", 128): "v"}, ""},
+		{"key 129", map[string]string{strings.Repeat("a", 129): "v"}, "key"},
+		{"key empty", map[string]string{"": "v"}, "key"},
+		{"value 256", map[string]string{"k": strings.Repeat("é", 256)}, ""},
+		{"value 257", map[string]string{"k": strings.Repeat("a", 257)}, `"k"`},
+		{"key comma", map[string]string{"a,b": "v"}, `"a,b"`},
+		{"value comma", map[string]string{"k": "a,b"}, `"k"`},
+		{"value tab", map[string]string{"k": "a\tb"}, `"k"`},
+		{"key tab", map[string]string{"a\tb": "v"}, "key"},
+		{"aws prefix", map[string]string{"aws:x": "v"}, `"aws:x"`},
+		{"AWS prefix", map[string]string{"AWS:x": "v"}, `"AWS:x"`},
+		{"dormeto prefix", map[string]string{"dormeto:x": "v"}, `"dormeto:x"`},
+		{"Dormeto prefix", map[string]string{"Dormeto:x": "v"}, `"Dormeto:x"`},
+		{"project", map[string]string{"project": "x"}, `"project"`},
+		{"managed-by", map[string]string{"managed-by": "x"}, `"managed-by"`},
+		{"40", many(40), ""},
+		{"41", many(41), "at most 40"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidateTags(c.tags)
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.HasPrefix(err.Error(), "--tag: ") || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want --tag: ... %q", err, c.want)
+			}
+			s := valid()
+			s.Tags = c.tags
+			if err := s.Validate(); err == nil || !strings.HasPrefix(err.Error(), "--tag: ") {
+				t.Errorf("Validate: %v", err)
+			}
+		})
 	}
 }
