@@ -166,7 +166,8 @@ func ValidateTags(tags map[string]string) error {
 	if len(tags) > maxTags {
 		return fmt.Errorf("--tag: %d tags given, at most %d", len(tags), maxTags)
 	}
-	for _, key := range slices.Sorted(maps.Keys(tags)) {
+	keys := slices.Sorted(maps.Keys(tags))
+	for i, key := range keys {
 		lower := strings.ToLower(key)
 		switch n := utf8.RuneCountInString(key); {
 		case n < 1 || n > 128:
@@ -177,8 +178,17 @@ func ValidateTags(tags map[string]string) error {
 			return fmt.Errorf("--tag: %q begins with aws:, which is AWS's", key)
 		case strings.HasPrefix(lower, "dormeto:"):
 			return fmt.Errorf("--tag: %q begins with dormeto:, which is Dormeto's", key)
-		case slices.Contains(fixedTagKeys, key):
-			return fmt.Errorf("--tag: %q is set by the install", key)
+		}
+		// IAM compares tag keys without regard to case.
+		for _, fixed := range fixedTagKeys {
+			if strings.EqualFold(key, fixed) {
+				return fmt.Errorf("--tag: %q is set by the install, as %q (tag keys ignore case)", key, fixed)
+			}
+		}
+		for _, other := range keys[:i] {
+			if strings.EqualFold(key, other) {
+				return fmt.Errorf("--tag: the keys %q and %q are the same key (IAM ignores case)", other, key)
+			}
 		}
 		if v := tags[key]; utf8.RuneCountInString(v) > 256 {
 			return fmt.Errorf("--tag: the value of %q is longer than 256 characters", key)
@@ -209,6 +219,11 @@ func ParseTags(values []string) (map[string]string, error) {
 		}
 		if _, dup := tags[key]; dup {
 			return nil, fmt.Errorf("--tag: the key %q is given twice", key)
+		}
+		for other := range tags {
+			if strings.EqualFold(key, other) {
+				return nil, fmt.Errorf("--tag: the keys %q and %q are the same key (IAM ignores case)", other, key)
+			}
 		}
 		tags[key] = value
 	}

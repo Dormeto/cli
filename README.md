@@ -305,7 +305,8 @@ follows the build. It refuses a plan made for an uninstall. `--yes` takes the su
 - `--var name=<JSON>`: another input of the manager module, its value as JSON; repeatable.
 - `--tag key=value`: a Terraform default tag of the manager's resources; repeatable. The tags given replace the
   install's tags (`--tag ''` alone removes them all); without `--tag`, the stored ones are kept. They are the provider's
-  `default_tags` of the manager's resources, after the fixed ones; the bootstrap's resources keep the fixed tags.
+  `default_tags` of the manager's resources, after the fixed ones; the bootstrap's resources keep the fixed tags. Keys
+  are compared without regard to case, as IAM does: `Project` collides with `project`, `Team` with `team`.
 - `--build-role <arn>`: an existing role for CodeBuild instead of the one the install creates; it must trust CodeBuild.
 - `--management-profile <profile>`: the management account's profile, for [organization access](#organization-access).
 - `--member-role <name>`: the role assumed in each member account from the management account

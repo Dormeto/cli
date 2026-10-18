@@ -258,6 +258,7 @@ func TestParseTags(t *testing.T) {
 		{[]string{"", "a=1"}, "--tag '' removes every tag: give it alone"},
 		{[]string{"nonsense"}, `--tag: "nonsense" is not key=value`},
 		{[]string{"a=1", "a=2"}, `--tag: the key "a" is given twice`},
+		{[]string{"Team=a", "team=b"}, `--tag: the keys "Team" and "team" are the same key (IAM ignores case)`},
 	} {
 		if _, err := ParseTags(c.values); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%q: %v, want %q", c.values, err, c.want)
@@ -297,6 +298,9 @@ func TestValidateTags(t *testing.T) {
 		{"Dormeto prefix", map[string]string{"Dormeto:x": "v"}, `"Dormeto:x"`},
 		{"project", map[string]string{"project": "x"}, `"project"`},
 		{"managed-by", map[string]string{"managed-by": "x"}, `"managed-by"`},
+		{"Project", map[string]string{"Project": "acme"}, `"Project" is set by the install, as "project"`},
+		{"MANAGED-BY", map[string]string{"MANAGED-BY": "x"}, `"MANAGED-BY" is set by the install, as "managed-by"`},
+		{"case twins", map[string]string{"Team": "a", "team": "b"}, `the keys "Team" and "team" are the same key (IAM ignores case)`},
 		{"40", many(40), ""},
 		{"41", many(41), "at most 40"},
 	}
