@@ -6,9 +6,10 @@
   and `applied the plan: ...` with the plan's counts when that line could not be read; `dormeto uninstall` does the same
   for its `destroyed` line.
 - `dormeto routers upgrade`: a start the manager answered but whose answer could not be read is reported unknown (with
-  the hint to check the Operations), a start that was never sent (AWS credentials failing) is reported not started, the
-  Operations hint comes after the summary when upgrades did not finish, and the manager's `Retry-After` (429, 503) is
-  waited, up to 30 seconds, before a read is retried. The API is looked up in the `--region` given, else the profile's.
+  the hint to check the Operations), a start that was never sent (AWS credentials failing) is reported failed, `not
+  started: ...` (safe to run again; `not started` when the run was cut short by `--timeout` or a signal), a start
+  answered without an operation id is reported unknown, the Operations hint comes after the summary when upgrades did
+  not finish, and the manager's `Retry-After` (429, 503) is waited, up to 30 seconds, before a read is retried.
 - The Homebrew cask removes the macOS quarantine with Homebrew 7's `postflight_steps`, so `brew install` no longer warns
   that `postflight` is deprecated.
 - `make dry-run` without `VERSION` says `VERSION is required: make dry-run VERSION=x.y.z` at once.
