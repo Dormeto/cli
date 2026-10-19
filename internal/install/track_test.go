@@ -561,15 +561,61 @@ func TestFollowReadsTerraformsCounts(t *testing.T) {
 	}
 }
 
-// The closing line returned by the read that follows the status SUCCEEDED is not lost.
-func TestFollowReadsTheClosingLineAfterTheStatusTurned(t *testing.T) {
-	w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 1, nil}, trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", 2, nil})
-	w.log = []string{"aws_a.b: Creating...", "Apply complete! Resources: 1 added, 0 changed, 0 destroyed."}
+func sameCounts(a, b PlanSummary) bool {
+	return a.Add == b.Add && a.Change == b.Change && a.Destroy == b.Destroy
+}
+
+// A closing line CloudWatch ingests after the status turned SUCCEEDED is read by a later read; one that never comes is
+// waited for 3 reads, 3 s apart, then nil; a follow that expects none (a plan) does not read again nor wait.
+func TestFollowReadsTheLaggingClosingLine(t *testing.T) {
+	const closing = "Apply complete! Resources: 1 added, 0 changed, 0 destroyed."
+	for name, c := range map[string]struct {
+		late    int // lines that appear only after a delay
+		closing bool
+		want    *PlanSummary
+		waited  time.Duration
+	}{
+		"lagging":       {1, true, &PlanSummary{Add: 1}, 3 * time.Second},
+		"never":         {0, true, nil, 9 * time.Second},
+		"not expected":  {1, false, nil, 0},
+		"already there": {0, true, &PlanSummary{Add: 1}, 0},
+	} {
+		w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 0, nil}, trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", 2, nil})
+		w.log = []string{"aws_a.b: Creating...", closing}
+		w.late = c.late
+		if c.late > 0 {
+			w.polls[1].lines = 2 - c.late
+		}
+		if name == "never" {
+			w.log = w.log[:1]
+			w.polls[1].lines = 1
+		}
+		o := trkOpts(w, nil, &bytes.Buffer{})
+		o.Closing = c.closing
+		start := w.clock
+		res, err := Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (res.Applied == nil) != (c.want == nil) || res.Applied != nil && !sameCounts(*res.Applied, *c.want) {
+			t.Errorf("%s: applied %+v, want %+v", name, res.Applied, c.want)
+		}
+		// the in-progress poll waits 5 s before the status turns
+		if got := w.clock.Sub(start) - pollEvery; got != c.waited {
+			t.Errorf("%s: waited %v after the success, want %v", name, got, c.waited)
+		}
+	}
+}
+
+// Terraform 1.5 and later count the resources imported in the closing line.
+func TestFollowReadsTheCountsWithImports(t *testing.T) {
+	w := newTrkWorld(trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", 1, nil})
+	w.log = []string{"Apply complete! Resources: 2 imported, 1 added, 3 changed, 0 destroyed."}
 	res, err := Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, trkOpts(w, nil, &bytes.Buffer{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Applied == nil || res.Applied.Add != 1 {
+	if res.Applied == nil || !sameCounts(*res.Applied, PlanSummary{Add: 1, Change: 3}) {
 		t.Errorf("applied %+v", res.Applied)
 	}
 }

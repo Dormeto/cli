@@ -712,7 +712,9 @@ func (x *run) applyPlan(s Settings, sum PlanSummary, a Action, label, goesOn str
 	if err != nil {
 		return nil, err
 	}
-	res, err := Follow(x.ctx, x.c, x.p, id, x.follow(label, sum.Add+sum.Change+sum.Destroy))
+	o := x.follow(label, sum.Add+sum.Change+sum.Destroy)
+	o.Closing = true
+	res, err := Follow(x.ctx, x.c, x.p, id, o)
 	if err != nil {
 		return nil, x.lost(err, goesOn)
 	}

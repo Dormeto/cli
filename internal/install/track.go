@@ -24,6 +24,8 @@ const (
 	pollEvery     = 5 * time.Second
 	tailLines     = 40
 	maxFailures   = 3
+	closingReads  = 3
+	closingEvery  = 3 * time.Second
 	statusRunning = "IN_PROGRESS"
 )
 
@@ -39,6 +41,9 @@ type FollowOptions struct {
 	// Count tells whether a log line is one more done out of Total (organization.sh's line per account); nil: Terraform's
 	// lines, the resource in progress shown.
 	Count func(line string) bool
+	// Closing is that the build ends with Terraform's closing line (an apply, a destroy): a success without it read is
+	// waited for, the log's ingestion lagging the build's end.
+	Closing bool
 }
 
 // Result is how a build ended.
@@ -93,7 +98,7 @@ var (
 	startedRe  = regexp.MustCompile(`^(.+): (Creating|Modifying|Destroying)\.\.\.`)
 	stillRe    = regexp.MustCompile(`^(.+): Still (creating|modifying|destroying)\.\.\. \[(.+) elapsed\]`)
 	completeRe = regexp.MustCompile(`^(.+): (?:Creation|Modifications|Destruction) complete after `)
-	appliedRe  = regexp.MustCompile(`^Apply complete! Resources: (\d+) added, (\d+) changed, (\d+) destroyed\.`)
+	appliedRe  = regexp.MustCompile(`^Apply complete! Resources: (?:\d+ imported, )?(\d+) added, (\d+) changed, (\d+) destroyed\.`)
 	destroyRe  = regexp.MustCompile(`^Destroy complete! Resources: (\d+) destroyed\.`)
 )
 
@@ -272,7 +277,17 @@ func Follow(ctx context.Context, c Clients, p Project, build string, o FollowOpt
 			failures = 0
 			now := o.Now()
 			if b.BuildStatus != cbtypes.StatusTypeInProgress {
-				if b.BuildStatus != cbtypes.StatusTypeSucceeded {
+				if b.BuildStatus == cbtypes.StatusTypeSucceeded && f.o.Closing {
+					// The closing line may reach CloudWatch after the build's end: read again, 3 s apart, up to 3 times.
+					for i := 0; i < closingReads && f.t.applied == nil; i++ {
+						select {
+						case <-ctx.Done():
+							i = closingReads
+						case <-o.Every(closingEvery):
+							f.readLog(ctx, b) //nolint:errcheck // best effort: the fallback line says the plan
+						}
+					}
+				} else if b.BuildStatus != cbtypes.StatusTypeSucceeded {
 					// CloudWatch ingestion lags the build's end: read the stream once more before the tail is taken.
 					select {
 					case <-ctx.Done():
