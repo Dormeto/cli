@@ -8,7 +8,7 @@
   `keep-awake` and `resume` work with any manager 0.15.0 or later (they use pauses); schedules need manager 0.16.0 and
   routers 0.31.0.
 
-## 0.4.1
+Also in 0.5.0 (prepared as 0.4.1, never published on its own):
 
 - `dormeto install` prints what Terraform did, from its own closing line (`applied: 2 added, 1 changed, 0 destroyed`),
   and `applied the plan: ...` with the plan's counts when that line could not be read; `dormeto uninstall` does the same
