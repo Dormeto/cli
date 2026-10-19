@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers list` and `dormeto workloads list`: the manager's routers and workloads, read through its
+// `dormeto routers list`, `dormeto routers upgrade` and `dormeto workloads list`: the manager's routers and workloads, read through its
 // IAM-authorized API (internal/fleet) with the AWS profile that `dormeto install` uses. The flags that say where the
 // manager is (--profile, --region, --env, --api-url) are shared by the fleet commands; the API is found by its name
 // unless --api-url gives it. Exit codes: 0; 1 when AWS or the manager refuses; 2 for a bad flag or argument; 128 and
@@ -35,6 +35,8 @@ type fleetDeps struct {
 	http     *http.Client
 	now      func() time.Time
 	terminal func(io.Reader) bool
+	sleep    func(context.Context, time.Duration) error                                            // between two reads of an operation
+	confirm  func(ctx context.Context, in io.Reader, out io.Writer, question string) (bool, error) // y/N on a terminal
 }
 
 // theFleetDeps are the real ones: the SDK's configuration of the profile, API Gateway's lookup, HTTPS with a 30 s
@@ -46,6 +48,8 @@ func theFleetDeps() fleetDeps {
 		http:     &http.Client{Timeout: 30 * time.Second},
 		now:      time.Now,
 		terminal: isTerminal,
+		sleep:    sleepFor,
+		confirm:  promptConfirm,
 	}
 }
 
@@ -244,12 +248,12 @@ func taggedRouters(ctx context.Context, api *fleet.Client, c *cobra.Command, war
 	return set, nil
 }
 
-// newRouters is `dormeto routers` and its subcommand list.
+// newRouters is `dormeto routers` and its subcommands list and upgrade.
 func newRouters(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
-	cmd := fleetCommand("routers", "List the manager's routers")
+	cmd := fleetCommand("routers", "List and upgrade the manager's routers")
 	f.bind(cmd)
-	cmd.AddCommand(newRoutersList(f, deps))
+	cmd.AddCommand(newRoutersList(f, deps), newRoutersUpgrade(f, deps))
 	return cmd
 }
 

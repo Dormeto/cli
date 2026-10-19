@@ -41,13 +41,20 @@ type fakeAPI struct {
 	requests []*http.Request
 	routers  string
 	status   int
-	body     string // overrides the answers when set, with status
+	body     string            // overrides the answers when set, with status
+	posted   []string          // the bodies of POST /iam/operations
+	startErr map[string]string // router -> 409 message
+	endWith  string            // the status operations end with: succeeded (default), failed or running
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, r)
 	f.mu.Unlock()
+	if strings.HasPrefix(r.URL.Path, "/iam/operations") {
+		f.operations(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if f.body != "" {
 		w.WriteHeader(f.status)
@@ -107,6 +114,12 @@ type fleetRan struct {
 
 func runFleet(t *testing.T, api *fakeAPI, profileRegion string, args ...string) fleetRan {
 	t.Helper()
+	return runFleetWith(t, api, profileRegion, nil, args...)
+}
+
+// runFleetWith is runFleet with the dependencies adjusted by tune (nil for none).
+func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*fleetDeps), args ...string) fleetRan {
+	t.Helper()
 	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
 	out := fleetRan{api: api}
@@ -124,6 +137,14 @@ func runFleet(t *testing.T, api *fakeAPI, profileRegion string, args ...string) 
 		http:     srv.Client(),
 		now:      func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
 		terminal: func(io.Reader) bool { return false },
+		sleep:    func(context.Context, time.Duration) error { return nil },
+		confirm: func(context.Context, io.Reader, io.Writer, string) (bool, error) {
+			t.Error("asked for a confirmation")
+			return false, nil
+		},
+	}
+	if tune != nil {
+		tune(&deps)
 	}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
 	root.AddCommand(newRouters(deps), newWorkloads(deps))
