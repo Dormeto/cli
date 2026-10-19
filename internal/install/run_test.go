@@ -833,7 +833,8 @@ func (f rwCB) closing(plan, kind string) string {
 		f.w.t.Errorf("plan %s of the build applied: %v", plan, err)
 	}
 	if kind == "destroy" {
-		return fmt.Sprintf("Destroy complete! Resources: %d destroyed.", sum.Destroy)
+		// `terraform apply tfplan` of a destroy plan closes like any apply (Destroy complete! is `terraform destroy`'s).
+		return fmt.Sprintf("Apply complete! Resources: 0 added, 0 changed, %d destroyed.", sum.Destroy)
 	}
 	return fmt.Sprintf("Apply complete! Resources: %d added, %d changed, %d destroyed.", sum.Add, sum.Change, sum.Destroy)
 }
