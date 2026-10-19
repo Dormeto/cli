@@ -385,9 +385,9 @@ func TestScheduleShowPrintsWindowsExceptionsAndNextEventsInTheZone(t *testing.T)
 		"nap sat,sun 00:00–00:00 (next day), wake: never",
 		"except 2026-12-25",
 		"maximum nap 7 days",
-		"Mon 19 Oct 19:00 awake window ends", // 17:00Z is 19:00 in Paris (CEST)
-		"Mon 19 Oct 20:00 nap window starts",
-		"maintenance wake due Mon 26 Oct 08:00", // 07:00Z, CET after the change on 25 Oct
+		"Mon 19 Oct 19:00 CEST awake window ends", // 17:00Z is 19:00 in Paris (CEST)
+		"Mon 19 Oct 20:00 CEST nap window starts",
+		"maintenance wake due Mon 26 Oct 08:00 CET", // 07:00Z, CET after the change on 25 Oct
 	} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout lacks %q", want)
@@ -401,7 +401,7 @@ func TestScheduleShowPrintsWindowsExceptionsAndNextEventsInTheZone(t *testing.T)
 func TestScheduleShowUnknownZoneFallsBackToUTC(t *testing.T) {
 	a := &wlAPI{schedule: `{"timeZone":"Mars/Olympus","windows":[]}`}
 	r := runWL(t, a, nil, "schedule", "show", "prod-eu/w-1")
-	if r.exit != 0 || !strings.Contains(r.stdout, "Mon 19 Oct 17:00 awake window ends") || !strings.Contains(r.stdout, `unknown time zone "Mars/Olympus"; times in UTC`) {
+	if r.exit != 0 || !strings.Contains(r.stdout, "Mon 19 Oct 17:00 UTC awake window ends") || !strings.Contains(r.stdout, `unknown time zone "Mars/Olympus"; times in UTC`) || !strings.Contains(r.stdout, "time zone Mars/Olympus\n") {
 		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
 	}
 }
@@ -611,7 +611,20 @@ func TestScheduleSetPrintsNextEventsInTheStoredZone(t *testing.T) {
 	a := &wlAPI{putSched: `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00"}]}`}
 	in := `{"timeZone":"Mars/Olympus","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00"}]}`
 	r := runWLStdin(t, a, nil, in, "schedule", "set", "prod-eu/w-1", "--file", "-")
-	if r.exit != 0 || strings.Contains(r.stdout, "unknown time zone") || !strings.Contains(r.stdout, "Mon 19 Oct 19:00 awake window ends") {
+	if r.exit != 0 || strings.Contains(r.stdout, "unknown time zone") || !strings.Contains(r.stdout, "Mon 19 Oct 19:00 CEST awake window ends") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+}
+
+func TestScheduleShowWindowlessLabelsTimesWithTheirZone(t *testing.T) {
+	a := &wlAPI{schedule: `{"timeZone":"Europe/Paris","maxNapDays":7,"by":"me","at":"2026-10-01T00:00:00Z"}`}
+	r := runWL(t, a, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || !strings.Contains(r.stdout, "time zone Europe/Paris") || !strings.Contains(r.stdout, "maintenance wake due Mon 26 Oct 08:00 CET") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+	// With no zone, the times are labelled UTC.
+	r = runWL(t, &wlAPI{schedule: `{"maxNapDays":7,"by":"me","at":"2026-10-01T00:00:00Z"}`}, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || !strings.Contains(r.stdout, "maintenance wake due Mon 26 Oct 07:00 UTC") {
 		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
 	}
 }

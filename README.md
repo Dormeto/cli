@@ -595,10 +595,12 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
   prints the next events. It needs manager 0.16.0 and routers 0.31.0 (older ones answer "upgrade the router to 0.31.0
   or later").
 - `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`), the exceptions, the maximum nap
-  and the next events in the schedule's time zone (UTC, with a note, when the zone is unknown to the CLI). `--json`
-  prints `{schedule, next, maintenanceDue}` (`schedule` is `null` when none), which `schedule set --file -` takes
-  back: the file may be a bare schedule or that shape, and its `schedule` member is sent (`by` and `at` in it are
-  accepted by the router). A file with no schedule (`null`, `{"schedule": null}`) is refused with exit 2.
+  and the next events in the schedule's time zone, every time labelled with its zone (`Mon 26 Oct 08:00 CET`; UTC,
+  with a note, when the zone is unknown to the CLI). `--json` prints `{schedule, next, maintenanceDue}`: `schedule`
+  is left out for a router before 0.31.0 (the text output then says "the router does not report schedules (upgrade
+  it to 0.31.0 or later)") and is `null` when none. `schedule set --file -` takes that shape back (or a bare
+  schedule) and sends its `schedule` member (`by` and `at` in it are accepted by the router); a file with no
+  schedule (`null`, `{"schedule": null}`, or the output of a router before 0.31.0) is refused with exit 2.
 - `schedule clear` removes the schedule.
 
 ### Exit codes

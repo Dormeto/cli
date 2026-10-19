@@ -550,6 +550,9 @@ func zoneOf(name string) (*time.Location, string) {
 	return loc, ""
 }
 
+// timeLayout labels every time with its zone (the abbreviation, UTC for no zone).
+const timeLayout = "Mon 2 Jan 15:04 MST"
+
 // printNext prints the next events and the maintenance wake due, in the zone.
 func printNext(w io.Writer, loc *time.Location, next []nextEvent, due string) {
 	if len(next) > 0 {
@@ -561,11 +564,11 @@ func printNext(w io.Writer, loc *time.Location, next []nextEvent, due string) {
 			fmt.Fprintf(w, "    %s %s\n", e.At, orDefault(eventTexts[e.Kind], e.Kind))
 			continue
 		}
-		fmt.Fprintf(w, "    %s %s\n", at.In(loc).Format("Mon 2 Jan 15:04"), orDefault(eventTexts[e.Kind], e.Kind))
+		fmt.Fprintf(w, "    %s %s\n", at.In(loc).Format(timeLayout), orDefault(eventTexts[e.Kind], e.Kind))
 	}
 	if due != "" {
 		if at, err := time.Parse(time.RFC3339, due); err == nil {
-			fmt.Fprintf(w, "  maintenance wake due %s\n", at.In(loc).Format("Mon 2 Jan 15:04"))
+			fmt.Fprintf(w, "  maintenance wake due %s\n", at.In(loc).Format(timeLayout))
 		}
 	}
 }
@@ -624,8 +627,10 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if len(s.Windows) > 0 {
 					fmt.Fprintf(out, "%s: time zone %s\n", t, orDefault(s.TimeZone, "UTC"))
 				} else {
-					// A maximum-nap-only schedule has no zone to speak of.
 					fmt.Fprintf(out, "%s: schedule\n", t)
+					if s.TimeZone != "" {
+						fmt.Fprintf(out, "  time zone %s\n", s.TimeZone)
+					}
 					if s.MaxNapDays == 0 {
 						fmt.Fprintln(out, "  no windows")
 					}
