@@ -332,7 +332,7 @@ func TestUpgradeStartFailingWith5xxOrTransportErrorMayHaveStarted(t *testing.T) 
 			ops := &fakeOps{polls: 1, refuse: map[string]error{"a": err}}
 			res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
 			a := res.Upgraded[0]
-			if a.Status != "unknown" || !strings.Contains(a.Error, "the manager may have started it: check its Operations view (") ||
+			if a.Status != "unknown" || !strings.Contains(a.Error, "the manager may have started it, check its Operations view (") ||
 				!strings.Contains(a.Error, err.Error()) || res.Failed() != 1 {
 				t.Errorf("%+v", a)
 			}
@@ -354,7 +354,7 @@ func TestUpgradeCutShortStartUsesTheSameWording(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { cancel(); return context.Canceled }}
 	res := Upgrade(ctx, ops, planOf("a"), options(&clock{}, 1, new([]Event)))
-	want := "interrupted while starting: the manager may have started it: check its Operations view (context canceled)"
+	want := "interrupted while starting: the manager may have started it, check its Operations view (context canceled)"
 	if o := res.Upgraded[0]; o.Status != "unknown" || o.Error != want {
 		t.Errorf("%+v", o)
 	}

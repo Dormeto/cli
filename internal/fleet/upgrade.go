@@ -249,7 +249,7 @@ func mayHaveStarted(err error) bool {
 
 // startUnknown is how a start whose outcome is not known is reported.
 func startUnknown(err error) string {
-	return "the manager may have started it: check its Operations view (" + err.Error() + ")"
+	return "the manager may have started it, check its Operations view (" + err.Error() + ")"
 }
 
 // Upgrade starts the plan's upgrades, at most Concurrency at once, and follows each every Poll until it ends. When ctx
