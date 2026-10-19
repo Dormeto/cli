@@ -94,6 +94,7 @@ case "$1" in
     echo "Error: Cask 'dormeto' is not installed." >&2; exit 1;;
   install|upgrade)
     ${installs(`"${prefix}/bin/dormeto"`, `"\${BREW_GIVES:-${VERSION}}"`)}
+    mkdir -p "${prefix}/Caskroom/dormeto/${VERSION}" && ${installs(`"${prefix}/Caskroom/dormeto/${VERSION}/dormeto"`, `"\${BREW_GIVES:-${VERSION}}"`)}
     touch "${root}/installed"; exit 0;;
 esac
 echo "brew: unexpected $*" >&2; exit 1
@@ -101,6 +102,14 @@ echo "brew: unexpected $*" >&2; exit 1
   // npm is not a channel (the user, 2026-10-13): an npx stub records any call, which the tests refuse.
   write(join(bin, 'npx'), `#!/bin/sh\necho "npx $*" >> "${log}"\nexit 1\n`, 0o755);
   write(join(bin, 'go'), `#!/bin/sh\necho "go $*" >> "${log}"\nmkdir -p "$GOBIN" && ${installs('"$GOBIN/dormeto"', '"${2##*@v}"')}\n`, 0o755);
+  // uname: the system under test (UNAME, default Darwin: the quarantine is a macOS matter); xattr: the quarantine is
+  // there when XATTR_QUARANTINED is set, as `xattr -p` prints it, else it fails as it does without the attribute.
+  write(join(bin, 'uname'), '#!/bin/sh\necho "${UNAME:-Darwin}"\n', 0o755);
+  write(join(bin, 'xattr'), `#!/bin/sh
+echo "xattr $*" >> "${log}"
+[ -n "$XATTR_QUARANTINED" ] && { echo "0083;5f5e1000;Safari;"; exit 0; }
+echo "xattr: $3: No such xattr: com.apple.quarantine" >&2; exit 1
+`, 0o755);
   write(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', 0o755);
   if (shadow) write(join(bin, 'dormeto'), '#!/bin/sh\necho "dormeto dev"\n', 0o755);
   if (installed) writeFileSync(join(root, 'installed'), '');
@@ -223,5 +232,35 @@ test('after-release.sh fails when Homebrew\'s dormeto is not the version release
     const out = f.run({ BREW_GIVES: '0.1.0' });
     assert.notEqual(out.status, 0);
     assert.match(out.stderr, /brew gave 'dormeto 0\.1\.0'.*not 'dormeto 0\.2\.0'/);
+  } finally { f.cleanup(); }
+});
+
+// --- the quarantine ---------------------------------------------------------------------------------------------
+
+test('after-release.sh passes on macOS when the installed binary has no quarantine attribute', () => {
+  const f = fixture({ shadow: true });
+  try {
+    const out = f.run();
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.ok(f.calls().includes(`xattr -p com.apple.quarantine ${f.prefix}/Caskroom/dormeto/${VERSION}/dormeto\n`), f.calls());
+  } finally { f.cleanup(); }
+});
+
+test('after-release.sh fails on macOS when the installed binary is quarantined', () => {
+  const f = fixture({ shadow: true });
+  try {
+    const out = f.run({ XATTR_QUARANTINED: '1' });
+    assert.notEqual(out.status, 0, out.stdout);
+    assert.match(out.stderr, /quarantine/);
+    assert.doesNotMatch(out.stdout, /all checks pass/);
+  } finally { f.cleanup(); }
+});
+
+test('after-release.sh does not look for the quarantine off macOS', () => {
+  const f = fixture({ shadow: true });
+  try {
+    const out = f.run({ UNAME: 'Linux', XATTR_QUARANTINED: '1' });
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.doesNotMatch(f.calls(), /^xattr /m);
   } finally { f.cleanup(); }
 });

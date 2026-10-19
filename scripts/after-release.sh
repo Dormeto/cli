@@ -46,6 +46,11 @@ if brew list --cask dormeto >/dev/null 2>&1; then brew upgrade --cask dormeto/ta
 # Homebrew's own dormeto, linked in its prefix's bin/, not whichever is first on PATH (a go install build).
 brewed="$(brew --prefix)/bin/dormeto"
 [ "$("$brewed" version | head -n 1)" = "dormeto $version" ] || fail "brew gave '$("$brewed" version | head -n 1)' ($brewed), not 'dormeto $version'"
+# macOS: the cask's postflight removed the quarantine (Gatekeeper would refuse the unsigned binary otherwise).
+if [ "$(uname -s)" = Darwin ]; then
+  staged="$(brew --prefix)/Caskroom/dormeto/$version/dormeto"
+  if xattr -p com.apple.quarantine "$staged" >/dev/null 2>&1; then fail "the installed binary $staged still has the macOS quarantine attribute"; fi
+fi
 
 echo "after-release: install.sh"
 mkdir "$scratch/install"
