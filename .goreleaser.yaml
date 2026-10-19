@@ -64,10 +64,12 @@ homebrew_casks:
       email: fabrice.daugan@gmail.com
     commit_msg_template: "chore: dormeto {{ .Tag }}"
     # The binaries are unsigned: macOS would block the first run of a download.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr",
-                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/dormeto"]
-          end
+    # Homebrew 7's install steps (a `postflight` block is deprecated); the
+    # template escapes keep `{{staged_path}}` literal, Homebrew expands it.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "{{ "{{" }}staged_path{{ "}}" }}/dormeto"]
+        end
+      end

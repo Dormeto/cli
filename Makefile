@@ -52,6 +52,7 @@ parity: ## Export the shared cases again from the manager checkout (MANAGER=../m
 	cd $(MANAGER) && node scripts/parity/export.mjs --out $(CURDIR)/testdata/parity
 
 dry-run: ## Check a release without publishing: make dry-run VERSION=0.1.0
+	@if [ -z "$(VERSION)" ] || [ "$(origin VERSION)" = file ]; then echo "VERSION is required: make dry-run VERSION=x.y.z" >&2; exit 2; fi
 	scripts/release.sh $(VERSION) --dry-run
 
 clean: ## Remove bin/ and dist/
