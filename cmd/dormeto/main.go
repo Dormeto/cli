@@ -47,6 +47,8 @@ func newRoot(b build) *cobra.Command {
 		},
 	})
 	root.AddCommand(newEstimate(b))
+	fleetCommands := theFleetDeps()
+	root.AddCommand(newRouters(fleetCommands), newWorkloads(fleetCommands))
 	v, _, _ := b.resolve()
 	root.AddCommand(newInstall(theInstallRuns, orDefault(v, "dev")), newUninstall(theInstallRuns, orDefault(v, "dev")))
 	return root

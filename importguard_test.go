@@ -65,7 +65,7 @@ func importsOf(file string) []string {
 	return out
 }
 
-func TestTheEstimateNeverImportsTheInstall(t *testing.T) {
+func TestTheEstimateNeverImportsTheInstallNorTheFleet(t *testing.T) {
 	files := []string{"cmd/dormeto/estimate.go"}
 	entries, err := os.ReadDir("internal/cli")
 	if err != nil {
@@ -81,8 +81,8 @@ func TestTheEstimateNeverImportsTheInstall(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if chain := reaches(".", files, modulePath+"/internal/install", modulePath+"/internal/installaws"); chain != nil {
-		t.Errorf("the estimate reaches the install: %s", strings.Join(chain, " -> "))
+	if chain := reaches(".", files, modulePath+"/internal/install", modulePath+"/internal/installaws", modulePath+"/internal/fleet"); chain != nil {
+		t.Errorf("the estimate reaches the install or the fleet: %s", strings.Join(chain, " -> "))
 	}
 }
 
