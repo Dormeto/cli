@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"io"
 	"net/http"
 	"net/url"
@@ -395,7 +396,7 @@ func TestUpgradeFollowingWaitsOutNetworkErrors429And5xx(t *testing.T) {
 
 func TestUpgradeStartNotSentIsFailedNotStarted(t *testing.T) {
 	// the credentials may fail with a network error (an SSO token fetch): still nothing was sent
-	err := fmt.Errorf("%w: AWS credentials: %w", ErrNotSent, &url.Error{Op: "Post", URL: "https://sso", Err: errors.New("i/o timeout")})
+	err := &notSentError{fmt.Errorf("AWS credentials: %w", &url.Error{Op: "Post", URL: "https://sso", Err: errors.New("i/o timeout")})}
 	ops := &fakeOps{polls: 1, refuse: map[string]error{"a": err}}
 	res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
 	if o := res.Upgraded[0]; o.Status != "failed" || !strings.Contains(o.Error, "not started") || strings.Contains(o.Error, "may have started") {
@@ -415,7 +416,7 @@ func TestUpgradeStartAnsweredButUnreadableIsUnknown(t *testing.T) {
 func TestUpgradeNotSentBeatsInterrupted(t *testing.T) {
 	// cancelled (--timeout, a signal): reported like the starts the stop pre-empted
 	ctx, cancel := context.WithCancel(t.Context())
-	err := fmt.Errorf("%w: AWS credentials: expired", ErrNotSent)
+	err := &notSentError{errors.New("AWS credentials: expired")}
 	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { cancel(); return err }}
 	res := Upgrade(ctx, ops, planOf("a"), options(&clock{}, 1, new([]Event)))
 	if o := res.Upgraded[0]; o.Status != "not started" || strings.Contains(o.Error, "interrupted") || o.Operation != "" {
@@ -427,10 +428,10 @@ func TestUpgradeNotSentBeatsInterrupted(t *testing.T) {
 }
 
 func TestUpgradeNotSentUncancelledIsFailed(t *testing.T) {
-	err := fmt.Errorf("%w: AWS credentials: expired", ErrNotSent)
+	err := &notSentError{errors.New("AWS credentials: expired")}
 	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { return err }}
 	res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
-	if o := res.Upgraded[0]; o.Status != "failed" || !strings.HasPrefix(o.Error, "not started: AWS") || res.Stopped {
+	if o := res.Upgraded[0]; o.Status != "failed" || o.Error != "not started: AWS credentials: expired" || res.Stopped {
 		t.Errorf("%+v", o)
 	}
 }
@@ -446,5 +447,20 @@ func TestUpgradeStartWithoutOperationIDIsUnknown(t *testing.T) {
 				t.Errorf("%+v", o)
 			}
 		})
+	}
+}
+
+type failingCreds struct{}
+
+func (failingCreds) Retrieve(context.Context) (aws.Credentials, error) {
+	return aws.Credentials{}, errors.New("expired")
+}
+
+func TestUpgradeRealClientCredentialsFailureReadsNotStarted(t *testing.T) {
+	c := newTestClient(t, func(http.ResponseWriter, *http.Request) { t.Error("nothing is sent") })
+	c.creds = failingCreds{}
+	res := Upgrade(t.Context(), NewOperations(c), planOf("a"), options(&clock{}, 1, new([]Event)))
+	if o := res.Upgraded[0]; o.Status != "failed" || o.Error != "not started: AWS credentials: expired" {
+		t.Errorf("%+v", o)
 	}
 }

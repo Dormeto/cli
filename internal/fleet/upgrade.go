@@ -319,7 +319,7 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 				out.Status = "not started"
 				return out
 			}
-			return ended("failed", err.Error()) // ErrNotSent's own text opens it: "not started: ..."
+			return ended("failed", "not started: "+err.Error())
 		}
 		if ctx.Err() != nil { // cut short in the call: the manager may or may not have started it
 			return ended("unknown", "interrupted while starting: "+startUnknown(err))
