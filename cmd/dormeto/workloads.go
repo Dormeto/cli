@@ -575,7 +575,8 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "show <router>/<workload>", Short: "Show a workload's schedule and its next events",
 		Long: "Show the schedule: the time zone, the windows, the exceptions, the maximum nap and the next events, in the\n" +
-			"schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none), which\n" +
+			"schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none, and left\n" +
+			"out when the router, before 0.31.0, does not report schedules), which\n" +
 			"`dormeto workloads schedule set --file -` accepts back.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -593,13 +594,23 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return fmt.Errorf("%s: %w", t, err)
 				}
 				out := c.OutOrStdout()
-				none := len(st.Schedule) == 0 || string(st.Schedule) == "null"
+				// A status without a schedule key comes from a router before 0.31.0; a null one is "no schedule".
+				unreported := len(st.Schedule) == 0
+				none := unreported || string(st.Schedule) == "null"
 				if asJSON {
+					var sched *json.RawMessage
+					if !unreported {
+						sched = &st.Schedule
+					}
 					return printJSON(out, struct {
-						Schedule       json.RawMessage `json:"schedule"`
-						Next           []nextEvent     `json:"next"`
-						MaintenanceDue *string         `json:"maintenanceDue"`
-					}{orRaw(st.Schedule), orNext(st.Next), nilIfEmpty(st.MaintenanceDue)})
+						Schedule       *json.RawMessage `json:"schedule,omitempty"`
+						Next           []nextEvent      `json:"next"`
+						MaintenanceDue *string          `json:"maintenanceDue"`
+					}{sched, orNext(st.Next), nilIfEmpty(st.MaintenanceDue)})
+				}
+				if unreported {
+					fmt.Fprintf(out, "%s: the router does not report schedules (upgrade it to 0.31.0 or later)\n", t)
+					return nil
 				}
 				if none {
 					fmt.Fprintf(out, "%s: no schedule\n", t)
@@ -610,12 +621,17 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return fmt.Errorf("decode the schedule: %w", err)
 				}
 				loc, note := zoneOf(s.TimeZone)
-				fmt.Fprintf(out, "%s: time zone %s\n", t, orDefault(s.TimeZone, "UTC"))
+				if len(s.Windows) > 0 {
+					fmt.Fprintf(out, "%s: time zone %s\n", t, orDefault(s.TimeZone, "UTC"))
+				} else {
+					// A maximum-nap-only schedule has no zone to speak of.
+					fmt.Fprintf(out, "%s: schedule\n", t)
+					if s.MaxNapDays == 0 {
+						fmt.Fprintln(out, "  no windows")
+					}
+				}
 				if note != "" {
 					fmt.Fprintf(out, "  %s\n", note)
-				}
-				if len(s.Windows) == 0 {
-					fmt.Fprintln(out, "  no windows")
 				}
 				for _, w := range s.Windows {
 					fmt.Fprintf(out, "  %s\n", windowText(w.Kind, strings.Join(w.Days, ","), w.Start, w.End, w.Wake))
@@ -668,8 +684,13 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if err := api.Put(ctx, t.Path("/schedule"), raw, &res); err != nil {
 						return "", err
 					}
+					// The next events are read in the zone as stored (its canonical name), the file's when the answer has none.
 					var s scheduleView
-					_ = json.Unmarshal(raw, &s)
+					if json.Unmarshal(res.Schedule, &s) != nil || s.TimeZone == "" {
+						var sent scheduleView
+						_ = json.Unmarshal(raw, &sent)
+						s.TimeZone = sent.TimeZone
+					}
 					loc, note := zoneOf(s.TimeZone)
 					var b strings.Builder
 					fmt.Fprintf(&b, "%s: schedule set\n", t)
@@ -710,6 +731,11 @@ func readScheduleFile(c *cobra.Command, path string) (json.RawMessage, error) {
 	}
 	none := usagef("--file: no schedule in %s; use schedule clear", map[bool]string{true: "standard input", false: path}[path == "-"])
 	if probe == nil { // null
+		return nil, none
+	}
+	_, hasNext := probe["next"]
+	_, hasDue := probe["maintenanceDue"]
+	if _, ok := probe["schedule"]; !ok && (hasNext || hasDue) { // `schedule show --json` of a router that reports none
 		return nil, none
 	}
 	if member, ok := probe["schedule"]; ok { // the shape of `schedule show --json` and of a PUT's answer

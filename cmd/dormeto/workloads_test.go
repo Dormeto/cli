@@ -28,6 +28,8 @@ type wlAPI struct {
 	perTarget bool // each workload has its own sequence of statuses
 	counts    map[string]int
 	schedule  string // the schedule GET …/{id} reports ("" for null)
+	oldRouter bool   // the status has no schedule key (router before 0.31.0)
+	putSched  string // the schedule member of the PUT's answer ("" for {})
 }
 
 func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
@@ -85,6 +87,9 @@ func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
 					st = `{"state":"AWAKE","schedule":null,"next":[]}`
 				}
 			}
+			if a.oldRouter {
+				st = `{"state":"AWAKE"}`
+			}
 			io.WriteString(w, st)
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/schedule"):
 			if a.putCode != 0 {
@@ -92,7 +97,7 @@ func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
 				io.WriteString(w, a.putBody)
 				return
 			}
-			io.WriteString(w, `{"schedule":{},"next":[{"at":"2026-10-19T17:00:00.000Z","kind":"awake-end","window":0}],"maintenanceDue":null}`)
+			io.WriteString(w, `{"schedule":`+orString(a.putSched, "{}")+`,"next":[{"at":"2026-10-19T17:00:00.000Z","kind":"awake-end","window":0}],"maintenanceDue":null}`)
 		case r.Method == http.MethodDelete:
 			io.WriteString(w, `{"cleared":true}`)
 		default:
@@ -571,4 +576,42 @@ func TestTheRealClockIsLocal(t *testing.T) {
 func runWLStdin(t *testing.T, a *wlAPI, tune func(*fleetDeps), stdin string, args ...string) fleetRan {
 	t.Helper()
 	return runFleetWith(t, &fakeAPI{custom: a.handler(t), stdin: stdin}, "eu-west-1", tune, append([]string{"workloads"}, args...)...)
+}
+
+func TestScheduleShowAnOldRouterIsNotNoSchedule(t *testing.T) {
+	r := runWL(t, &wlAPI{oldRouter: true}, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || !strings.Contains(r.stdout, "does not report schedules") || !strings.Contains(r.stdout, "0.31.0") || strings.Contains(r.stdout, "no schedule") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+	// --json keeps them distinct: the schedule member is omitted for an old router, null for none.
+	j := runWL(t, &wlAPI{oldRouter: true}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(j.stdout), &got); err != nil {
+		t.Fatalf("%v: %q", err, j.stdout)
+	}
+	if _, has := got["schedule"]; has || got["next"] == nil {
+		t.Errorf("json %q", j.stdout)
+	}
+	// and set --file refuses that output as it does a null schedule
+	b := &wlAPI{}
+	set := runWLStdin(t, b, nil, j.stdout, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if set.exit != 2 || len(b.writes) != 0 {
+		t.Errorf("exit %d writes %q stderr %q", set.exit, b.writes, set.stderr)
+	}
+}
+
+func TestScheduleShowMaxNapOnlyHasNoTimeZoneLine(t *testing.T) {
+	r := runWL(t, &wlAPI{schedule: `{"maxNapDays":7,"by":"me","at":"2026-10-01T00:00:00Z"}`}, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || strings.Contains(r.stdout, "time zone") || !strings.Contains(r.stdout, "maximum nap 7 days") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+}
+
+func TestScheduleSetPrintsNextEventsInTheStoredZone(t *testing.T) {
+	a := &wlAPI{putSched: `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00"}]}`}
+	in := `{"timeZone":"Mars/Olympus","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00"}]}`
+	r := runWLStdin(t, a, nil, in, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if r.exit != 0 || strings.Contains(r.stdout, "unknown time zone") || !strings.Contains(r.stdout, "Mon 19 Oct 19:00 awake window ends") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
 }
