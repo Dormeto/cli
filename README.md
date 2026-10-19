@@ -464,6 +464,120 @@ Through the member role, the build runs Dormeto's release script, which creates 
 boundary in each account: the member role must be allowed to do that (the role AWS Organizations creates is an
 administrator).
 
+## Routers and workloads
+
+From CLI 0.4.0 and manager 0.15.0, three commands list the manager's routers and workloads and upgrade routers, with the
+AWS profile that `dormeto install` uses. They call the manager's API on its IAM-authorized `/iam/*` routes (see
+[Permission](#permission-to-call-the-manager)); nothing is installed.
+
+```sh
+dormeto routers list [filters] [--outdated] [--json]
+dormeto routers upgrade [<router>...] [filters] [--all] [--dry-run] [--yes] [--json]
+dormeto workloads list [--state ...] [--router ...] [--tag ...] [--search ...] [--json]
+```
+
+```sh
+dormeto routers list --env dev --outdated
+dormeto workloads list --tag team=payments --state ASLEEP
+dormeto routers upgrade --tag team=payments
+dormeto routers upgrade --all --dry-run
+dormeto routers upgrade --all --yes --json > upgrade.json   # in CI
+```
+
+### Where the manager is
+
+All three take `--profile` (the AWS profile; the SDK's default), `--region` (the manager's region; the profile's by
+default), `--env` (the manager's environment, `prod` by default) and `--api-url`. The API is found by its name,
+`dmt-<env>-manager-api`, in the manager's region; `--api-url` gives its URL and skips the lookup. When no API has that
+name, the message says which environment and region were searched.
+
+### routers list
+
+Lists each router's name, account, region, source (`manager` or `terraform`), version (`0.29.0 → 0.30.0` when below the
+version available, `upgrading` while an upgrade runs), health and workloads (the total and the count per state), then a
+last line with the version available and how many routers are outdated. A router that does not answer is listed, its
+error on stderr.
+
+- `--outdated`: only the routers below the version available.
+- `--account <id>`: only the routers of these AWS accounts.
+- `--router-region <region>`: only the routers in these regions (`--region` is the manager's).
+- `--name <glob>`: only the routers whose name matches the glob (`*`, `?`, `[…]`).
+- `--tag key=value`: only the routers that serve a workload carrying this Dormeto tag.
+- `--json`: the API's answer, its rows after the filters.
+
+`--account` and `--router-region` take repeated or comma-separated values, of which one must match. `--tag` is
+repeatable and all the tags must be carried by the same workload. The tags are those of the workloads in the manager (see
+`workloads list`), not AWS tags on the routers; a router that does not answer has unknown workloads' tags, so a `--tag`
+cannot select it (a warning says so).
+
+### routers upgrade
+
+Upgrades the routers named, narrowed by the filters, to the version available. Without a name or a filter, `--all` is
+required (exit 2); `--all` takes neither names nor filters. An unknown name exits 2.
+
+It prints the plan: each router to upgrade, from → to, then the routers skipped and why. A router is skipped when it is:
+
+- written in Terraform (upgraded with its Terraform);
+- up to date;
+- newer than the version available;
+- of unknown version (its error is given);
+- busy with an operation (the operation's type and id are given).
+
+The plan is confirmed on a terminal. Without one, `--yes` is required (exit 2 after the plan). A declined confirmation
+starts nothing and exits 0. `--dry-run` prints the plan and stops. Then one `upgrade-router` operation per router is
+started in the manager, at most `--concurrency` at once, and followed every five seconds; each result is printed as it
+ends (the version change and the duration, or the step that failed, its detail and the operation's id).
+
+- `--concurrency <n>`: how many upgrades run at once, from 1 to 20 (4 by default).
+- `--timeout <duration>`: stop following the upgrades after this long (60m by default). Ctrl-C does the same: the
+  upgrades already started go on in the manager, and the CLI says where to follow them (its Operations view).
+- `--dry-run`: print the plan and stop.
+- `--yes`: do not ask for confirmation.
+- `--json`: print the result on stdout as `{available, upgraded: [{router, from, to, operation, status, error?}],
+  skipped: [{router, reason}]}`; the plan and the progress go to stderr.
+- `--all`, `--account`, `--router-region`, `--name` and `--tag`: the selection, as for `routers list`.
+
+### workloads list
+
+Lists each workload's router, id, name, state, Dormeto tags (`key=value`, sorted by key) and the time since its last
+change, then a last line with the total. A router that does not answer is reported on stderr, the others are listed.
+
+- `--state <state>`: only the workloads in these states (repeatable or comma-separated; case-insensitive).
+- `--router <name>`: only the workloads of this router.
+- `--tag key=value`: only the workloads with this Dormeto tag (repeatable: all must match).
+- `--search <text>`: only the workloads whose name or id contains the text.
+- `--json`: the API's answer.
+
+### Exit codes
+
+- 0: success (and a declined confirmation, which starts nothing).
+- 1: AWS or the manager refused, an upgrade failed or did not start, or `--timeout` stopped the following.
+- 2: a bad flag or argument, or no `--yes` without a terminal.
+- 128 plus the signal's number when SIGINT or SIGTERM stopped the command.
+
+### Permission to call the manager
+
+The caller needs `execute-api:Invoke` on the manager API's `/iam/*` routes, with credentials of the manager's account (a
+caller from another account assumes a role there that has it). The manager module's output `api_iam_arn` is the
+resource for all the routes, which `routers upgrade` needs (it posts):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "execute-api:Invoke",
+    "Resource": "arn:aws:execute-api:<region>:<account>:<api id>/*/*/iam/*"
+  }]
+}
+```
+
+For `routers list` and `workloads list`, `GET` alone is enough: `arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/*`.
+
+Such a caller acts as an administrator of the manager, outside its MFA policy: the audit log and the operations name its
+ARN. To find the API by name, the caller also needs `apigateway:GET`; `--api-url` does without. The manager must be
+0.15.0 or later: an older one answers `Not Found`, and the CLI says to update it.
+
 ## Building from source
 
 Go 1.26 or later; Node.js for the release scripts' tests; GoReleaser 2 for `make snapshot`. `make` lists the targets:

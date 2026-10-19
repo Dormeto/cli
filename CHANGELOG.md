@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0
+
+- `dormeto routers list`, `dormeto routers upgrade` and `dormeto workloads list`: the manager's routers and workloads
+  from the command line, with the install's AWS profile, through the manager's IAM-authorized `/iam/*` routes (the API
+  found by its name, `dmt-<env>-manager-api`, or `--api-url`). `routers list` shows each router's version (and the one
+  available), health and workloads, `--outdated` only the routers to upgrade; `workloads list` filters by `--state`,
+  `--router`, `--tag` and `--search`; `--json` prints the API's answer.
+- `routers upgrade [<router>...]` upgrades the routers named or selected (`--all` for every one), prints the plan with
+  the routers skipped and why (written in Terraform, up to date, newer than the version available, of unknown version,
+  busy with an operation), asks for confirmation (`--yes` without a terminal, `--dry-run` to stop at the plan), runs the
+  upgrades in the manager at most `--concurrency` at once (4 by default) and follows them until `--timeout` (60m).
+- The routers are narrowed by `--account`, `--router-region`, `--name` (a glob) and `--tag key=value` (repeatable),
+  which selects the routers that serve a workload with these Dormeto tags.
+- The caller needs `execute-api:Invoke` on the API's `/iam/*` routes (`GET` alone for the two lists) and acts as an
+  administrator of the manager; `apigateway:GET` finds the API unless `--api-url` is given. Manager 0.15.0 or later. The
+  README has the section "Routers and workloads" and the policy.
+
 ## 0.3.0
 
 - `dormeto install --tag key=value` (repeatable): the customer's tags join the fixed ones in the AWS provider's
