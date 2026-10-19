@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const env = { ...process.env };
-delete env.VERSION;
+for (const name of ['VERSION', 'MAKEFLAGS', 'MAKELEVEL', 'MFLAGS']) delete env[name];
 
 test('make dry-run without VERSION fails at once and says how to give it', () => {
   for (const args of [['dry-run'], ['dry-run', 'VERSION=']]) {
@@ -23,4 +23,6 @@ test('the cask removes the quarantine with Homebrew 7 install steps, not a postf
   assert.match(yaml, /postflight_steps do/);
   assert.match(yaml, /on_macos do/);
   assert.doesNotMatch(yaml, /^ {4}hooks:/m);
+  // the template escapes that leave `{{staged_path}}` literal for Homebrew
+  assert.ok(yaml.includes('{{ "{{" }}staged_path{{ "}}" }}'), 'staged_path is escaped for goreleaser');
 });
