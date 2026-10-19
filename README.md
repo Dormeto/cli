@@ -489,7 +489,8 @@ dormeto routers upgrade --all --yes --json > upgrade.json   # in CI
 All three take `--profile` (the AWS profile; the SDK's default), `--region` (the manager's region; the profile's by
 default), `--env` (the manager's environment, `prod` by default) and `--api-url`. The API is found by its name,
 `dmt-<env>-manager-api`, in the manager's region; `--api-url` gives its URL and skips the lookup. When no API has that
-name, the message says which environment and region were searched.
+name, the message says which environment and region were searched. `--api-url` is the API's execute-api endpoint (the
+module's `api_endpoint` output, `https://<api id>.execute-api.<region>.amazonaws.com`), not the dashboard's URL.
 
 ### routers list
 
@@ -575,6 +576,15 @@ resource for all the routes, which `routers upgrade` needs (it posts):
 ```
 
 For `routers list` and `workloads list`, `GET` alone is enough: `arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/*`.
+It still reads everything an administrator reads through the `/iam/*` routes: the users and their emails, the audit, the
+update state.
+
+A manager installed with the CLI has no Terraform outputs at hand: find the API id by the API's name, then build the ARN
+with it:
+
+```sh
+aws apigatewayv2 get-apis --query "Items[?Name=='dmt-<env>-manager-api'].ApiId" --output text
+```
 
 Such a caller acts as an administrator of the manager, outside its MFA policy: the audit log and the operations name its
 ARN. To find the API by name, the caller also needs `apigateway:GET`; `--api-url` does without. The manager must be

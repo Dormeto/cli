@@ -96,7 +96,8 @@ func (f *fleetFlags) bind(cmd *cobra.Command) {
 	p.StringVar(&f.profile, "profile", "", "the AWS profile (default: the SDK's)")
 	p.StringVar(&f.region, "region", "", "the manager's region (default: the profile's)")
 	p.StringVar(&f.env, "env", "prod", "the manager's environment")
-	p.StringVar(&f.apiURL, "api-url", "", "the manager API's URL, skipping the lookup by name (needs no apigateway:GET)")
+	p.StringVar(&f.apiURL, "api-url", "",
+		"the manager API's execute-api endpoint (not the dashboard's URL), skipping the lookup by name (needs no apigateway:GET)")
 }
 
 var envName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,8}[a-z0-9])?$`)
