@@ -1,7 +1,7 @@
 {
-  "manager": "0.16.0",
+  "manager": "0.17.0",
   "router": "0.31.0",
-  "commit": "fcd027038dbd3a63dfdc9178c7211592b93281aa",
+  "commit": "40a3d02639eab9a7fe7cef1f36cfb2eaf5160abf",
   "cases": [
     {
       "name": "describeStopped: EC2 instances by type and OS; an Auto Scaling group at its desired capacity by the types of its instances",
