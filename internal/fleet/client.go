@@ -21,6 +21,9 @@ import (
 // an operation.
 const getAttempts = 3
 
+// maxAnswer bounds what is read of an answer (a listing of 1,000 workloads is a few MB).
+const maxAnswer = 32 << 20
+
 // APIError is a refusal from API Gateway (Gateway) or from the manager (Code and Message).
 type APIError struct {
 	Status        int
@@ -129,9 +132,12 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte, ou
 		return err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > maxAnswer {
+		return fmt.Errorf("the manager's answer is too large (over %d MiB)", maxAnswer>>20)
 	}
 	if resp.StatusCode >= 300 {
 		return parseError(resp.StatusCode, data)

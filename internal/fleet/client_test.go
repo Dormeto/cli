@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -146,6 +147,33 @@ func TestCredentialsError(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("called") })
 	c.creds = aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) { return aws.Credentials{}, errors.New("expired") })
 	if err := c.Get(context.Background(), "/routers", nil, nil); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestCancelledDuringBackoffStops(t *testing.T) {
+	var calls atomic.Int32
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(503)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.sleep = func(ctx context.Context, _ time.Duration) error {
+		cancel()
+		return ctx.Err()
+	}
+	err := c.Get(ctx, "/routers", nil, nil)
+	if !errors.Is(err, context.Canceled) || calls.Load() != 1 {
+		t.Errorf("err = %v, calls = %d", err, calls.Load())
+	}
+}
+
+func TestAnswerTooLarge(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat([]byte(" "), maxAnswer+1))
+	})
+	err := c.Get(context.Background(), "/routers", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Errorf("err = %v", err)
 	}
 }
