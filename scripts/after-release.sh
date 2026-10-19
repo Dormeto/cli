@@ -48,7 +48,8 @@ brewed="$(brew --prefix)/bin/dormeto"
 [ "$("$brewed" version | head -n 1)" = "dormeto $version" ] || fail "brew gave '$("$brewed" version | head -n 1)' ($brewed), not 'dormeto $version'"
 # macOS: the cask's postflight removed the quarantine (Gatekeeper would refuse the unsigned binary otherwise).
 if [ "$(uname -s)" = Darwin ]; then
-  staged="$(brew --prefix)/Caskroom/dormeto/$version/dormeto"
+  staged="$(brew --caskroom)/dormeto/$version/dormeto"
+  [ -e "$staged" ] || fail "the cask's binary is not at $staged: the quarantine cannot be checked"
   if xattr -p com.apple.quarantine "$staged" >/dev/null 2>&1; then fail "the installed binary $staged still has the macOS quarantine attribute"; fi
 fi
 

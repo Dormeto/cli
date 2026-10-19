@@ -88,13 +88,14 @@ echo "brew $*" >> "${log}"
 case "$1" in
   update) exit 0;;
   --prefix) echo "${prefix}"; exit 0;;
+  --caskroom) echo "${prefix}/Caskroom"; exit 0;;
   list)
     case " $* " in *" --formula "*) case " $* " in *" --cask "*) echo "Error: Options --formula and --cask are mutually exclusive." >&2; exit 1;; esac;; esac
     [ -f "${root}/installed" ] && { echo dormeto; exit 0; }
     echo "Error: Cask 'dormeto' is not installed." >&2; exit 1;;
   install|upgrade)
     ${installs(`"${prefix}/bin/dormeto"`, `"\${BREW_GIVES:-${VERSION}}"`)}
-    mkdir -p "${prefix}/Caskroom/dormeto/${VERSION}" && ${installs(`"${prefix}/Caskroom/dormeto/${VERSION}/dormeto"`, `"\${BREW_GIVES:-${VERSION}}"`)}
+    [ -z "$CASK_MISSING" ] && mkdir -p "${prefix}/Caskroom/dormeto/${VERSION}" && ${installs(`"${prefix}/Caskroom/dormeto/${VERSION}/dormeto"`, `"\${BREW_GIVES:-${VERSION}}"`)}
     touch "${root}/installed"; exit 0;;
 esac
 echo "brew: unexpected $*" >&2; exit 1
@@ -261,6 +262,16 @@ test('after-release.sh does not look for the quarantine off macOS', () => {
   try {
     const out = f.run({ UNAME: 'Linux', XATTR_QUARANTINED: '1' });
     assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.doesNotMatch(f.calls(), /^xattr /m);
+  } finally { f.cleanup(); }
+});
+
+test('after-release.sh fails when the cask\'s binary is not where the quarantine is checked', () => {
+  const f = fixture({ shadow: true });
+  try {
+    const out = f.run({ CASK_MISSING: '1' });
+    assert.notEqual(out.status, 0, out.stdout);
+    assert.match(out.stderr, /not at .*Caskroom\/dormeto\/0\.2\.0\/dormeto/);
     assert.doesNotMatch(f.calls(), /^xattr /m);
   } finally { f.cleanup(); }
 });
