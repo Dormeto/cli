@@ -242,3 +242,40 @@ func TestGetHonoursRetryAfter(t *testing.T) {
 		})
 	}
 }
+
+func TestPutAndDeleteAreSignedAndNeverRetried(t *testing.T) {
+	var methods []string
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		bodies = append(bodies, string(b))
+		if !strings.Contains(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256") {
+			t.Errorf("not signed: %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(503)
+		io.WriteString(w, `{"error":"unavailable","message":"later"}`)
+	}))
+	defer srv.Close()
+	c := New(srv.Client(), srv.URL, "eu-west-1", credentials.NewStaticCredentialsProvider("A", "s", ""), time.Now)
+	if err := c.Put(context.Background(), "/x", map[string]int{"a": 1}, nil); err == nil || err.Error() != "later" {
+		t.Errorf("put: %v", err)
+	}
+	if err := c.Delete(context.Background(), "/x", nil); err == nil || err.Error() != "later" {
+		t.Errorf("delete: %v", err)
+	}
+	if len(methods) != 2 || methods[0] != "PUT /iam/x" || methods[1] != "DELETE /iam/x" || bodies[0] != `{"a":1}` {
+		t.Errorf("requests %v %v", methods, bodies)
+	}
+}
+
+func TestParseTarget(t *testing.T) {
+	if tg, err := ParseTarget("prod-eu/w-1"); err != nil || tg != (Target{"prod-eu", "w-1"}) {
+		t.Errorf("%v %v", tg, err)
+	}
+	for _, bad := range []string{"nope", "/w", "r/", ""} {
+		if _, err := ParseTarget(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

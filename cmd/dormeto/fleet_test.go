@@ -46,12 +46,18 @@ type fakeAPI struct {
 	startErr   map[string]string // router -> 409 message
 	readStatus int               // when set, reading an operation is refused with this status
 	endWith    string            // the status operations end with: succeeded (default), failed or running
+	stdin      string            // what the command reads on its standard input
+	custom     http.HandlerFunc  // answers every request when set (the workloads commands' tests)
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, r)
 	f.mu.Unlock()
+	if f.custom != nil {
+		f.custom(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/iam/operations") {
 		f.operations(w, r)
 		return
@@ -155,7 +161,7 @@ func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*f
 	var o, e bytes.Buffer
 	root.SetOut(&o)
 	root.SetErr(&e)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(strings.NewReader(api.stdin))
 	root.SetArgs(args)
 	out.exit = execute(root)
 	out.stdout, out.stderr = o.String(), e.String()

@@ -338,9 +338,9 @@ func printJSON(w io.Writer, v any) error {
 // newWorkloads is `dormeto workloads` and its subcommand list.
 func newWorkloads(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
-	cmd := fleetCommand("workloads", "List the manager's workloads")
+	cmd := fleetCommand("workloads", "List workloads, keep them awake and schedule them")
 	f.bind(cmd)
-	cmd.AddCommand(newWorkloadsList(f, deps))
+	cmd.AddCommand(newWorkloadsList(f, deps), newWorkloadsKeepAwake(f, deps), newWorkloadsResume(f, deps), newWorkloadsSchedule(f, deps))
 	return cmd
 }
 

@@ -551,10 +551,56 @@ change, then a last line with the total. A router that does not answer is report
 - `--search <text>`: only the workloads whose name or id contains the text.
 - `--json`: the API's answer.
 
+### Keeping workloads awake and scheduling them
+
+From CLI 0.5.0, `workloads` also keeps workloads awake for a while and sets their weekly schedules (awake and nap
+windows, a maximum nap that wakes for maintenance). Targets are `<router>/<workload id>` arguments, or `--tag key=value`
+(repeatable; every workload that carries them). More than one target is confirmed on a terminal; `--yes` skips it and is
+needed without one; `--dry-run` lists the targets and sends nothing. The other workloads go on when one is refused, and
+the exit is 1.
+
+```sh
+dormeto workloads keep-awake <target>... | --tag k=v... (--for <duration> | --until <time>) [--reason <text>] [--wait] [--timeout <d>]
+dormeto workloads resume     <target>... | --tag k=v...
+dormeto workloads schedule show  <router>/<workload> [--json]
+dormeto workloads schedule set   <target>... | --tag k=v... --file <path or ->
+dormeto workloads schedule clear <target>... | --tag k=v...
+```
+
+```sh
+dormeto workloads keep-awake prod-eu/w-1 --for 2h --wait          # in CI: wake, then wait until awake
+dormeto workloads keep-awake --tag team=payments --until 18:30 --yes
+dormeto workloads resume prod-eu/w-1                              # at the end of the CI job
+dormeto workloads schedule set --tag team=payments --file schedule.json --yes
+dormeto workloads schedule show prod-eu/w-1
+dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule set prod-eu/w-2 --file -
+```
+
+- `keep-awake` posts a pause that leaves the workload awake (`keepAsleep: false`): it is woken when asleep and not put
+  to sleep before the end. `--for` is a Go duration up to `168h` (7 days: `2h`, `90m`; no `d` suffix); `--until` is an
+  RFC 3339 time or `HH:MM` today in the local time zone, refused when already past (it never means tomorrow) or more
+  than 7 days away. One of them is required. `--reason` is the pause's reason ("keep-awake from the CLI" by default).
+  It works with any manager 0.15.0 or later: it uses pauses.
+- `--wait` reads each workload every 5 seconds until `AWAKE`. A `FAILED` workload ends it with its failure (exit 1),
+  `--timeout` (15m by default) names the workloads not awake (exit 1), Ctrl-C exits 130. In each case the pause stays:
+  `workloads resume` ends it.
+- `resume` ends the pause, a keep-awake included.
+- `schedule set` sends the file as it is (`-` for standard input) and the router validates it, its refusal is printed as
+  it words it (exit 1). The file is the schedule's JSON: `timeZone` (an IANA name), `windows` (`kind` `awake` or `nap`,
+  `days` from `mon` to `sun`, `start` and `end` as `HH:MM` in steps of 5 minutes, an `end` not after the `start` ends
+  the next day, `wake` `never` or `header` for a nap), `exceptions` (local dates) and `maxNapDays` (1 to 60). It
+  prints the next events. It needs manager 0.16.0 and routers 0.31.0 (older ones answer "upgrade the router to 0.31.0
+  or later").
+- `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`), the exceptions, the maximum nap
+  and the next events in the schedule's time zone (UTC, with a note, when the zone is unknown to the CLI). `--json`
+  prints the schedule alone, as stored (with `by` and `at`, which the router accepts back), so that it feeds
+  `schedule set --file -`; `null` when none.
+- `schedule clear` removes the schedule.
+
 ### Exit codes
 
 - 0: success (and a declined confirmation, which starts nothing).
-- 1: AWS or the manager refused, an upgrade failed or did not start, or `--timeout` stopped the following.
+- 1: AWS or the manager refused, an upgrade failed or did not start, a workload failed to wake, or `--timeout` stopped the following.
 - 2: a bad flag or argument, or no `--yes` without a terminal.
 - 128 plus the signal's number when SIGINT or SIGTERM stopped the command.
 

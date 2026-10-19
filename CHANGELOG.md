@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- `dormeto workloads keep-awake`, `resume` and `schedule show|set|clear`: keep workloads awake for up to 7 days
+  (`--for 2h` or `--until 17:30`, with `--wait` until they are awake, for CI), end the pause, and set, show or clear
+  their weekly awake and nap windows, one workload or every workload with a tag (`--tag`, `--yes`, `--dry-run`).
+  `keep-awake` and `resume` work with any manager 0.15.0 or later (they use pauses); schedules need manager 0.16.0 and
+  routers 0.31.0.
+
 ## 0.4.1
 
 - `dormeto install` prints what Terraform did, from its own closing line (`applied: 2 added, 1 changed, 0 destroyed`),

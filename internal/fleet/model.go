@@ -104,6 +104,7 @@ type Workload struct {
 	Tags       map[string]string `json:"tags,omitempty"`
 	StateAt    string            `json:"stateAt,omitempty"`
 	UpdatedAt  string            `json:"updatedAt,omitempty"`
+	Scheduled  bool              `json:"scheduled,omitempty"` // a schedule is set (manager 0.16.0)
 }
 
 // RouterError is a router that did not answer the workloads' listing.

@@ -163,6 +163,20 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, path, payload, out)
 }
 
+// Put calls PUT /iam<path> with body as JSON and decodes the answer into out; never retried.
+func (c *Client) Put(ctx context.Context, path string, body, out any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPut, path, payload, out)
+}
+
+// Delete calls DELETE /iam<path> and decodes the answer into out (nil to ignore it); never retried.
+func (c *Client) Delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, out)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, payload []byte, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, c.base+"/iam"+path, bytes.NewReader(payload))
 	if err != nil {
