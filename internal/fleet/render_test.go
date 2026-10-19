@@ -113,13 +113,23 @@ func TestWorkloadsTable(t *testing.T) {
 	t.Errorf("w-2 has no name or tags: %q", lines[2])
 }
 
+func rowsIn(states ...string) []Workload {
+	ws := make([]Workload, len(states))
+	for i, s := range states {
+		ws[i].State = s
+	}
+	return ws
+}
+
 func TestWorkloadsSummary(t *testing.T) {
 	cases := []struct {
 		w    Workloads
 		want string
 	}{
-		{Workloads{Rows: make([]Workload, 4), Total: 4, ByState: map[string]int{"AWAKE": 1, "ASLEEP": 3}}, "4 workloads (3 ASLEEP, 1 AWAKE)"},
-		{Workloads{Rows: make([]Workload, 1), Total: 1}, "1 workload"},
+		{Workloads{Rows: rowsIn("ASLEEP", "ASLEEP", "ASLEEP", "AWAKE"), Total: 4}, "4 workloads (3 ASLEEP, 1 AWAKE)"},
+		// byState counts every workload the caller sees, whatever the filters: the rows listed are counted instead.
+		{Workloads{Rows: rowsIn("AWAKE", "ASLEEP"), Total: 2, ByState: map[string]int{"AWAKE": 12, "ASLEEP": 30}}, "2 workloads (1 ASLEEP, 1 AWAKE)"},
+		{Workloads{Rows: rowsIn("AWAKE"), Total: 1}, "1 workload (1 AWAKE)"},
 		{Workloads{}, "0 workloads"},
 		{Workloads{Rows: make([]Workload, 2), Total: 9}, "9 workloads (2 shown)"},
 	}
@@ -127,5 +137,12 @@ func TestWorkloadsSummary(t *testing.T) {
 		if got := WorkloadsSummary(c.w); got != c.want {
 			t.Errorf("got %q, want %q", got, c.want)
 		}
+	}
+}
+
+func TestRoutersTableShowsNoWorkloadsCountForARouterThatDidNotAnswer(t *testing.T) {
+	lines := strings.Split(strings.TrimRight(RoutersTable(sampleRouters(), "0.30.0"), "\n"), "\n")
+	if !strings.HasSuffix(strings.TrimSpace(lines[4]), none) || !strings.HasPrefix(lines[4], "lost") {
+		t.Errorf("lost: %q", lines[4])
 	}
 }

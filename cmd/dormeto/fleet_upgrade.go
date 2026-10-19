@@ -3,7 +3,8 @@ package main
 // `dormeto routers upgrade`: the plan (routers upgraded, routers skipped and why), the confirmation, then one
 // upgrade-router operation per router started in the manager and followed until it ends. Exit codes: 0 (also when the
 // confirmation is declined: nothing started); 1 when an upgrade failed or did not start, the manager refused or
-// --timeout stopped the following; 2 for a bad flag or argument, or no --yes without a terminal; 128 and the signal's number on a signal.
+// --timeout stopped the following; 2 for a bad flag or argument, or no --yes without a terminal; 128 and the
+// signal's number on a signal.
 
 import (
 	"context"
@@ -17,6 +18,9 @@ import (
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/install"
 )
+
+// unfinishedHint is printed when upgrades are started whose end the run did not see.
+const unfinishedHint = "the started upgrades go on in the manager: follow them in its Operations view"
 
 // followEvery is how often an operation is read while it runs.
 const followEvery = 5 * time.Second
@@ -111,7 +115,8 @@ func runUpgrade(ctx context.Context, c *cobra.Command, deps fleetDeps, api *flee
 		if !deps.terminal(c.InOrStdin()) {
 			return usagef("confirmation needed: pass --yes to upgrade without a terminal")
 		}
-		question := fmt.Sprintf("Upgrade %d %s to %s?", len(plan.Upgrade), fleet.Plural(len(plan.Upgrade), "router"), plan.Available)
+		n := len(plan.Upgrade)
+		question := fmt.Sprintf("Upgrade %d %s to %s?", n, fleet.Plural(n, "router"), plan.Available)
 		ok, err := deps.confirm(ctx, c.InOrStdin(), info, question)
 		if err != nil {
 			return err
@@ -144,11 +149,14 @@ func runUpgrade(ctx context.Context, c *cobra.Command, deps fleetDeps, api *flee
 		}
 		fmt.Fprintln(c.ErrOrStderr(), cause)
 		if res.Unfinished() > 0 {
-			fmt.Fprintln(c.ErrOrStderr(), "the started upgrades go on in the manager: follow them in its Operations view")
+			fmt.Fprintln(c.ErrOrStderr(), unfinishedHint)
 		}
 		return exitCode(1)
 	}
 	if res.Failed() > 0 {
+		if res.Unfinished() > 0 {
+			fmt.Fprintln(c.ErrOrStderr(), unfinishedHint)
+		}
 		return errors.New(summary)
 	}
 	fmt.Fprintln(info, summary)

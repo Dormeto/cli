@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -66,25 +67,34 @@ func TestPlanText(t *testing.T) {
 
 // fakeOps is an Operations whose operations end after `polls` follow-ups. It counts those running at once.
 type fakeOps struct {
-	mu       sync.Mutex
-	polls    int
-	started  []string
-	seen     map[string]int
-	running  int
-	peak     int
-	failWith map[string]Operation // router -> the final operation it ends with
-	refuse   map[string]error
-	getErr   error
-	getErrs  int           // the first reads that fail with a transient error
-	barrier  int           // Get waits until this many routers have started
-	ready    chan struct{} // closed at the barrier
-	onStart  func(n int)   // called with the number started, after a start
-	onGet    func()
+	mu          sync.Mutex
+	polls       int
+	started     []string
+	seen        map[string]int
+	running     int
+	peak        int
+	failWith    map[string]Operation // router -> the final operation it ends with
+	refuse      map[string]error
+	getErr      error
+	getErrOnce  error // the error of the first getErrOnceN reads
+	getErrOnceN int
+	startFn     func(context.Context) error // called by Start, its error refuses the start
+	gets        int
+	getErrs     int           // the first reads that fail with a transient error
+	barrier     int           // Get waits until this many routers have started
+	ready       chan struct{} // closed at the barrier
+	onStart     func(n int)   // called with the number started, after a start
+	onGet       func()
 }
 
 func (f *fakeOps) Start(ctx context.Context, router string) (Operation, error) {
 	if err := ctx.Err(); err != nil {
 		return Operation{}, err
+	}
+	if f.startFn != nil {
+		if err := f.startFn(ctx); err != nil {
+			return Operation{}, err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -119,9 +129,14 @@ func (f *fakeOps) Get(ctx context.Context, id string) (Operation, error) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.gets++
+	if f.getErrOnceN > 0 {
+		f.getErrOnceN--
+		return Operation{}, f.getErrOnce
+	}
 	if f.getErrs > 0 {
 		f.getErrs--
-		return Operation{}, errors.New("connection reset")
+		return Operation{}, &url.Error{Op: "Get", URL: "https://x", Err: errors.New("connection reset")}
 	}
 	if f.getErr != nil {
 		return Operation{}, f.getErr
@@ -174,7 +189,7 @@ func TestUpgradeNeverRunsMoreThanConcurrency(t *testing.T) {
 	var ev []Event
 	c := &clock{t: time.Unix(0, 0)}
 	res := Upgrade(t.Context(), ops, planOf("a", "b", "c", "d", "e"), options(c, 2, &ev))
-	if ops.peak > 2 || ops.peak != 2 || len(ops.started) != 5 {
+	if ops.peak != 2 || len(ops.started) != 5 {
 		t.Errorf("peak %d, started %v", ops.peak, ops.started)
 	}
 	if res.Failed() != 0 || len(res.Upgraded) != 5 || res.Stopped {
@@ -305,5 +320,73 @@ func TestUpgradeLosingTheOperationIsNotASuccess(t *testing.T) {
 	}
 	if got := res.Summary(); got != "1 unknown" {
 		t.Errorf("summary %q", got)
+	}
+}
+
+func TestUpgradeStartFailingWith5xxOrTransportErrorMayHaveStarted(t *testing.T) {
+	for name, err := range map[string]error{
+		"5xx":       &APIError{Status: 502, Message: "bad gateway"},
+		"transport": &url.Error{Op: "Post", URL: "https://x", Err: errors.New("i/o timeout")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ops := &fakeOps{polls: 1, refuse: map[string]error{"a": err}}
+			res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+			a := res.Upgraded[0]
+			if a.Status != "unknown" || !strings.Contains(a.Error, "the manager may have started it: check its Operations view (") ||
+				!strings.Contains(a.Error, err.Error()) || res.Failed() != 1 {
+				t.Errorf("%+v", a)
+			}
+		})
+	}
+}
+
+func TestUpgradeStartRefusedWith4xxDidNotStart(t *testing.T) {
+	for _, status := range []int{403, 404, 409} {
+		ops := &fakeOps{polls: 1, refuse: map[string]error{"a": &APIError{Status: status, Message: "no"}}}
+		a := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+		if o := a.Upgraded[0]; o.Status != "failed" || o.Error != "no" {
+			t.Errorf("%d: %+v", status, o)
+		}
+	}
+}
+
+func TestUpgradeCutShortStartUsesTheSameWording(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { cancel(); return context.Canceled }}
+	res := Upgrade(ctx, ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+	want := "interrupted while starting: the manager may have started it: check its Operations view (context canceled)"
+	if o := res.Upgraded[0]; o.Status != "unknown" || o.Error != want {
+		t.Errorf("%+v", o)
+	}
+}
+
+func TestUpgradeFollowingGivesUpOnANonAPIError(t *testing.T) {
+	for _, err := range []error{
+		errors.New("AWS credentials: the SSO session has expired"),
+		errors.New("decode the manager's answer: invalid character"),
+		&APIError{Status: 404, Message: "no such operation"},
+	} {
+		ops := &fakeOps{polls: 1, getErr: err}
+		res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+		o := res.Upgraded[0]
+		if o.Status != "unknown" || !strings.Contains(o.Error, err.Error()) {
+			t.Errorf("%v: %+v", err, o)
+		}
+		if ops.gets != refusedAfter {
+			t.Errorf("%v: %d reads, want %d", err, ops.gets, refusedAfter)
+		}
+	}
+}
+
+func TestUpgradeFollowingWaitsOutNetworkErrors429And5xx(t *testing.T) {
+	for _, err := range []error{
+		&url.Error{Op: "Get", URL: "https://x", Err: errors.New("reset")},
+		&APIError{Status: 429}, &APIError{Status: 503},
+	} {
+		ops := &fakeOps{polls: 1, getErrOnce: err, getErrOnceN: 10}
+		res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+		if res.Upgraded[0].Status != "succeeded" {
+			t.Errorf("%v: %+v", err, res.Upgraded[0])
+		}
 	}
 }

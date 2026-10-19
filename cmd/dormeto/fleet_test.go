@@ -37,14 +37,15 @@ const workloadsAnswer = `{"workloads":[
 
 // fakeAPI answers /iam/routers and /iam/workloads, recording the requests.
 type fakeAPI struct {
-	mu       sync.Mutex
-	requests []*http.Request
-	routers  string
-	status   int
-	body     string            // overrides the answers when set, with status
-	posted   []string          // the bodies of POST /iam/operations
-	startErr map[string]string // router -> 409 message
-	endWith  string            // the status operations end with: succeeded (default), failed or running
+	mu         sync.Mutex
+	requests   []*http.Request
+	routers    string
+	status     int
+	body       string            // overrides the answers when set, with status
+	posted     []string          // the bodies of POST /iam/operations
+	startErr   map[string]string // router -> 409 message
+	readStatus int               // when set, reading an operation is refused with this status
+	endWith    string            // the status operations end with: succeeded (default), failed or running
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {

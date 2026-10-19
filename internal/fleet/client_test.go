@@ -86,6 +86,7 @@ func TestErrors(t *testing.T) {
 		code    string
 	}{
 		{"forbidden", 403, `{"message":"Forbidden"}`, "execute-api:Invoke", true, ""},
+		{"expired token", 403, `{"message":"The security token included in the request is expired"}`, "execute-api:Invoke", true, ""},
 		{"not found", 404, `{"message":"Not Found"}`, "update it to 0.15.0 or later", true, ""},
 		{"manager", 409, `{"error":"conflict","message":"m"}`, "m", false, "conflict"},
 		{"opaque", 500, `oops`, "500", false, ""},
@@ -103,6 +104,12 @@ func TestErrors(t *testing.T) {
 			}
 			if ae.Status != tt.status || ae.Gateway != tt.gateway || ae.Code != tt.code || !strings.Contains(ae.Error(), tt.want) {
 				t.Errorf("err = %+v (%s)", ae, ae)
+			}
+			if tt.name == "expired token" && !strings.Contains(ae.Error(), "(The security token included in the request is expired)") {
+				t.Errorf("the gateway's message is lost: %q", ae)
+			}
+			if tt.name == "forbidden" && strings.Contains(ae.Error(), "(Forbidden)") {
+				t.Errorf("a plain Forbidden is repeated: %q", ae)
 			}
 			if tt.name == "manager" && ae.Error() != "m" {
 				t.Errorf("Error() = %q", ae.Error())

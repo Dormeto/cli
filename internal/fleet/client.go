@@ -34,7 +34,12 @@ type APIError struct {
 func (e *APIError) Error() string {
 	switch {
 	case e.Gateway && e.Status == http.StatusForbidden:
-		return "the manager's API refused the request (forbidden): the profile's identity needs execute-api:Invoke on the manager API's /iam/* routes"
+		hint := "the manager's API refused the request (forbidden): the profile's identity needs execute-api:Invoke " +
+			"on the manager API's /iam/* routes"
+		if e.Message != "Forbidden" { // an expired token, a clock skew, a wrong signing region: the gateway says which
+			hint += " (" + e.Message + ")"
+		}
+		return hint
 	case e.Gateway && e.Status == http.StatusNotFound:
 		return "the manager's API has no /iam routes: the manager predates them, update it to 0.15.0 or later"
 	case e.Message != "":

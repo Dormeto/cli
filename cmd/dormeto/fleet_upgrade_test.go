@@ -19,6 +19,11 @@ func (f *fakeAPI) operations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodGet {
 		id := strings.TrimPrefix(r.URL.Path, "/iam/operations/")
+		if f.readStatus != 0 {
+			w.WriteHeader(f.readStatus)
+			io.WriteString(w, `{"error":"forbidden","message":"not yours"}`)
+			return
+		}
 		switch f.endWith {
 		case "failed":
 			fmt.Fprintf(w, `{"id":%q,"type":"upgrade-router","status":"failed","steps":[{"name":"backup","status":"done"},{"name":"update-stack","status":"failed","detail":"role missing"}]}`, id)
@@ -200,5 +205,14 @@ func TestUpgradeTimeoutStopsFollowingAndExits1(t *testing.T) {
 	}
 	if strings.Contains(r.stderr, "exit code") {
 		t.Errorf("stderr %q", r.stderr)
+	}
+}
+
+func TestUpgradeFailedWithAnOperationUnreadHintsAtTheOperationsView(t *testing.T) {
+	api := &fakeAPI{routers: upgradeRouters, readStatus: 403}
+	r := runFleet(t, api, "eu-west-1", "routers", "upgrade", "r1", "--yes")
+	hint := "the started upgrades go on in the manager: follow them in its Operations view"
+	if r.exit != 1 || !strings.Contains(r.stdout+r.stderr, "cannot read the operation: not yours") || !strings.Contains(r.stderr, hint) {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }

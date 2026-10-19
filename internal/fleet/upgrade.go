@@ -5,8 +5,11 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -192,7 +195,10 @@ func (r Result) Summary() string {
 	for _, c := range []struct {
 		n     int
 		label string
-	}{{r.count("succeeded"), "upgraded"}, {r.count("failed"), "failed"}, {r.count("unknown"), "unknown"}, {r.Running(), "still running"}, {r.NotStarted(), "not started"}} {
+	}{
+		{r.count("succeeded"), "upgraded"}, {r.count("failed"), "failed"}, {r.count("unknown"), "unknown"},
+		{r.Running(), "still running"}, {r.NotStarted(), "not started"},
+	} {
 		if c.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.label))
 		}
@@ -209,14 +215,41 @@ type UpgradeOptions struct {
 	Progress    func(Event) // called one at a time
 }
 
-// refusedAfter is how many reads of an operation in a row the manager may refuse (403, 404…) before it is given up as
-// unknown. A network error, 429 or 5xx is waited out: the upgrade runs in the manager, and the context bounds the wait.
+// refusedAfter is how many reads of an operation in a row may fail for a reason that will not pass (a 403 or 404, the
+// credentials, an unreadable answer) before it is given up as unknown. A network error, 429 or 5xx is waited out: the
+// upgrade runs in the manager, and the context bounds the wait.
 const refusedAfter = 3
 
-// refusal tells whether err is the manager's refusal, which another try will not change.
-func refusal(err error) bool {
-	e, ok := err.(*APIError)
-	return ok && e.Status != http.StatusTooManyRequests && e.Status < 500
+// transient tells whether err is worth waiting out: a network error, 429 or 5xx. Any other error (the credentials, an
+// answer that cannot be read, a 4xx refusal) will not pass by itself.
+func transient(err error) bool {
+	var ne net.Error
+	var ue *url.Error
+	var ae *APIError
+	switch {
+	case errors.As(err, &ae):
+		return ae.Status == http.StatusTooManyRequests || ae.Status >= 500
+	case errors.As(err, &ue), errors.As(err, &ne):
+		return true
+	}
+	return false
+}
+
+// mayHaveStarted tells whether a failed start leaves the operation possibly created in the manager: a 5xx or a
+// transport error (a 4xx refusal, or an error before the request is sent, did not start it).
+func mayHaveStarted(err error) bool {
+	var ae *APIError
+	if errors.As(err, &ae) {
+		return ae.Status >= 500
+	}
+	var ne net.Error
+	var ue *url.Error
+	return errors.As(err, &ue) || errors.As(err, &ne)
+}
+
+// startUnknown is how a start whose outcome is not known is reported.
+func startUnknown(err error) string {
+	return "the manager may have started it: check its Operations view (" + err.Error() + ")"
 }
 
 // Upgrade starts the plan's upgrades, at most Concurrency at once, and follows each every Poll until it ends. When ctx
@@ -275,7 +308,10 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 	op, err := api.Start(ctx, st.Router)
 	if err != nil {
 		if ctx.Err() != nil { // cut short in the call: the manager may or may not have started it
-			return ended("unknown", "interrupted while starting, the manager may have started it: "+err.Error())
+			return ended("unknown", "interrupted while starting: "+startUnknown(err))
+		}
+		if mayHaveStarted(err) {
+			return ended("unknown", startUnknown(err))
 		}
 		return ended("failed", err.Error())
 	}
@@ -299,7 +335,7 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 		case ctx.Err() != nil:
 			out.Status, out.Duration = "running", o.Now().Sub(began)
 			return out
-		case refusal(err):
+		case !transient(err):
 			if failures++; failures >= refusedAfter {
 				return ended("unknown", "cannot read the operation: "+err.Error())
 			}

@@ -69,9 +69,12 @@ func RoutersTable(rs []Router, available string) string {
 		case r.Outdated(available):
 			version += " → " + available
 		}
-		count := fmt.Sprint(r.Workloads)
-		if s := states(r.WorkloadStates); s != "" {
-			count += " (" + s + ")"
+		count := none // a router that did not answer has no count
+		if r.Error == "" {
+			count = fmt.Sprint(r.Workloads)
+			if s := states(r.WorkloadStates); s != "" {
+				count += " (" + s + ")"
+			}
 		}
 		rows = append(rows, []string{r.Name, orNone(r.Account), r.Region, r.Source, version, orNone(r.Health.Status), count})
 	}
@@ -136,14 +139,19 @@ func age(at string, now time.Time) string {
 	}
 }
 
-// WorkloadsSummary is the line under the table: the total, with the count per state when every workload is listed.
+// WorkloadsSummary is the line under the table: the total, with the count per state of the rows listed when they are
+// all there. The manager's byState counts every workload the caller sees, whatever the filters, so it is not used.
 func WorkloadsSummary(w Workloads) string {
 	s := fmt.Sprintf("%d %s", w.Total, Plural(w.Total, "workload"))
-	switch {
-	case len(w.Rows) < w.Total:
-		s += fmt.Sprintf(" (%d shown)", len(w.Rows))
-	case len(w.ByState) > 0:
-		s += " (" + states(w.ByState) + ")"
+	if len(w.Rows) < w.Total {
+		return s + fmt.Sprintf(" (%d shown)", len(w.Rows))
+	}
+	counts := map[string]int{}
+	for _, r := range w.Rows {
+		counts[r.State]++
+	}
+	if len(counts) > 0 {
+		s += " (" + states(counts) + ")"
 	}
 	return s
 }
