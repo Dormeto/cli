@@ -314,8 +314,12 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 	}
 	op, err := api.Start(ctx, st.Router)
 	if err != nil {
-		if errors.Is(err, ErrNotSent) { // nothing left, whatever became of the run
-			return ended("failed", "not started: "+err.Error())
+		if errors.Is(err, ErrNotSent) { // nothing was sent: safe to run again
+			if ctx.Err() != nil { // the run was cut short: like the starts the stop pre-empted
+				out.Status = "not started"
+				return out
+			}
+			return ended("failed", err.Error()) // ErrNotSent's own text opens it: "not started: ..."
 		}
 		if ctx.Err() != nil { // cut short in the call: the manager may or may not have started it
 			return ended("unknown", "interrupted while starting: "+startUnknown(err))
@@ -324,6 +328,9 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 			return ended("unknown", startUnknown(err))
 		}
 		return ended("failed", err.Error())
+	}
+	if op.ID == "" { // answered 2xx without naming the operation: it cannot be followed
+		return ended("unknown", startUnknown(errors.New("the answer names no operation")))
 	}
 	out.Operation = op.ID
 	report(Event{Outcome: out})

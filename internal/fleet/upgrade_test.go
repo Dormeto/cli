@@ -413,11 +413,38 @@ func TestUpgradeStartAnsweredButUnreadableIsUnknown(t *testing.T) {
 }
 
 func TestUpgradeNotSentBeatsInterrupted(t *testing.T) {
+	// cancelled (--timeout, a signal): reported like the starts the stop pre-empted
 	ctx, cancel := context.WithCancel(t.Context())
 	err := fmt.Errorf("%w: AWS credentials: expired", ErrNotSent)
 	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { cancel(); return err }}
 	res := Upgrade(ctx, ops, planOf("a"), options(&clock{}, 1, new([]Event)))
-	if o := res.Upgraded[0]; o.Status != "failed" || !strings.Contains(o.Error, "not started") || strings.Contains(o.Error, "interrupted") {
+	if o := res.Upgraded[0]; o.Status != "not started" || strings.Contains(o.Error, "interrupted") || o.Operation != "" {
 		t.Errorf("%+v", o)
+	}
+	if !res.Stopped {
+		t.Errorf("%+v", res)
+	}
+}
+
+func TestUpgradeNotSentUncancelledIsFailed(t *testing.T) {
+	err := fmt.Errorf("%w: AWS credentials: expired", ErrNotSent)
+	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { return err }}
+	res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+	if o := res.Upgraded[0]; o.Status != "failed" || !strings.HasPrefix(o.Error, "not started: AWS") || res.Stopped {
+		t.Errorf("%+v", o)
+	}
+}
+
+func TestUpgradeStartWithoutOperationIDIsUnknown(t *testing.T) {
+	for name, body := range map[string]string{"empty body": "", "no id": `{"status":"running"}`} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) })
+			ev := new([]Event)
+			res := Upgrade(t.Context(), NewOperations(c), planOf("a"), options(&clock{}, 1, ev))
+			o := res.Upgraded[0]
+			if o.Status != "unknown" || o.Operation != "" || !strings.Contains(o.Error, "the manager may have started it") || res.Failed() != 1 {
+				t.Errorf("%+v", o)
+			}
+		})
 	}
 }
