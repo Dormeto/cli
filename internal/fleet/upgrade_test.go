@@ -411,3 +411,13 @@ func TestUpgradeStartAnsweredButUnreadableIsUnknown(t *testing.T) {
 		t.Errorf("%+v", o)
 	}
 }
+
+func TestUpgradeNotSentBeatsInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	err := fmt.Errorf("%w: AWS credentials: expired", ErrNotSent)
+	ops := &fakeOps{polls: 1, startFn: func(context.Context) error { cancel(); return err }}
+	res := Upgrade(ctx, ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+	if o := res.Upgraded[0]; o.Status != "failed" || !strings.Contains(o.Error, "not started") || strings.Contains(o.Error, "interrupted") {
+		t.Errorf("%+v", o)
+	}
+}

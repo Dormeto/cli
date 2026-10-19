@@ -47,7 +47,8 @@ func (e *notSentError) Error() string        { return e.err.Error() }
 func (e *notSentError) Unwrap() error        { return e.err }
 func (e *notSentError) Is(target error) bool { return target == ErrNotSent }
 
-// unreadableError is a 2xx answer whose body cannot be decoded: the call was done, only its result is lost.
+// unreadableError is a 2xx answer whose body cannot be decoded (of a GET or a POST): the call was done, only its result
+// is lost; for a start, the operation may exist.
 type unreadableError struct{ err error }
 
 func (e *unreadableError) Error() string { return e.err.Error() }

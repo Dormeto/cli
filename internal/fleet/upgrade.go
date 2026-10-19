@@ -238,11 +238,11 @@ func transient(err error) bool {
 // mayHaveStarted tells whether a failed start leaves the operation possibly created in the manager: a 5xx, a transport
 // error, or a 2xx answer that cannot be read (a 4xx refusal, or an error before the request is sent, did not start it).
 func mayHaveStarted(err error) bool {
-	var ue2 *unreadableError
+	var unreadable *unreadableError
 	if errors.Is(err, ErrNotSent) {
 		return false
 	}
-	if errors.As(err, &ue2) {
+	if errors.As(err, &unreadable) {
 		return true
 	}
 	var ae *APIError
@@ -314,14 +314,14 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 	}
 	op, err := api.Start(ctx, st.Router)
 	if err != nil {
+		if errors.Is(err, ErrNotSent) { // nothing left, whatever became of the run
+			return ended("failed", "not started: "+err.Error())
+		}
 		if ctx.Err() != nil { // cut short in the call: the manager may or may not have started it
 			return ended("unknown", "interrupted while starting: "+startUnknown(err))
 		}
 		if mayHaveStarted(err) {
 			return ended("unknown", startUnknown(err))
-		}
-		if errors.Is(err, ErrNotSent) {
-			return ended("failed", "not started: "+err.Error())
 		}
 		return ended("failed", err.Error())
 	}

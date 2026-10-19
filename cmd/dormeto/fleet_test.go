@@ -110,6 +110,7 @@ type fleetRan struct {
 	exit           int
 	api            *fakeAPI
 	located        []string // env/region of each lookup
+	cfgRegions     []string // the region of the configuration each lookup is made with
 	profile        string
 }
 
@@ -129,7 +130,8 @@ func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*f
 			out.profile = profile
 			return awssdk.Config{Region: profileRegion, Credentials: credentials.NewStaticCredentialsProvider("AKID", "secret", "")}, nil
 		},
-		locator: func(awssdk.Config) fleet.Locator {
+		locator: func(cfg awssdk.Config) fleet.Locator {
+			out.cfgRegions = append(out.cfgRegions, cfg.Region)
 			return locatorFunc(func(_ context.Context, env, region string) (string, error) {
 				out.located = append(out.located, env+"/"+region)
 				return srv.URL, nil
@@ -386,5 +388,16 @@ func TestFleetRefusals(t *testing.T) {
 		if exit != 1 || !strings.Contains(e.String(), c.want) || o.String() != "" || len(c.api.requests) != c.wantRequests {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q, %d requests", c.name, exit, o.String(), e.String(), len(c.api.requests))
 		}
+	}
+}
+
+func TestRegionFlagWinsOverTheProfilesForTheLookup(t *testing.T) {
+	r := runFleet(t, &fakeAPI{}, "eu-west-1", "routers", "list", "--region", "eu-west-3")
+	if r.exit != 0 || len(r.cfgRegions) != 1 || r.cfgRegions[0] != "eu-west-3" {
+		t.Errorf("exit %d, config regions %v, stderr %q", r.exit, r.cfgRegions, r.stderr)
+	}
+	r = runFleet(t, &fakeAPI{}, "eu-west-1", "routers", "list")
+	if r.exit != 0 || len(r.cfgRegions) != 1 || r.cfgRegions[0] != "eu-west-1" {
+		t.Errorf("exit %d, config regions %v, stderr %q", r.exit, r.cfgRegions, r.stderr)
 	}
 }
