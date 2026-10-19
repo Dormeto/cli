@@ -555,7 +555,10 @@ change, then a last line with the total. A router that does not answer is report
 
 From CLI 0.5.0, `workloads` also keeps workloads awake for a while and sets their weekly schedules (awake and nap
 windows, a maximum nap that wakes for maintenance). Targets are `<router>/<workload id>` arguments, or `--tag key=value`
-(repeatable; every workload that carries them). More than one target is confirmed on a terminal; `--yes` skips it and is
+(repeatable; every workload that carries them, all pages of the listing); arguments and `--tag` cannot be mixed, and a
+`--tag` that matches nothing exits 2. When a router does not answer (or the listing cannot be completed), the workloads
+resolved are acted on, then the command names what could not be resolved and exits 1 (`--wait` still waits for the
+resolved ones). More than one target is confirmed on a terminal; `--yes` skips it and is
 needed without one; `--dry-run` lists the targets and sends nothing. The other workloads go on when one is refused, and
 the exit is 1.
 
@@ -581,7 +584,7 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
   RFC 3339 time or `HH:MM` today in the local time zone, refused when already past (it never means tomorrow) or more
   than 7 days away. One of them is required. `--reason` is the pause's reason ("keep-awake from the CLI" by default).
   It works with any manager 0.15.0 or later: it uses pauses.
-- `--wait` reads each workload every 5 seconds until `AWAKE`. A `FAILED` workload ends it with its failure (exit 1),
+- `--wait` reads each workload every 5 seconds until `AWAKE` (a workload whose status answers 4xx, or fails 3 times in a row, is dropped and the exit is 1). A `FAILED` workload ends it with its failure (exit 1),
   `--timeout` (15m by default) names the workloads not awake (exit 1), Ctrl-C exits 130. In each case the pause stays:
   `workloads resume` ends it.
 - `resume` ends the pause, a keep-awake included.
@@ -593,14 +596,16 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
   or later").
 - `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`), the exceptions, the maximum nap
   and the next events in the schedule's time zone (UTC, with a note, when the zone is unknown to the CLI). `--json`
-  prints the schedule alone, as stored (with `by` and `at`, which the router accepts back), so that it feeds
-  `schedule set --file -`; `null` when none.
+  prints `{schedule, next, maintenanceDue}` (`schedule` is `null` when none), which `schedule set --file -` takes
+  back: the file may be a bare schedule or that shape, and its `schedule` member is sent (`by` and `at` in it are
+  accepted by the router). A file with no schedule (`null`, `{"schedule": null}`) is refused with exit 2.
 - `schedule clear` removes the schedule.
 
 ### Exit codes
 
 - 0: success (and a declined confirmation, which starts nothing).
-- 1: AWS or the manager refused, an upgrade failed or did not start, a workload failed to wake, or `--timeout` stopped the following.
+- 1: AWS or the manager refused, an upgrade failed or did not start, a workload failed to wake or was not followed to
+  the end, a `--tag` selection was incomplete, or `--timeout` stopped the following.
 - 2: a bad flag or argument, or no `--yes` without a terminal.
 - 128 plus the signal's number when SIGINT or SIGTERM stopped the command.
 

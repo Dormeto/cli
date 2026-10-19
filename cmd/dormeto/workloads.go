@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -61,9 +62,10 @@ func (t *targetFlags) check(args []string, one bool) error {
 	return nil
 }
 
-// resolve gives the targets: the arguments, or the workloads GET /workloads?tag=… lists (a router that did not answer
-// is warned of; none matching is a bad argument).
-func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.Client, args []string) ([]fleet.Target, error) {
+// resolve gives the targets: the arguments, or the workloads GET /workloads?tag=… lists, every page of it. A router
+// that did not answer, or a listing that cannot be completed, is not fatal: the workloads resolved are returned and
+// incomplete says what could not be resolved ("" when nothing is missing). None matching at all is a bad argument.
+func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.Client, args []string) (targets []fleet.Target, incomplete string, err error) {
 	if len(args) > 0 {
 		var out []fleet.Target
 		for _, a := range args {
@@ -72,27 +74,64 @@ func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.
 				out = append(out, tg)
 			}
 		}
-		return out, nil
+		return out, "", nil
 	}
-	var w fleet.Workloads
-	if err := api.Get(ctx, "/workloads", url.Values{"tag": t.tags}, &w); err != nil {
-		return nil, err
-	}
+	var (
+		out     []fleet.Target
+		silent  []string // routers that did not answer
+		partial bool
+		seen    = map[string]bool{}
+		cursor  string
+	)
 	warnings := newRouterWarnings(c)
-	for _, e := range w.Errors {
-		warnings.warn(e.Router, e.Message, "its workloads' tags are unknown")
+	for page := 0; page < 1000; page++ {
+		q := url.Values{"tag": t.tags}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		var w fleet.Workloads
+		if err := api.Get(ctx, "/workloads", q, &w); err != nil {
+			return nil, "", err
+		}
+		for _, e := range w.Errors {
+			warnings.warn(e.Router, e.Message, "its workloads' tags are unknown")
+			if !slices.Contains(silent, e.Router) {
+				silent = append(silent, e.Router)
+			}
+		}
+		for _, wl := range w.Rows {
+			if tg := (fleet.Target{Router: wl.Router, ID: wl.WorkloadID}); !slices.Contains(out, tg) {
+				out = append(out, tg)
+			}
+		}
+		if !w.More() {
+			break
+		}
+		var next string
+		if json.Unmarshal(w.Cursor, &next) != nil || next == "" || seen[next] {
+			partial = true
+			break
+		}
+		seen[next], cursor = true, next
+		if page == 999 {
+			partial = true
+		}
 	}
-	if w.More() {
-		fmt.Fprintln(c.ErrOrStderr(), "the manager listed only part of the workloads with these tags: some may be missing")
+	var missing []string
+	if len(silent) > 0 {
+		slices.Sort(silent)
+		missing = append(missing, "router "+strings.Join(silent, ", ")+" did not answer")
 	}
-	var out []fleet.Target
-	for _, wl := range w.Rows {
-		out = append(out, fleet.Target{Router: wl.Router, ID: wl.WorkloadID})
+	if partial {
+		missing = append(missing, "the manager's listing could not be completed")
 	}
-	if len(out) == 0 {
-		return nil, usagef("no workload carries %s", strings.Join(t.tags, ", "))
+	if len(missing) > 0 {
+		incomplete = "not all the workloads with these tags were resolved: " + strings.Join(missing, "; ")
 	}
-	return out, nil
+	if len(out) == 0 && incomplete == "" {
+		return nil, "", usagef("no workload carries %s", strings.Join(t.tags, ", "))
+	}
+	return out, incomplete, nil
 }
 
 // confirmTargets lists the targets on --dry-run (done: true), asks on a terminal when there are several and --yes is
@@ -169,14 +208,28 @@ func (w *writeCommand) bindShared(cmd *cobra.Command) {
 // run resolves, confirms and calls act with the targets.
 func (w *writeCommand) run(c *cobra.Command, args []string, what, question string, act func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error) error {
 	return w.f.run(c, w.deps, func(ctx context.Context, api *fleet.Client) error {
-		targets, err := w.targets.resolve(ctx, c, api, args)
+		targets, incomplete, err := w.targets.resolve(ctx, c, api, args)
 		if err != nil {
 			return err
 		}
-		if done, err := confirmTargets(ctx, c, w.deps, targets, what, question, w.dryRun, w.yes); done || err != nil {
+		// What could not be resolved is said after the action on the others, and makes the exit 1.
+		report := func(err error) error {
+			if incomplete == "" || ctx.Err() != nil {
+				return err
+			}
+			fmt.Fprintln(c.ErrOrStderr(), incomplete)
+			if err == nil {
+				return exitCode(1)
+			}
 			return err
 		}
-		return act(ctx, api, targets)
+		if len(targets) == 0 {
+			return report(nil)
+		}
+		if done, err := confirmTargets(ctx, c, w.deps, targets, what, question, w.dryRun, w.yes); done || err != nil {
+			return report(err)
+		}
+		return report(act(ctx, api, targets))
 	})
 }
 
@@ -314,20 +367,32 @@ func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-followed.Done():
-				return
-			}
+			errs := 0
 			for {
 				var st workloadStatus
-				err := api.Get(followed, t.Path(""), nil, &st)
+				var err error
+				select { // a slot for the request alone, so that every target is polled
+				case sem <- struct{}{}:
+					err = api.Get(followed, t.Path(""), nil, &st)
+					<-sem
+				case <-followed.Done():
+					return
+				}
 				switch {
 				case followed.Err() != nil:
 					return
 				case err != nil:
 					say(c.ErrOrStderr(), "%s: %s\n", t, err)
+					errs++
+					var ae *fleet.APIError
+					if (errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500 && ae.Status != http.StatusTooManyRequests) || errs >= 3 {
+						say(c.ErrOrStderr(), "%s: not followed any more\n", t)
+						mu.Lock()
+						delete(pending, t)
+						failures++
+						mu.Unlock()
+						return
+					}
 				case st.State == "AWAKE":
 					say(c.OutOrStdout(), "%s: awake\n", t)
 					mu.Lock()
@@ -341,6 +406,8 @@ func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet
 					failures++
 					mu.Unlock()
 					return
+				default:
+					errs = 0
 				}
 				if deps.sleep(followed, followEvery) != nil {
 					return
@@ -508,8 +575,8 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "show <router>/<workload>", Short: "Show a workload's schedule and its next events",
 		Long: "Show the schedule: the time zone, the windows, the exceptions, the maximum nap and the next events, in the\n" +
-			"schedule's time zone. --json prints the schedule alone, as stored (null when none), ready for\n" +
-			"`dormeto workloads schedule set --file -`.",
+			"schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none), which\n" +
+			"`dormeto workloads schedule set --file -` accepts back.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := (&targetFlags{}).check(args, true); err != nil {
@@ -528,11 +595,11 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				out := c.OutOrStdout()
 				none := len(st.Schedule) == 0 || string(st.Schedule) == "null"
 				if asJSON {
-					if none {
-						_, err := fmt.Fprintln(out, "null")
-						return err
-					}
-					return printJSON(out, st.Schedule)
+					return printJSON(out, struct {
+						Schedule       json.RawMessage `json:"schedule"`
+						Next           []nextEvent     `json:"next"`
+						MaintenanceDue *string         `json:"maintenanceDue"`
+					}{orRaw(st.Schedule), orNext(st.Next), nilIfEmpty(st.MaintenanceDue)})
 				}
 				if none {
 					fmt.Fprintf(out, "%s: no schedule\n", t)
@@ -564,7 +631,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the schedule alone, as stored")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print {schedule, next, maintenanceDue}, as `schedule set --file` accepts")
 	return cmd
 }
 
@@ -574,7 +641,8 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "set (<router>/<workload>... | --tag k=v...) --file <path or ->", Short: "Set the schedule of workloads from a JSON file",
 		Long: "Set the schedule of the workloads from a JSON file (- for standard input), sent as it is: the router checks it\n" +
-			"and a refusal is printed as it words it. `schedule show --json` output is accepted back. Needs manager 0.16.0 and\n" +
+			"and a refusal is printed as it words it. The file is the schedule, or `schedule show --json` output (its\n" +
+			"`schedule` member is sent; a null one is refused). Needs manager 0.16.0 and\n" +
 			"routers 0.31.0. The schedule's JSON:\n\n" +
 			"  {\"timeZone\": \"Europe/Paris\",\n" +
 			"   \"windows\": [{\"kind\": \"awake\", \"days\": [\"mon\",\"tue\",\"wed\",\"thu\",\"fri\"], \"start\": \"08:30\", \"end\": \"19:00\"},\n" +
@@ -634,11 +702,22 @@ func readScheduleFile(c *cobra.Command, path string) (json.RawMessage, error) {
 		data, err = os.ReadFile(path)
 	}
 	if err != nil {
-		return nil, usagef("--file: %v", errors.Unwrap(err))
+		return nil, usagef("--file: %v", err)
 	}
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, usagef("--file: not a JSON object: %v", err)
+	}
+	none := usagef("--file: no schedule in %s; use schedule clear", map[bool]string{true: "standard input", false: path}[path == "-"])
+	if probe == nil { // null
+		return nil, none
+	}
+	if member, ok := probe["schedule"]; ok { // the shape of `schedule show --json` and of a PUT's answer
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(member, &obj) != nil || obj == nil {
+			return nil, none
+		}
+		return member, nil
 	}
 	return json.RawMessage(data), nil
 }
@@ -670,4 +749,25 @@ func newScheduleClear(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	w.bindShared(cmd)
 	return cmd
+}
+
+func orRaw(r json.RawMessage) json.RawMessage {
+	if len(r) == 0 {
+		return json.RawMessage("null")
+	}
+	return r
+}
+
+func orNext(n []nextEvent) []nextEvent {
+	if n == nil {
+		return []nextEvent{}
+	}
+	return n
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

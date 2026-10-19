@@ -19,13 +19,15 @@ import (
 
 // wlAPI is a fake manager for the workloads commands: it records the writes and answers the statuses in order.
 type wlAPI struct {
-	mu       sync.Mutex
-	writes   []string // "POST /iam/workloads/prod-eu/w-1/pause {body}"
-	statuses []string // the status answers of GET …/{id}, the last one repeated
-	reads    int
-	putCode  int
-	putBody  string
-	schedule string // the schedule GET …/{id} reports ("" for null)
+	mu        sync.Mutex
+	writes    []string // "POST /iam/workloads/prod-eu/w-1/pause {body}"
+	statuses  []string // the status answers of GET …/{id}, the last one repeated
+	reads     int
+	putCode   int
+	putBody   string
+	perTarget bool // each workload has its own sequence of statuses
+	counts    map[string]int
+	schedule  string // the schedule GET …/{id} reports ("" for null)
 }
 
 func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
@@ -43,6 +45,18 @@ func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
 			switch {
 			case len(tag) == 1 && tag[0] == "team=payments":
 				io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"},{"workloadId":"w-2","router":"prod-eu","state":"ASLEEP"}],"total":2,"cursor":null}`)
+			case len(tag) == 1 && tag[0] == "team=partial": // prod-eu answered, lost did not
+				io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"}],"total":1,"cursor":null,"errors":[{"router":"lost","message":"timed out"}]}`)
+			case len(tag) == 1 && tag[0] == "team=allsilent":
+				io.WriteString(w, `{"workloads":[],"total":0,"cursor":null,"errors":[{"router":"lost","message":"timed out"}]}`)
+			case len(tag) == 1 && tag[0] == "team=paged":
+				if r.URL.Query().Get("cursor") == "c2" {
+					io.WriteString(w, `{"workloads":[{"workloadId":"w-2","router":"prod-eu","state":"ASLEEP"}],"total":2,"cursor":null}`)
+				} else {
+					io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"}],"total":2,"cursor":"c2"}`)
+				}
+			case len(tag) == 1 && tag[0] == "team=stuck":
+				io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"}],"total":2,"cursor":"same"}`)
 			case len(tag) == 1 && tag[0] == "team=none":
 				io.WriteString(w, `{"workloads":[],"total":0,"cursor":null}`)
 			default:
@@ -50,10 +64,19 @@ func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
 			}
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/iam/workloads/"):
 			st := `{"state":"AWAKE"}`
-			if len(a.statuses) > 0 {
+			if a.perTarget {
+				if a.counts == nil {
+					a.counts = map[string]int{}
+				}
+				a.reads = a.counts[r.URL.Path]
+				a.counts[r.URL.Path]++
 				st = a.statuses[min(a.reads, len(a.statuses)-1)]
+			} else {
+				if len(a.statuses) > 0 {
+					st = a.statuses[min(a.reads, len(a.statuses)-1)]
+				}
+				a.reads++
 			}
-			a.reads++
 			if a.schedule != "" || len(a.statuses) == 0 {
 				sched := orString(a.schedule, "null")
 				if a.schedule != "" {
@@ -385,19 +408,20 @@ func TestScheduleShowNone(t *testing.T) {
 	}
 }
 
-// show --json prints the schedule alone, as stored, so that it goes back into `schedule set --file -`.
+// show --json prints {schedule, next, maintenanceDue}; set --file takes it back, sending the schedule member.
 func TestScheduleShowJSONRoundTripsIntoSet(t *testing.T) {
 	a := &wlAPI{schedule: shownSchedule}
 	shown := runWL(t, a, nil, "schedule", "show", "prod-eu/w-1", "--json")
 	if shown.exit != 0 {
 		t.Fatalf("exit %d: %s", shown.exit, shown.stderr)
 	}
-	var got, want any
+	var got map[string]any
 	if err := json.Unmarshal([]byte(shown.stdout), &got); err != nil {
 		t.Fatalf("not JSON: %v: %q", err, shown.stdout)
 	}
+	var want any
 	json.Unmarshal([]byte(shownSchedule), &want)
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(got["schedule"], want) || got["maintenanceDue"] != "2026-10-26T07:00:00.000Z" || len(got["next"].([]any)) != 2 {
 		t.Errorf("shown %s", shown.stdout)
 	}
 	b := &wlAPI{}
@@ -409,6 +433,138 @@ func TestScheduleShowJSONRoundTripsIntoSet(t *testing.T) {
 	json.Unmarshal([]byte(strings.TrimPrefix(b.writes[0], "PUT /iam/workloads/prod-eu/w-1/schedule ")), &sent)
 	if !reflect.DeepEqual(sent, want) {
 		t.Errorf("sent %v", b.writes[0])
+	}
+}
+
+func TestScheduleShowJSONWithNoScheduleAndSetRefusesIt(t *testing.T) {
+	shown := runWL(t, &wlAPI{}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	var got map[string]any
+	if err := json.Unmarshal([]byte(shown.stdout), &got); err != nil || got["schedule"] != nil || got["next"] == nil {
+		t.Fatalf("shown %q: %v", shown.stdout, err)
+	}
+	for _, in := range []string{shown.stdout, "null", `{"schedule":null}`} {
+		b := &wlAPI{}
+		r := runWLStdin(t, b, nil, in, "schedule", "set", "prod-eu/w-1", "--file", "-")
+		if r.exit != 2 || len(b.writes) != 0 || !strings.Contains(r.stderr, "no schedule in standard input; use schedule clear") {
+			t.Errorf("%q: exit %d writes %q stderr %q", in, r.exit, b.writes, r.stderr)
+		}
+	}
+}
+
+func TestTagSelectionIncompleteActsOnTheResolvedThenExits1(t *testing.T) {
+	for name, args := range map[string][]string{
+		"keep-awake":     {"keep-awake", "--tag", "team=partial", "--for", "1h"},
+		"schedule clear": {"schedule", "clear", "--tag", "team=partial"},
+		"resume":         {"resume", "--tag", "team=partial"},
+	} {
+		a := &wlAPI{}
+		r := runWL(t, a, nil, args...)
+		if r.exit != 1 || len(a.writes) != 1 || !strings.Contains(a.writes[0], "/prod-eu/w-1/") ||
+			!strings.Contains(r.stderr, "not all the workloads with these tags were resolved: router lost did not answer") {
+			t.Errorf("%s: exit %d writes %q stderr %q", name, r.exit, a.writes, r.stderr)
+		}
+	}
+	a := &wlAPI{}
+	r := runWL(t, a, nil, "resume", "--tag", "team=allsilent")
+	if r.exit != 1 || len(a.writes) != 0 || !strings.Contains(r.stderr, "router lost did not answer") {
+		t.Errorf("all silent: exit %d writes %q stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestTagSelectionKeepAwakeWaitStillWaitsForTheResolved(t *testing.T) {
+	a := &wlAPI{statuses: []string{`{"state":"AWAKE"}`}}
+	r := runWL(t, a, nil, "keep-awake", "--tag", "team=partial", "--for", "1h", "--wait")
+	if r.exit != 1 || !strings.Contains(r.stdout, "prod-eu/w-1: awake") {
+		t.Errorf("exit %d stdout %q stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+func TestTagSelectionPagesThroughTheListing(t *testing.T) {
+	a := &wlAPI{}
+	r := runWL(t, a, nil, "resume", "--tag", "team=paged", "--yes")
+	if r.exit != 0 || len(a.writes) != 2 {
+		t.Errorf("exit %d writes %q stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &wlAPI{} // a cursor that repeats cannot be followed: the first page is acted on, exit 1
+	r = runWL(t, a, nil, "resume", "--tag", "team=stuck")
+	if r.exit != 1 || len(a.writes) < 1 || !strings.Contains(r.stderr, "could not be completed") {
+		t.Errorf("exit %d writes %q stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestFileErrorShowsTheCause(t *testing.T) {
+	r := runWL(t, &wlAPI{}, nil, "schedule", "set", "prod-eu/w-1", "--file", "/nonexistent/s.json")
+	if r.exit != 2 || !strings.Contains(r.stderr, "/nonexistent/s.json") {
+		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
+	}
+}
+
+func TestWaitPollsMoreTargetsThanSlots(t *testing.T) {
+	var args []string
+	for i := 0; i < waitConcurrency+4; i++ {
+		args = append(args, "prod-eu/w-"+string(rune('a'+i)))
+	}
+	a := &wlAPI{statuses: []string{`{"state":"WAKING"}`, `{"state":"AWAKE"}`}}
+	// every target reads WAKING first (one shared sequence): all must be polled again before the end
+	a.perTarget = true
+	r := runWL(t, a, nil, append(append([]string{"keep-awake"}, args...), "--for", "1h", "--wait", "--yes")...)
+	if r.exit != 0 || strings.Count(r.stdout, ": awake") != len(args) {
+		t.Errorf("exit %d stdout %q stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+func TestWaitStopsFollowingAfterA404AndAfterThreeErrors(t *testing.T) {
+	for name, code := range map[string]int{"404": 404, "dropped": 0} {
+		var n int
+		var mu sync.Mutex
+		r := runFleetWith(t, &fakeAPI{custom: func(w http.ResponseWriter, req *http.Request) {
+			if req.Method == http.MethodGet {
+				mu.Lock()
+				n++
+				mu.Unlock()
+				if code == 0 { // the connection is cut: an error that is not an answer, not retried by the client
+					conn, _, _ := w.(http.Hijacker).Hijack()
+					conn.Close()
+					return
+				}
+				w.WriteHeader(code)
+				io.WriteString(w, `{"error":"x","message":"nope"}`)
+				return
+			}
+			io.WriteString(w, `{}`)
+		}}, "eu-west-1", nil, "workloads", "keep-awake", "prod-eu/w-1", "--for", "1h", "--wait")
+		mu.Lock()
+		got := n
+		mu.Unlock()
+		want := 1
+		if code == 0 {
+			want = 3 // three polls in a row
+		}
+		if code == 0 { // the transport may repeat a cut GET once: count the reports
+			want, got = 3, strings.Count(r.stderr, "EOF")
+		}
+		if r.exit != 1 || got != want || !strings.Contains(r.stderr, "prod-eu/w-1: not followed any more") {
+			t.Errorf("%s: exit %d, GETs %d (want %d), stderr %q", name, r.exit, got, want, r.stderr)
+		}
+	}
+}
+
+func TestUntilClockIsTodayInTheClocksZone(t *testing.T) {
+	zone := time.FixedZone("UTC+9", 9*3600)
+	tune := func(d *fleetDeps) { d.now = func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, zone) } }
+	a := &wlAPI{}
+	r := runWL(t, a, tune, "keep-awake", "prod-eu/w-1", "--until", "17:30")
+	if r.exit != 0 || !strings.Contains(a.writes[0], `"until":"2026-10-19T08:30:00Z"`) || !strings.Contains(r.stdout, "17:30 UTC+9") {
+		t.Errorf("exit %d writes %q stdout %q", r.exit, a.writes, r.stdout)
+	}
+	if r := runWL(t, &wlAPI{}, tune, "keep-awake", "prod-eu/w-1", "--until", "11:00"); r.exit != 2 {
+		t.Errorf("past in the zone: exit %d", r.exit)
+	}
+}
+
+func TestTheRealClockIsLocal(t *testing.T) {
+	if got := theFleetDeps().now().Location(); got != time.Local {
+		t.Errorf("the clock's zone is %v, not the local one", got)
 	}
 }
 
