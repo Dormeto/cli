@@ -185,27 +185,54 @@ func (r *routerFilters) bind(cmd *cobra.Command) {
 	f.StringArrayVar(&r.tags, "tag", nil, "only the routers that serve a workload with this Dormeto tag, key=value (repeatable: all must match)")
 }
 
-// selection is the filters as a fleet.Selection, refused when a flag is bad.
-func (r *routerFilters) selection() (fleet.Selection, error) {
+// selection is the filters, with the router names and --all of a command that takes them (nil and false for a
+// listing), as a fleet.Selection; refused when a flag is bad or, for an upgrade, when nothing is selected.
+func (r *routerFilters) selection(names []string, all, forUpgrade bool) (fleet.Selection, error) {
 	tags, err := fleet.ParseTags(r.tags)
 	if err != nil {
 		return fleet.Selection{}, usageError{err}
 	}
-	sel := fleet.Selection{Accounts: items(r.accounts), RouterRegions: items(r.regions), NameGlob: r.name}
+	sel := fleet.Selection{Names: items(names), Accounts: items(r.accounts), RouterRegions: items(r.regions), NameGlob: r.name, All: all}
 	if len(tags) > 0 {
 		sel.Tags = tags
 	}
-	if err := sel.Validate(false); err != nil {
+	if err := sel.Validate(forUpgrade); err != nil {
 		return sel, usageError{err}
 	}
 	return sel, nil
 }
 
+// routerWarnings print on stderr, once per router, that a router did not answer.
+type routerWarnings struct {
+	c    *cobra.Command
+	seen map[string]bool
+}
+
+func newRouterWarnings(c *cobra.Command) *routerWarnings {
+	return &routerWarnings{c: c, seen: map[string]bool{}}
+}
+
+// warn says that router did not answer (message), then note when there is one; a router already warned of is not again.
+func (w *routerWarnings) warn(router, message, note string) {
+	if w.seen[router] {
+		return
+	}
+	w.seen[router] = true
+	if note != "" {
+		note = " (" + note + ")"
+	}
+	fmt.Fprintf(w.c.ErrOrStderr(), "router %s did not answer: %s%s\n", router, message, note)
+}
+
 // taggedRouters is the set of routers that serve at least one workload carrying all the tags: one GET /workloads.
-func taggedRouters(ctx context.Context, api *fleet.Client, c *cobra.Command, tags []string) (map[string]bool, error) {
+// A router that did not answer is warned of: its workloads' tags are unknown, so it cannot be selected.
+func taggedRouters(ctx context.Context, api *fleet.Client, c *cobra.Command, warnings *routerWarnings, tags []string) (map[string]bool, error) {
 	var w fleet.Workloads
 	if err := api.Get(ctx, "/workloads", url.Values{"tag": tags}, &w); err != nil {
 		return nil, err
+	}
+	for _, e := range w.Errors {
+		warnings.warn(e.Router, e.Message, "its workloads' tags are unknown")
 	}
 	if w.More() {
 		fmt.Fprintln(c.ErrOrStderr(), "the manager listed only part of the workloads with these tags: some routers may be missing")
@@ -238,7 +265,7 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"higher), health and workloads. --tag keeps the routers that serve a workload with those Dormeto tags. A router\n" +
 			"that does not answer is listed, its error on stderr.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			sel, err := filters.selection()
+			sel, err := filters.selection(nil, false, false)
 			if err != nil {
 				return finish(c, err)
 			}
@@ -247,9 +274,10 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := api.Get(ctx, "/routers", nil, &all); err != nil {
 					return err
 				}
+				warnings := newRouterWarnings(c)
 				var tagged map[string]bool
 				if len(sel.Tags) > 0 {
-					if tagged, err = taggedRouters(ctx, api, c, filters.tags); err != nil {
+					if tagged, err = taggedRouters(ctx, api, c, warnings, filters.tags); err != nil {
 						return err
 					}
 				}
@@ -261,9 +289,9 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if outdated {
 					rows = slices.DeleteFunc(slices.Clone(rows), func(r fleet.Router) bool { return !r.Outdated(all.Available) })
 				}
-				for _, r := range rows {
+				for _, r := range considered { // whatever --outdated shows
 					if r.Error != "" {
-						fmt.Fprintf(c.ErrOrStderr(), "router %s did not answer: %s\n", r.Name, r.Error)
+						warnings.warn(r.Name, r.Error, "")
 					}
 				}
 				if asJSON {
@@ -339,12 +367,9 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := json.Unmarshal(raw, &w); err != nil {
 					return fmt.Errorf("decode the manager's answer: %w", err)
 				}
-				warned := map[string]bool{}
+				warnings := newRouterWarnings(c)
 				for _, e := range w.Errors {
-					if !warned[e.Router] {
-						warned[e.Router] = true
-						fmt.Fprintf(c.ErrOrStderr(), "router %s did not answer: %s\n", e.Router, e.Message)
-					}
+					warnings.warn(e.Router, e.Message, "")
 				}
 				out := c.OutOrStdout()
 				if asJSON {

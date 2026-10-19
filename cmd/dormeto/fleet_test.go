@@ -59,6 +59,10 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, orString(f.routers, routersAnswer))
 	case "/iam/workloads":
 		tag := r.URL.Query()["tag"]
+		if len(tag) == 1 && tag[0] == "team=partial" { // prod-eu answered, lost did not
+			io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"}],"total":1,"cursor":null,"errors":[{"router":"lost","message":"timed out"},{"router":"lost","message":"again"}]}`)
+			return
+		}
 		if len(tag) == 1 && tag[0] == "team=payments" { // only prod-eu serves these
 			io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"}],"total":1,"cursor":null}`)
 			return
@@ -198,6 +202,26 @@ func TestRoutersListTagsSelectTheRoutersOfTheirWorkloads(t *testing.T) {
 	}
 	if got := r.api.requests[1].URL.Query()["tag"]; len(got) != 1 || got[0] != "team=payments" {
 		t.Errorf("tag = %v", got)
+	}
+}
+
+func TestRoutersListTagsWarnOfRoutersThatDidNotAnswer(t *testing.T) {
+	r := runFleet(t, &fakeAPI{}, "eu-west-1", "routers", "list", "--tag", "team=partial", "--json")
+	if r.exit != 0 || !strings.Contains(r.stdout, `"prod-eu"`) || strings.Contains(r.stdout, `"prod-us"`) {
+		t.Fatalf("exit %d, stdout %q", r.exit, r.stdout)
+	}
+	if want := "router lost did not answer: timed out (its workloads' tags are unknown)\n"; r.stderr != want {
+		t.Errorf("stderr %q, want %q", r.stderr, want)
+	}
+}
+
+func TestRoutersListReportsEveryRouterErrorWhateverIsShown(t *testing.T) {
+	r := runFleet(t, &fakeAPI{}, "eu-west-1", "routers", "list", "--outdated", "--json")
+	if strings.Contains(r.stdout, `"lost"`) {
+		t.Errorf("the router with an unknown version is shown: %q", r.stdout)
+	}
+	if r.stderr != "router lost did not answer: timed out\n" {
+		t.Errorf("stderr %q", r.stderr)
 	}
 }
 

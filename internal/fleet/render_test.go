@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 var renderNow = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
@@ -47,10 +48,11 @@ func TestRoutersTable(t *testing.T) {
 	if strings.Contains(lines[5], "→") {
 		t.Errorf("a newer pre-release is outdated: %q", lines[5])
 	}
-	// Columns align.
-	col := strings.Index(lines[0], "ACCOUNT")
-	for _, l := range lines[1:5] {
-		if len(l) <= col || l[col-1] != ' ' {
+	// Columns align by characters, not bytes: "→" (3 bytes) and "—" sit before later columns.
+	col := utf8.RuneCountInString(lines[0][:strings.Index(lines[0], "WORKLOADS")])
+	for _, l := range lines[1:] {
+		r := []rune(l)
+		if len(r) <= col || r[col-1] != ' ' || r[col] == ' ' {
 			t.Errorf("misaligned: %q", l)
 		}
 	}
@@ -98,8 +100,7 @@ func TestWorkloadsTable(t *testing.T) {
 	if len(lines) != 6 || !strings.HasPrefix(lines[0], "ROUTER") {
 		t.Fatalf("lines:\n%s", got)
 	}
-	for i, want := range []string{"env=dev,team=payments", "3h", "2d", "<1m", "45m", "—"} {
-		_ = i
+	for _, want := range []string{"env=dev,team=payments", "3h", "2d", "<1m", "45m", "—"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q", want)
 		}
