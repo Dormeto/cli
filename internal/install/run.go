@@ -705,30 +705,36 @@ func (x *run) startPlan(s *Settings, a Action, kind, label, apply string) (strin
 }
 
 // applyPlan applies the saved plan s.LastPlan (sum its summary) with s's release by a build of action a and follows it
-// (label); goesOn is what a lost follow says of the build.
-func (x *run) applyPlan(s Settings, sum PlanSummary, a Action, label, goesOn string) error {
+// (label); goesOn is what a lost follow says of the build. It returns what Terraform's closing line said was done (nil:
+// the log has none).
+func (x *run) applyPlan(s Settings, sum PlanSummary, a Action, label, goesOn string) (*PlanSummary, error) {
 	id, err := Start(x.ctx, x.c, x.p, a, map[string]string{"PLAN_BUILD": s.LastPlan, "RELEASE_BASE": s.ReleaseBase, "RELEASE_VERSION": s.Version})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	res, err := Follow(x.ctx, x.c, x.p, id, x.follow(label, sum.Add+sum.Change+sum.Destroy))
 	if err != nil {
-		return x.lost(err, goesOn)
+		return nil, x.lost(err, goesOn)
 	}
 	if res.Failed {
-		return x.failed(label, res, x.p.LogGroup)
+		return nil, x.failed(label, res, x.p.LogGroup)
 	}
-	return nil
+	return res.Applied, nil
 }
 
 // applyInstall applies the saved install plan s.LastPlan (sum its summary) and follows it; then is what to run once it
 // is applied ("": nothing more), said with the commands that follow and apply it.
 func (x *run) applyInstall(s Settings, sum PlanSummary, then string) error {
 	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args() + then
-	if err := x.applyPlan(s, sum, ActionApply, "Apply", "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args()+then); err != nil {
+	done, err := x.applyPlan(s, sum, ActionApply, "Apply", "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args()+then)
+	if err != nil {
 		return err
 	}
-	x.say("  ✓ applied: %d added, %d changed, %d destroyed", sum.Add, sum.Change, sum.Destroy)
+	if done == nil { // the log lost or cut: only the plan is known
+		x.say("  ✓ applied the plan: %d to add, %d to change, %d to destroy", sum.Add, sum.Change, sum.Destroy)
+		return nil
+	}
+	x.say("  ✓ applied: %d added, %d changed, %d destroyed", done.Add, done.Change, done.Destroy)
 	return nil
 }
 

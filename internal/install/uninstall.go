@@ -449,12 +449,17 @@ func (x *run) checkDestroyPlan(s Settings, applied *Applied) error {
 // release and follows it; once it succeeded, install.json forgets the plan (the build removed applied.json).
 func (x *run) applyDestroy(s Settings, sum PlanSummary) error {
 	x.interrupted = "Not applied; the destroy plan is kept: dormeto uninstall apply " + x.args()
-	if err := x.applyPlan(s, sum, ActionApplyDestroy, "Destroy", "the destroy goes on in CodeBuild. Follow it: dormeto install status "+x.args()+
-		"; once done, dormeto uninstall "+x.args()+" removes the bootstrap."); err != nil {
+	done, err := x.applyPlan(s, sum, ActionApplyDestroy, "Destroy", "the destroy goes on in CodeBuild. Follow it: dormeto install status "+x.args()+
+		"; once done, dormeto uninstall "+x.args()+" removes the bootstrap.")
+	if err != nil {
 		return err
 	}
 	x.interrupted = "Interrupted: the manager is destroyed; dormeto uninstall " + x.args() + " removes the bootstrap."
-	x.say("  ✓ destroyed: %d resources", sum.Destroy)
+	if done == nil { // the log lost or cut: only the plan is known
+		x.say("  ✓ destroyed the plan: %d to destroy", sum.Destroy)
+	} else {
+		x.say("  ✓ destroyed: %d resources", done.Destroy)
+	}
 	s.LastPlan, s.LastPlanKind = "", ""
 	return WriteSettings(context.WithoutCancel(x.ctx), x.c, x.p, s)
 }

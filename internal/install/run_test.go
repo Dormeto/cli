@@ -146,13 +146,14 @@ type rwWorld struct {
 	rwAcct        // the manager's account
 	t             *testing.T
 	org           *Organization
-	region        string // the profile's region; "": none
-	plan          string // the plan.json a plan build writes
-	destroyPlan   string // the plan.json a plan-destroy build writes
-	simDenied     bool   // iam:SimulatePrincipalPolicy refused: a warning
-	identityErr   error  // sts:GetCallerIdentity's error
-	cancelOnStart bool   // Ctrl-C as the build starts
-	batchErr      error  // codebuild:BatchGetBuilds's error
+	region        string  // the profile's region; "": none
+	plan          string  // the plan.json a plan build writes
+	destroyPlan   string  // the plan.json a plan-destroy build writes
+	simDenied     bool    // iam:SimulatePrincipalPolicy refused: a warning
+	identityErr   error   // sts:GetCallerIdentity's error
+	closingLine   *string // the closing line of the applies' logs instead of the plan's counts ("": none)
+	cancelOnStart bool    // Ctrl-C as the build starts
+	batchErr      error   // codebuild:BatchGetBuilds's error
 	writes        []string
 	failWrites    map[string]error // a write (as writes records it) that fails so
 	readOnly      bool
@@ -807,16 +808,34 @@ func (f rwCB) StartBuild(_ context.Context, in *codebuild.StartBuildInput, _ ...
 		f.a.objects["prod/applied.json"] = `{"version":"` + vars["RELEASE_VERSION"] + `","build":"` + b.id + `"}`
 		f.a.objects["prod/outputs.json"] = rwOutputs
 		f.a.objects["prod/manager.tfstate"] = rwState
+		b.log = append(b.log[:1], f.closing(vars["PLAN_BUILD"], "apply"), "dormeto: done")
 	case b.status == cbtypes.StatusTypeSucceeded && action == "apply-destroy":
 		delete(f.a.objects, "prod/applied.json")
 		delete(f.a.objects, "prod/outputs.json")
 		f.a.objects["prod/manager.tfstate"] = rwNoneState
+		b.log = append(b.log[:1], f.closing(vars["PLAN_BUILD"], "destroy"), "dormeto: done")
 	}
 	f.a.builds = append(f.a.builds, b)
 	if f.w.cancelOnStart {
 		f.w.cancel()
 	}
 	return &codebuild.StartBuildOutput{Build: &cbtypes.Build{Id: aws.String(b.id)}}, nil
+}
+
+// closing is Terraform's closing line for the plan build applied (what the plan says, unless the world gives another:
+// closingLine; "" without the line, a log cut).
+func (f rwCB) closing(plan, kind string) string {
+	if f.w.closingLine != nil {
+		return *f.w.closingLine
+	}
+	sum, err := Summarize([]byte(f.a.objects["prod/plans/"+plan+"/plan.json"]))
+	if err != nil {
+		f.w.t.Errorf("plan %s of the build applied: %v", plan, err)
+	}
+	if kind == "destroy" {
+		return fmt.Sprintf("Destroy complete! Resources: %d destroyed.", sum.Destroy)
+	}
+	return fmt.Sprintf("Apply complete! Resources: %d added, %d changed, %d destroyed.", sum.Add, sum.Change, sum.Destroy)
 }
 
 type rwLogs struct {
@@ -1246,6 +1265,25 @@ func TestInstallUpgradeAsksNothing(t *testing.T) {
 	}
 }
 
+// The applied line gives Terraform's counts, not the plan's (updates planned "known after apply" can come out unchanged);
+// without the closing line (the log cut), it says only what the plan was.
+func TestInstallAppliedLineIsTerraformsCounts(t *testing.T) {
+	for name, c := range map[string]struct {
+		closing *string
+		want    string
+	}{
+		"closing line": {aws.String("Apply complete! Resources: 1 added, 2 changed, 0 destroyed."), "  ✓ applied: 1 added, 2 changed, 0 destroyed\n"},
+		"no line":      {aws.String(""), "  ✓ applied the plan: 3 to add, 0 to change, 0 to destroy\n"},
+	} {
+		w := rwNew(t)
+		w.closingLine = c.closing
+		code, out, _ := w.run(Install, rwFlags(), true, "y")
+		if code != 0 || !strings.Contains(out, c.want) || strings.Contains(out, "applied: 3 added") {
+			t.Errorf("%s: exit code %d:\n%s", name, code, out)
+		}
+	}
+}
+
 func TestInstallNothingToChange(t *testing.T) {
 	w := rwNew(t)
 	w.plan = rwEmpty
@@ -1254,6 +1292,9 @@ func TestInstallNothingToChange(t *testing.T) {
 		t.Errorf("exit code %d, asked %q:\n%s", code, asked, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
+	if strings.Contains(out, "applied") {
+		t.Errorf("an applied line for a plan with nothing to change:\n%s", out)
+	}
 }
 
 func TestInstallARunningBuildStopsThePlan(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,9 @@ type Result struct {
 	Failed     bool
 	Tail       []string // the log's last 40 lines (on a failure)
 	ConsoleURL string
+	// Applied is what Terraform's closing line said (Apply complete! or Destroy complete!); nil when the log has none
+	// (cut, lost, or not an apply).
+	Applied *PlanSummary
 }
 
 // CredentialsError is the AWS credentials expiring while a build is followed: the build goes on. The run that followed
@@ -89,6 +93,8 @@ var (
 	startedRe  = regexp.MustCompile(`^(.+): (Creating|Modifying|Destroying)\.\.\.`)
 	stillRe    = regexp.MustCompile(`^(.+): Still (creating|modifying|destroying)\.\.\. \[(.+) elapsed\]`)
 	completeRe = regexp.MustCompile(`^(.+): (?:Creation|Modifications|Destruction) complete after `)
+	appliedRe  = regexp.MustCompile(`^Apply complete! Resources: (\d+) added, (\d+) changed, (\d+) destroyed\.`)
+	destroyRe  = regexp.MustCompile(`^Destroy complete! Resources: (\d+) destroyed\.`)
 )
 
 // formatDuration is 45s, 3m12s, 12m05s.
@@ -107,10 +113,15 @@ type tracker struct {
 	verb    string
 	address string
 	since   time.Time
+	applied *PlanSummary // Terraform's closing line, once read
 }
 
 func (t *tracker) read(line string, ts, now time.Time) {
-	if m := completeRe.FindStringSubmatch(line); m != nil {
+	if m := appliedRe.FindStringSubmatch(line); m != nil {
+		t.applied = &PlanSummary{Add: atoi(m[1]), Change: atoi(m[2]), Destroy: atoi(m[3])}
+	} else if m := destroyRe.FindStringSubmatch(line); m != nil {
+		t.applied = &PlanSummary{Destroy: atoi(m[1])}
+	} else if m := completeRe.FindStringSubmatch(line); m != nil {
 		t.done++
 		t.seen = true
 		if m[1] == t.address {
@@ -126,6 +137,12 @@ func (t *tracker) read(line string, ts, now time.Time) {
 			t.since = now.Add(-d)
 		}
 	}
+}
+
+// atoi reads the digits a pattern matched.
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 // follower is one Follow run.
@@ -289,7 +306,7 @@ func (f *follower) end(b cbtypes.Build, now time.Time) Result {
 	} else {
 		fmt.Fprintln(f.o.Out, line)
 	}
-	res := Result{Status: status, Failed: b.BuildStatus != cbtypes.StatusTypeSucceeded}
+	res := Result{Status: status, Failed: b.BuildStatus != cbtypes.StatusTypeSucceeded, Applied: f.t.applied}
 	if res.Failed {
 		res.Tail = append([]string(nil), f.ring...)
 		res.ConsoleURL = ConsoleURL(f.p, f.build)

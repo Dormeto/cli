@@ -307,6 +307,22 @@ func TestUninstallWritesTheProtectionOffThenForgetsTheDestroyPlan(t *testing.T) 
 	}
 }
 
+// The destroyed line gives Terraform's count; without its closing line, what the plan said.
+func TestUninstallDestroyedLineIsTerraformsCount(t *testing.T) {
+	for closing, want := range map[string]string{
+		"Destroy complete! Resources: 2 destroyed.": "  ✓ destroyed: 2 resources\n",
+		"": "  ✓ destroyed the plan: 3 to destroy\n",
+	} {
+		w := unNew(t)
+		unProtectionOff(w)
+		w.closingLine = &closing
+		code, out, _ := w.run(Uninstall, unRequest, true, "y", "y", "n")
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%q: exit code %d:\n%s", closing, code, out)
+		}
+	}
+}
+
 func TestUninstallProtectionAlreadyOff(t *testing.T) {
 	w := unNew(t)
 	unProtectionOff(w)

@@ -537,6 +537,43 @@ func TestFollowReadsTheLogOnceMoreAfterAFailure(t *testing.T) {
 	}
 }
 
+// The closing line gives Terraform's counts, with or without colors; Destroy complete! gives the destroyed alone; no
+// closing line, none.
+func TestFollowReadsTerraformsCounts(t *testing.T) {
+	for name, c := range map[string]struct {
+		log  []string
+		want *PlanSummary
+	}{
+		"apply":      {[]string{"aws_a.b: Creation complete after 2s [id=a]", "Apply complete! Resources: 1 added, 2 changed, 0 destroyed."}, &PlanSummary{Add: 1, Change: 2}},
+		"colors":     {[]string{"\x1b[0m\x1b[1m\x1b[32mApply complete! Resources: 4 added, 0 changed, 3 destroyed.\x1b[0m"}, &PlanSummary{Add: 4, Destroy: 3}},
+		"destroy":    {[]string{"Destroy complete! Resources: 7 destroyed."}, &PlanSummary{Destroy: 7}},
+		"no closing": {[]string{"aws_a.b: Creation complete after 2s [id=a]", "Apply complete!"}, nil},
+	} {
+		w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 0, nil}, trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", len(c.log), nil})
+		w.log = c.log
+		res, err := Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, trkOpts(w, &trkStatus{}, &bytes.Buffer{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (res.Applied == nil) != (c.want == nil) || res.Applied != nil && (res.Applied.Add != c.want.Add || res.Applied.Change != c.want.Change || res.Applied.Destroy != c.want.Destroy) {
+			t.Errorf("%s: applied %+v, want %+v", name, res.Applied, c.want)
+		}
+	}
+}
+
+// The closing line returned by the read that follows the status SUCCEEDED is not lost.
+func TestFollowReadsTheClosingLineAfterTheStatusTurned(t *testing.T) {
+	w := newTrkWorld(trkPoll{cbtypes.StatusTypeInProgress, "BUILD", 1, nil}, trkPoll{cbtypes.StatusTypeSucceeded, "COMPLETED", 2, nil})
+	w.log = []string{"aws_a.b: Creating...", "Apply complete! Resources: 1 added, 0 changed, 0 destroyed."}
+	res, err := Follow(context.Background(), w.clients(), Names("1", "eu-west-1", "prod"), trkID, trkOpts(w, nil, &bytes.Buffer{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Applied == nil || res.Applied.Add != 1 {
+		t.Errorf("applied %+v", res.Applied)
+	}
+}
+
 func TestVerifyDashboardInterrupted(t *testing.T) {
 	want := Check{"dashboard", "not checked (interrupted)", Skip}
 	w := newTrkWorld()
