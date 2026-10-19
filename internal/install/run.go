@@ -144,9 +144,9 @@ func (x *run) noInstall() error {
 	return &stop{1, fmt.Sprintf("no install of env %s in %s %s: run dormeto install", x.env, x.w.Account, x.region)}
 }
 
-// prompted is the prompter's answer, or the context's error as soon as the run is cancelled (a terminal's read does
+// Prompted is the prompter's answer, or the context's error as soon as the run is cancelled (a terminal's read does
 // not end with Ctrl-C), a newline then written to out so that what follows does not land on the question's line.
-func prompted[T any](ctx context.Context, out io.Writer, ask func() (T, error)) (T, error) {
+func Prompted[T any](ctx context.Context, out io.Writer, ask func() (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, err
@@ -185,7 +185,7 @@ func (x *run) ask(question, def, flag string) (string, error) {
 		return "", needed(flag)
 	}
 	for range asks {
-		a, err := prompted(x.ctx, x.d.Out, func() (string, error) { return x.d.Prompter.Ask(question, def) })
+		a, err := Prompted(x.ctx, x.d.Out, func() (string, error) { return x.d.Prompter.Ask(question, def) })
 		switch {
 		case err != nil && x.ctx.Err() != nil:
 			return "", err
@@ -201,7 +201,7 @@ func (x *run) ask(question, def, flag string) (string, error) {
 
 // confirm asks a yes-or-no question in the terminal.
 func (x *run) confirm(question string) (bool, error) {
-	return prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+	return Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
 }
 
 // locate finds where the run happens: the region (the flag's, else the profile's, else asked), the clients, the

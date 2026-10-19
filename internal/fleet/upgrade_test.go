@@ -75,10 +75,17 @@ type fakeOps struct {
 	failWith map[string]Operation // router -> the final operation it ends with
 	refuse   map[string]error
 	getErr   error
+	getErrs  int           // the first reads that fail with a transient error
+	barrier  int           // Get waits until this many routers have started
+	ready    chan struct{} // closed at the barrier
+	onStart  func(n int)   // called with the number started, after a start
 	onGet    func()
 }
 
-func (f *fakeOps) Start(_ context.Context, router string) (Operation, error) {
+func (f *fakeOps) Start(ctx context.Context, router string) (Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return Operation{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.refuse[router]; err != nil {
@@ -90,15 +97,32 @@ func (f *fakeOps) Start(_ context.Context, router string) (Operation, error) {
 	}
 	f.running++
 	f.peak = max(f.peak, f.running)
+	if f.barrier > 0 && len(f.started) == f.barrier {
+		close(f.ready)
+	}
+	if f.onStart != nil {
+		f.onStart(len(f.started))
+	}
 	return Operation{ID: "op-" + router, Status: "running"}, nil
 }
 
-func (f *fakeOps) Get(_ context.Context, id string) (Operation, error) {
+func (f *fakeOps) Get(ctx context.Context, id string) (Operation, error) {
 	if f.onGet != nil {
 		f.onGet()
 	}
+	if f.ready != nil {
+		select {
+		case <-f.ready:
+		case <-ctx.Done():
+			return Operation{}, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErrs > 0 {
+		f.getErrs--
+		return Operation{}, errors.New("connection reset")
+	}
 	if f.getErr != nil {
 		return Operation{}, f.getErr
 	}
@@ -146,11 +170,11 @@ func planOf(names ...string) Plan {
 }
 
 func TestUpgradeNeverRunsMoreThanConcurrency(t *testing.T) {
-	ops := &fakeOps{polls: 3}
+	ops := &fakeOps{polls: 3, barrier: 2, ready: make(chan struct{})} // none ends before two have started
 	var ev []Event
 	c := &clock{t: time.Unix(0, 0)}
 	res := Upgrade(t.Context(), ops, planOf("a", "b", "c", "d", "e"), options(c, 2, &ev))
-	if ops.peak != 2 || len(ops.started) != 5 {
+	if ops.peak > 2 || ops.peak != 2 || len(ops.started) != 5 {
 		t.Errorf("peak %d, started %v", ops.peak, ops.started)
 	}
 	if res.Failed() != 0 || len(res.Upgraded) != 5 || res.Stopped {
@@ -211,12 +235,9 @@ func TestUpgradeRefusedStartIsFailedWithItsMessage(t *testing.T) {
 
 func TestUpgradeCancelledWhileFollowingReportsStartedAsRunning(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	ops := &fakeOps{polls: 100}
-	ops.onGet = func() { // once both have started
-		ops.mu.Lock()
-		n := len(ops.started)
-		ops.mu.Unlock()
-		if n >= 2 {
+	ops := &fakeOps{polls: 100, barrier: 2, ready: make(chan struct{})}
+	ops.onStart = func(n int) { // at the second start
+		if n == 2 {
 			cancel()
 		}
 	}
@@ -231,19 +252,58 @@ func TestUpgradeCancelledWhileFollowingReportsStartedAsRunning(t *testing.T) {
 	if got["a"] != "running" || got["b"] != "running" || got["c"] != "not started" {
 		t.Errorf("%v", got)
 	}
-	if res.Failed() != 0 || res.Running() != 2 || res.NotStarted() != 1 {
-		t.Errorf("failed %d, running %d, not started %d", res.Failed(), res.Running(), res.NotStarted())
+	if res.Failed() != 0 || res.Running() != 2 || res.NotStarted() != 1 || res.Unfinished() != 2 {
+		t.Errorf("failed %d, running %d, not started %d, unfinished %d", res.Failed(), res.Running(), res.NotStarted(), res.Unfinished())
 	}
 	if len(ops.started) != 2 {
 		t.Errorf("started %v", ops.started)
 	}
 }
 
+// A goroutine that got its slot just before the cancellation starts nothing, and that is no failure.
+func TestFollowOnADoneContextStartsNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	ops := &fakeOps{polls: 1}
+	o := follow(ctx, ops, Step{"a", "0.29.0", "0.30.0"}, options(&clock{}, 1, new([]Event)), func(Event) {})
+	if o.Status != "not started" || o.Error != "" || len(ops.started) != 0 {
+		t.Errorf("%+v, started %v", o, ops.started)
+	}
+}
+
+func TestUpgradeFollowingSurvivesTransientErrors(t *testing.T) {
+	ops := &fakeOps{polls: 1, getErrs: 10}
+	res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+	if res.Upgraded[0].Status != "succeeded" || res.Failed() != 0 {
+		t.Errorf("%+v", res.Upgraded[0])
+	}
+}
+
+func TestUpgradeFollowingTransientErrorsEndWithTheContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	ops := &fakeOps{polls: 1, getErrs: 1 << 30}
+	ops.onGet = func() {
+		ops.mu.Lock()
+		n := ops.getErrs
+		ops.mu.Unlock()
+		if n < 1<<30-20 {
+			cancel()
+		}
+	}
+	res := Upgrade(ctx, ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+	if res.Upgraded[0].Status != "running" || res.Unfinished() != 1 || !res.Stopped {
+		t.Errorf("%+v", res)
+	}
+}
+
 func TestUpgradeLosingTheOperationIsNotASuccess(t *testing.T) {
-	ops := &fakeOps{polls: 1, getErr: errors.New("boom")}
+	ops := &fakeOps{polls: 1, getErr: &APIError{Status: 403, Message: "boom"}} // a refusal will not pass
 	res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
 	o := res.Upgraded[0]
-	if o.Status != "unknown" || !strings.Contains(o.Error, "boom") || res.Failed() != 1 {
+	if o.Status != "unknown" || !strings.Contains(o.Error, "boom") || res.Failed() != 1 || res.Unfinished() != 1 {
 		t.Errorf("%+v", o)
+	}
+	if got := res.Summary(); got != "1 unknown" {
+		t.Errorf("summary %q", got)
 	}
 }

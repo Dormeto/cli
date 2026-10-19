@@ -531,6 +531,8 @@ ends (the version change and the duration, or the step that failed, its detail a
 - `--concurrency <n>`: how many upgrades run at once, from 1 to 20 (4 by default).
 - `--timeout <duration>`: stop following the upgrades after this long (60m by default). Ctrl-C does the same: the
   upgrades already started go on in the manager, and the CLI says where to follow them (its Operations view).
+  Routers not yet started are not started (status `not started`); a network error while following is waited out until the
+  timeout.
 - `--dry-run`: print the plan and stop.
 - `--yes`: do not ask for confirmation.
 - `--json`: print the result on stdout as `{available, upgraded: [{router, from, to, operation, status, error?}],

@@ -6,6 +6,7 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -61,7 +62,7 @@ func (p Plan) Text() string {
 	if len(p.Upgrade) == 0 {
 		b.WriteString("nothing to upgrade\n")
 	} else {
-		fmt.Fprintf(&b, "%d %s to upgrade to %s\n", len(p.Upgrade), plural(len(p.Upgrade), "router"), p.Available)
+		fmt.Fprintf(&b, "%d %s to upgrade to %s\n", len(p.Upgrade), Plural(len(p.Upgrade), "router"), p.Available)
 		var rows [][]string
 		for _, s := range p.Upgrade {
 			rows = append(rows, []string{"  " + s.Router, s.From + " → " + s.To})
@@ -168,8 +169,18 @@ func (r Result) count(status ...string) (n int) {
 	return n
 }
 
-// Failed counts the upgrades that failed or whose operation was lost.
+// Failed counts the upgrades that failed or whose operation could not be read.
 func (r Result) Failed() int { return r.count("failed", "unknown") }
+
+// Unfinished counts the upgrades with an operation in the manager whose end the run did not see: they may go on there.
+func (r Result) Unfinished() (n int) {
+	for _, o := range r.Upgraded {
+		if o.Operation != "" && o.Status != "succeeded" && o.Status != "failed" {
+			n++
+		}
+	}
+	return n
+}
 
 // Running counts those the run stopped following; NotStarted those it stopped before starting.
 func (r Result) Running() int    { return r.count("running") }
@@ -181,7 +192,7 @@ func (r Result) Summary() string {
 	for _, c := range []struct {
 		n     int
 		label string
-	}{{r.count("succeeded"), "upgraded"}, {r.Failed(), "failed"}, {r.Running(), "still running"}, {r.NotStarted(), "not started"}} {
+	}{{r.count("succeeded"), "upgraded"}, {r.count("failed"), "failed"}, {r.count("unknown"), "unknown"}, {r.Running(), "still running"}, {r.NotStarted(), "not started"}} {
 		if c.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.label))
 		}
@@ -198,8 +209,15 @@ type UpgradeOptions struct {
 	Progress    func(Event) // called one at a time
 }
 
-// lostAfter is how many reads of an operation in a row may fail before it is given up as unknown.
-const lostAfter = 3
+// refusedAfter is how many reads of an operation in a row the manager may refuse (403, 404…) before it is given up as
+// unknown. A network error, 429 or 5xx is waited out: the upgrade runs in the manager, and the context bounds the wait.
+const refusedAfter = 3
+
+// refusal tells whether err is the manager's refusal, which another try will not change.
+func refusal(err error) bool {
+	e, ok := err.(*APIError)
+	return ok && e.Status != http.StatusTooManyRequests && e.Status < 500
+}
 
 // Upgrade starts the plan's upgrades, at most Concurrency at once, and follows each every Poll until it ends. When ctx
 // ends, it starts no more and stops following: the upgrades started go on in the manager, reported as running.
@@ -234,7 +252,7 @@ func Upgrade(ctx context.Context, api Operations, plan Plan, o UpgradeOptions) R
 	}
 	wg.Wait()
 	for _, u := range res.Upgraded {
-		if u.Status == "running" || u.Status == "not started" {
+		if ctx.Err() != nil && u.Status != "succeeded" && u.Status != "failed" {
 			res.Stopped = true
 		}
 	}
@@ -250,10 +268,14 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 		report(Event{Ended: true, Outcome: out})
 		return out
 	}
+	if ctx.Err() != nil { // the slot was given before the run was cut short
+		out.Status = "not started"
+		return out
+	}
 	op, err := api.Start(ctx, st.Router)
 	if err != nil {
-		if ctx.Err() != nil { // cut short: the manager may or may not have started it
-			return ended("unknown", "interrupted while starting: "+err.Error())
+		if ctx.Err() != nil { // cut short in the call: the manager may or may not have started it
+			return ended("unknown", "interrupted while starting, the manager may have started it: "+err.Error())
 		}
 		return ended("failed", err.Error())
 	}
@@ -272,15 +294,15 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 		}
 		next, err := api.Get(ctx, op.ID)
 		switch {
+		case err == nil:
+			failures, op = 0, next
 		case ctx.Err() != nil:
 			out.Status, out.Duration = "running", o.Now().Sub(began)
 			return out
-		case err != nil:
-			if failures++; failures >= lostAfter {
+		case refusal(err):
+			if failures++; failures >= refusedAfter {
 				return ended("unknown", "cannot read the operation: "+err.Error())
 			}
-		default:
-			failures, op = 0, next
 		}
 	}
 }

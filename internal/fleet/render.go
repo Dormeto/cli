@@ -81,7 +81,7 @@ func RoutersTable(rs []Router, available string) string {
 // RoutersSummary is the line under the table: the version available and how many of rs are below it.
 func RoutersSummary(rs []Router, available string) string {
 	if available == "" {
-		return fmt.Sprintf("no version available · %d %s", len(rs), plural(len(rs), "router"))
+		return fmt.Sprintf("no version available · %d %s", len(rs), Plural(len(rs), "router"))
 	}
 	n := 0
 	for _, r := range rs {
@@ -92,7 +92,8 @@ func RoutersSummary(rs []Router, available string) string {
 	return fmt.Sprintf("available %s · %d of %d outdated", available, n, len(rs))
 }
 
-func plural(n int, word string) string {
+// Plural is word, in the plural unless n is 1.
+func Plural(n int, word string) string {
 	if n == 1 {
 		return word
 	}
@@ -137,7 +138,7 @@ func age(at string, now time.Time) string {
 
 // WorkloadsSummary is the line under the table: the total, with the count per state when every workload is listed.
 func WorkloadsSummary(w Workloads) string {
-	s := fmt.Sprintf("%d %s", w.Total, plural(w.Total, "workload"))
+	s := fmt.Sprintf("%d %s", w.Total, Plural(w.Total, "workload"))
 	switch {
 	case len(w.Rows) < w.Total:
 		s += fmt.Sprintf(" (%d shown)", len(w.Rows))

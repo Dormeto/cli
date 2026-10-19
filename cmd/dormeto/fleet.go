@@ -1,10 +1,10 @@
 package main
 
-// `dormeto routers list`, `dormeto routers upgrade` and `dormeto workloads list`: the manager's routers and workloads, read through its
-// IAM-authorized API (internal/fleet) with the AWS profile that `dormeto install` uses. The flags that say where the
-// manager is (--profile, --region, --env, --api-url) are shared by the fleet commands; the API is found by its name
-// unless --api-url gives it. Exit codes: 0; 1 when AWS or the manager refuses; 2 for a bad flag or argument; 128 and
-// the signal's number when SIGINT or SIGTERM stopped it.
+// `dormeto routers list`, `dormeto routers upgrade` and `dormeto workloads list`: the manager's routers and workloads,
+// read through its IAM-authorized API (internal/fleet) with the AWS profile that `dormeto install` uses. The flags that
+// say where the manager is (--profile, --region, --env, --api-url) are shared by the fleet commands; the API is found
+// by its name unless --api-url gives it. Exit codes: 0; 1 when AWS or the manager refuses; 2 for a bad flag or
+// argument; 128 and the signal's number when SIGINT or SIGTERM stopped it.
 
 import (
 	"bytes"
@@ -36,6 +36,7 @@ type fleetDeps struct {
 	now      func() time.Time
 	terminal func(io.Reader) bool
 	sleep    func(context.Context, time.Duration) error                                            // between two reads of an operation
+	timeout  func(context.Context, time.Duration) (context.Context, context.CancelFunc)            // ends the following
 	confirm  func(ctx context.Context, in io.Reader, out io.Writer, question string) (bool, error) // y/N on a terminal
 }
 
@@ -49,6 +50,7 @@ func theFleetDeps() fleetDeps {
 		now:      time.Now,
 		terminal: isTerminal,
 		sleep:    sleepFor,
+		timeout:  context.WithTimeout,
 		confirm:  promptConfirm,
 	}
 }
@@ -58,10 +60,15 @@ type usageError struct{ error }
 
 func usagef(format string, a ...any) error { return usageError{fmt.Errorf(format, a...)} }
 
-// finish prints err on stderr and gives the exit code it stands for; nil is success.
+// finish prints err on stderr and gives the exit code it stands for; nil is success. An exitCode is already said: it
+// is returned as it is.
 func finish(c *cobra.Command, err error) error {
 	if err == nil {
 		return nil
+	}
+	var code exitCode
+	if errors.As(err, &code) {
+		return err
 	}
 	fmt.Fprintln(c.ErrOrStderr(), err)
 	if errors.As(err, &usageError{}) {

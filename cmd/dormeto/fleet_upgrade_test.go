@@ -124,7 +124,7 @@ func TestUpgradeAsksOnATerminal(t *testing.T) {
 	}
 	asked, api = nil, &fakeAPI{routers: upgradeRouters}
 	r = runFleetWith(t, api, "eu-west-1", withTerminal(false, &asked), "routers", "upgrade", "--all")
-	if r.exit != 1 || len(api.posted) != 0 || !strings.Contains(r.stderr, "not confirmed") {
+	if r.exit != 0 || len(api.posted) != 0 || !strings.Contains(r.stdout, "not confirmed: nothing started") {
 		t.Errorf("declined: exit %d, posted %v, stderr %q", r.exit, api.posted, r.stderr)
 	}
 }
@@ -183,14 +183,22 @@ func TestUpgradeNoVersionAvailableExits1(t *testing.T) {
 func TestUpgradeTimeoutStopsFollowingAndExits1(t *testing.T) {
 	api := &fakeAPI{routers: upgradeRouters, endWith: "running"}
 	r := runFleetWith(t, api, "eu-west-1", func(d *fleetDeps) {
-		d.sleep = func(ctx context.Context, _ time.Duration) error { <-ctx.Done(); return ctx.Err() }
+		var fire context.CancelFunc // the deadline, fired once the upgrade is started and followed
+		d.timeout = func(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+			ctx, fire = context.WithCancel(ctx)
+			return ctx, fire
+		}
+		d.sleep = func(ctx context.Context, _ time.Duration) error { fire(); <-ctx.Done(); return ctx.Err() }
 	}, "routers", "upgrade", "r1", "--yes", "--timeout", "50ms")
 	if r.exit != 1 || len(api.posted) != 1 {
 		t.Fatalf("exit %d, posted %v, stderr %q", r.exit, api.posted, r.stderr)
 	}
-	for _, w := range []string{"timeout", "1 still running", "the started upgrades go on in the manager: follow them in its Operations view"} {
+	for _, w := range []string{"timeout of 50ms reached", "1 still running", "the started upgrades go on in the manager: follow them in its Operations view"} {
 		if !strings.Contains(r.stdout+r.stderr, w) {
 			t.Errorf("output lacks %q: %q %q", w, r.stdout, r.stderr)
 		}
+	}
+	if strings.Contains(r.stderr, "exit code") {
+		t.Errorf("stderr %q", r.stderr)
 	}
 }

@@ -138,6 +138,7 @@ func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*f
 		now:      func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
 		terminal: func(io.Reader) bool { return false },
 		sleep:    func(context.Context, time.Duration) error { return nil },
+		timeout:  context.WithTimeout,
 		confirm: func(context.Context, io.Reader, io.Writer, string) (bool, error) {
 			t.Error("asked for a confirmation")
 			return false, nil
