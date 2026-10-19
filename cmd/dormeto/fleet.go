@@ -31,7 +31,7 @@ import (
 // lookup of the manager's API, the HTTP client, the clock and the check that stdin is a terminal.
 type fleetDeps struct {
 	load     func(ctx context.Context, profile string) (awssdk.Config, error)
-	locator  func(cfg awssdk.Config, region string) fleet.Locator
+	locator  func(cfg awssdk.Config) fleet.Locator
 	http     *http.Client
 	now      func() time.Time
 	terminal func(io.Reader) bool
@@ -145,7 +145,8 @@ func (f *fleetFlags) connect(ctx context.Context, deps fleetDeps) (*fleet.Client
 		if region == "" {
 			return nil, noRegion()
 		}
-		if api, err = deps.locator(cfg, region).APIURL(ctx, f.env, region); err != nil {
+		cfg.Region = region // --region overrides the profile's
+		if api, err = deps.locator(cfg).APIURL(ctx, f.env, region); err != nil {
 			if errors.Is(err, fleet.ErrNoAPI) {
 				err = fmt.Errorf("%w (use --env, --region or --api-url)", err)
 			}

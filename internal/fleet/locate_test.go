@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
 )
@@ -38,5 +39,13 @@ func TestAPIURLAbsent(t *testing.T) {
 	_, err := l.APIURL(context.Background(), "dev", "eu-west-3")
 	if !errors.Is(err, ErrNoAPI) || !strings.Contains(err.Error(), "dmt-dev-manager-api") || !strings.Contains(err.Error(), "dev") || !strings.Contains(err.Error(), "eu-west-3") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestNewLocatorTakesTheRegionFromTheConfig(t *testing.T) {
+	l := NewLocator(aws.Config{Region: "eu-west-3"}).(*apiLocator)
+	c, ok := l.api.(*apigatewayv2.Client)
+	if !ok || c.Options().Region != "eu-west-3" {
+		t.Errorf("api = %#v", l.api)
 	}
 }

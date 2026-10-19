@@ -154,8 +154,10 @@ func runUpgrade(ctx context.Context, c *cobra.Command, deps fleetDeps, api *flee
 		return exitCode(1)
 	}
 	if res.Failed() > 0 {
-		if res.Unfinished() > 0 {
+		if res.Unfinished() > 0 { // the summary first, then the hint, as on the other paths
+			fmt.Fprintln(c.ErrOrStderr(), summary)
 			fmt.Fprintln(c.ErrOrStderr(), unfinishedHint)
+			return exitCode(1)
 		}
 		return errors.New(summary)
 	}

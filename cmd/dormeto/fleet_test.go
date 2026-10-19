@@ -129,7 +129,7 @@ func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*f
 			out.profile = profile
 			return awssdk.Config{Region: profileRegion, Credentials: credentials.NewStaticCredentialsProvider("AKID", "secret", "")}, nil
 		},
-		locator: func(awssdk.Config, string) fleet.Locator {
+		locator: func(awssdk.Config) fleet.Locator {
 			return locatorFunc(func(_ context.Context, env, region string) (string, error) {
 				out.located = append(out.located, env+"/"+region)
 				return srv.URL, nil
@@ -370,7 +370,7 @@ func TestFleetRefusals(t *testing.T) {
 			load: func(context.Context, string) (awssdk.Config, error) {
 				return awssdk.Config{Region: "eu-west-1", Credentials: credentials.NewStaticCredentialsProvider("A", "s", "")}, nil
 			},
-			locator: func(awssdk.Config, string) fleet.Locator {
+			locator: func(awssdk.Config) fleet.Locator {
 				return locatorFunc(func(context.Context, string, string) (string, error) { return srv.URL, c.locate })
 			},
 			http: srv.Client(), now: time.Now, terminal: func(io.Reader) bool { return false },

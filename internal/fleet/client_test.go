@@ -184,3 +184,61 @@ func TestAnswerTooLarge(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestCredentialsFailingIsNotSent(t *testing.T) {
+	var calls atomic.Int32
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
+	c.creds = aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) { return aws.Credentials{}, errors.New("expired") })
+	err := c.Post(context.Background(), "/operations", map[string]string{"a": "1"}, nil)
+	if !errors.Is(err, ErrNotSent) || !strings.Contains(err.Error(), "expired") || calls.Load() != 0 {
+		t.Errorf("err = %v, calls = %d", err, calls.Load())
+	}
+}
+
+// retryAfterWaits is what a GET answered 429 with retryAfter, then 200, waits between its two attempts.
+func retryAfterWaits(t *testing.T, retryAfter string, status int) []time.Duration {
+	t.Helper()
+	var calls atomic.Int32
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", retryAfter)
+			w.WriteHeader(status)
+			return
+		}
+		io.WriteString(w, `{}`)
+	})
+	var waits []time.Duration
+	c.sleep = func(_ context.Context, d time.Duration) error { waits = append(waits, d); return nil }
+	if err := c.Get(context.Background(), "/routers", nil, nil); err != nil || calls.Load() != 2 {
+		t.Fatalf("err = %v, calls = %d", err, calls.Load())
+	}
+	return waits
+}
+
+func TestGetHonoursRetryAfter(t *testing.T) {
+	date := func(d time.Duration) string {
+		return time.Date(2026, 10, 19, 8, 0, 0, 0, time.UTC).Add(d).Format(http.TimeFormat)
+	}
+	tests := []struct {
+		name, header string
+		status       int
+		want         []time.Duration
+	}{
+		{"seconds", "2", 429, []time.Duration{2 * time.Second}},
+		{"seconds on 503", "2", 503, []time.Duration{2 * time.Second}},
+		{"capped", "120", 429, []time.Duration{30 * time.Second}},
+		{"date", date(3 * time.Second), 429, []time.Duration{3 * time.Second}},
+		{"zero is at once", "0", 429, nil},
+		{"past date is at once", date(-time.Minute), 429, nil},
+		{"unreadable falls back to the backoff", "soon", 429, []time.Duration{500 * time.Millisecond}},
+		{"ignored on 500", "2", 500, []time.Duration{500 * time.Millisecond}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := retryAfterWaits(t, tt.header, tt.status)
+			if len(got) != len(tt.want) || (len(got) == 1 && got[0] != tt.want[0]) {
+				t.Errorf("waits = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

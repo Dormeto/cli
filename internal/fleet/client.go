@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,11 +26,48 @@ const getAttempts = 3
 // maxAnswer bounds what is read of an answer (a listing of 1,000 workloads is a few MB).
 const maxAnswer = 32 << 20
 
+// ErrNotSent marks an error from before the request left: the credentials or the signature failed, nothing reached
+// the manager.
+var ErrNotSent = errors.New("not started")
+
 // APIError is a refusal from API Gateway (Gateway) or from the manager (Code and Message).
 type APIError struct {
 	Status        int
 	Code, Message string
 	Gateway       bool
+
+	retryAfter    time.Duration // the Retry-After of a 429 or 503, when it has one and it is readable
+	hasRetryAfter bool
+}
+
+// notSentError is an error from before the request left; it is ErrNotSent.
+type notSentError struct{ err error }
+
+func (e *notSentError) Error() string        { return e.err.Error() }
+func (e *notSentError) Unwrap() error        { return e.err }
+func (e *notSentError) Is(target error) bool { return target == ErrNotSent }
+
+// unreadableError is a 2xx answer whose body cannot be decoded: the call was done, only its result is lost.
+type unreadableError struct{ err error }
+
+func (e *unreadableError) Error() string { return e.err.Error() }
+func (e *unreadableError) Unwrap() error { return e.err }
+
+// maxRetryAfter caps how long a Retry-After is waited.
+const maxRetryAfter = 30 * time.Second
+
+// retryAfter reads a Retry-After header (seconds or an HTTP date); a wait in the past is zero.
+func retryAfter(h string, now time.Time) (time.Duration, bool) {
+	h = strings.TrimSpace(h)
+	var d time.Duration
+	if secs, err := strconv.ParseInt(h, 10, 32); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if at, err := http.ParseTime(h); err == nil {
+		d = at.Sub(now)
+	} else {
+		return 0, false
+	}
+	return min(max(d, 0), maxRetryAfter), true
 }
 
 func (e *APIError) Error() string {
@@ -91,7 +130,14 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 		if err == nil || !retryable(err) || i == getAttempts {
 			return err
 		}
-		if serr := c.sleep(ctx, time.Duration(i)*c.backoff); serr != nil {
+		wait := time.Duration(i) * c.backoff
+		if ae, ok := err.(*APIError); ok && ae.hasRetryAfter {
+			wait = ae.retryAfter
+		}
+		if wait <= 0 { // a Retry-After of zero (or past): at once
+			continue
+		}
+		if serr := c.sleep(ctx, wait); serr != nil {
 			return serr
 		}
 	}
@@ -126,11 +172,11 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte, ou
 	}
 	cr, err := c.creds.Retrieve(ctx)
 	if err != nil {
-		return fmt.Errorf("AWS credentials: %w", err)
+		return &notSentError{fmt.Errorf("AWS credentials: %w", err)}
 	}
 	sum := sha256.Sum256(payload)
 	if err := c.signer.SignHTTP(ctx, cr, req, hex.EncodeToString(sum[:]), "execute-api", c.region, c.now()); err != nil {
-		return fmt.Errorf("sign the request: %w", err)
+		return &notSentError{fmt.Errorf("sign the request: %w", err)}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -145,13 +191,17 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte, ou
 		return fmt.Errorf("the manager's answer is too large (over %d MiB)", maxAnswer>>20)
 	}
 	if resp.StatusCode >= 300 {
-		return parseError(resp.StatusCode, data)
+		ae := parseError(resp.StatusCode, data)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			ae.retryAfter, ae.hasRetryAfter = retryAfter(resp.Header.Get("Retry-After"), c.now())
+		}
+		return ae
 	}
 	if out == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("decode the manager's answer: %w", err)
+		return &unreadableError{fmt.Errorf("decode the manager's answer: %w", err)}
 	}
 	return nil
 }

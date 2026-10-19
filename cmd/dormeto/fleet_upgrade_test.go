@@ -216,3 +216,13 @@ func TestUpgradeFailedWithAnOperationUnreadHintsAtTheOperationsView(t *testing.T
 		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }
+
+func TestUpgradeFailedHintComesAfterTheSummary(t *testing.T) {
+	api := &fakeAPI{routers: upgradeRouters, readStatus: 403}
+	r := runFleet(t, api, "eu-west-1", "routers", "upgrade", "r1", "--yes")
+	summary := strings.Index(r.stderr, "1 unknown")
+	hint := strings.Index(r.stderr, "follow them in its Operations view")
+	if r.exit != 1 || summary < 0 || hint < summary {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+}

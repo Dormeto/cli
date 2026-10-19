@@ -27,10 +27,10 @@ type apisAPI interface {
 
 type apiLocator struct{ api apisAPI }
 
-// NewLocator is the Locator over API Gateway in region, with the standard retryer (5 attempts).
-func NewLocator(cfg aws.Config, region string) Locator {
+// NewLocator is the Locator over API Gateway in cfg's region, with the standard retryer (5 attempts).
+func NewLocator(cfg aws.Config) Locator {
 	return &apiLocator{api: apigatewayv2.NewFromConfig(cfg, func(o *apigatewayv2.Options) {
-		o.Region, o.RetryMode, o.RetryMaxAttempts = region, aws.RetryModeStandard, 0
+		o.RetryMode, o.RetryMaxAttempts = aws.RetryModeStandard, 0
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) { so.MaxAttempts = 5 })
 	})}
 }

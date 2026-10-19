@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -388,5 +390,24 @@ func TestUpgradeFollowingWaitsOutNetworkErrors429And5xx(t *testing.T) {
 		if res.Upgraded[0].Status != "succeeded" {
 			t.Errorf("%v: %+v", err, res.Upgraded[0])
 		}
+	}
+}
+
+func TestUpgradeStartNotSentIsFailedNotStarted(t *testing.T) {
+	// the credentials may fail with a network error (an SSO token fetch): still nothing was sent
+	err := fmt.Errorf("%w: AWS credentials: %w", ErrNotSent, &url.Error{Op: "Post", URL: "https://sso", Err: errors.New("i/o timeout")})
+	ops := &fakeOps{polls: 1, refuse: map[string]error{"a": err}}
+	res := Upgrade(t.Context(), ops, planOf("a"), options(&clock{}, 1, new([]Event)))
+	if o := res.Upgraded[0]; o.Status != "failed" || !strings.Contains(o.Error, "not started") || strings.Contains(o.Error, "may have started") {
+		t.Errorf("%+v", o)
+	}
+}
+
+func TestUpgradeStartAnsweredButUnreadableIsUnknown(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "<html>") })
+	res := Upgrade(t.Context(), NewOperations(c), planOf("a"), options(&clock{}, 1, new([]Event)))
+	o := res.Upgraded[0]
+	if o.Status != "unknown" || o.Operation != "" || !strings.Contains(o.Error, "the manager may have started it, check its Operations view (") || res.Failed() != 1 {
+		t.Errorf("%+v", o)
 	}
 }
