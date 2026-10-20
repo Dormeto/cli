@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -108,22 +107,13 @@ func (o Operation) TargetText() string {
 	case t.Router != "":
 		return t.Router
 	case t.TargetGroupARN != "":
-		return targetGroupName(t.TargetGroupARN)
+		return TargetGroupName(t.TargetGroupARN)
 	case t.ExclusionID != "":
 		return "exclusion " + t.ExclusionID
 	case t.Account != "" && t.Region != "":
 		return t.Account + "/" + t.Region
 	}
 	return t.Account
-}
-
-// targetGroupName is the name in a target group's ARN (…:targetgroup/<name>/<id>), the ARN itself when it has none.
-func targetGroupName(arn string) string {
-	_, rest, ok := strings.Cut(arn, ":targetgroup/")
-	if name, _, _ := strings.Cut(rest, "/"); ok && name != "" {
-		return name
-	}
-	return arn
 }
 
 // StartOperation starts an operation: POST /operations with body ({type, …}), the record it answers.
