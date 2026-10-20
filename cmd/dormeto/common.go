@@ -384,3 +384,22 @@ func limitText(d time.Duration) string {
 	days := int(d / day)
 	return fmt.Sprintf("%dh (%d %s)", int(d/time.Hour), days, fleet.Plural(days, "day"))
 }
+
+var (
+	accountID  = regexp.MustCompile(`^[0-9]{12}$`)
+	regionName = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
+)
+
+// printStarted prints, under --json, the operations that started (whatever err is), then returns err.
+func printStarted(c *cobra.Command, asJSON bool, ops []fleet.Operation, err error) error {
+	if asJSON && len(ops) > 0 {
+		var v any = ops
+		if len(ops) == 1 {
+			v = ops[0]
+		}
+		if perr := printJSON(c.OutOrStdout(), v); perr != nil && err == nil {
+			err = perr
+		}
+	}
+	return err
+}

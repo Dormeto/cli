@@ -179,7 +179,7 @@ func (d RouterDetails) Text(loc *time.Location) string {
 		{"idle check", schedule}, {"lambda", lambdaText(d)}, {"failure queues", queuesText(d)},
 		{"concurrency", concurrencyText(d)},
 		{"workloads", workloads}, {"last activity", When(d.Workloads.LastActivityAt, loc)},
-		{"pauses", strings.Join(pauses, "\n")}, {"clusters", clustersText(d.Clusters, loc)}, {"ip lists", ipListsText(d)},
+		{"pauses", strings.Join(pauses, "\n")}, {"clusters", clustersText(d.Clusters, loc)}, {"ip lists", ipListsText(d, loc)},
 	}
 	c := d.Configuration
 	metrics := none
@@ -300,7 +300,7 @@ func clustersText(cs []ClusterCheck, loc *time.Location) string {
 }
 
 // ipListsText is the lists the router read: their entries and when they were downloaded, or why not.
-func ipListsText(d RouterDetails) string {
+func ipListsText(d RouterDetails, loc *time.Location) string {
 	var lines []string
 	for _, l := range d.Health.IPLists {
 		s := l.Name + ": "
@@ -309,7 +309,7 @@ func ipListsText(d RouterDetails) string {
 		} else {
 			s += fmt.Sprintf("%d entries", l.Entries)
 			if l.FetchedAt != "" {
-				s += ", downloaded " + l.FetchedAt
+				s += ", downloaded " + When(l.FetchedAt, loc)
 			}
 		}
 		lines = append(lines, s)

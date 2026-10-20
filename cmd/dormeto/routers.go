@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -30,11 +29,6 @@ const maxReason = 256
 
 // uninstallConcurrency bounds the uninstalls started at once.
 const uninstallConcurrency = 3
-
-var (
-	accountID  = regexp.MustCompile(`^[0-9]{12}$`)
-	regionName = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
-)
 
 // routerPath is the manager's route of a router, its name escaped.
 func routerPath(name, suffix string) string { return "/routers/" + url.PathEscape(name) + suffix }
@@ -126,20 +120,6 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd
-}
-
-// printStarted prints, under --json, the operations that started (whatever err is), then returns err.
-func printStarted(c *cobra.Command, asJSON bool, ops []fleet.Operation, err error) error {
-	if asJSON && len(ops) > 0 {
-		var v any = ops
-		if len(ops) == 1 {
-			v = ops[0]
-		}
-		if perr := printJSON(c.OutOrStdout(), v); perr != nil && err == nil {
-			err = perr
-		}
-	}
-	return err
 }
 
 func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {

@@ -36,3 +36,14 @@ func TestConditionsText(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestRouterDetailsTextIPListDownloadInTheZone(t *testing.T) {
+	var d RouterDetails
+	in := `{"name":"r","router":{},"workloads":{},"health":{"status":"ok","ipLists":[{"name":"bots","entries":12,"fetchedAt":"2026-10-19T08:00:00.000Z"}]}}`
+	if err := json.Unmarshal([]byte(in), &d); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Text(time.FixedZone("CEST", 2*3600)); !strings.Contains(got, "bots: 12 entries, downloaded 2026-10-19 10:00 CEST") {
+		t.Errorf("got\n%s", got)
+	}
+}
