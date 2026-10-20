@@ -464,3 +464,18 @@ func (c Changes) Text() string {
 	}
 	return strings.Join(parts, "\n\n") + "\n"
 }
+
+// InstallBuild is the install build a manager update's record names in its context (once the manager knows it); "" when
+// it names none.
+func (o Operation) InstallBuild() string {
+	var r struct {
+		Context struct {
+			Build any `json:"build"`
+		} `json:"context"`
+	}
+	if json.Unmarshal(o.raw, &r) != nil {
+		return ""
+	}
+	build, _ := r.Context.Build.(string)
+	return build
+}

@@ -238,3 +238,19 @@ func TestTargetText(t *testing.T) {
 		}
 	}
 }
+
+func TestFollowWithWaitOutWaitsOutEveryFailedReadAndSaysEachErrorOnce(t *testing.T) {
+	notFound := &APIError{Status: 404, Gateway: true, Message: "Not Found"}
+	forbidden := &APIError{Status: 403, Gateway: true, Message: "Forbidden"}
+	r := &reads{answers: []any{op("running", "apply", "running"), notFound, notFound, notFound, forbidden, notFound, op("succeeded", "apply", "done")}}
+	var told []string
+	o := followOptions(new([]Operation))
+	o.WaitOut = func(err error) { told = append(told, err.Error()) }
+	got, err := Follow(t.Context(), r.get, "op-1", o)
+	if err != nil || got.Status != "succeeded" || r.n != 7 {
+		t.Fatalf("%+v, %v, %d reads", got, err, r.n)
+	}
+	if len(told) != 2 || told[0] != notFound.Error() || told[1] != forbidden.Error() {
+		t.Errorf("told %q", told)
+	}
+}

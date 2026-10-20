@@ -175,6 +175,10 @@ type FollowOptions struct {
 	Poll     time.Duration
 	Sleep    func(context.Context, time.Duration) error // ends with the context's error when it is done
 	Progress func(Operation)                            // called with the record each time a step's status changes
+	// WaitOut, when set, has every failed read waited out until the context ends, not only the transient ones (the
+	// manager's update replaces the API: its routes may answer anything for a moment); it is told each error whose
+	// message it was not told yet.
+	WaitOut func(error)
 }
 
 // refusedAfter is how many reads of an operation in a row may fail for a reason that will not pass (a 403 or 404, the
@@ -184,10 +188,12 @@ const refusedAfter = 3
 
 // Follow reads the operation id with get, at once then every Poll, until it is no longer running, and gives its last
 // record. Progress is called when a step's status changes (a step not seen yet counts as pending). It ends with the
-// error of the reads given up on, or with the context's error when it is done, the last record read returned with it.
+// error of the reads given up on (none with WaitOut), or with the context's error when it is done, the last record read
+// returned with it.
 func Follow(ctx context.Context, get func(context.Context, string) (Operation, error), id string, o FollowOptions) (Operation, error) {
 	var last Operation
-	seen := map[int]string{} // the steps' statuses, by index
+	seen := map[int]string{}  // the steps' statuses, by index
+	told := map[string]bool{} // the errors WaitOut was told, by message
 	for failures := 0; ; {
 		op, err := get(ctx, id)
 		switch {
@@ -201,6 +207,11 @@ func Follow(ctx context.Context, get func(context.Context, string) (Operation, e
 			}
 		case ctx.Err() != nil:
 			return last, ctx.Err()
+		case o.WaitOut != nil:
+			if msg := err.Error(); !told[msg] {
+				told[msg] = true
+				o.WaitOut(err)
+			}
 		case !transient(err):
 			if failures++; failures >= refusedAfter {
 				return last, err

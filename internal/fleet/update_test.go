@@ -199,3 +199,15 @@ func TestBuildFailureText(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestInstallBuildIsTheBuildTheRecordNames(t *testing.T) {
+	o := parse[Operation](t, `{"id":"op-1","type":"update-manager","status":"succeeded","context":{"build":"dmt-prod-install:b","consoleUrl":null}}`)
+	if got := o.InstallBuild(); got != "dmt-prod-install:b" {
+		t.Errorf("InstallBuild() = %q", got)
+	}
+	for _, record := range []string{`{"id":"op-1","context":{}}`, `{"id":"op-1"}`, `{"id":"op-1","context":{"build":7}}`} {
+		if got := parse[Operation](t, record).InstallBuild(); got != "" {
+			t.Errorf("%s: %q", record, got)
+		}
+	}
+}
