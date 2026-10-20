@@ -445,8 +445,9 @@ func newDiscoveryConfigShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "show", Short: "Show the discovery configuration and its lint", Args: noArgs, SilenceErrors: true,
-		Long: "Show the discovery configuration as JSON (the file `config set` takes), then what the lint finds in it.\n" +
-			"--json prints the manager's whole answer: the configuration, who set it and when, the lint.",
+		Long: "Print the discovery configuration as JSON alone on stdout, so that `show > config.json` is a file `config set`\n" +
+			"takes, and what the lint finds in it on stderr. --json prints the manager's whole answer instead: the\n" +
+			"configuration as its `config` member, who set it and when, the lint.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var cfg fleet.DiscoveryConfig
@@ -457,6 +458,7 @@ func newDiscoveryConfigShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return printJSON(c.OutOrStdout(), cfg)
 				}
 				fmt.Fprint(c.OutOrStdout(), cfg.Text())
+				fmt.Fprint(c.ErrOrStderr(), fleet.LintText(cfg.Lint))
 				return nil
 			})
 		},
@@ -473,10 +475,10 @@ func newDiscoveryConfigSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "set --file <path>|-", Short: "Replace the discovery configuration with a JSON file", Args: noArgs, SilenceErrors: true,
-		Long: "Replace the whole discovery configuration with the JSON file (- reads standard input), sent as it is: the\n" +
+		Long: "Replace the whole discovery configuration with the JSON file (- reads standard input): the output of `config\n" +
+			"show` (the configuration as it is), or the answer of `config show --json`, whose `config` member is sent. The\n" +
 			"manager checks it, and a refusal prints each of its errors on a line (exit 1). It is always confirmed on a\n" +
-			"terminal (--yes without one). `config show --json` gives the current one to edit. --json prints the manager's\n" +
-			"answer. Needs an administrator.",
+			"terminal (--yes without one). --json prints the manager's answer. Needs an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			data, err := readJSONFile(c, file)
 			if err != nil {
@@ -511,7 +513,8 @@ func newDiscoveryConfigSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// readJSONFile reads path (- for the command's input): it must be given and hold JSON, nothing else is checked here.
+// readJSONFile reads path (- for the command's input): it must be given and hold JSON; the answer of `config show
+// --json` is unwrapped to its `config` member (which must be an object), anything else is sent as it is.
 func readJSONFile(c *cobra.Command, path string) ([]byte, error) {
 	if path == "" {
 		return nil, usagef("--file: name the configuration file (- for standard input)")
@@ -529,6 +532,16 @@ func readJSONFile(c *cobra.Command, path string) ([]byte, error) {
 	}
 	if !json.Valid(data) {
 		return nil, usagef("--file: %s is not JSON", path)
+	}
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(data, &probe) == nil {
+		if member, ok := probe["config"]; ok {
+			var obj map[string]json.RawMessage
+			if json.Unmarshal(member, &obj) != nil || obj == nil {
+				return nil, usagef("--file: the config member of %s is not a configuration object", path)
+			}
+			return member, nil
+		}
 	}
 	return data, nil
 }

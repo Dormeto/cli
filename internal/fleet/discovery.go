@@ -382,11 +382,11 @@ func (d DiscoveryConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(discoveryConfigFields(d))
 }
 
-// Text is the configuration as indented JSON, then the lint.
+// Text is the configuration as indented JSON alone: a file `config set` takes.
 func (d DiscoveryConfig) Text() string {
 	config := []byte(d.Config)
 	if indented, err := json.MarshalIndent(d.Config, "", "  "); err == nil {
 		config = indented
 	}
-	return string(config) + "\n\n" + LintText(d.Lint)
+	return string(config) + "\n"
 }

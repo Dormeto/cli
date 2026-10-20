@@ -356,8 +356,12 @@ const configAnswer = `{"config":{"version":1,"mode":"account","regions":["*"]},"
 func TestDiscoveryConfigShow(t *testing.T) {
 	a := &disAPI{config: configAnswer}
 	r := runDiscovery(t, a, nil, "", "config", "show")
-	if r.exit != 0 || !strings.Contains(r.stdout, "\"mode\": \"account\"") || !strings.Contains(r.stdout, "warning: matches every target group (filter all, include 1)") {
-		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
+	var cfg map[string]any
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &cfg) != nil || cfg["mode"] != "account" || cfg["lint"] != nil {
+		t.Errorf("stdout is not the configuration alone: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	if r.stderr != "warning: matches every target group (filter all, include 1)\n" {
+		t.Errorf("stderr %q", r.stderr)
 	}
 	r = runDiscovery(t, a, nil, "", "config", "show", "--json")
 	var got map[string]any
@@ -418,5 +422,26 @@ func TestDiscoveryConfigSetRefusesABadFileBeforeAnything(t *testing.T) {
 	r := runDiscovery(t, a, nil, `{"version":`, "config", "set", "--file", "-", "--yes")
 	if r.exit != 2 || len(a.requests) != 0 || !strings.Contains(r.stderr, "not JSON") {
 		t.Errorf("bad JSON: exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
+func TestDiscoveryConfigSetTakesTheShowAnswerOrABareConfiguration(t *testing.T) {
+	a := &disAPI{}
+	r := runDiscovery(t, a, nil, configAnswer, "config", "set", "--file", "-", "--yes")
+	want := `PUT /iam/discovery/config {"version":1,"mode":"account","regions":["*"]}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Errorf("show --json answer: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &disAPI{}
+	r = runDiscovery(t, a, nil, `{"version":1,"mode":"account"}`, "config", "set", "--file", "-", "--yes")
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != `PUT /iam/discovery/config {"version":1,"mode":"account"}` {
+		t.Errorf("bare: exit %d, writes %q", r.exit, a.writes)
+	}
+	for _, file := range []string{`{"config":null}`, `{"config":"x"}`, `{"config":[1]}`} {
+		a = &disAPI{}
+		r = runDiscovery(t, a, nil, file, "config", "set", "--file", "-", "--yes")
+		if r.exit != 2 || len(a.requests) != 0 {
+			t.Errorf("%s: exit %d, requests %q", file, r.exit, a.requests)
+		}
 	}
 }
