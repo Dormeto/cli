@@ -431,106 +431,6 @@ func newWorkloadsSchedule(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// scheduleView is the part of a schedule the display reads (the rest is kept as the API sent it).
-type scheduleView struct {
-	TimeZone string `json:"timeZone"`
-	Windows  []struct {
-		Kind  string   `json:"kind"`
-		Days  []string `json:"days"`
-		Start string   `json:"start"`
-		End   string   `json:"end"`
-		Wake  string   `json:"wake"`
-	} `json:"windows"`
-	Exceptions []string `json:"exceptions"`
-	MaxNapDays int      `json:"maxNapDays"`
-}
-
-type nextEvent struct {
-	At     string `json:"at"`
-	Kind   string `json:"kind"`
-	Window int    `json:"window"`
-}
-
-var weekdays = []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
-
-// daysText writes days in week order, three or more in a row as a range: mon–fri, sat,sun.
-func daysText(days []string) string {
-	set := map[string]bool{}
-	for _, d := range days {
-		set[strings.ToLower(d)] = true
-	}
-	var parts []string
-	for i := 0; i < len(weekdays); {
-		if !set[weekdays[i]] {
-			i++
-			continue
-		}
-		j := i
-		for j+1 < len(weekdays) && set[weekdays[j+1]] {
-			j++
-		}
-		if j-i >= 2 {
-			parts = append(parts, weekdays[i]+"–"+weekdays[j])
-		} else {
-			parts = append(parts, weekdays[i:j+1]...)
-		}
-		i = j + 1
-	}
-	return strings.Join(parts, ",")
-}
-
-// windowText is "awake mon–fri 08:30–19:00" or "nap mon–fri 20:00–07:00 (next day), wake: header".
-func windowText(kind, days, start, end, wake string) string {
-	s := fmt.Sprintf("%s %s %s–%s", kind, daysText(strings.Split(days, ",")), start, end)
-	if end <= start { // HH:MM compares as text
-		s += " (next day)"
-	}
-	if kind == "nap" {
-		s += ", wake: " + orDefault(wake, "never")
-	}
-	return s
-}
-
-var eventTexts = map[string]string{
-	"awake-start": "awake window starts", "awake-end": "awake window ends",
-	"nap-start": "nap window starts", "nap-end": "nap window ends",
-}
-
-// zoneOf is the schedule's zone for display; when it cannot be loaded, UTC and the sentence that says so.
-func zoneOf(name string) (*time.Location, string) {
-	if name == "" {
-		return time.UTC, ""
-	}
-	loc, err := time.LoadLocation(name)
-	if err != nil {
-		return time.UTC, fmt.Sprintf("unknown time zone %q; times in UTC", name)
-	}
-	return loc, ""
-}
-
-// timeLayout labels every time with its zone (the abbreviation, UTC for no zone).
-const timeLayout = "Mon 2 Jan 15:04 MST"
-
-// printNext prints the next events and the maintenance wake due, in the zone.
-func printNext(w io.Writer, loc *time.Location, next []nextEvent, due string) {
-	if len(next) > 0 {
-		fmt.Fprintln(w, "  next")
-	}
-	for _, e := range next {
-		at, err := time.Parse(time.RFC3339, e.At)
-		if err != nil {
-			fmt.Fprintf(w, "    %s %s\n", e.At, orDefault(eventTexts[e.Kind], e.Kind))
-			continue
-		}
-		fmt.Fprintf(w, "    %s %s\n", at.In(loc).Format(timeLayout), orDefault(eventTexts[e.Kind], e.Kind))
-	}
-	if due != "" {
-		if at, err := time.Parse(time.RFC3339, due); err == nil {
-			fmt.Fprintf(w, "  maintenance wake due %s\n", at.In(loc).Format(timeLayout))
-		}
-	}
-}
-
 func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -547,9 +447,9 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			t, _ := fleet.ParseTarget(args[0])
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var st struct {
-					Schedule       json.RawMessage `json:"schedule"`
-					Next           []nextEvent     `json:"next"`
-					MaintenanceDue string          `json:"maintenanceDue"`
+					Schedule       json.RawMessage   `json:"schedule"`
+					Next           []fleet.NextEvent `json:"next"`
+					MaintenanceDue string            `json:"maintenanceDue"`
 				}
 				if err := api.Get(ctx, t.Path(""), nil, &st); err != nil {
 					return fmt.Errorf("%s: %w", t, err)
@@ -564,9 +464,9 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						sched = &st.Schedule
 					}
 					return printJSON(out, struct {
-						Schedule       *json.RawMessage `json:"schedule,omitempty"`
-						Next           []nextEvent      `json:"next"`
-						MaintenanceDue *string          `json:"maintenanceDue"`
+						Schedule       *json.RawMessage  `json:"schedule,omitempty"`
+						Next           []fleet.NextEvent `json:"next"`
+						MaintenanceDue *string           `json:"maintenanceDue"`
 					}{sched, orNext(st.Next), nilIfEmpty(st.MaintenanceDue)})
 				}
 				if unreported {
@@ -577,11 +477,11 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					fmt.Fprintf(out, "%s: no schedule\n", t)
 					return nil
 				}
-				var s scheduleView
+				var s fleet.ScheduleView
 				if err := json.Unmarshal(st.Schedule, &s); err != nil {
 					return fmt.Errorf("decode the schedule: %w", err)
 				}
-				loc, note := zoneOf(s.TimeZone)
+				loc, note := fleet.ZoneOf(s.TimeZone)
 				if len(s.Windows) > 0 {
 					fmt.Fprintf(out, "%s: time zone %s\n", t, orDefault(s.TimeZone, "UTC"))
 				} else {
@@ -597,7 +497,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					fmt.Fprintf(out, "  %s\n", note)
 				}
 				for _, w := range s.Windows {
-					fmt.Fprintf(out, "  %s\n", windowText(w.Kind, strings.Join(w.Days, ","), w.Start, w.End, w.Wake))
+					fmt.Fprintf(out, "  %s\n", fleet.WindowText(w.Kind, strings.Join(w.Days, ","), w.Start, w.End, w.Wake))
 				}
 				if len(s.Exceptions) > 0 {
 					fmt.Fprintf(out, "  except %s\n", strings.Join(s.Exceptions, ", "))
@@ -605,7 +505,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if s.MaxNapDays > 0 {
 					fmt.Fprintf(out, "  maximum nap %d %s\n", s.MaxNapDays, fleet.Plural(s.MaxNapDays, "day"))
 				}
-				printNext(out, loc, st.Next, st.MaintenanceDue)
+				fleet.PrintNext(out, loc, st.Next, st.MaintenanceDue)
 				return nil
 			})
 		},
@@ -640,27 +540,27 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			return w.run(c, args, "set the schedule of", "Set the schedule of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
 					var res struct {
-						Schedule       json.RawMessage `json:"schedule"`
-						Next           []nextEvent     `json:"next"`
-						MaintenanceDue string          `json:"maintenanceDue"`
+						Schedule       json.RawMessage   `json:"schedule"`
+						Next           []fleet.NextEvent `json:"next"`
+						MaintenanceDue string            `json:"maintenanceDue"`
 					}
 					if err := api.Put(ctx, t.Path("/schedule"), raw, &res); err != nil {
 						return "", err
 					}
 					// The next events are read in the zone as stored (its canonical name), the file's when the answer has none.
-					var s scheduleView
+					var s fleet.ScheduleView
 					if json.Unmarshal(res.Schedule, &s) != nil || s.TimeZone == "" {
-						var sent scheduleView
+						var sent fleet.ScheduleView
 						_ = json.Unmarshal(raw, &sent)
 						s.TimeZone = sent.TimeZone
 					}
-					loc, note := zoneOf(s.TimeZone)
+					loc, note := fleet.ZoneOf(s.TimeZone)
 					var b strings.Builder
 					fmt.Fprintf(&b, "%s: schedule set\n", t)
 					if note != "" {
 						fmt.Fprintf(&b, "  %s\n", note)
 					}
-					printNext(&b, loc, res.Next, res.MaintenanceDue)
+					fleet.PrintNext(&b, loc, res.Next, res.MaintenanceDue)
 					return b.String(), nil
 				})
 				return err
@@ -747,9 +647,9 @@ func orRaw(r json.RawMessage) json.RawMessage {
 	return r
 }
 
-func orNext(n []nextEvent) []nextEvent {
+func orNext(n []fleet.NextEvent) []fleet.NextEvent {
 	if n == nil {
-		return []nextEvent{}
+		return []fleet.NextEvent{}
 	}
 	return n
 }
