@@ -60,15 +60,18 @@ type opResult struct {
 // runOperations starts the items' operations, at most concurrency at once, each followed until it ends unless --no-wait.
 // On stdout (stderr with the command's --json): each start, "started <type> <id> for <label>", and each success. On
 // stderr: the steps as they change, each failure (a refused start with the manager's message: the others go on), and,
-// when --timeout or a signal stops the following, each operation still running in the manager with how to follow it. It
-// gives the records of the operations started, in the items' order, as last read; the error is exit 1 when one failed or
-// was not followed to its end (the run's signal exit wins).
+// when --timeout (no limit when not positive) or a signal stops the following, each operation still running in the
+// manager with how to follow it. It gives the records of the operations started, in the items' order, as last read; the
+// error is exit 1 when one failed or was not followed to its end (the run's signal exit wins).
 func runOperations(ctx context.Context, c *cobra.Command, deps fleetDeps, items []opItem, concurrency int, w waitFlags) ([]fleet.Operation, error) {
 	o := opOutput{info: c.OutOrStdout(), errs: c.ErrOrStderr(), mu: &sync.Mutex{}, named: len(items) > 1}
 	if asJSON, _ := c.Flags().GetBool("json"); asJSON {
 		o.info = c.ErrOrStderr()
 	}
-	followed, cancel := deps.timeout(ctx, w.timeout)
+	followed, cancel := ctx, context.CancelFunc(func() {})
+	if w.timeout > 0 { // none is no limit: the context alone ends the following
+		followed, cancel = deps.timeout(ctx, w.timeout)
+	}
 	defer cancel()
 	results := make([]opResult, len(items))
 	slots := make(chan struct{}, max(concurrency, 1))

@@ -358,3 +358,33 @@ func TestEndOf(t *testing.T) {
 		t.Errorf("neither, required: %v", err)
 	}
 }
+
+// A command that builds its waitFlags by hand, with no --timeout checked, follows its operations without a limit.
+func TestRunOperationsWithoutTimeoutFollowsToTheEnd(t *testing.T) {
+	reads := 0
+	item := opItem{
+		label: "a",
+		start: func(context.Context) (fleet.Operation, error) {
+			return fleet.Operation{ID: "op-a", Type: "install-router", Status: "running"}, nil
+		},
+		get: func(context.Context, string) (fleet.Operation, error) {
+			if reads++; reads < 2 {
+				return fleet.Operation{ID: "op-a", Type: "install-router", Status: "running"}, nil
+			}
+			return fleet.Operation{ID: "op-a", Type: "install-router", Status: "succeeded"}, nil
+		},
+	}
+	deps := fleetDeps{
+		now:     func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
+		sleep:   func(context.Context, time.Duration) error { return nil },
+		timeout: context.WithTimeout,
+	}
+	c := &cobra.Command{}
+	var out, errs bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&errs)
+	ops, err := runOperations(t.Context(), c, deps, []opItem{item}, 1, waitFlags{timeout: 0})
+	if err != nil || len(ops) != 1 || ops[0].Status != "succeeded" || reads != 2 || !strings.Contains(out.String(), "✓ a: install-router succeeded") {
+		t.Errorf("err %v, ops %+v, %d reads, stdout %q, stderr %q", err, ops, reads, out.String(), errs.String())
+	}
+}

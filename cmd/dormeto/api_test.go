@@ -112,3 +112,11 @@ func TestAPIBadArgumentsExit2AndSendNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIJSONIsAcceptedAndPrintsTheSameBody(t *testing.T) {
+	a := &rawAPI{body: `{"routers":[]}`}
+	r := runAPI(t, a, "", "GET", "/routers", "--json")
+	if r.exit != 0 || r.stdout != "{\n  \"routers\": []\n}\n" || len(a.seen) != 1 || a.seen[0] != "GET /iam/routers" {
+		t.Errorf("exit %d, stdout %q, seen %q, stderr %q", r.exit, r.stdout, a.seen, r.stderr)
+	}
+}

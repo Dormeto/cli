@@ -28,17 +28,20 @@ func newAPI(deps fleetDeps) *cobra.Command {
 	var (
 		data   string
 		params []string
+		asJSON bool
 	)
 	cmd := fleetCommand("api <method> <path>", "Call a route of the manager's API, signed, and print its answer")
 	cmd.Long = "Call a route of the manager's API with the profile's signature and print the answer's body (indented when it is\n" +
 		"JSON). The method is GET, POST, PUT or DELETE; the path starts with / and is the route's under /iam (an /iam prefix\n" +
 		"is dropped), percent-encoded where a segment needs it. --data is the body: JSON, @<file>, or - for standard input.\n" +
-		"A GET answered 429 or 5xx is tried again, up to 3 times. Any status but 2xx prints HTTP <status> on stderr, exit 1.\n\n" +
+		"A GET answered 429 or 5xx is tried up to 3 times in all. Any status but 2xx prints HTTP <status> on stderr, exit 1.\n" +
+		"--json changes nothing (the body is the API's answer); it is accepted as every command accepts it.\n\n" +
 		"  dormeto api GET /workloads -q state=ASLEEP -q limit=10\n" +
 		"  dormeto api POST /routers/prod-eu/pause --data '{\"reason\":\"maintenance\"}'"
 	f.bind(cmd)
 	cmd.Flags().StringVar(&data, "data", "", "the request's body: JSON, @<file>, or - for standard input")
 	cmd.Flags().StringArrayVarP(&params, "query", "q", nil, "a query parameter, key=value (repeatable)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "the body as the API answers it (what is printed anyway)")
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		method, path, query, err := apiRequest(args, params)
 		var body []byte
