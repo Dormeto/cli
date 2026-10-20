@@ -135,31 +135,19 @@ func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.
 }
 
 // confirmTargets lists the targets on --dry-run (done: true), asks on a terminal when there are several and --yes is
-// absent (done: true when declined), and refuses without a terminal.
+// absent (done: true when declined), and refuses without a terminal: confirmNames, with what in the dry run's line and
+// question taking the count.
 func confirmTargets(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, dryRun, yes bool) (done bool, err error) {
-	out := c.OutOrStdout()
-	n := len(targets)
+	names := make([]string, len(targets))
+	for i, t := range targets {
+		names[i] = t.String()
+	}
+	n := len(names)
 	if dryRun {
-		fmt.Fprintf(out, "dry run: %s %d %s, nothing sent\n", what, n, fleet.Plural(n, "workload"))
-		for _, t := range targets {
-			fmt.Fprintf(out, "  %s\n", t)
-		}
+		listDryRun(c.OutOrStdout(), fmt.Sprintf("%s %d %s", what, n, fleet.Plural(n, "workload")), names)
 		return true, nil
 	}
-	if n < 2 || yes {
-		return false, nil
-	}
-	if !deps.terminal(c.InOrStdin()) {
-		return false, usagef("confirmation needed: pass --yes to act on %d workloads without a terminal", n)
-	}
-	ok, err := deps.confirm(ctx, c.InOrStdin(), out, fmt.Sprintf(question, n))
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		fmt.Fprintln(out, "not confirmed: nothing sent")
-	}
-	return !ok, nil
+	return confirmNames(ctx, c, deps, names, "workload", fmt.Sprintf(question, n), false, false, yes)
 }
 
 // applyAll runs do for each target in turn: its line goes to stdout, its failure to stderr as "target: message"; the
@@ -245,13 +233,13 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "keep-awake (<router>/<workload>... | --tag k=v...) (--for <duration> | --until <time>)", Short: "Keep workloads awake for a while (a pause that does not put them to sleep)",
 		SilenceErrors: true,
 		Long: "Keep the workloads awake until a time, as a pause that leaves them awake: they are woken when asleep and are\n" +
-			"not put to sleep before it ends. --for is a Go duration up to 168h (7 days; 2h, 90m, 36h); --until is an RFC 3339\n" +
+			"not put to sleep before it ends. --for is a duration up to 168h (7 days; 90m, 2h, 2d); --until is an RFC 3339\n" +
 			"time or HH:MM today in the local time zone, refused when already past or more than 7 days away. --wait follows\n" +
 			"the workloads every 5 s until all are awake (FAILED ends it with the failure, exit 1; --timeout, exit 1; Ctrl-C,\n" +
 			"exit 130: the pause stays, `dormeto workloads resume` ends it). Several targets are confirmed on a terminal.",
 		RunE: func(c *cobra.Command, args []string) error {
 			now := deps.now()
-			end, err := keepAwakeEnd(now, dur, until)
+			end, _, err := endOf(now, dur, until, maxKeepAwake, true)
 			if err == nil {
 				err = w.targets.check(args, false)
 			}
@@ -286,42 +274,12 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	w.bindShared(cmd)
 	fl := cmd.Flags()
-	fl.StringVar(&dur, "for", "", "how long, a Go duration up to 168h (2h, 90m)")
+	fl.StringVar(&dur, "for", "", "how long, a duration up to 168h (90m, 2h, 2d)")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
 	fl.StringVar(&why, "reason", defaultKeepAwakeReason, "the pause's reason, shown in the manager")
 	fl.BoolVar(&wait, "wait", false, "wait until the workloads are awake")
 	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long (the pause stays)")
 	return cmd
-}
-
-// keepAwakeEnd is the end of the pause from --for or --until, refused (a usage error) when neither or both are given,
-// when it is not within (now, now + 7 days].
-func keepAwakeEnd(now time.Time, forText, until string) (time.Time, error) {
-	if (forText != "") == (until != "") {
-		return time.Time{}, usagef("give exactly one of --for and --until")
-	}
-	var end time.Time
-	if forText != "" {
-		dur, err := time.ParseDuration(forText)
-		if err != nil || dur < time.Second || dur > maxKeepAwake {
-			return time.Time{}, usagef("--for: %q is not a Go duration (2h, 90m) from 1s up to 168h (7 days)", forText)
-		}
-		return now.Add(dur), nil
-	}
-	if t, err := time.Parse(time.RFC3339, until); err == nil {
-		end = t
-	} else if hm, err := time.Parse("15:04", until); err == nil {
-		end = time.Date(now.Year(), now.Month(), now.Day(), hm.Hour(), hm.Minute(), 0, 0, now.Location())
-	} else {
-		return time.Time{}, usagef("--until: %q is neither an RFC 3339 time nor HH:MM", until)
-	}
-	if !end.After(now) {
-		return time.Time{}, usagef("--until: %s is already past (it is %s now)", until, now.Format("15:04 MST"))
-	}
-	if end.Sub(now) > maxKeepAwake {
-		return time.Time{}, usagef("--until: %s is more than 168h (7 days) away", until)
-	}
-	return end, nil
 }
 
 // workloadStatus is what GET …/{id} says that --wait reads.

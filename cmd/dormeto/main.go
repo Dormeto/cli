@@ -47,11 +47,15 @@ func newRoot(b build) *cobra.Command {
 		},
 	})
 	root.AddCommand(newEstimate(b))
-	fleetCommands := theFleetDeps()
-	root.AddCommand(newRouters(fleetCommands), newWorkloads(fleetCommands))
+	root.AddCommand(managerCommands(theFleetDeps())...)
 	v, _, _ := b.resolve()
 	root.AddCommand(newInstall(theInstallRuns, orDefault(v, "dev")), newUninstall(theInstallRuns, orDefault(v, "dev")))
 	return root
+}
+
+// managerCommands are the commands that call the manager's API, with deps.
+func managerCommands(deps fleetDeps) []*cobra.Command {
+	return []*cobra.Command{newRouters(deps), newWorkloads(deps)}
 }
 
 func orDefault(s, d string) string {

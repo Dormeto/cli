@@ -628,3 +628,15 @@ func TestScheduleShowWindowlessLabelsTimesWithTheirZone(t *testing.T) {
 		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
 	}
 }
+
+func TestKeepAwakeForTakesDays(t *testing.T) {
+	a := &wlAPI{}
+	r := runWL(t, a, nil, "keep-awake", "prod-eu/w-1", "--for", "2d")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"until":"2026-10-21T12:00:00Z"`) {
+		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	r = runWL(t, &wlAPI{}, nil, "keep-awake", "prod-eu/w-1", "--for", "8d")
+	if r.exit != 2 || !strings.Contains(r.stderr, `--for: "8d" is not a duration`) {
+		t.Errorf("8d: exit %d, stderr %q", r.exit, r.stderr)
+	}
+}

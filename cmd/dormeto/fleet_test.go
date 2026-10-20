@@ -128,6 +128,12 @@ func runFleet(t *testing.T, api *fakeAPI, profileRegion string, args ...string) 
 // runFleetWith is runFleet with the dependencies adjusted by tune (nil for none).
 func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*fleetDeps), args ...string) fleetRan {
 	t.Helper()
+	return runCommands(t, api, profileRegion, tune, managerCommands, args...)
+}
+
+// runCommands runs the command line on a root holding the commands built with fake dependencies, adjusted by tune.
+func runCommands(t *testing.T, api *fakeAPI, profileRegion string, tune func(*fleetDeps), commands func(fleetDeps) []*cobra.Command, args ...string) fleetRan {
+	t.Helper()
 	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
 	out := fleetRan{api: api}
@@ -157,7 +163,7 @@ func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*f
 		tune(&deps)
 	}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
-	root.AddCommand(newRouters(deps), newWorkloads(deps))
+	root.AddCommand(commands(deps)...)
 	var o, e bytes.Buffer
 	root.SetOut(&o)
 	root.SetErr(&e)
