@@ -342,7 +342,8 @@ func newWorkloads(deps fleetDeps) *cobra.Command {
 	cmd := fleetCommand("workloads", "List and show workloads, keep them awake and schedule them")
 	f.bind(cmd)
 	cmd.AddCommand(newWorkloadsList(f, deps), newWorkloadsKeepAwake(f, deps), newWorkloadsResume(f, deps), newWorkloadsSchedule(f, deps),
-		newWorkloadsShow(f, deps), newWorkloadsHistory(f, deps), newWorkloadsIdleWindow(f, deps))
+		newWorkloadsShow(f, deps), newWorkloadsHistory(f, deps), newWorkloadsIdleWindow(f, deps),
+		newWorkloadsWake(f, deps), newWorkloadsNap(f, deps), newWorkloadsPause(f, deps), newWorkloadsRename(f, deps), newWorkloadsTags(f, deps))
 	return cmd
 }
 

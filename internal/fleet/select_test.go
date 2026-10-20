@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -114,5 +115,33 @@ func TestParseTags(t *testing.T) {
 	}
 	if _, err := ParseTags([]string{"a=1", "a=2"}); err == nil || !strings.Contains(err.Error(), `"a"`) {
 		t.Errorf("twice: %v", err)
+	}
+}
+
+func TestTagsProblem(t *testing.T) {
+	many := map[string]string{}
+	for i := 0; i < 51; i++ {
+		many[fmt.Sprintf("k%d", i)] = "v"
+	}
+	for name, c := range map[string]struct {
+		tags map[string]string
+		bad  bool
+	}{
+		"empty":        {map[string]string{}, false},
+		"allowed":      {map[string]string{"team/name": "Pay ments_a.b:c=d+e-f@g", "é": "ü9"}, false},
+		"empty value":  {map[string]string{"a": ""}, false},
+		"empty key":    {map[string]string{"": "v"}, true},
+		"long key":     {map[string]string{strings.Repeat("k", 129): "v"}, true},
+		"128 key":      {map[string]string{strings.Repeat("k", 128): "v"}, false},
+		"long value":   {map[string]string{"a": strings.Repeat("v", 257)}, true},
+		"comma":        {map[string]string{"a": "1,2"}, true},
+		"tab":          {map[string]string{"a": "1\t2"}, true},
+		"reserved":     {map[string]string{"DORMETO:x": "v"}, true},
+		"dormeto only": {map[string]string{"dormetox": "v"}, false},
+		"51":           {many, true},
+	} {
+		if got := TagsProblem(c.tags); (got != "") != c.bad {
+			t.Errorf("%s: %q", name, got)
+		}
 	}
 }

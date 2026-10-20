@@ -189,6 +189,11 @@ type writeCommand struct {
 
 func (w *writeCommand) bindShared(cmd *cobra.Command) {
 	w.targets.bind(cmd)
+	w.bindConfirmation(cmd)
+}
+
+// bindConfirmation binds --dry-run and --yes alone (rename takes no --tag).
+func (w *writeCommand) bindConfirmation(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&w.dryRun, "dry-run", false, "list the targets and stop")
 	cmd.Flags().BoolVar(&w.yes, "yes", false, "do not ask for confirmation of several targets (needed without a terminal)")
 }
@@ -265,7 +270,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if !wait || len(ok) == 0 {
 						return err
 					}
-					if werr := waitAwake(ctx, c, deps, api, ok, timeout); werr != nil {
+					if werr := waitAwake(ctx, c, deps, api, ok, timeout, true); werr != nil {
 						return werr
 					}
 					return err
@@ -302,8 +307,9 @@ func failureText(raw json.RawMessage) string {
 }
 
 // waitAwake reads each target's status every 5 s until AWAKE (a line on stdout), FAILED (its failure on stderr) or the
-// end of --timeout or of the run. A failure, a timeout or an unreadable status is exit 1; the pause stays in each case.
-func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client, targets []fleet.Target, timeout time.Duration) error {
+// end of --timeout or of the run. A failure, a timeout or an unreadable status is exit 1; with paused (keep-awake), the
+// pause stays in each case and is said so.
+func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client, targets []fleet.Target, timeout time.Duration, paused bool) error {
 	followed, cancel := deps.timeout(ctx, timeout)
 	defer cancel()
 	var (
@@ -377,15 +383,24 @@ func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet
 	mu.Lock()
 	defer mu.Unlock()
 	if ctx.Err() != nil {
-		fmt.Fprintf(c.ErrOrStderr(), "interrupted: the pause stays, `dormeto workloads resume` ends it; not awake: %s\n", targetNames(pending))
+		if paused {
+			fmt.Fprintf(c.ErrOrStderr(), "interrupted: the pause stays, `dormeto workloads resume` ends it; not awake: %s\n", targetNames(pending))
+		} else {
+			fmt.Fprintf(c.ErrOrStderr(), "interrupted; not awake: %s\n", targetNames(pending))
+		}
 		return nil // the run's signal exit applies
 	}
 	if followed.Err() != nil && len(pending) > 0 {
-		fmt.Fprintf(c.ErrOrStderr(), "timeout of %s reached: not awake: %s\nthe pause stays: `dormeto workloads resume` ends it\n", timeout, targetNames(pending))
+		fmt.Fprintf(c.ErrOrStderr(), "timeout of %s reached: not awake: %s\n", timeout, targetNames(pending))
+		if paused {
+			fmt.Fprintln(c.ErrOrStderr(), "the pause stays: `dormeto workloads resume` ends it")
+		}
 		return exitCode(1)
 	}
 	if failures > 0 {
-		fmt.Fprintln(c.ErrOrStderr(), "the pause stays on the failed workloads: `dormeto workloads resume` ends it")
+		if paused {
+			fmt.Fprintln(c.ErrOrStderr(), "the pause stays on the failed workloads: `dormeto workloads resume` ends it")
+		}
 		return exitCode(1)
 	}
 	return nil

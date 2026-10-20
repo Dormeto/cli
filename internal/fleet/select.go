@@ -3,9 +3,12 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Selection is which routers a command acts on: the names given (upgrade) narrowed by the filters. Accounts and
@@ -89,3 +92,29 @@ func ParseTags(values []string) (map[string]string, error) {
 	}
 	return tags, nil
 }
+
+// TagsProblem says why the manager refuses these tags as a workload's (at most 50; key 1 to 128 and value up to 256
+// characters; letters, digits, spaces and _ . : / = + - @; no dormeto: key prefix), or "" when it accepts them.
+func TagsProblem(tags map[string]string) string {
+	if len(tags) > 50 {
+		return "tags: at most 50"
+	}
+	for _, k := range slices.Sorted(maps.Keys(tags)) {
+		v := tags[k]
+		switch {
+		case utf8.RuneCountInString(k) < 1 || utf8.RuneCountInString(k) > 128:
+			return fmt.Sprintf("tag %q: key of 1 to 128 characters", k)
+		case utf8.RuneCountInString(v) > 256:
+			return fmt.Sprintf("tag %q: value of at most 256 characters", k)
+		case !tagChars.MatchString(k):
+			return fmt.Sprintf("tag %q: key characters: letters, digits, spaces and _ . : / = + - @", k)
+		case !tagChars.MatchString(v):
+			return fmt.Sprintf("tag %q: value characters: letters, digits, spaces and _ . : / = + - @", k)
+		case strings.HasPrefix(strings.ToLower(k), "dormeto:"):
+			return fmt.Sprintf("tag %q: the dormeto: prefix is reserved", k)
+		}
+	}
+	return ""
+}
+
+var tagChars = regexp.MustCompile(`^[\p{L}\p{Z}\p{N}_.:/=+\-@]*$`)
