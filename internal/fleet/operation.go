@@ -116,6 +116,24 @@ func (o Operation) TargetText() string {
 	return t.Account
 }
 
+// Workload is the workload an onboarding or an offboarding concerns, once known: the operation's target (what a member
+// is shown), else its context (an onboarding's preview names it). The router is "" when the record does not name it.
+func (o Operation) Workload() (router, id string) {
+	router, id = o.Target.Router, o.Target.WorkloadID
+	var ctx struct {
+		Context struct {
+			WorkloadID string `json:"workloadId"`
+			Router     struct {
+				Name string `json:"name"`
+			} `json:"router"`
+		} `json:"context"`
+	}
+	if json.Unmarshal(o.raw, &ctx) == nil {
+		router, id = orStr(router, ctx.Context.Router.Name), orStr(id, ctx.Context.WorkloadID)
+	}
+	return router, id
+}
+
 // StartOperation starts an operation: POST /operations with body ({type, …}), the record it answers.
 func StartOperation(ctx context.Context, c *Client, body map[string]any) (Operation, error) {
 	var out struct {

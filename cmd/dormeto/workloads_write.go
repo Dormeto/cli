@@ -249,20 +249,24 @@ func tagsText(tags map[string]string) string {
 }
 
 // parseSet reads --set values, key=value: the value may hold "=", a key is given once.
-func parseSet(values []string) (map[string]string, error) {
+func parseSet(values []string) (map[string]string, error) { return parseTagFlag("--set", values) }
+
+// parseTagFlag is parseSet for the flag of that name (--set-tag of onboard): tags given as key=value, checked as the
+// manager checks them.
+func parseTagFlag(flag string, values []string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, v := range values {
 		k, val, ok := strings.Cut(v, "=")
 		if !ok || k == "" {
-			return nil, usagef("--set: %q is not key=value", v)
+			return nil, usagef("%s: %q is not key=value", flag, v)
 		}
 		if _, dup := out[k]; dup {
-			return nil, usagef("--set: key %q given twice", k)
+			return nil, usagef("%s: key %q given twice", flag, k)
 		}
 		out[k] = val
 	}
 	if p := fleet.TagsProblem(out); p != "" {
-		return nil, usagef("--set: %s", p)
+		return nil, usagef("%s: %s", flag, p)
 	}
 	return out, nil
 }

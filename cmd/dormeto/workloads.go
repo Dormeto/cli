@@ -138,6 +138,11 @@ func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.
 // absent (done: true when declined), and refuses without a terminal: confirmNames, with what in the dry run's line and
 // question taking the count.
 func confirmTargets(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, dryRun, yes bool) (done bool, err error) {
+	return confirmWorkloads(ctx, c, deps, targets, what, question, false, dryRun, yes)
+}
+
+// confirmWorkloads is confirmTargets that asks even for one target when always (the destructive commands).
+func confirmWorkloads(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, always, dryRun, yes bool) (done bool, err error) {
 	names := make([]string, len(targets))
 	for i, t := range targets {
 		names[i] = t.String()
@@ -147,7 +152,7 @@ func confirmTargets(ctx context.Context, c *cobra.Command, deps fleetDeps, targe
 		listDryRun(c.OutOrStdout(), fmt.Sprintf("%s %d %s", what, n, fleet.Plural(n, "workload")), names)
 		return true, nil
 	}
-	return confirmNames(ctx, c, deps, names, "workload", fmt.Sprintf(question, n), false, false, yes)
+	return confirmNames(ctx, c, deps, names, "workload", fmt.Sprintf(question, n), always, false, yes)
 }
 
 // applyAll runs do for each target in turn: its line goes to stdout, its failure to stderr as "target: message"; the
@@ -219,6 +224,7 @@ type writeCommand struct {
 	targets targetFlags
 	dryRun  bool
 	yes     bool
+	always  bool // ask even for one target (offboard, exclude)
 }
 
 func (w *writeCommand) bindShared(cmd *cobra.Command) {
@@ -253,7 +259,7 @@ func (w *writeCommand) run(c *cobra.Command, args []string, what, question strin
 		if len(targets) == 0 {
 			return report(nil)
 		}
-		if done, err := confirmTargets(ctx, c, w.deps, targets, what, question, w.dryRun, w.yes); done || err != nil {
+		if done, err := confirmWorkloads(ctx, c, w.deps, targets, what, question, w.always, w.dryRun, w.yes); done || err != nil {
 			return report(err)
 		}
 		return report(act(ctx, api, targets))
