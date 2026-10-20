@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"slices"
@@ -31,44 +30,6 @@ func newUsers(deps fleetDeps) *cobra.Command {
 				return fmt.Sprintf("mfa of %s reset%s", a.Email, map[bool]string{true: " (token deleted)", false: ""}[a.TokenDeleted])
 			}))
 	return cmd
-}
-
-// answer is what the user routes say back, of which each prints its part.
-type answer struct {
-	Email        string   `json:"email"`
-	Role         string   `json:"role"`
-	Groups       []string `json:"groups"`
-	Invitation   string   `json:"invitation"`
-	TokenDeleted bool     `json:"tokenDeleted"`
-}
-
-// callAPI sends a write to path with body (nil for none) and returns the manager's answer, raw for --json.
-func callAPI(ctx context.Context, api *fleet.Client, method, path string, body any) (json.RawMessage, error) {
-	var raw json.RawMessage
-	var err error
-	switch method {
-	case "POST":
-		err = api.Post(ctx, path, body, &raw)
-	case "PUT":
-		err = api.Put(ctx, path, body, &raw)
-	default:
-		err = api.Delete(ctx, path, &raw)
-	}
-	return raw, err
-}
-
-// printAnswer prints the manager's answer under --json, else text(its decoded form).
-func printAnswer(c *cobra.Command, asJSON bool, raw json.RawMessage, text func(answer) string) error {
-	if asJSON {
-		if len(raw) == 0 {
-			raw = json.RawMessage("{}")
-		}
-		return printJSON(c.OutOrStdout(), raw)
-	}
-	var a answer
-	_ = json.Unmarshal(raw, &a)
-	fmt.Fprintln(c.OutOrStdout(), text(a))
-	return nil
 }
 
 func userPath(email, tail string) string { return "/users/" + url.PathEscape(email) + tail }
@@ -149,13 +110,6 @@ func newUsersInvite(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd.Flags().StringArrayVar(&groups, "group", nil, "an existing custom group; repeat for several")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
-}
-
-func emptyIfNil(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
 
 func newUsersRole(f *fleetFlags, deps fleetDeps) *cobra.Command {
@@ -290,15 +244,4 @@ func newUsersSimple(f *fleetFlags, deps fleetDeps, use, short, long, tail string
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
-}
-
-// argCount checks the number of arguments (max -1: any): a wrong one is a usage error naming what is expected.
-func argCount(min, max int, want string) cobra.PositionalArgs {
-	return func(c *cobra.Command, args []string) error {
-		if len(args) < min || (max >= 0 && len(args) > max) {
-			fmt.Fprintf(c.ErrOrStderr(), "%s takes %s\n", c.CommandPath(), want)
-			return exitCode(2)
-		}
-		return nil
-	}
 }

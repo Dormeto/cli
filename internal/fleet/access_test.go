@@ -12,6 +12,7 @@ func TestParseGrant(t *testing.T) {
 		"team=a,env=dev:read,wake": {Tags: map[string]string{"team": "a", "env": "dev"}, Permissions: []string{"read", "wake"}},
 		":read":                    {Tags: map[string]string{}, Permissions: []string{"read"}},
 		"a:b=c:nap":                {Tags: map[string]string{"a:b": "c"}, Permissions: []string{"nap"}},
+		" =v:read":                 {Tags: map[string]string{" ": "v"}, Permissions: []string{"read"}},
 		"team=:read,wake,nap":      {Tags: map[string]string{"team": ""}, Permissions: []string{"read", "wake", "nap"}},
 	}
 	for in, want := range ok {

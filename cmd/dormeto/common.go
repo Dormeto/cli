@@ -6,10 +6,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"regexp"
 	"strconv"
 	"sync"
@@ -402,4 +404,62 @@ func printStarted(c *cobra.Command, asJSON bool, ops []fleet.Operation, err erro
 		}
 	}
 	return err
+}
+
+// answer is what the user routes say back, of which each prints its part.
+type answer struct {
+	Email        string   `json:"email"`
+	Role         string   `json:"role"`
+	Groups       []string `json:"groups"`
+	Invitation   string   `json:"invitation"`
+	TokenDeleted bool     `json:"tokenDeleted"`
+}
+
+// callAPI sends a write to path with body (nil for none) and returns the manager's answer, raw for --json.
+func callAPI(ctx context.Context, api *fleet.Client, method, path string, body any) (json.RawMessage, error) {
+	var raw json.RawMessage
+	var err error
+	switch method {
+	case http.MethodPost:
+		err = api.Post(ctx, path, body, &raw)
+	case http.MethodPut:
+		err = api.Put(ctx, path, body, &raw)
+	case http.MethodDelete:
+		err = api.Delete(ctx, path, &raw)
+	default:
+		err = fmt.Errorf("callAPI: unsupported method %q", method)
+	}
+	return raw, err
+}
+
+// printAnswer prints the manager's answer under --json, else text(its decoded form).
+func printAnswer(c *cobra.Command, asJSON bool, raw json.RawMessage, text func(answer) string) error {
+	if asJSON {
+		if len(raw) == 0 {
+			raw = json.RawMessage("{}")
+		}
+		return printJSON(c.OutOrStdout(), raw)
+	}
+	var a answer
+	_ = json.Unmarshal(raw, &a)
+	fmt.Fprintln(c.OutOrStdout(), text(a))
+	return nil
+}
+
+func emptyIfNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// argCount checks the number of arguments (max -1: any): a wrong one is a usage error naming what is expected.
+func argCount(min, max int, want string) cobra.PositionalArgs {
+	return func(c *cobra.Command, args []string) error {
+		if len(args) < min || (max >= 0 && len(args) > max) {
+			fmt.Fprintf(c.ErrOrStderr(), "%s takes %s\n", c.CommandPath(), want)
+			return exitCode(2)
+		}
+		return nil
+	}
 }

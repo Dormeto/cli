@@ -92,7 +92,7 @@ func ParseGrant(s string) (Grant, error) {
 	if tags := s[:i]; tags != "" {
 		for _, t := range strings.Split(tags, ",") {
 			k, v, ok := strings.Cut(t, "=")
-			if !ok || strings.TrimSpace(k) == "" {
+			if !ok || k == "" {
 				return Grant{}, fmt.Errorf("--grant: tag %q of %q is not key=value", t, s)
 			}
 			if _, dup := g.Tags[k]; dup {
