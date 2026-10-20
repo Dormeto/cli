@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,8 +83,96 @@ func TestReadmeRelativeLinksResolve(t *testing.T) {
 
 func TestReadmeSections(t *testing.T) {
 	text := readme(t)
-	for _, title := range []string{"Install", "First run", "Options", "Install the manager", "Permissions", "Report", "Cache", "Privacy", "Releasing", "License"} {
+	for _, title := range []string{"Install", "First run", "Options", "Install the manager", "Permissions", "Report", "Cache", "Privacy",
+		"Routers and workloads", "Discovery and exclusions", "Operations", "Users and groups", "Audit, savings and alerts", "The manager",
+		"Raw calls", "Releasing", "License"} {
 		section(t, text, title)
+	}
+}
+
+// The manager's commands of CLI 0.6.0, as `dormeto --help` and each group's --help list them.
+var managerCommands = []string{
+	"whoami", "api", "overview",
+	"routers list", "routers show", "routers install", "routers uninstall", "routers upgrade", "routers pause", "routers resume",
+	"workloads list", "workloads show", "workloads history", "workloads idle-window", "workloads wake", "workloads nap",
+	"workloads pause", "workloads keep-awake", "workloads resume", "workloads rename", "workloads tags",
+	"workloads schedule show", "workloads schedule set", "workloads schedule clear",
+	"workloads onboard", "workloads offboard", "workloads exclude",
+	"discovery status", "discovery run", "discovery candidates", "discovery dismiss", "discovery restore", "discovery access",
+	"discovery config show", "discovery config set",
+	"exclusions list", "exclusions add", "exclusions lift",
+	"operations list", "operations show", "operations watch",
+	"users list", "users invite", "users role", "users groups", "users disable", "users enable", "users resend", "users reset-mfa",
+	"groups list", "groups show", "groups create", "groups update", "groups delete",
+	"audit", "savings show", "savings discounts", "alerts list", "ip-lists list",
+	"manager status", "manager check", "manager changes", "manager update",
+}
+
+// Every command of the manager is shown in the README with its usage: a line "dormeto <command> ..." in a code block.
+func TestReadmeShowsEveryManagerCommand(t *testing.T) {
+	var code strings.Builder
+	for _, m := range regexp.MustCompile("(?s)```[a-z]*\n(.*?)```").FindAllStringSubmatch(readme(t), -1) {
+		code.WriteString(m[1])
+	}
+	for _, command := range managerCommands {
+		if !regexp.MustCompile(`(?m)^dormeto ` + regexp.QuoteMeta(command) + `( |$)`).MatchString(code.String()) {
+			t.Errorf("no code block of the README shows dormeto %s", command)
+		}
+	}
+}
+
+// The permission to call the manager gives its policies as JSON that IAM takes: execute-api:Invoke on routes of the
+// manager's API under /iam/, one read-only, one that also wakes and naps, one with every route.
+func TestReadmeManagerPoliciesAreIAMPolicies(t *testing.T) {
+	_, sub, ok := strings.Cut(section(t, readme(t), "Routers and workloads"), "\n### Permission to call the manager\n")
+	if !ok {
+		t.Fatal("no '### Permission to call the manager' subsection")
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	var resources []string
+	blocks := regexp.MustCompile("(?s)```json\n(.*?)```").FindAllStringSubmatch(sub, -1)
+	for _, m := range blocks {
+		var policy struct {
+			Version   string
+			Statement []struct {
+				Effect, Action string
+				Resource       any
+			}
+		}
+		if err := json.Unmarshal([]byte(m[1]), &policy); err != nil {
+			t.Fatalf("a policy is not JSON: %v\n%s", err, m[1])
+		}
+		if policy.Version != "2012-10-17" || len(policy.Statement) == 0 {
+			t.Errorf("a policy without its version or a statement:\n%s", m[1])
+		}
+		for _, s := range policy.Statement {
+			if s.Effect != "Allow" || s.Action != "execute-api:Invoke" {
+				t.Errorf("a statement is not Allow execute-api:Invoke: %+v", s)
+			}
+			switch r := s.Resource.(type) {
+			case string:
+				resources = append(resources, r)
+			case []any:
+				for _, v := range r {
+					s, _ := v.(string)
+					resources = append(resources, s)
+				}
+			}
+		}
+	}
+	if len(blocks) != 3 {
+		t.Errorf("%d policies, want 3 (read-only, wake and nap, every route)", len(blocks))
+	}
+	route := regexp.MustCompile(`^arn:aws:execute-api:<region>:<account>:<api id>/\*/(\*|GET|POST|PUT|DELETE)/iam/[a-z*/-]*$`)
+	for _, r := range resources {
+		if !route.MatchString(r) {
+			t.Errorf("resource %q is not a route of the manager's API under /iam/", r)
+		}
+	}
+	for _, want := range []string{"/*/GET/iam/*", "/*/POST/iam/workloads/*/wake", "/*/POST/iam/workloads/*/nap", "/*/*/iam/*"} {
+		if !slices.ContainsFunc(resources, func(r string) bool { return strings.HasSuffix(r, want) }) {
+			t.Errorf("no policy has the resource .../%s", want)
+		}
 	}
 }
 

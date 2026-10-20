@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0
+
+- Every operation of the manager from the command line, a verb per action of the dashboard, through the manager's
+  `/iam/*` routes with the install's AWS profile (manager 0.15.0 or later): `dormeto whoami`, `overview`,
+  `routers show|install|uninstall|pause|resume`, `workloads show|history|idle-window|wake|nap|pause|rename|tags`,
+  `workloads onboard|offboard|exclude`, `discovery status|run|candidates|dismiss|restore|access`,
+  `discovery config show|set`, `exclusions list|add|lift`, `operations list|show|watch`,
+  `users list|invite|role|groups|disable|enable|resend|reset-mfa`, `groups list|show|create|update|delete`, `audit`,
+  `savings show|discounts`, `alerts list`, `ip-lists list` and `manager status|check|changes|update`.
+  `dormeto api <method> <path>` calls any other route, signed, and prints its answer (exit 1 on a status other than
+  2xx). The README has a section per group.
+- The long operations (onboard, offboard, the install, upgrade and uninstall of routers, exclusions and their lifting,
+  the manager's update) are followed step by step until they end; `--no-wait` prints the operation's id and
+  `dormeto operations watch <id>` instead, and `--timeout` (60m by default) and Ctrl-C stop following while the
+  operation goes on in the manager. A wake and a discovery run are waited for with `--wait`. A conflict with another
+  operation names it, `(operation <id>: dormeto operations watch <id>)`, in `routers upgrade` too.
+- Writes on several workloads or routers are confirmed on a terminal, and the destructive ones always are
+  (`routers uninstall`, `workloads offboard`, `workloads exclude`, `exclusions add`, `users disable`, `users role`,
+  `groups delete`, `discovery config set`, `manager update`); `--yes` without a terminal, `--dry-run` where a preview
+  exists. Every command has `--json`, the manager's answer after the CLI's own filters on stdout alone, `keep-awake`,
+  `resume` and `schedule set|clear` included.
+- `--region` is always the manager's region: a router's is `--router-region` (`routers install`, as `routers list`), a
+  candidate's `--candidate-region` (`discovery candidates`). A candidate is named by its id or its target group's name.
+- `--for` takes whole days first (`3d`, `1d12h`), `workloads keep-awake --for` included (up to 7 days); its message for
+  a bad value says so.
+- The README's permission section gives three policies, read-only (`GET`), wake and nap, and every route, with the route
+  each write calls. From manager 0.18.0, the manager refuses to demote or disable its last enabled administrator; an
+  older one does not, and the CLI does not check it itself.
+
 ## 0.5.0
 
 - `dormeto workloads keep-awake`, `resume` and `schedule show|set|clear`: keep workloads awake for up to 7 days

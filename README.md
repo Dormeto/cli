@@ -22,7 +22,11 @@ report. It installs nothing in your accounts and sends nothing anywhere but to A
 
 `dormeto install` then installs the Dormeto manager in your AWS account with CodeBuild, after its checks and your
 confirmation of the plan (see [Install the manager](#install-the-manager)). It is the only command that changes your
-accounts.
+accounts itself.
+
+Once the manager runs, every operation of its dashboard is a command too, with the same AWS profile: routers, workloads,
+discovery, operations, users, the audit, the manager's update (see [Routers and workloads](#routers-and-workloads) and
+the sections after it). These ask the manager, which acts as it does for the dashboard.
 
 ## Install
 
@@ -466,33 +470,189 @@ administrator).
 
 ## Routers and workloads
 
-From CLI 0.4.0 and manager 0.15.0, three commands list the manager's routers and workloads and upgrade routers, with the
-AWS profile that `dormeto install` uses. They call the manager's API on its IAM-authorized `/iam/*` routes (see
-[Permission](#permission-to-call-the-manager)); nothing is installed.
+From CLI 0.4.0 and manager 0.15.0, `dormeto` calls the manager's API, with the AWS profile that `dormeto install` uses,
+on its IAM-authorized `/iam/*` routes (see [Permission](#permission-to-call-the-manager)); nothing is installed. From
+CLI 0.6.0, every operation of the manager is a command, a verb per action of the dashboard: this section has the
+routers and the workloads, then come [Discovery and exclusions](#discovery-and-exclusions), [Operations](#operations),
+[Users and groups](#users-and-groups), [Audit, savings and alerts](#audit-savings-and-alerts),
+[The manager](#the-manager) and [Raw calls](#raw-calls). What they all share comes first: where the manager is, how
+targets, confirmations, operations and output work, the exit codes and the permission.
 
 ```sh
-dormeto routers list [filters] [--outdated] [--json]
-dormeto routers upgrade [<router>...] [filters] [--all] [--dry-run] [--yes] [--json]
-dormeto workloads list [--state ...] [--router ...] [--tag ...] [--search ...] [--json]
-```
-
-```sh
+dormeto whoami
 dormeto routers list --env dev --outdated
 dormeto workloads list --tag team=payments --state ASLEEP
-dormeto routers upgrade --tag team=payments
+dormeto workloads wake prod-eu/w-1 --wait
 dormeto routers upgrade --all --dry-run
 dormeto routers upgrade --all --yes --json > upgrade.json   # in CI
 ```
 
 ### Where the manager is
 
-All three take `--profile` (the AWS profile; the SDK's default), `--region` (the manager's region; the profile's by
-default), `--env` (the manager's environment, `prod` by default) and `--api-url`. The API is found by its name,
-`dmt-<env>-manager-api`, in the manager's region; `--api-url` gives its URL and skips the lookup. When no API has that
-name, the message says which environment and region were searched. `--api-url` is the API's execute-api endpoint (the
-module's `api_endpoint` output, `https://<api id>.execute-api.<region>.amazonaws.com`), not the dashboard's URL.
+Every manager command takes `--profile` (the AWS profile; the SDK's default), `--region` (the manager's region; the
+profile's by default), `--env` (the manager's environment, `prod` by default) and `--api-url`. The API is found by its
+name, `dmt-<env>-manager-api`, in the manager's region; `--api-url` gives its URL and skips the lookup. When no API has
+that name, the message says which environment and region were searched. `--api-url` is the API's execute-api endpoint
+(the module's `api_endpoint` output, `https://<api id>.execute-api.<region>.amazonaws.com`), not the dashboard's URL.
+
+```sh
+dormeto whoami [--json]
+```
+
+`whoami` shows the caller as the manager names it (the profile's identity, by its ARN) and its role, then the manager
+that answered: its version, its API's URL, the environment it was found by (not with `--api-url`) and its region. Run
+it first to check the profile and the permission. `--json` prints `{me, version, apiUrl}`.
+
+### What every manager command shares
+
+- **Targets.** A router is its name. A workload is `<router>/<workload id>`; the workload writes take several, or
+  `--tag key=value` (repeatable; every workload that carries all the tags, all pages of the listing), never both, and a
+  `--tag` that matches nothing exits 2. When a router does not answer (or the listing cannot be completed), the
+  workloads resolved are acted on, then the command names what could not be resolved and exits 1 (`--wait` still
+  waits for the resolved ones). A discovery
+  candidate is its id (the target group's ARN) or the name of its target group when it is unique among the candidates
+  of the status the command works on; an ambiguous name exits 2 and lists the matching ARNs. A user is an email, a
+  group a name, an operation and an exclusion their id.
+- **Regions.** `--region` is always the manager's region. A router's region is `--router-region` (`routers list`,
+  `upgrade`, `install`), a candidate's `--candidate-region` (`discovery candidates`).
+- **Confirmation.** On a terminal, a write on several workloads or routers is confirmed, and these always are, even for
+  one target: `routers uninstall`, `workloads offboard`, `workloads exclude`, `exclusions add`, `users disable`,
+  `users role`, `groups delete`, `discovery config set` and `manager update`. The question names the targets and what
+  happens. Without a terminal, `--yes` is required (exit 2). A declined confirmation sends nothing and exits 0.
+  `--dry-run`, where a command has it, lists the targets and sends nothing.
+- **Operations.** Onboarding, offboarding, the install, upgrade and uninstall of routers, exclusions and their lifting,
+  and the manager's update are operations of the manager. The CLI starts them and follows them, reading each every 5
+  seconds: `started <type> <id> for <target>`, each step on stderr as it changes (`  … install router`,
+  `  ✓ verify router (12s)`), then `✓ <target>: <type> succeeded in 3m12s` or
+  `✗ <target>: <type> failed at <step>: <detail> (operation <id>)`. A start the manager refuses is printed with its
+  message; the others go on, and the exit is 1. An operation that another one holds is refused with that one's id:
+  `(operation <id>: dormeto operations watch <id>)`.
+- **Following.** `--no-wait` prints `follow it: dormeto operations watch <id>` instead of following. `--timeout` (60m
+  by default) and Ctrl-C stop following: the operations go on in the manager, and the CLI prints
+  `<target>: still running in the manager: dormeto operations watch <id>` for each one (exit 1; 130 on Ctrl-C). A wake,
+  a keep-awake and a discovery run are not operations: `--wait` waits for them, with their own `--timeout`.
+- **Durations and times.** `--for` takes a duration: `90m`, `2h`, or whole days first, `3d`, `1d12h`. `--until` takes
+  an RFC 3339 time or `HH:MM` today in the local time zone, refused when already past (it never means tomorrow). Each
+  command's limit is the manager's: 7 days for `keep-awake`, 366 days for pauses and exclusions.
+- **Checks.** A value the manager checks is checked before anything is sent where the rule is known (exit 2, nothing
+  sent), never more strictly than the manager does.
+- **Output.** Lists are tables; `show` commands print labelled lines. Times in lists are ages (`45m`, `3h`, `2d`); in
+  `show`, the audit and operations, local times with their zone (`2026-10-21 14:05 CEST`). The manager's refusals are
+  printed as it words them, on stderr. Every command has `--json`: the manager's answer, after the CLI's own filters,
+  on stdout alone; lines and progress then go to stderr.
+
+### Exit codes
+
+- 0: success (and a declined confirmation, which sends nothing).
+- 1: AWS or the manager refused, an operation or an upgrade failed or did not start, a workload failed to wake, an
+  operation or a wait was not followed to its end (`--timeout`), a `--tag` selection was incomplete, or `dormeto api`
+  got a status other than 2xx.
+- 2: a bad flag or argument, or no `--yes` without a terminal.
+- 128 plus the signal's number when SIGINT or SIGTERM stopped the command (130 for Ctrl-C).
+
+### Permission to call the manager
+
+The caller needs `execute-api:Invoke` on the manager API's `/iam/*` routes, with credentials of the manager's account (a
+caller from another account assumes a role there that has it). Whatever it may call, such a caller acts as an
+administrator of the manager, outside its MFA policy: the audit log, the operations, the pauses and every change name
+its ARN. Its IAM policy is the only limit: grant it the routes, by method and path, that its commands call. Three
+policies, from the narrowest.
+
+**Read-only.** Every command that only reads: the lists, `show`, `history`, `idle-window`, `schedule show`, `whoami`,
+`overview`, `audit`, `operations watch`, `manager status` and `changes`, and the `--dry-run` of the writes (but
+`manager update --dry-run`, which plans):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "execute-api:Invoke",
+    "Resource": "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/*"
+  }]
+}
+```
+
+It still reads everything an administrator reads through the `/iam/*` routes: the users and their emails, the audit,
+the update state.
+
+**Wake and nap.** Read the workloads (`workloads list`, `show`, `history`, `idle-window`, the `--tag` selections), wake
+them (`--wait` included) and nap them, and nothing else:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "execute-api:Invoke",
+    "Resource": [
+      "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/workloads",
+      "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/workloads/*",
+      "arn:aws:execute-api:<region>:<account>:<api id>/*/POST/iam/workloads/*/wake",
+      "arn:aws:execute-api:<region>:<account>:<api id>/*/POST/iam/workloads/*/nap"
+    ]
+  }]
+}
+```
+
+Add `.../POST/iam/workloads/*/pause` and `.../POST/iam/workloads/*/resume` for `keep-awake`, `pause` and `resume`.
+
+**Every route.** Every command, the writes included. The manager module's output `api_iam_arn` is this resource:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "execute-api:Invoke",
+    "Resource": "arn:aws:execute-api:<region>:<account>:<api id>/*/*/iam/*"
+  }]
+}
+```
+
+For another policy, start from the read-only one (every command reads with `GET`) and add the routes of the writes it
+needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pause`):
+
+| Command | Route it writes, under `/iam` |
+|---|---|
+| `routers install`, `upgrade`, `uninstall`, `workloads onboard`, `offboard` | `POST /operations` |
+| `routers pause`, `resume` | `POST /routers/{router}/pause`, `POST /routers/{router}/resume` |
+| `workloads wake`, `nap`, `pause` and `keep-awake`, `resume`, `rename` | `POST /workloads/{router}/{id}/wake` (`nap`, `pause`, `resume`, `rename`) |
+| `workloads tags` | `PUT /workloads/{router}/{id}/tags` |
+| `workloads schedule set`, `clear` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
+| `workloads exclude`, `exclusions add` | `POST /exclusions` |
+| `exclusions lift` | `DELETE /exclusions/{id}` |
+| `discovery run`, `dismiss`, `restore` | `POST /discovery/run` (`dismiss`, `restore`) |
+| `discovery config set` | `PUT /discovery/config` |
+| `users invite` | `POST /users` |
+| `users role`, `groups` | `PUT /users/{email}/role`, `PUT /users/{email}/groups` |
+| `users disable`, `enable`, `resend`, `reset-mfa` | `POST /users/{email}/disable` (`enable`, `resend`, `mfa/reset`) |
+| `groups create`, `update`, `delete` | `POST /groups`, `PUT /groups/{name}`, `DELETE /groups/{name}` |
+| `savings discounts` | `PUT /savings/settings` |
+| `manager check` | `PUT /update/check` |
+| `manager update` | `POST /update/plan`, `POST /update/apply` |
+
+A manager installed with the CLI has no Terraform outputs at hand: find the API id by the API's name, then build the
+ARN with it:
+
+```sh
+aws apigatewayv2 get-apis --query "Items[?Name=='dmt-<env>-manager-api'].ApiId" --output text
+```
+
+To find the API by name, the caller also needs `apigateway:GET`; `--api-url` does without.
+
+Versions: every command needs manager 0.15.0 or later (the `/iam/` routes): an older one answers `Not Found`, and the
+CLI says to update it. A command a router is too old for is refused with the version to upgrade it to, printed as the
+manager words it: `routers show` and the pauses need routers 0.16.0, `workloads rename` 0.20.0, `workloads tags` 0.30.0,
+schedules 0.31.0. The manager refuses to demote or disable its last enabled administrator from manager 0.18.0 (409, "the
+last administrator: give the admin role to another user first"); an older manager does not, and the CLI does not check
+it itself, so there `users role` and `users disable` can leave no person able to administer the manager.
 
 ### routers list
+
+```sh
+dormeto routers list [--account <id>]... [--router-region <region>]... [--name <glob>] [--tag k=v]... [--outdated] [--json]
+```
 
 Lists each router's name, account, region, source (`manager` or `terraform`), version (`0.29.0 → 0.30.0` when below the
 version available, `upgrading` while an upgrade runs), health and workloads (the total and the count per state), then a
@@ -512,6 +672,15 @@ repeatable and all the tags must be carried by the same workload. The tags are t
 cannot select it (a warning says so).
 
 ### routers upgrade
+
+```sh
+dormeto routers upgrade [<router>...] [filters] [--all] [--concurrency <n>] [--timeout <d>] [--dry-run] [--yes] [--json]
+```
+
+```sh
+dormeto routers upgrade --tag team=payments
+dormeto routers upgrade --all --dry-run
+```
 
 Upgrades the routers named, narrowed by the filters, to the version available. Without a name or a filter, `--all` is
 required (exit 2); `--all` takes neither names nor filters. An unknown name exits 2.
@@ -540,7 +709,61 @@ ends (the version change and the duration, or the step that failed, its detail a
   skipped: [{router, reason}]}`; the plan and the progress go to stderr.
 - `--all`, `--account`, `--router-region`, `--name` and `--tag`: the selection, as for `routers list`.
 
+### routers show
+
+```sh
+dormeto routers show <router> [--json]
+```
+
+Shows one router as it tells its details: its version and build, its health and problems, the idle check (its schedule
+and last run), the Lambda and queue figures, the workloads by state, the pauses, the EKS clusters and the IP lists, then
+each configuration value with where it is set (`terraform`: the router's module; `manager`). Times are in the local
+time zone. `--json` prints the manager's answer.
+
+### routers install and uninstall
+
+```sh
+dormeto routers install --account <12 digits> --router-region <region> [--no-wait] [--timeout <d>] [--json]
+dormeto routers uninstall <router>... [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
+```
+
+```sh
+dormeto routers install --account 111122223333 --router-region eu-west-3
+dormeto routers uninstall staging-eu --yes --no-wait
+```
+
+- `install` starts the manager's install of a router in the account and region (an `install-router` operation) and
+  follows it. The account needs the command role the manager assumes: without it, the manager refuses (`no_access`) and
+  the CLI prints why.
+- `uninstall` starts an `uninstall-router` operation for each router, 3 at once at most, and follows them. It is always
+  confirmed on a terminal. The operation's "check empty" step refuses a router that still has workloads: offboard them
+  first.
+- `--json`: the operations, as the manager last said them.
+
+### routers pause and resume
+
+```sh
+dormeto routers pause <router>... --reason <text> [--for <duration> | --until <time>] [--keep-asleep] [--dry-run] [--yes] [--json]
+dormeto routers resume <router>... [--dry-run] [--yes] [--json]
+```
+
+```sh
+dormeto routers pause prod-eu --reason "database migration" --for 3h
+dormeto routers resume prod-eu
+```
+
+- `pause`: none of the routers' workloads is napped automatically, and the workloads asleep are woken unless
+  `--keep-asleep` (the woken ones are printed). `--reason` (1 to 256 characters) is shown in the manager. `--for` is up
+  to 366 days, `--until` within 366 days; without either, the pause lasts until `routers resume`.
+- `resume`: the workloads follow their schedule and idle rules again; a router that was not paused says `not paused`.
+- Several routers are confirmed on a terminal. A router refused does not stop the others (exit 1). `--json` prints the
+  manager's answers, by router.
+
 ### workloads list
+
+```sh
+dormeto workloads list [--state <state>]... [--router <name>] [--tag k=v]... [--search <text>] [--json]
+```
 
 Lists each workload's router, id, name, state, Dormeto tags (`key=value`, sorted by key) and the time since its last
 change, then a last line with the total. A router that does not answer is reported on stderr, the others are listed.
@@ -551,16 +774,69 @@ change, then a last line with the total. A router that does not answer is report
 - `--search <text>`: only the workloads whose name or id contains the text.
 - `--json`: the API's answer.
 
+### workloads show, history and idle-window
+
+```sh
+dormeto workloads show        <router>/<workload> [--json]
+dormeto workloads history     <router>/<workload> [--days 1..31] [--json]
+dormeto workloads idle-window <router>/<workload> [--json]
+```
+
+- `show`: one workload as the manager's workload view shows it: its state and since when, name, URL, account and region,
+  router version and tags, its settings, its pauses (who, why, until when), its schedule with the next events (in the
+  schedule's time zone), the share of the last 7 days in each state, its idle hours, and what its naps saved, with the
+  energy not used.
+- `history`: from the manager's store, never the router: the time in each state over `--days` (1 to 31, 7 by default),
+  the wakes (how many, the median and the longest, the failed ones) and the savings estimate, then the latest 50
+  changes, newest first, with what started each and how long a wake took. `--json` has every change.
+- `idle-window`: the manager's advice on the idle window: the last 14 days of requests replayed against windows from 5
+  to 120 minutes, each with its savings a month (hours asleep a day when nothing is priced), its wakes and wait a day,
+  the current and the recommended window marked. The manager computes it once a day: the first read may take a while.
+
+### Waking, napping, pausing, renaming and tagging workloads
+
+```sh
+dormeto workloads wake   <target>... | --tag k=v... [--wait] [--timeout <d>]
+dormeto workloads nap    <target>... | --tag k=v...
+dormeto workloads pause  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--keep-asleep]
+dormeto workloads rename <router>/<workload> <name>
+dormeto workloads tags   <target>... | --tag k=v... [--set k=v]... [--unset k]... [--clear]
+```
+
+```sh
+dormeto workloads wake prod-eu/w-1 --wait
+dormeto workloads nap --tag env=dev --yes
+dormeto workloads pause --tag team=payments --reason "load test" --until 18:00 --yes
+dormeto workloads rename prod-eu/w-1 "checkout api"
+dormeto workloads tags prod-eu/w-1 --set team=payments --unset owner
+```
+
+- `wake` asks the routers to wake the workloads now. `--wait` reads each one every 5 seconds until `AWAKE`, as
+  `keep-awake --wait` does: `FAILED` ends it with the failure (exit 1), `--timeout` (15m by default) names the workloads
+  not awake (exit 1), Ctrl-C exits 130.
+- `nap` asks the routers to put the workloads to sleep now. A router refuses a workload that is paused or not awake: its
+  reason is printed for that workload, and the exit is 1.
+- `pause`: the routers do not put the workloads to sleep, and wake them first unless `--keep-asleep`. `--reason` (1 to
+  256 characters) is shown in the manager. `--for` is up to 366 days, `--until` within 366 days; without either, the
+  pause lasts until `workloads resume`.
+- `rename` sets the display name of one workload: 1 to 64 characters, no control characters. Routers 0.20.0 and later;
+  the router refuses a workload written by Terraform.
+- `tags` reads each workload's tags, empties them with `--clear`, removes every `--unset` key, adds every `--set`, and
+  sends them only when they changed (`unchanged` otherwise). Tags are given by flags alone, since a key may hold `/`; a
+  key given twice is refused (exit 2). The manager's rules are checked first: at most 50 tags, a key of 1 to 128
+  characters, a value of up to 256, letters, digits, spaces and `_ . : / = + - @`, no key starting with `dormeto:`.
+  Routers 0.30.0 and later.
+- More than one target is confirmed on a terminal; `--yes` skips it and is needed without one; `--dry-run` lists the
+  targets and sends nothing. The other workloads go on when one is refused, and the exit is 1. `--json` prints the
+  manager's answers of those that succeeded, by `<router>/<workload>`; the lines and failures go to stderr.
+
 ### Keeping workloads awake and scheduling them
 
 From CLI 0.5.0, `workloads` also keeps workloads awake for a while and sets their weekly schedules (awake and nap
-windows, a maximum nap that wakes for maintenance). Targets are `<router>/<workload id>` arguments, or `--tag key=value`
-(repeatable; every workload that carries them, all pages of the listing); arguments and `--tag` cannot be mixed, and a
-`--tag` that matches nothing exits 2. When a router does not answer (or the listing cannot be completed), the workloads
-resolved are acted on, then the command names what could not be resolved and exits 1 (`--wait` still waits for the
-resolved ones). More than one target is confirmed on a terminal; `--yes` skips it and is
-needed without one; `--dry-run` lists the targets and sends nothing. The other workloads go on when one is refused, and
-the exit is 1.
+windows, a maximum nap that wakes for maintenance). Targets are `<router>/<workload id>` arguments, or
+`--tag key=value`, as for the other workload writes: more than one target is confirmed on a terminal, `--yes` skips it
+and is needed without one, `--dry-run` lists the targets and sends nothing, and the other workloads go on when one is
+refused (exit 1). From CLI 0.6.0, each of these commands has `--json`, as the other workload writes do.
 
 ```sh
 dormeto workloads keep-awake <target>... | --tag k=v... (--for <duration> | --until <time>) [--reason <text>] [--wait] [--timeout <d>]
@@ -580,7 +856,7 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
 ```
 
 - `keep-awake` posts a pause that leaves the workload awake (`keepAsleep: false`): it is woken when asleep and not put
-  to sleep before the end. `--for` is a Go duration up to `168h` (7 days: `2h`, `90m`; no `d` suffix); `--until` is an
+  to sleep before the end. `--for` is a duration up to 7 days (`90m`, `2h`, `3d`, `1d12h`, `168h`); `--until` is an
   RFC 3339 time or `HH:MM` today in the local time zone, refused when already past (it never means tomorrow) or more
   than 7 days away. One of them is required. `--reason` is the pause's reason ("keep-awake from the CLI" by default).
   It works with any manager 0.15.0 or later: it uses pauses.
@@ -603,45 +879,319 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
   schedule (`null`, `{"schedule": null}`, or the output of a router before 0.31.0) is refused with exit 2.
 - `schedule clear` removes the schedule.
 
-### Exit codes
-
-- 0: success (and a declined confirmation, which starts nothing).
-- 1: AWS or the manager refused, an upgrade failed or did not start, a workload failed to wake or was not followed to
-  the end, a `--tag` selection was incomplete, or `--timeout` stopped the following.
-- 2: a bad flag or argument, or no `--yes` without a terminal.
-- 128 plus the signal's number when SIGINT or SIGTERM stopped the command.
-
-### Permission to call the manager
-
-The caller needs `execute-api:Invoke` on the manager API's `/iam/*` routes, with credentials of the manager's account (a
-caller from another account assumes a role there that has it). The manager module's output `api_iam_arn` is the
-resource for all the routes, which `routers upgrade` needs (it posts):
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": "execute-api:Invoke",
-    "Resource": "arn:aws:execute-api:<region>:<account>:<api id>/*/*/iam/*"
-  }]
-}
-```
-
-For `routers list` and `workloads list`, `GET` alone is enough: `arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/*`.
-It still reads everything an administrator reads through the `/iam/*` routes: the users and their emails, the audit, the
-update state.
-
-A manager installed with the CLI has no Terraform outputs at hand: find the API id by the API's name, then build the ARN
-with it:
+### Onboarding, offboarding and excluding workloads
 
 ```sh
-aws apigatewayv2 get-apis --query "Items[?Name=='dmt-<env>-manager-api'].ApiId" --output text
+dormeto workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
+                          [--database <id>|cluster:<id>]... [--fallback-type <type>]... [--set-tag k=v]...
+dormeto workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry-run] [--yes]
+dormeto workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
 ```
 
-Such a caller acts as an administrator of the manager, outside its MFA policy: the audit log and the operations name its
-ARN. To find the API by name, the caller also needs `apigateway:GET`; `--api-url` does without. The manager must be
-0.15.0 or later: an older one answers `Not Found`, and the CLI says to update it.
+All three take `--no-wait`, `--timeout <d>` and `--json` (the operations, as the manager last said them).
+
+```sh
+dormeto discovery candidates
+dormeto workloads onboard shop-staging --idle-minutes 30 --database cluster:shop-aurora --set-tag team=shop
+dormeto workloads offboard prod-eu/w-1 --yes
+dormeto workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
+```
+
+- `onboard` starts the onboarding of a candidate pending onboarding, given by its id (the target group's ARN) or the
+  name of its target group, follows it, then prints the new workload as `onboarded <router>/<workload id>`. An unknown
+  or ambiguous name exits 2 (its ARNs listed) and sends nothing. It sends what the dashboard's Onboard dialog sends:
+  - `--name`: the workload's display name, 1 to 64 characters (the target group's name by default);
+  - `--idle-minutes`: the idle window, 5 to 1440 minutes (15 by default);
+  - `--wake-mode`: `any` request that passes the filters (the default), or `browser` (only the waiting page's script
+    or the `x-dormeto-wake: 1` header wakes it);
+  - `--database`: a companion RDS instance identifier, or `cluster:<identifier>`, stopped after the application and
+    started before it (repeatable);
+  - `--fallback-type`: an EC2 instance type, such as `t3a.medium`, tried in order at a wake when AWS has no capacity
+    for the instance's own type (at most 5, EC2 candidates only);
+  - `--set-tag key=value`: a Dormeto tag of the new workload (repeatable). It is `--set-tag`, not `--tag`, which selects
+    targets everywhere else.
+- `offboard` starts the offboarding of each workload, at most `--concurrency` at once (1 to 20, 4 by default): the
+  workload is woken, its application given back as it was, and it leaves Dormeto. It is always confirmed on a terminal.
+- `exclude` excludes each workload's target group from discovery, with a reason: the manager pauses its managed
+  workloads (an `exclude` operation). `--reason` is 1 to 246 characters; `--for` is up to 366 days, `--until` within
+  366 days; without either, the exclusion lasts until `dormeto exclusions lift`. It is always confirmed on a terminal.
+- A workload another operation holds is refused with that operation's id; the others go on (exit 1).
+
+## Discovery and exclusions
+
+From CLI 0.6.0, `discovery` shows what the manager's discovery found, runs it, dismisses and restores candidates and
+replaces its configuration, and `exclusions` lists, adds and lifts the manual exclusions. Targets, confirmations,
+operations and output are as in [What every manager command shares](#what-every-manager-command-shares).
+
+```sh
+dormeto discovery status [--json]
+dormeto discovery run [--wait] [--timeout <d>] [--json]
+dormeto discovery candidates [--status <status>] [--account <id> [--candidate-region <region>]] [--limit <n>] [--json]
+dormeto discovery dismiss <candidate>... [--note <text>] [--json]
+dormeto discovery restore <candidate>... [--json]
+dormeto discovery access [--limit <n>] [--json]
+dormeto discovery config show [--json]
+dormeto discovery config set --file <path>|- [--yes] [--json]
+dormeto exclusions list [--json]
+dormeto exclusions add (--target-group <arn> | --load-balancer <arn> | --account <id>) --reason <text> [--for <d> | --until <time>]
+dormeto exclusions lift <id>... [--no-wait] [--timeout <d>] [--json]
+```
+
+```sh
+dormeto discovery run --wait
+dormeto discovery candidates --account 111122223333 --candidate-region eu-west-1
+dormeto discovery dismiss legacy-admin --note "decommissioned in December"
+dormeto discovery config show > discovery.json
+dormeto discovery config set --file discovery.json
+dormeto exclusions add --account 444455556666 --reason "production account" --yes
+dormeto exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
+```
+
+### discovery status and run
+
+- `status` shows the last run (when, by whom, how many account-regions it scanned, skipped and failed), a Run now
+  refused since, the candidates per status, the roles the manager uses and what the lint found. Times are in the local
+  time zone.
+- `run` asks the manager for a run now; it runs on its own. With `--wait`, the last run is read every 5 seconds until a
+  run newer than the request has ended, then printed as `status` does; a run the manager refused, because another was in
+  progress, exits 1. Ctrl-C and `--timeout` (30m by default) stop waiting, the run going on in the manager. `--json`
+  prints the manager's answer, with `--wait` the status once the run ended.
+
+### discovery candidates, dismiss and restore
+
+- `candidates` lists the candidates of one `--status` (`pending-onboarding` by default; `pending-offboarding`,
+  `managed`, `ineligible`, `dismissed`, `excluded`, `out-of-scope`, `gone`): target group, account, region, hosts, idle
+  hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every page
+  is read unless `--limit` stops at that many. `--account` keeps one AWS account, `--candidate-region` one region of it
+  (it needs `--account`; `--region` is the manager's).
+- `dismiss` takes candidates out of the pending onboarding, each given by its id or the name of its target group,
+  resolved among the candidates pending onboarding before anything is sent: an unknown name, or one that names the
+  target groups of several accounts or regions (their ARNs are listed), exits 2 and nothing is dismissed. `--note` says
+  why (cut at 256 characters).
+- `restore` brings dismissed candidates back, resolved among the dismissed ones in the same way.
+- `--json` prints the candidates as the manager sends them.
+
+### discovery access
+
+`access` shows the organization access of the last run: how many accounts are ready, the delegation policy, the event
+forwarders, and a table of the accounts that are not ready with what is missing (the discovery or the command role).
+Every page is read unless `--limit` stops at that many accounts.
+
+### discovery config show and set
+
+- `config show` prints the configuration as JSON alone on stdout, so that `config show > discovery.json` gives a file
+  that `config set` takes, and what the lint finds in it on stderr. `--json` prints the manager's whole answer instead:
+  the configuration as its `config` member, who set it and when, the lint.
+- `config set --file <path>` replaces the whole configuration with the file (`-` reads standard input): the output of
+  `config show`, or the answer of `config show --json`, whose `config` member is sent. It is always confirmed on a
+  terminal. The manager checks it, and a refusal prints each of its errors on a line (exit 1).
+
+### exclusions
+
+- `exclusions list` lists the manual exclusions: id, target, reason, who excluded it, until when (local time zone), the
+  workloads it paused by name, and its state (`active`, `expired`, or `lifting` while a lift runs).
+- `exclusions add` excludes one target from discovery: an application target group (`--target-group <arn>`), an
+  application load balancer (`--load-balancer <arn>`) or a whole account (`--account <12 digits>`). The manager pauses
+  its managed workloads (an `exclude` operation, followed). `--reason` is 1 to 246 characters; `--for` is up to 366
+  days, `--until` within 366 days; without either, the exclusion lasts until it is lifted. It is always confirmed on a
+  terminal; `--dry-run` names the target and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json`.
+- `exclusions lift <id>...` lifts each exclusion (its id is in `exclusions list`) and follows the operations: the
+  workloads it paused are resumed, then the exclusion is deleted. One that stays listed (a workload could not be
+  resumed) is lifted again by running the command again. An exclusion another operation holds is refused with that
+  operation's id, the others go on (exit 1).
+
+## Operations
+
+From CLI 0.6.0, `operations` lists the manager's operations, shows one and follows one, started from the CLI or the
+dashboard.
+
+```sh
+dormeto operations list [--running] [--type <type>]... [--limit <n>] [--json]
+dormeto operations show  <id> [--json]
+dormeto operations watch <id> [--timeout <d>] [--json]
+```
+
+```sh
+dormeto operations list --running
+dormeto operations list --type install-router,uninstall-router --limit 0
+dormeto operations watch 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
+```
+
+- `list` lists the operations, newest first by creation: id, type, target, status, current step, who started it (an ARN
+  shortened to its last two parts) and its age. `--running` keeps those still running; `--type` the types given
+  (repeatable or comma-separated: `onboard`, `offboard`, `install-router`, `upgrade-router`, `uninstall-router`,
+  `exclude`, `lift-exclusion`, `update-manager`, ...); `--limit` caps the rows (50 by default; 0 for all). `--json`
+  prints the manager's records, after these filters.
+- `show` prints one operation: type, target, status, who started it, its times (local time zone) and error, then its
+  steps with their status, how long each took and what it says.
+- `watch` follows an operation, printing its steps on stderr as they change, until it ends: exit 0 when it succeeded, 1
+  when it failed (with the failed step's detail). One already finished prints its outcome at once. Ctrl-C and
+  `--timeout` (60m by default) stop following, the operation going on in the manager (exit 1; 130 on Ctrl-C). `--json`
+  prints the operation as last read, on stdout. It is what `--no-wait` and a refused conflict point to.
+
+## Users and groups
+
+From CLI 0.6.0, `users` and `groups` manage the people of the manager's dashboard and their custom groups. They manage
+Cognito users: the CLI's own caller is an IAM principal, never one of them.
+
+```sh
+dormeto users list [--json]
+dormeto users invite <email> --role <member|viewer|operator|admin> [--group <name>]... [--json]
+dormeto users role <email> <member|viewer|operator|admin> [--dry-run] [--yes] [--json]
+dormeto users groups <email> [<name>...] [--json]
+dormeto users disable <email> [--dry-run] [--yes] [--json]
+dormeto users enable <email> [--json]
+dormeto users resend <email> [--json]
+dormeto users reset-mfa <email> [--json]
+dormeto groups list [--json]
+dormeto groups show <name> [--json]
+dormeto groups create <name> [--description <text>] [--grant <tags>:<permissions>]... [--json]
+dormeto groups update <name> [--description <text>] [--grant <tags>:<permissions>]... [--no-grants] [--json]
+dormeto groups delete <name> [--dry-run] [--yes] [--json]
+```
+
+```sh
+dormeto groups create payments-dev --description "Payments, dev" --grant team=payments,env=dev:read,wake
+dormeto users invite ana@example.com --role member --group payments-dev
+dormeto users role ana@example.com operator
+dormeto users groups ana@example.com          # no group: clears them
+```
+
+### users
+
+- `list`: email, role, custom groups, status (`disabled` when they are), whether their authenticator is set up, and
+  the age of the account.
+- `invite`: the manager emails the user a temporary password. `--role` is `member` (sees only what their groups grant),
+  `viewer`, `operator` or `admin`; `--group`, repeated, puts them in existing custom groups. The answer says whether
+  the invitation was sent or waits for the address to be verified.
+- `role` sets the user's built-in role. `groups` sets their custom groups to those named, replacing their groups;
+  naming none clears them (it applies at their next sign-in, within an hour).
+- `disable` stops the user from signing in, `enable` lets them sign in again, `resend` sends the invitation again to a
+  user who has not signed in yet, `reset-mfa` resets their authenticator (they set it up again at their next sign-in).
+- `role` and `disable` are always confirmed on a terminal. From manager 0.18.0, the manager refuses to demote or
+  disable its last enabled administrator, and the CLI prints its refusal (exit 1); see
+  [Permission](#permission-to-call-the-manager) for older managers.
+
+### groups
+
+- `list`: name, description, how many grants and the age of the last change. `show`: the description, who changed it
+  last and when, and each grant.
+- `create`: the name is 1 to 48 lower-case letters, digits and hyphens, not starting with `dmt-`; the description at
+  most 200 characters.
+- `update` changes the description, or replaces the grants: the grants given replace the group's (take `groups show`
+  first to keep some); `--no-grants` removes them all. Give at least one of `--description`, `--grant` and
+  `--no-grants`.
+- A grant is `<tags>:<permissions>`, split at the last `:`: the permissions `read`, `wake` and `nap`, comma-separated,
+  on the workloads that carry all the tags, `key=value` comma-separated (none: every workload), such as
+  `team=payments,env=dev:read,wake` or `:read`. At most 20 grants.
+- `delete` removes the group and its grants: its members lose what it granted at their next sign-in. It is always
+  confirmed on a terminal.
+
+## Audit, savings and alerts
+
+From CLI 0.6.0, the dashboard's readings: the overview, the audit log, the savings and their discounts, the alerts and
+the IP lists.
+
+```sh
+dormeto overview [--json]
+dormeto audit [--since <duration|time|date>] [--action <action>]... [--who <text>] [--target <text>] [--limit <n>] [--json]
+dormeto savings show [--json]
+dormeto savings discounts --compute <0..90> --databases <0..90> [--json]
+dormeto alerts list [--json]
+dormeto ip-lists list [--json]
+```
+
+```sh
+dormeto overview
+dormeto audit --since 2d --action pause,resume
+dormeto audit --who ci-deploy --limit 0 --json > audit.json
+dormeto savings discounts --compute 20 --databases 15
+```
+
+- `overview` shows what the dashboard's Overview shows: the workloads by state, the share of the last 7 days in each
+  state, the estimated savings, the open alerts, the running operations and the routers that are outdated. It reads six
+  routes: one that fails is reported on stderr and its block left out (exit 1 at the end); one the manager does not have
+  (404) is "not available" (`null` in `--json`). `--json` prints `{workloads: {total, byState}, states, savings,
+  alerts: {open}, operations: {running}, routers: {total, outdated, available}}`.
+- `audit` shows the audit log, newest first (times in the local time zone): when, who (an ARN shortened to its last two
+  parts), action, target and result, of every mutating call and refused action. The manager sends it whole; the filters
+  are the CLI's: `--since` a duration back from now (`2d`, `12h`), an RFC 3339 time or a date (`YYYY-MM-DD`, local
+  midnight); `--action` an action's name (repeatable or comma-separated, such as `pause` or `operation-onboard`);
+  `--who` and `--target` a part of the text, in any case; `--limit` the newest entries only (100 by default; 0 for
+  all). `--json` prints `{entries}` as the manager sends them, after the filters.
+- `savings show` shows the estimate of the daily job as the Savings card does: the last 30 days, this month, since the
+  first day computed, Dormeto's own cost and the net, the top savers, what is not priced, and the discounts for
+  commitments the prices are reduced by.
+- `savings discounts` sets those discounts, in whole percent from 0 to 90, off the list prices of compute (EC2,
+  Fargate, EKS nodes) and of databases. Both are required (what is not given would be reset); they apply from the next
+  day the job computes.
+- `alerts list` lists the open health alarms (level, kind, name, age, problems), then the alert topic's subscriptions:
+  how many are confirmed and pending, and each endpoint, masked. `no alerts configured` when the manager has none.
+- `ip-lists list` lists the manager's IP lists: name, action (`defer`: a request from a listed address does not wake a
+  workload by itself; `ignore`: it never wakes one), entries, the age of the last download and its status. They are set
+  with `ip_lists` in the manager's Terraform.
+
+## The manager
+
+From CLI 0.6.0, `manager` shows the manager's version and its update state, turns its daily check on or off, prints the
+release notes and updates it, as the dashboard's Update page does. A manager installed with the CLI is updated by its
+install build (see [Updating from the dashboard](#updating-from-the-dashboard)); one installed with the Terraform module
+is updated by changing the module's `source`.
+
+```sh
+dormeto manager status [--json]
+dormeto manager check (--enable [--alert | --no-alert] | --disable) [--json]
+dormeto manager changes [--to <version>] [--json]
+dormeto manager update [--version <version>] [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
+```
+
+```sh
+dormeto manager status
+dormeto manager changes
+dormeto manager update --dry-run
+dormeto manager update --version 0.18.0
+```
+
+- `status` shows the version the manager runs, how it was installed (with the CLI, whose install build updates it, or
+  with Terraform), the version last applied, the newer versions (with their router version, or why one cannot be
+  applied from the manager), the last install build, a request waiting for its build, the plan ready to apply and its
+  summary, and the daily check (`not available` in a manager without it). `--json` prints `{version, update, check}`.
+- `check --enable` checks daily for new versions, `--disable` stops it (and its alert). `--alert` also sends a new
+  version to the alert topic, `--no-alert` stops that; with `--enable` alone the alert stays as it is.
+- `changes` prints the release notes of the versions the manager offers, newest first, up to `--to` (the newest by
+  default), with a note where a version asks for an access change that the update does not apply. A manager installed
+  with the CLI only.
+- `update` plans the update to `--version` (the newest the manager offers by default) in the install build and follows
+  it, prints the plan once the manager shows it (the resources to add, change and destroy, those replaced or
+  destroyed), then, once confirmed (always on a terminal; `--yes` without one), applies that plan and follows it, and
+  reads the version the manager then runs. `--dry-run` stops after the plan. `--no-wait` starts the apply without
+  following it (the plan is always followed: its summary is what is confirmed). `--timeout` (60m by default) applies to
+  the plan and to the apply each; while the apply replaces the manager's API, a read that fails is tried again until
+  then, each new error said once on stderr. A manager installed with Terraform is refused with that advice (exit 1).
+  `--json` prints `{update, operations}`: the update's state as last read and the operations followed.
+
+## Raw calls
+
+From CLI 0.6.0, `dormeto api` calls any route of the manager's API, signed with the profile, and prints its answer: the
+escape hatch for what a later manager adds before the CLI has a command for it.
+
+```sh
+dormeto api <method> <path> [--data <json> | --data @<file> | --data -] [-q key=value]...
+```
+
+```sh
+dormeto api GET /workloads -q state=ASLEEP -q limit=10
+dormeto api GET /routers/prod-eu
+dormeto api POST /routers/prod-eu/pause --data '{"reason":"maintenance"}'
+dormeto api PUT /discovery/config --data @discovery.json
+```
+
+- The method is `GET`, `POST`, `PUT` or `DELETE`; the path starts with `/` and is the route's under `/iam` (an `/iam`
+  prefix is dropped), percent-encoded where a segment needs it. `-q key=value` adds a query parameter (repeatable).
+- `--data` is the body, sent as it is: JSON, `@<file>`, or `-` for standard input.
+- The answer's body is printed on stdout, indented when it is JSON. A `GET` answered 429 or 5xx is tried up to 3 times
+  in all. Any status but 2xx prints `HTTP <status>` on stderr (the body still on stdout) and exits 1.
+- `--json` changes nothing: the body is the API's answer. It is accepted as every command accepts it.
 
 ## Building from source
 
