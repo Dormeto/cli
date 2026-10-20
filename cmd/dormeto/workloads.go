@@ -177,6 +177,40 @@ func applyAll(ctx context.Context, c *cobra.Command, targets []fleet.Target, do 
 	return ok, nil
 }
 
+// applyAnswers is applyAll for commands with --json: do also gives the API's answer for the target. Without asJSON the
+// lines go to stdout as applyAll prints them; with it they go to stderr, and the answers of the targets that succeeded
+// are printed on stdout, by target, even when the exit is 1.
+func applyAnswers(ctx context.Context, c *cobra.Command, targets []fleet.Target, asJSON bool, do func(fleet.Target) (line string, answer json.RawMessage, err error)) ([]fleet.Target, error) {
+	answers := map[string]json.RawMessage{}
+	ok, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
+		line, answer, err := do(t)
+		if err != nil {
+			return "", err
+		}
+		answers[t.String()] = orRaw(answer)
+		if asJSON {
+			fmt.Fprint(c.ErrOrStderr(), line)
+			return "", nil
+		}
+		return line, nil
+	})
+	if asJSON && len(answers) > 0 {
+		if perr := printJSON(c.OutOrStdout(), answers); perr != nil && err == nil {
+			err = perr
+		}
+	}
+	return ok, err
+}
+
+// waitAwakeJSON is waitAwake, its lines on stderr under --json (stdout holds the answers alone).
+func waitAwakeJSON(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client, targets []fleet.Target, timeout time.Duration, paused, asJSON bool) error {
+	if asJSON {
+		c.SetOut(c.ErrOrStderr())
+		defer c.SetOut(nil)
+	}
+	return waitAwake(ctx, c, deps, api, targets, timeout, paused)
+}
+
 // writeCommand is what keep-awake, resume, schedule set and schedule clear share: the checks, the targets, the
 // confirmation, then act.
 type writeCommand struct {
@@ -233,6 +267,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		dur, until string
 		why        string
 		wait       bool
+		asJSON     bool
 	)
 	cmd := &cobra.Command{
 		Use: "keep-awake (<router>/<workload>... | --tag k=v...) (--for <duration> | --until <time>)", Short: "Keep workloads awake for a while (a pause that does not put them to sleep)",
@@ -261,16 +296,17 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			}{why, end.UTC().Format("2006-01-02T15:04:05Z"), false}
 			return w.run(c, args, "keep awake until "+end.Format("2006-01-02 15:04 MST")+": would act on", "Keep %d workloads awake?",
 				func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-					ok, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
-						if err := api.Post(ctx, t.Path("/pause"), body, nil); err != nil {
-							return "", err
+					ok, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+						var raw json.RawMessage
+						if err := api.Post(ctx, t.Path("/pause"), body, &raw); err != nil {
+							return "", nil, err
 						}
-						return fmt.Sprintf("%s: kept awake until %s\n", t, end.Format("2006-01-02 15:04 MST")), nil
+						return fmt.Sprintf("%s: kept awake until %s\n", t, end.Format("2006-01-02 15:04 MST")), raw, nil
 					})
 					if !wait || len(ok) == 0 {
 						return err
 					}
-					if werr := waitAwake(ctx, c, deps, api, ok, timeout, true); werr != nil {
+					if werr := waitAwakeJSON(ctx, c, deps, api, ok, timeout, true, asJSON); werr != nil {
 						return werr
 					}
 					return err
@@ -284,6 +320,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&why, "reason", defaultKeepAwakeReason, "the pause's reason, shown in the manager")
 	fl.BoolVar(&wait, "wait", false, "wait until the workloads are awake")
 	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long (the pause stays)")
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
@@ -417,6 +454,7 @@ func targetNames(set map[fleet.Target]bool) string {
 
 func newWorkloadsResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "resume (<router>/<workload>... | --tag k=v...)", Short: "End the pause of workloads (a keep-awake included)",
 		Long:          "End the pause of the workloads: they follow their schedule and idle rules again.",
@@ -426,17 +464,19 @@ func newWorkloadsResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return w.run(c, args, "resume", "Resume %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
-					if err := api.Post(ctx, t.Path("/resume"), nil, nil); err != nil {
-						return "", err
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Post(ctx, t.Path("/resume"), nil, &raw); err != nil {
+						return "", nil, err
 					}
-					return t.String() + ": resumed\n", nil
+					return t.String() + ": resumed\n", raw, nil
 				})
 				return err
 			})
 		},
 	}
 	w.bindShared(cmd)
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
@@ -531,7 +571,10 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 
 func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
-	var file string
+	var (
+		file   string
+		asJSON bool
+	)
 	cmd := &cobra.Command{
 		Use: "set (<router>/<workload>... | --tag k=v...) --file <path or ->", Short: "Set the schedule of workloads from a JSON file",
 		Long: "Set the schedule of the workloads from a JSON file (- for standard input), sent as it is: the router checks it\n" +
@@ -553,15 +596,17 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return w.run(c, args, "set the schedule of", "Set the schedule of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var res struct {
 						Schedule       json.RawMessage   `json:"schedule"`
 						Next           []fleet.NextEvent `json:"next"`
 						MaintenanceDue string            `json:"maintenanceDue"`
 					}
-					if err := api.Put(ctx, t.Path("/schedule"), raw, &res); err != nil {
-						return "", err
+					var answer json.RawMessage
+					if err := api.Put(ctx, t.Path("/schedule"), raw, &answer); err != nil {
+						return "", nil, err
 					}
+					_ = json.Unmarshal(answer, &res)
 					// The next events are read in the zone as stored (its canonical name), the file's when the answer has none.
 					var s fleet.ScheduleView
 					if json.Unmarshal(res.Schedule, &s) != nil || s.TimeZone == "" {
@@ -576,13 +621,14 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						fmt.Fprintf(&b, "  %s\n", note)
 					}
 					fleet.PrintNext(&b, loc, res.Next, res.MaintenanceDue)
-					return b.String(), nil
+					return b.String(), answer, nil
 				})
 				return err
 			})
 		},
 	}
 	w.bindShared(cmd)
+	bindJSON(cmd, &asJSON)
 	cmd.Flags().StringVar(&file, "file", "", "the schedule's JSON file, - for standard input")
 	return cmd
 }
@@ -628,6 +674,7 @@ func readScheduleFile(c *cobra.Command, path string) (json.RawMessage, error) {
 
 func newScheduleClear(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "clear (<router>/<workload>... | --tag k=v...)", Short: "Remove the schedule of workloads",
 		Long:          "Remove the schedule of the workloads: they follow their idle rules alone.",
@@ -637,21 +684,24 @@ func newScheduleClear(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return w.run(c, args, "clear the schedule of", "Clear the schedule of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Delete(ctx, t.Path("/schedule"), &raw); err != nil {
+						return "", nil, err
+					}
 					var res struct{ Cleared bool }
-					if err := api.Delete(ctx, t.Path("/schedule"), &res); err != nil {
-						return "", err
-					}
+					_ = json.Unmarshal(raw, &res)
 					if !res.Cleared {
-						return t.String() + ": no schedule to clear\n", nil
+						return t.String() + ": no schedule to clear\n", raw, nil
 					}
-					return t.String() + ": schedule cleared\n", nil
+					return t.String() + ": schedule cleared\n", raw, nil
 				})
 				return err
 			})
 		},
 	}
 	w.bindShared(cmd)
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
@@ -674,4 +724,9 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// bindJSON binds --json of the workload writes.
+func bindJSON(cmd *cobra.Command, asJSON *bool) {
+	cmd.Flags().BoolVar(asJSON, "json", false, "print the manager's answers, by <router>/<workload> (lines and failures go to stderr)")
 }

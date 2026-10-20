@@ -5,8 +5,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -327,5 +329,88 @@ func TestTagsRefusedByTheRouterExits1(t *testing.T) {
 	r := runWR(t, a, nil, "tags", "prod-eu/w-1", "prod-eu/w-2", "--set", "a=1", "--yes")
 	if r.exit != 1 || len(a.writes) != 2 || !strings.Contains(r.stderr, "prod-eu/w-1: ") || !strings.Contains(r.stdout, "prod-eu/w-2: a=1") {
 		t.Errorf("exit %d writes %q stdout %q stderr %q", r.exit, a.writes, r.stdout, r.stderr)
+	}
+}
+
+// jsonOut decodes a --json stdout: the answers by target.
+func jsonOut(t *testing.T, stdout string) map[string]map[string]any {
+	t.Helper()
+	var m map[string]map[string]any
+	if err := json.Unmarshal([]byte(stdout), &m); err != nil {
+		t.Fatalf("stdout is not the answers by target: %v: %q", err, stdout)
+	}
+	return m
+}
+
+func TestWriteJSONPrintsTheAnswersOfTheSucceededOnStdoutAndTheLinesOnStderr(t *testing.T) {
+	a := &wrAPI{refuse: map[string]string{"/iam/workloads/prod-eu/w-2/nap": "paused"}}
+	r := runWR(t, a, nil, "nap", "prod-eu/w-1", "prod-eu/w-2", "--yes", "--json")
+	m := jsonOut(t, r.stdout)
+	if r.exit != 1 || len(m) != 1 || m["prod-eu/w-1"]["accepted"] != true {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+	if !strings.Contains(r.stderr, "prod-eu/w-1: nap requested") || !strings.Contains(r.stderr, "prod-eu/w-2: ") {
+		t.Errorf("stderr %q", r.stderr)
+	}
+}
+
+func TestWriteJSONOfEveryWorkloadWrite(t *testing.T) {
+	for name, c := range map[string]struct {
+		args []string
+		key  string
+	}{
+		"wake":           {[]string{"wake", "prod-eu/w-1"}, ""},
+		"pause":          {[]string{"pause", "prod-eu/w-1", "--reason", "x"}, "woken"},
+		"rename":         {[]string{"rename", "prod-eu/w-1", "n"}, "name"},
+		"tags":           {[]string{"tags", "prod-eu/w-1", "--set", "a=1"}, "tags"},
+		"keep-awake":     {[]string{"keep-awake", "prod-eu/w-1", "--for", "1h"}, "woken"},
+		"resume":         {[]string{"resume", "prod-eu/w-1"}, ""},
+		"schedule clear": {[]string{"schedule", "clear", "prod-eu/w-1"}, "cleared"},
+	} {
+		a := &wrAPI{}
+		r := runWR(t, a, nil, append(c.args, "--json")...)
+		m := jsonOut(t, r.stdout)
+		if r.exit != 0 || len(m) != 1 || m["prod-eu/w-1"] == nil {
+			t.Errorf("%s: exit %d stdout %q stderr %q", name, r.exit, r.stdout, r.stderr)
+		}
+		if c.key != "" && m["prod-eu/w-1"][c.key] == nil && name != "schedule clear" {
+			t.Errorf("%s: no %q in %q", name, c.key, r.stdout)
+		}
+		if !strings.Contains(r.stderr, "prod-eu/w-1: ") {
+			t.Errorf("%s: stderr %q", name, r.stderr)
+		}
+	}
+}
+
+func TestScheduleSetJSON(t *testing.T) {
+	a := &wrAPI{}
+	f := t.TempDir() + "/s.json"
+	if err := os.WriteFile(f, []byte(`{"maxNapDays":3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runWR(t, a, nil, "schedule", "set", "prod-eu/w-1", "--file", f, "--json")
+	if m := jsonOut(t, r.stdout); r.exit != 0 || m["prod-eu/w-1"] == nil || strings.Contains(r.stdout, "schedule set") {
+		t.Errorf("exit %d stdout %q stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+func TestTagsJSONHoldsTheCurrentTagsOfTheUnchanged(t *testing.T) {
+	a := &wrAPI{tags: map[string]string{"prod-eu/w-1": `{"a":"1"}`}}
+	r := runWR(t, a, nil, "tags", "prod-eu/w-1", "--set", "a=1", "--json")
+	m := jsonOut(t, r.stdout)
+	tags, _ := m["prod-eu/w-1"]["tags"].(map[string]any)
+	if r.exit != 0 || len(a.writes) != 0 || tags["a"] != "1" || !strings.Contains(r.stderr, "unchanged") {
+		t.Errorf("exit %d writes %q stdout %q stderr %q", r.exit, a.writes, r.stdout, r.stderr)
+	}
+}
+
+func TestWakeWaitJSONKeepsStdoutToTheAnswers(t *testing.T) {
+	a := &wrAPI{statuses: []string{"WAKING", "AWAKE"}}
+	r := runWR(t, a, func(d *fleetDeps) {
+		d.sleep = func(context.Context, time.Duration) error { return nil }
+	}, "wake", "prod-eu/w-1", "--wait", "--json")
+	jsonOut(t, r.stdout)
+	if r.exit != 0 || !strings.Contains(r.stderr, "prod-eu/w-1: awake") {
+		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
 	}
 }

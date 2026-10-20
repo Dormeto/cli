@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -26,6 +27,7 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		wait    bool
 		timeout time.Duration
+		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use: "wake (<router>/<workload>... | --tag k=v...)", Short: "Wake workloads now",
@@ -41,20 +43,22 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return w.run(c, args, "wake", "Wake %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				ok, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
+				ok, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Post(ctx, t.Path("/wake"), nil, &raw); err != nil {
+						return "", nil, err
+					}
 					var res struct{ State string }
-					if err := api.Post(ctx, t.Path("/wake"), nil, &res); err != nil {
-						return "", err
-					}
+					_ = json.Unmarshal(raw, &res)
 					if res.State != "" {
-						return fmt.Sprintf("%s: wake requested (%s)\n", t, res.State), nil
+						return fmt.Sprintf("%s: wake requested (%s)\n", t, res.State), raw, nil
 					}
-					return t.String() + ": wake requested\n", nil
+					return t.String() + ": wake requested\n", raw, nil
 				})
 				if !wait || len(ok) == 0 {
 					return err
 				}
-				if werr := waitAwake(ctx, c, deps, api, ok, timeout, false); werr != nil {
+				if werr := waitAwakeJSON(ctx, c, deps, api, ok, timeout, false, asJSON); werr != nil {
 					return werr
 				}
 				return err
@@ -65,11 +69,13 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&wait, "wait", false, "wait until the workloads are awake")
 	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long")
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
 func newWorkloadsNap(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "nap (<router>/<workload>... | --tag k=v...)", Short: "Ask workloads to nap now",
 		Long: "Ask the routers to put the workloads to sleep now. A router refuses a workload that is paused or not awake: its\n" +
@@ -80,17 +86,19 @@ func newWorkloadsNap(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return w.run(c, args, "nap", "Put %d workloads to sleep?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
-					if err := api.Post(ctx, t.Path("/nap"), nil, nil); err != nil {
-						return "", err
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Post(ctx, t.Path("/nap"), nil, &raw); err != nil {
+						return "", nil, err
 					}
-					return t.String() + ": nap requested\n", nil
+					return t.String() + ": nap requested\n", raw, nil
 				})
 				return err
 			})
 		},
 	}
 	w.bindShared(cmd)
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
@@ -99,6 +107,7 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		reason, dur, until string
 		keepAsleep         bool
+		asJSON             bool
 	)
 	cmd := &cobra.Command{
 		Use: "pause (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>] [--keep-asleep]", Short: "Pause workloads: no automatic nap",
@@ -135,16 +144,18 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				lasts = "until " + end.In(now.Location()).Format("2006-01-02 15:04 MST")
 			}
 			return w.run(c, args, "pause "+lasts+": would act on", "Pause %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
-					var res struct{ Woken []string }
-					if err := api.Post(ctx, t.Path("/pause"), body, &res); err != nil {
-						return "", err
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Post(ctx, t.Path("/pause"), body, &raw); err != nil {
+						return "", nil, err
 					}
+					var res struct{ Woken []string }
+					_ = json.Unmarshal(raw, &res)
 					line := fmt.Sprintf("%s: paused %s", t, lasts)
 					if len(res.Woken) > 0 {
 						line += "; woken " + strings.Join(res.Woken, ", ")
 					}
-					return line + "\n", nil
+					return line + "\n", raw, nil
 				})
 				return err
 			})
@@ -156,11 +167,13 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 366 days (90m, 2h, 3d); default until resumed")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
 	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake the workloads first")
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
 func newWorkloadsRename(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "rename <router>/<workload> <name>", Short: "Set the display name of a workload",
 		Long: "Set the display name of one workload (1 to 64 characters, no control characters; routers 0.20.0 and later;\n" +
@@ -185,18 +198,21 @@ func newWorkloadsRename(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return w.run(c, args[:1], fmt.Sprintf("rename to %q: would act on", name), "Rename %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
-					var res struct{ Name string }
-					if err := api.Put(ctx, t.Path("/rename"), map[string]string{"name": name}, &res); err != nil {
-						return "", err
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Put(ctx, t.Path("/rename"), map[string]string{"name": name}, &raw); err != nil {
+						return "", nil, err
 					}
-					return fmt.Sprintf("%s: renamed to %s\n", t, orDefault(res.Name, name)), nil
+					var res struct{ Name string }
+					_ = json.Unmarshal(raw, &res)
+					return fmt.Sprintf("%s: renamed to %s\n", t, orDefault(res.Name, name)), raw, nil
 				})
 				return err
 			})
 		},
 	}
 	w.bindConfirmation(cmd)
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
@@ -256,6 +272,7 @@ func newWorkloadsTags(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		sets, unsets []string
 		clear        bool
+		asJSON       bool
 	)
 	cmd := &cobra.Command{
 		Use: "tags (<router>/<workload>... | --tag k=v...) [--set k=v]... [--unset k]... [--clear]", Short: "Change the tags of workloads",
@@ -313,18 +330,20 @@ func newWorkloadsTags(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					plans[t] = plan{tags: next, changed: changed}
 				}
-				_, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					p := plans[t]
 					switch {
 					case p.err != nil:
-						return "", p.err
-					case !p.changed:
-						return t.String() + ": unchanged\n", nil
+						return "", nil, p.err
+					case !p.changed: // no PUT: the answer is the tags as they are
+						current, _ := json.Marshal(map[string]map[string]string{"tags": p.tags})
+						return t.String() + ": unchanged\n", current, nil
 					}
-					if err := api.Put(ctx, t.Path("/tags"), map[string]map[string]string{"tags": p.tags}, nil); err != nil {
-						return "", err
+					var raw json.RawMessage
+					if err := api.Put(ctx, t.Path("/tags"), map[string]map[string]string{"tags": p.tags}, &raw); err != nil {
+						return "", nil, err
 					}
-					return fmt.Sprintf("%s: %s\n", t, tagsText(p.tags)), nil
+					return fmt.Sprintf("%s: %s\n", t, tagsText(p.tags)), raw, nil
 				})
 				return err
 			})
@@ -335,6 +354,7 @@ func newWorkloadsTags(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringArrayVar(&sets, "set", nil, "set this tag, key=value (repeatable)")
 	fl.StringArrayVar(&unsets, "unset", nil, "remove this tag, by key (repeatable)")
 	fl.BoolVar(&clear, "clear", false, "remove every tag first (--set then adds)")
+	bindJSON(cmd, &asJSON)
 	return cmd
 }
 
