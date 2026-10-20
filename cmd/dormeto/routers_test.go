@@ -135,7 +135,7 @@ func TestRoutersShowUnknownRouterIsRefused(t *testing.T) {
 
 func TestRoutersInstallPostsTheOperationAndFollowsIt(t *testing.T) {
 	a := &routersAPI{}
-	r := runRouters(t, a, nil, "install", "--account", "123456789012", "--region", "eu-west-1")
+	r := runRouters(t, a, nil, "install", "--account", "123456789012", "--router-region", "eu-west-1")
 	if r.exit != 0 {
 		t.Fatalf("exit %d: %s", r.exit, r.stderr)
 	}
@@ -149,12 +149,12 @@ func TestRoutersInstallPostsTheOperationAndFollowsIt(t *testing.T) {
 
 func TestRoutersInstallBadAccountOrRegionIsRefusedBeforeSending(t *testing.T) {
 	for _, args := range [][]string{
-		{"--account", "1234", "--region", "eu-west-1"},
-		{"--account", "12345678901a", "--region", "eu-west-1"},
-		{"--account", "123456789012", "--region", "europe"},
-		{"--account", "123456789012", "--region", "EU-west-1"},
+		{"--account", "1234", "--router-region", "eu-west-1"},
+		{"--account", "12345678901a", "--router-region", "eu-west-1"},
+		{"--account", "123456789012", "--router-region", "europe"},
+		{"--account", "123456789012", "--router-region", "EU-west-1"},
 		{"--account", "123456789012"},
-		{"--region", "eu-west-1"},
+		{"--router-region", "eu-west-1"},
 	} {
 		a := &routersAPI{}
 		r := runRouters(t, a, nil, append([]string{"install"}, args...)...)
@@ -165,7 +165,7 @@ func TestRoutersInstallBadAccountOrRegionIsRefusedBeforeSending(t *testing.T) {
 }
 
 func TestRoutersInstallNoAccessIsPrintedExit1(t *testing.T) {
-	r := runRouters(t, &routersAPI{noAccess: true}, nil, "install", "--account", "123456789012", "--region", "eu-west-1")
+	r := runRouters(t, &routersAPI{noAccess: true}, nil, "install", "--account", "123456789012", "--router-region", "eu-west-1")
 	if r.exit != 1 || !strings.Contains(r.stderr, "no command role in account 123456789012") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}

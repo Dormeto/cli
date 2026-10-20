@@ -92,19 +92,19 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		asJSON          bool
 	)
 	cmd := &cobra.Command{
-		Use: "install --account <12 digits> --region <region>", Short: "Install a router in an AWS account and region", Args: noArgs, SilenceErrors: true,
+		Use: "install --account <12 digits> --router-region <region>", Short: "Install a router in an AWS account and region", Args: noArgs, SilenceErrors: true,
 		Long: "Start the manager's install of a router in the account and region and follow it step by step. The account\n" +
-			"needs the command role the manager assumes: a refusal \"no_access\" says it has none. Here --region is the\n" +
-			"router's, not the manager's (which is the profile's). --no-wait only starts it; Ctrl-C and --timeout stop\n" +
-			"following, the operation goes on in the manager: `dormeto operations watch <id>` follows it again. Needs\n" +
-			"an administrator.",
+			"needs the command role the manager assumes: a refusal \"no_access\" says it has none. --region is the\n" +
+			"manager's, --router-region the router's. --no-wait only starts it; Ctrl-C and --timeout stop following,\n" +
+			"the operation goes on in the manager: `dormeto operations watch <id>` follows it again. Needs an\n" +
+			"administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := wait.check()
 			if err == nil && !accountID.MatchString(account) {
 				err = usagef("--account: %q is not 12 digits", account)
 			}
 			if err == nil && !regionName.MatchString(region) {
-				err = usagef("--region: %q is not a region such as eu-west-1", region)
+				err = usagef("--router-region: %q is not a region such as eu-west-1", region)
 			}
 			if err != nil {
 				return finish(c, err)
@@ -121,9 +121,8 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	// Here --region is the router's: it shadows the group's flag of the manager's region, which then is the profile's.
 	fl.StringVar(&account, "account", "", "the AWS account (12 digits)")
-	fl.StringVar(&region, "region", "", "the AWS region of the router, such as eu-west-1 (the manager's is the profile's)")
+	fl.StringVar(&region, "router-region", "", "the AWS region of the router, such as eu-west-1 (--region is the manager's)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd
