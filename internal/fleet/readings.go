@@ -6,8 +6,10 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -505,7 +507,7 @@ func (s FleetStates) Shares() string {
 	return strings.Join(parts, ", ")
 }
 
-// Overview is what the six routes of the overview answered: a block is nil when its route failed (Failed says why).
+// Overview is what the six routes of the overview answered: a block is nil when its route failed (Failed says why) or is not in this manager (Missing).
 type Overview struct {
 	Workloads *Workloads
 	States    *FleetStates
@@ -514,13 +516,26 @@ type Overview struct {
 	Alerts    *AlertsAnswer
 	Running   *[]Operation
 	Routers   *Routers
-	Failed    []error // one per route that failed, naming it
+	Missing   map[string]bool // the blocks whose route answered 404: that service is not in this manager
+	Failed    []error         // one per route that failed otherwise, naming it
 }
 
-// ReadOverview reads the routes of the overview in turn; one that fails is recorded in Failed and its block left out.
+// blockOf is the overview block (its key in --json) of each route's name.
+var blockOf = map[string]string{"workloads": "workloads", "workload states": "states", "savings": "savings", "alerts": "alerts", "operations": "operations", "routers": "routers"}
+
+// ReadOverview reads the routes of the overview in turn; one that answers 404 is recorded in Missing, one that fails
+// otherwise in Failed, and its block is left out.
 func ReadOverview(ctx context.Context, c *Client) Overview {
 	var o Overview
-	fail := func(route string, err error) { o.Failed = append(o.Failed, fmt.Errorf("%s: %w", route, err)) }
+	o.Missing = map[string]bool{}
+	fail := func(route string, err error) {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			o.Missing[blockOf[route]] = true
+			return
+		}
+		o.Failed = append(o.Failed, fmt.Errorf("%s: %w", route, err))
+	}
 	var w Workloads
 	if err := c.Get(ctx, "/workloads", url.Values{"limit": {"1"}}, &w); err != nil {
 		fail("workloads", err)
@@ -575,7 +590,7 @@ func (o Overview) outdated() (n int) {
 }
 
 // JSON is the composite --json prints: workloads {total, byState}, states (the API's answer), savings (the API's answer),
-// alerts {open}, operations {running}, routers {total, outdated, available}; a block whose route failed is absent.
+// alerts {open}, operations {running}, routers {total, outdated, available}; a block whose route is not in this manager is null, one whose route failed is absent.
 func (o Overview) JSON() map[string]any {
 	out := map[string]any{}
 	if o.Workloads != nil {
@@ -597,6 +612,9 @@ func (o Overview) JSON() map[string]any {
 	if o.Running != nil {
 		out["operations"] = map[string]any{"running": *o.Running}
 	}
+	for key := range o.Missing {
+		out[key] = nil
+	}
 	if o.Routers != nil {
 		out["routers"] = map[string]any{"total": len(o.Routers.Rows), "outdated": o.outdated(), "available": o.Routers.Available}
 	}
@@ -606,6 +624,12 @@ func (o Overview) JSON() map[string]any {
 // Text is the overview as labelled lines, a block per route that answered, then the running operations.
 func (o Overview) Text(now time.Time) string {
 	var rows [][2]string
+	absent := func(key, label string) {
+		if o.Missing[key] {
+			rows = append(rows, [2]string{label, "not available"})
+		}
+	}
+	absent("workloads", "workloads")
 	if o.Workloads != nil {
 		s := fmt.Sprintf("%d", o.Workloads.Total)
 		if len(o.Workloads.ByState) > 0 {
@@ -613,9 +637,11 @@ func (o Overview) Text(now time.Time) string {
 		}
 		rows = append(rows, [2]string{"workloads", s})
 	}
+	absent("states", "last 7 days")
 	if o.States != nil {
 		rows = append(rows, [2]string{"last 7 days", o.States.Shares()})
 	}
+	absent("savings", "savings")
 	if o.Savings != nil {
 		if s := o.Savings.Summary; s != nil {
 			rows = append(rows, [2]string{"savings", fmt.Sprintf("%s in the last 30 days, %s this month (estimated)", USD(s.Last30.USD), USD(s.Month.USD))})
@@ -623,10 +649,12 @@ func (o Overview) Text(now time.Time) string {
 			rows = append(rows, [2]string{"savings", "no estimate yet"})
 		}
 	}
+	absent("alerts", "alerts")
 	if o.Alerts != nil {
 		n := len(o.Alerts.Alarms)
 		rows = append(rows, [2]string{"alerts", fmt.Sprintf("%d open", n)})
 	}
+	absent("routers", "routers")
 	if o.Routers != nil {
 		s := fmt.Sprintf("%d, %d outdated", len(o.Routers.Rows), o.outdated())
 		if o.Routers.Available != "" {
@@ -634,6 +662,7 @@ func (o Overview) Text(now time.Time) string {
 		}
 		rows = append(rows, [2]string{"routers", s})
 	}
+	absent("operations", "operations")
 	if o.Running != nil {
 		rows = append(rows, [2]string{"operations", fmt.Sprintf("%d running", len(*o.Running))})
 	}

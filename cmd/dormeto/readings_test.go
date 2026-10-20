@@ -216,3 +216,21 @@ func TestAuditRefusesABadSinceOrLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestOverviewTreatsA404AsNotAvailableNotAFailure(t *testing.T) {
+	a := overviewAPI()
+	delete(a.routes, "/savings") // the fake answers 404: no savings in this manager
+	r := runReading(t, a, nil, "overview")
+	if r.exit != 0 || r.stderr != "" || !strings.Contains(r.stdout, "savings      not available") || !strings.Contains(r.stdout, "1 open") {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	r = runReading(t, a, nil, "overview", "--json")
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || string(got["savings"]) != "null" || got["alerts"] == nil {
+		t.Errorf("exit %d, %v: %q", r.exit, err, r.stdout)
+	}
+	a.routes["status:/alerts"] = "403"
+	if r := runReading(t, a, nil, "overview"); r.exit != 1 || !strings.Contains(r.stderr, "alerts: the route failed") {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
