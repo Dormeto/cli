@@ -257,12 +257,13 @@ func taggedRouters(ctx context.Context, api *fleet.Client, c *cobra.Command, war
 	return set, nil
 }
 
-// newRouters is `dormeto routers` and its subcommands list and upgrade.
+// newRouters is `dormeto routers` and its subcommands (list and upgrade here, the others in routers.go).
 func newRouters(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
-	cmd := fleetCommand("routers", "List and upgrade the manager's routers")
+	cmd := fleetCommand("routers", "List, show, install, upgrade, pause and uninstall the manager's routers")
 	f.bind(cmd)
-	cmd.AddCommand(newRoutersList(f, deps), newRoutersUpgrade(f, deps))
+	cmd.AddCommand(newRoutersList(f, deps), newRoutersUpgrade(f, deps), newRoutersShow(f, deps), newRoutersInstall(f, deps),
+		newRoutersUninstall(f, deps), newRoutersPause(f, deps), newRoutersResume(f, deps))
 	return cmd
 }
 
