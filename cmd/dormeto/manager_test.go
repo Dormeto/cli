@@ -23,6 +23,8 @@ type managerAPI struct {
 	requests []string // "METHOD requestURI body"
 	state    string   // GET /update before the plan ends
 	planned  string   // GET /update once the plan has ended (state when "")
+	lag      int      // reads of GET /update, once the plan has ended, that answer lagging before planned
+	lagging  string   // GET /update while the plan has not shown yet (state when "")
 	applied  string   // GET /update once the apply has ended (planned when "")
 	check    string   // GET /update/check ("" answers 404)
 	changes  string   // GET /update/changes ("" answers 404, as a manager installed with Terraform does)
@@ -30,13 +32,14 @@ type managerAPI struct {
 	applyEnd string   // how the apply's operation ends: succeeded (default) or failed
 	outage   int      // reads of GET /operations answered 502 once the apply is requested
 	busy     int      // reads answered 503 (Retry-After: 0, so that the client gives up at once) after the 502s
+	missing  int      // reads answered 404 by API Gateway after the 503s
 	runs     string   // the version /health answers once the apply has ended (0.18.1 when "")
 	refusal  string   // POST /update/plan is refused (400) with this message when set
 
 	phase   string // "", planning, planned, applying, applied
 	version string // the version requested
 	reads   int    // reads of the current operation
-	gone    int    // 502s and 503s answered
+	gone    int    // 502s, 503s and 404s answered
 }
 
 func (m *managerAPI) handler() http.HandlerFunc {
@@ -101,7 +104,13 @@ func (m *managerAPI) handler() http.HandlerFunc {
 
 func (m *managerAPI) stateNow() string {
 	switch m.phase {
-	case "planned", "applying":
+	case "planned":
+		if m.lag > 0 {
+			m.lag--
+			return orString(m.lagging, m.state)
+		}
+		return orString(m.planned, m.state)
+	case "applying":
 		return orString(m.planned, m.state)
 	case "applied":
 		return orString(m.applied, orString(m.planned, m.state))
@@ -110,9 +119,10 @@ func (m *managerAPI) stateNow() string {
 }
 
 // operations answers GET /operations with the current request's operation: running at the first read, ended at the
-// next; once the apply is requested, its first reads answer 502 while outage lasts, then 503 while busy does.
+// next, with its build in its context; once the apply is requested, its first reads answer 502 while outage lasts, then
+// 503 while busy does, then 404 while missing does.
 func (m *managerAPI) operations(w http.ResponseWriter) {
-	id, step, end, action := "op-plan", "Plan manager "+m.version, orString(m.planEnd, "succeeded"), "plan"
+	id, step, end, action, build := "op-plan", "Plan manager "+m.version, orString(m.planEnd, "succeeded"), "plan", planBuild
 	if m.phase == "applying" || m.phase == "applied" {
 		switch {
 		case m.phase == "applying" && m.outage > 0:
@@ -128,8 +138,14 @@ func (m *managerAPI) operations(w http.ResponseWriter) {
 			w.WriteHeader(503)
 			io.WriteString(w, `{"message":"Service Unavailable"}`)
 			return
+		case m.phase == "applying" && m.missing > 0:
+			m.missing--
+			m.gone++
+			w.WriteHeader(404)
+			io.WriteString(w, `{"message":"Not Found"}`)
+			return
 		}
-		id, step, end, action = "op-apply", "Apply manager "+m.version, orString(m.applyEnd, "succeeded"), "apply"
+		id, step, end, action, build = "op-apply", "Apply manager "+m.version, orString(m.applyEnd, "succeeded"), "apply", applyBuild
 	}
 	m.reads++
 	status, stepStatus, stepEnd, opEnd := "running", "running", "", ""
@@ -150,8 +166,8 @@ func (m *managerAPI) operations(w http.ResponseWriter) {
 	}
 	fmt.Fprintf(w, `{"operations":[{"id":"other","type":"onboard","status":"running","target":{},"steps":[]},
 	 {"id":%q,"type":"update-manager","status":%q,"target":{"account":"111111111111","region":"eu-west-1","version":%q},
-	  "steps":[{"name":%q,"status":%q,"startedAt":"2026-10-19T12:00:00Z"%s}],"by":"arn","createdAt":"2026-10-19T12:00:00Z"%s}]}`,
-		id, status, m.version, step, stepStatus, stepEnd, opEnd)
+	  "steps":[{"name":%q,"status":%q,"startedAt":"2026-10-19T12:00:00Z"%s}],"context":{"build":%q},"by":"arn","createdAt":"2026-10-19T12:00:00Z"%s}]}`,
+		id, status, m.version, step, stepStatus, stepEnd, build, opEnd)
 }
 
 // sent is the requests other than reads: "METHOD requestURI body".
@@ -189,6 +205,8 @@ func updateState(plan, build string) string {
 
 const (
 	planBuild     = "dmt-prod-install:11111111-2222-4333-8444-555555555555"
+	applyBuild    = "dmt-prod-install:66666666-7777-4888-8999-000000000000"
+	oldPlanBuild  = "dmt-prod-install:00000000-0000-4000-8000-0000000000aa"
 	planOf0181    = `{"build":"` + planBuild + `","version":"0.18.1","summary":{"add":2,"change":1,"destroy":0,"replaced":["module.m.aws_lambda_function.api"],"destroyed":[]}}`
 	planBuildDone = `{"id":"` + planBuild + `","by":"dashboard","action":"plan","version":"0.18.1","status":"SUCCEEDED","phase":"COMPLETED","startedAt":"2026-10-19T12:00:00Z","endedAt":"2026-10-19T12:02:00Z","steps":["plan"],"tail":[],"consoleUrl":null}`
 	terraformOnly = `{"installedWithCli":false,"version":"0.17.1","env":"prod","region":"eu-west-1"}`
@@ -488,34 +506,151 @@ func TestManagerUpdateNeverAppliesAPlanOfAnotherVersion(t *testing.T) {
 	if r.exit != 1 || m.has("POST /iam/update/apply") || !strings.Contains(r.stderr, "the manager's plan is of 0.18.0, not 0.18.1: nothing applied") {
 		t.Errorf("exit %d, stderr %q, requests %q", r.exit, r.stderr, m.requests)
 	}
+}
+
+// timeoutAtSleep makes the --timeout of what is being waited for end at the nth wait between two reads.
+func timeoutAtSleep(n int) func(*fleetDeps) {
+	return func(d *fleetDeps) {
+		var fire context.CancelFunc
+		sleeps := 0
+		d.timeout = func(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+			ctx, fire = context.WithCancel(ctx)
+			return ctx, fire
+		}
+		d.sleep = func(ctx context.Context, _ time.Duration) error {
+			if sleeps++; sleeps != n {
+				return nil
+			}
+			fire()
+			return ctx.Err()
+		}
+	}
+}
+
+func TestManagerUpdateWaitsForThePlanOfItsBuild(t *testing.T) {
+	m := updating()
+	m.lag = 1 // the build's result is not written yet: no plan at the first read
+	m.lagging = updateState("null", "null")
+	r := runManager(t, m, nil, "update", "--yes")
+	if r.exit != 0 || !strings.Contains(r.stdout, "plan      0.18.1, build "+planBuild+"\n") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	if got := m.sent(); len(got) != 2 || got[1] != `POST /iam/update/apply {"planBuild":"`+planBuild+`"}` {
+		t.Errorf("sent %q", got)
+	}
+	reads := 0
+	for _, q := range m.requests {
+		if q == "GET /iam/update " {
+			reads++
+		}
+	}
+	if reads != 3 { // the state, then the plan read twice
+		t.Errorf("%d reads of GET /update", reads)
+	}
+}
+
+func TestManagerUpdateNeverShowsNorSendsAnOlderPlanOfTheSameVersion(t *testing.T) {
+	m := updating()
+	m.lag = 1000
+	m.lagging = updateState(strings.Replace(planOf0181, planBuild, oldPlanBuild, 1), "null")
+	r := runManager(t, m, timeoutAtSleep(2), "update", "--yes")
+	if r.exit != 1 || m.has("POST /iam/update/apply") || strings.Contains(r.stdout, oldPlanBuild) || strings.Contains(r.stdout, "changes") {
+		t.Fatalf("exit %d, stdout %q, requests %q", r.exit, r.stdout, m.requests)
+	}
+	if want := "the manager's plan is of build " + oldPlanBuild + ", not this run's " + planBuild + ": nothing applied (dormeto manager status)\n"; !strings.HasSuffix(r.stderr, want) {
+		t.Errorf("stderr %q", r.stderr)
+	}
+}
+
+func TestManagerUpdateTimesOutWhenThePlanNeverShows(t *testing.T) {
+	m := updating()
+	m.lag = 1000
+	r := runManager(t, m, timeoutAtSleep(2), "update", "--yes", "--timeout", "10m")
+	if r.exit != 1 || m.has("POST /iam/update/apply") {
+		t.Fatalf("exit %d, requests %q", r.exit, m.requests)
+	}
+	if want := "the plan of 0.18.1 (build " + planBuild + ") did not show in the manager within 10m0s: nothing applied (dormeto manager status)\n"; !strings.HasSuffix(r.stderr, want) {
+		t.Errorf("stderr %q", r.stderr)
+	}
+}
+
+func TestManagerUpdateNoWaitStartsTheApplyWithoutFollowingIt(t *testing.T) {
+	m := updating()
+	r := runManager(t, m, nil, "update", "--yes", "--no-wait")
+	if r.exit != 0 || len(m.sent()) != 2 || m.has("GET /iam/health") || m.phase != "applying" || m.reads != 0 {
+		t.Fatalf("exit %d, phase %s, %d reads, requests %q, stderr %q", r.exit, m.phase, m.reads, m.requests, r.stderr)
+	}
+	if !strings.HasSuffix(r.stdout, "started update-manager op-apply for apply 0.18.1\nfollow it: dormeto operations watch op-apply\n") {
+		t.Errorf("stdout %q", r.stdout)
+	}
 	m = updating()
-	m.planned = updateState("null", planBuildDone)
-	r = runManager(t, m, nil, "update", "--yes")
-	if r.exit != 1 || m.has("POST /iam/update/apply") || !strings.Contains(r.stderr, "the manager shows no plan of 0.18.1 to apply") {
-		t.Errorf("no plan: exit %d, stderr %q", r.exit, r.stderr)
+	r = runManager(t, m, nil, "update", "--yes", "--no-wait", "--json")
+	var got struct{ Operations []struct{ ID, Status string } }
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || len(got.Operations) != 2 || got.Operations[1].ID != "op-apply" || got.Operations[1].Status != "running" {
+		t.Errorf("%v, exit %d: %q", err, r.exit, r.stdout)
+	}
+}
+
+// API Gateway answers 404 for a moment while the update replaces the API: the apply's following waits it out, saying so
+// once.
+func TestManagerUpdateApplyWaitsOutAnyFailedRead(t *testing.T) {
+	m := updating()
+	m.missing = 3
+	r := runManager(t, m, nil, "update", "--yes")
+	if r.exit != 0 || m.gone != 3 || !strings.HasSuffix(r.stdout, "manager updated to 0.18.1\n") {
+		t.Fatalf("exit %d, %d failed reads, stdout %q, stderr %q", r.exit, m.gone, r.stdout, r.stderr)
+	}
+	if n := strings.Count(r.stderr, "  … the manager does not answer ("); n != 1 || !strings.Contains(r.stderr, "), waiting\n") {
+		t.Errorf("%d waiting lines: %q", n, r.stderr)
+	}
+}
+
+func TestManagerUpdateSaysWhenAnotherVersionRuns(t *testing.T) {
+	m := updating()
+	m.runs = "0.18.2"
+	r := runManager(t, m, nil, "update", "--yes")
+	if r.exit != 1 || r.stderr[strings.LastIndex(strings.TrimSuffix(r.stderr, "\n"), "\n")+1:] != "the manager runs 0.18.2, not 0.18.1\n" {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
 
 func TestManagerUpdateConfirmsNamingTheVersionAndTheCounts(t *testing.T) {
 	var asked string
-	m := updating()
-	r := runManager(t, m, func(d *fleetDeps) {
+	declining := func(d *fleetDeps) {
 		d.terminal = func(io.Reader) bool { return true }
-		d.confirm = func(_ context.Context, _ io.Reader, _ io.Writer, q string) (bool, error) {
+		d.confirm = func(_ context.Context, _ io.Reader, out io.Writer, q string) (bool, error) {
 			asked = q
+			fmt.Fprintln(out, q)
 			return false, nil
 		}
-	}, "update")
-	if r.exit != 0 || m.has("POST /iam/update/apply") || !strings.HasSuffix(r.stdout, "not confirmed: nothing sent\n") {
+	}
+	m := updating()
+	r := runManager(t, m, declining, "update")
+	declined := "not confirmed: nothing applied (the plan of 0.18.1 stays ready in the manager: dormeto manager status)\n"
+	if r.exit != 0 || m.has("POST /iam/update/apply") || !strings.HasSuffix(r.stdout, declined) {
 		t.Errorf("exit %d, stdout %q, requests %q", r.exit, r.stdout, m.requests)
 	}
 	if asked != "Update the manager from 0.17.1 to 0.18.1 (2 to add, 1 to change, 0 to destroy)?" {
 		t.Errorf("asked %q", asked)
 	}
+	// Under --json, what --dry-run --json prints; the question and the answer on stderr.
+	m = updating()
+	r = runManager(t, m, declining, "update", "--json")
+	var got struct {
+		Update     struct{ Plan struct{ Build string } }
+		Operations []struct{ ID, Status string }
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || got.Update.Plan.Build != planBuild || len(got.Operations) != 1 || got.Operations[0].ID != "op-plan" {
+		t.Errorf("%v, exit %d: %q", err, r.exit, r.stdout)
+	}
+	if !strings.Contains(r.stderr, asked) || !strings.HasSuffix(r.stderr, declined) {
+		t.Errorf("stderr %q", r.stderr)
+	}
 }
 
 func TestManagerUpdateOfATerraformInstall(t *testing.T) {
 	for args, want := range map[string]string{
+		"update":                           "installed with Terraform: change its module's source to the version you want\n", // no terminal, no --yes
 		"update --yes":                     "installed with Terraform: change its module's source to the version you want\n",
 		"update --yes --version 0.18.1":    "installed with Terraform: change its module's source to 0.18.1\n",
 		"update --dry-run --version 1.0.0": "installed with Terraform: change its module's source to 1.0.0\n",
@@ -542,8 +677,12 @@ func TestManagerUpdateUpToDate(t *testing.T) {
 }
 
 func TestManagerUpdateRefusalsSendNothing(t *testing.T) {
+	m := updating()
+	r := runManager(t, m, nil, "update") // no terminal: refused after the read that tells a Terraform install
+	if r.exit != 2 || r.stderr != "confirmation needed: pass --yes to update the manager without a terminal\n" || strings.Join(m.requests, "\n") != "GET /iam/update " {
+		t.Errorf("no --yes: exit %d, stderr %q, requests %q", r.exit, r.stderr, m.requests)
+	}
 	for args, want := range map[string]string{
-		"update":                          "confirmation needed: pass --yes to update the manager without a terminal\n",
 		"update --yes --version 1.2":      "--version: \"1.2\" is not a version such as 1.2.3\n",
 		"update --yes --timeout 0s":       "--timeout: 0s is not a positive duration\n",
 		"update --yes extra":              "unexpected argument \"extra\"\n",
@@ -556,9 +695,9 @@ func TestManagerUpdateRefusalsSendNothing(t *testing.T) {
 		}
 	}
 	// The manager's own refusal of the plan is printed as it words it.
-	m := updating()
+	m = updating()
 	m.refusal = "9.9.9 is not a version to update to"
-	r := runManager(t, m, nil, "update", "--version", "9.9.9", "--dry-run")
+	r = runManager(t, m, nil, "update", "--version", "9.9.9", "--dry-run")
 	if r.exit != 1 || r.stderr != "✗ plan 9.9.9: 9.9.9 is not a version to update to\n" || m.has("GET /iam/operations") {
 		t.Errorf("refused plan: exit %d, stderr %q, requests %q", r.exit, r.stderr, m.requests)
 	}

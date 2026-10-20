@@ -192,18 +192,18 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "update [--version <version>] [--dry-run] [--yes]", Short: "Plan the manager's update, then apply it once confirmed", Args: noArgs, SilenceErrors: true,
 		Long: "Update the manager as the Update page does: its install build plans the update to --version (default: the\n" +
-			"newest the manager offers), the plan's summary is printed (resources to add, change and destroy, those replaced\n" +
-			"or destroyed), then, once confirmed (always on a terminal; --yes without one), the build applies that plan, and\n" +
-			"the version the manager then runs is read. Both builds are followed step by step; while the apply replaces the\n" +
-			"manager's API, the reads that fail are tried again until --timeout (for each build). --dry-run stops after the\n" +
-			"plan. A manager installed with Terraform is updated by changing its module's source. Needs an administrator.",
+			"newest the manager offers), the plan this run made is printed once the manager shows it (resources to add,\n" +
+			"change and destroy, those replaced or destroyed), then, once confirmed (always on a terminal; --yes without\n" +
+			"one), the build applies that plan, and the version the manager then runs is read. Both builds are followed\n" +
+			"step by step, each for up to --timeout; while the apply replaces the manager's API, every read that fails is\n" +
+			"tried again until then, each new error said once. --dry-run stops after the plan. --no-wait starts the apply\n" +
+			"without following it (the plan is always followed: its summary is what is confirmed); `dormeto operations\n" +
+			"watch <id>` follows it. A manager installed with Terraform is updated by changing its module's source. Needs\n" +
+			"an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := u.wait.check()
 			if err == nil && u.version != "" && !fleet.IsVersion(u.version) {
 				err = usagef("--version: %q is not a version such as 1.2.3", u.version)
-			}
-			if err == nil && !u.dryRun && !u.yes && !deps.terminal(c.InOrStdin()) {
-				err = usagef("confirmation needed: pass --yes to update the manager without a terminal")
 			}
 			if err != nil {
 				return finish(c, err)
@@ -227,6 +227,7 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&u.dryRun, "dry-run", false, "plan the update and print the plan, without applying it")
 	fl.BoolVar(&u.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	fl.DurationVar(&u.wait.timeout, "timeout", 60*time.Minute, "stop following the plan, or the apply, after this long (the build goes on in the manager)")
+	fl.BoolVar(&u.wait.noWait, "no-wait", false, "start the apply and print its operation's id instead of following it (the plan is always followed)")
 	fl.BoolVar(&u.asJSON, "json", false, "print {update, operations}: the update's state as last read and the operations followed (progress goes to stderr)")
 	return cmd
 }
@@ -244,9 +245,9 @@ type updateRun struct {
 	Operations []fleet.Operation `json:"operations"`
 }
 
-// run plans the update, prints the plan, and applies it once confirmed; the plan only of the version asked is applied.
-// It gives what --json prints (nil when GET /update could not be read, or the update was not confirmed). Under --json,
-// what is said along the way goes to stderr.
+// run plans the update, prints the plan this run made once the manager shows it, and applies it once confirmed. It gives
+// what --json prints (nil when GET /update could not be read, or for a usage error). Under --json, what is said along the
+// way goes to stderr.
 func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client) (*updateRun, error) {
 	info := c.OutOrStdout()
 	if u.asJSON {
@@ -274,10 +275,15 @@ func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps
 			return run, nil
 		}
 	}
+	if !u.dryRun && !u.yes && !deps.terminal(c.InOrStdin()) { // before anything is sent
+		return nil, usagef("confirmation needed: pass --yes to update the manager without a terminal")
+	}
 
-	// follow runs one request of the update to its end: its operation, then, when it failed, what its build says.
-	follow := func(action string, start func(context.Context) (fleet.Operation, error)) error {
-		ops, err := runOperations(ctx, c, deps, []opItem{{label: action + " " + version, start: start, get: fleet.ListedOperation(api)}}, 1, u.wait)
+	// follow runs one request of the update to its end (or only starts it, with w.noWait): its operation, then, when it
+	// failed, what its build says.
+	follow := func(action string, w waitFlags, patient bool, start func(context.Context) (fleet.Operation, error)) error {
+		item := opItem{label: action + " " + version, start: start, get: fleet.ListedOperation(api), patient: patient}
+		ops, err := runOperations(ctx, c, deps, []opItem{item}, 1, w)
 		run.Operations = append(run.Operations, ops...)
 		if err != nil && len(ops) == 1 && ops[0].Status == "failed" {
 			if s, rerr := fleet.GetUpdate(ctx, api); rerr == nil {
@@ -288,18 +294,25 @@ func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps
 		return err
 	}
 
-	if err := follow("plan", func(ctx context.Context) (fleet.Operation, error) { return fleet.PlanUpdate(ctx, api, version) }); err != nil {
+	began := deps.now()
+	planned := waitFlags{timeout: u.wait.timeout} // always followed: its summary is what is confirmed
+	if err := follow("plan", planned, false, func(ctx context.Context) (fleet.Operation, error) { return fleet.PlanUpdate(ctx, api, version) }); err != nil {
 		return run, err
 	}
-	if s, err = fleet.GetUpdate(ctx, api); err != nil {
+	planOp := run.Operations[len(run.Operations)-1]
+	build := planOp.InstallBuild()
+	if build == "" {
+		return run, fmt.Errorf("the plan's operation names no build: nothing applied (dormeto operations show %s)", planOp.ID)
+	}
+	shown, err := planOf(ctx, deps, api, version, build, began.Add(u.wait.timeout), u.wait.timeout)
+	if shown != nil {
+		run.Update = *shown
+	}
+	if err != nil {
 		return run, err
 	}
-	run.Update = s
-	plan := s.Plan
-	switch {
-	case plan == nil:
-		return run, fmt.Errorf("the manager shows no plan of %s to apply: nothing applied (dormeto manager status)", version)
-	case plan.Version != version:
+	plan := shown.Plan
+	if plan.Version != version {
 		return run, fmt.Errorf("the manager's plan is of %s, not %s: nothing applied", plan.Version, version)
 	}
 	fmt.Fprint(info, plan.Text())
@@ -307,13 +320,23 @@ func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps
 		fmt.Fprintf(info, "dry run: the plan of %s is not applied\n", version)
 		return run, nil
 	}
-	question := fmt.Sprintf("Update the manager from %s to %s (%s)?", running, version, plan.Summary.Counts())
-	if declined, err := confirmNames(ctx, c, deps, []string{"manager " + version}, "manager", question, true, false, u.yes); declined || err != nil {
-		return nil, err
+	if !u.yes { // on a terminal, as checked above
+		question := fmt.Sprintf("Update the manager from %s to %s (%s)?", running, version, plan.Summary.Counts())
+		ok, err := deps.confirm(ctx, c.InOrStdin(), info, question)
+		if err != nil {
+			return run, err
+		}
+		if !ok {
+			fmt.Fprintf(info, "not confirmed: nothing applied (the plan of %s stays ready in the manager: dormeto manager status)\n", version)
+			return run, nil
+		}
 	}
 
-	if err := follow("apply", func(ctx context.Context) (fleet.Operation, error) { return fleet.ApplyUpdate(ctx, api, plan.Build) }); err != nil {
+	if err := follow("apply", u.wait, true, func(ctx context.Context) (fleet.Operation, error) { return fleet.ApplyUpdate(ctx, api, plan.Build) }); err != nil {
 		return run, err
+	}
+	if u.wait.noWait {
+		return run, nil
 	}
 	runs, err := managerVersion(ctx, api)
 	if err != nil {
@@ -333,6 +356,37 @@ func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps
 		return run, fmt.Errorf("the apply succeeded but the manager still runs %s", running)
 	}
 	return run, fmt.Errorf("the manager runs %s, not %s", runs, version)
+}
+
+// planOf reads GET /update at once, then every followEvery until the deadline, until its plan is the one of build (the
+// build writes its plan's files after its operation's outcome). It gives the state as last read (nil when none was), and
+// a refusal when that plan did not show in time: another build's plan is never shown nor applied.
+func planOf(ctx context.Context, deps fleetDeps, api *fleet.Client, version, build string, deadline time.Time, timeout time.Duration) (*fleet.UpdateState, error) {
+	waited, cancel := deps.timeout(ctx, deadline.Sub(deps.now()))
+	defer cancel()
+	var last *fleet.UpdateState
+	for {
+		s, err := fleet.GetUpdate(waited, api)
+		switch {
+		case err == nil:
+			last = &s
+			if s.Plan != nil && s.Plan.Build == build {
+				return last, nil
+			}
+		case waited.Err() == nil:
+			return last, err
+		}
+		if waited.Err() == nil && deps.sleep(waited, followEvery) == nil {
+			continue
+		}
+		switch {
+		case ctx.Err() != nil: // a signal, not the deadline
+			return last, ctx.Err()
+		case last != nil && last.Plan != nil:
+			return last, fmt.Errorf("the manager's plan is of build %s, not this run's %s: nothing applied (dormeto manager status)", last.Plan.Build, build)
+		}
+		return last, fmt.Errorf("the plan of %s (build %s) did not show in the manager within %s: nothing applied (dormeto manager status)", version, build, timeout)
+	}
 }
 
 // explainBuild prints, after a failed plan or apply, what its install build says of it (the step that failed, the end of

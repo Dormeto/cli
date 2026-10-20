@@ -43,11 +43,13 @@ func (w *waitFlags) check() error {
 }
 
 // opItem is an operation for runOperations: label names its target in what is printed, start starts it, get reads it
-// (fleet.GetOperation, or fleet.ListedOperation for the manager's update).
+// (fleet.GetOperation, or fleet.ListedOperation for the manager's update). A patient one has every failed read waited
+// out until --timeout, each new error said once on stderr (the manager's apply, which replaces the API).
 type opItem struct {
-	label string
-	start func(context.Context) (fleet.Operation, error)
-	get   func(context.Context, string) (fleet.Operation, error)
+	label   string
+	start   func(context.Context) (fleet.Operation, error)
+	get     func(context.Context, string) (fleet.Operation, error)
+	patient bool
 }
 
 // opResult is what became of an item: the operation's record as last read (started), whether it failed (said when it
@@ -169,14 +171,23 @@ func runOperation(ctx context.Context, deps fleetDeps, it opItem, w waitFlags, o
 	}
 	if op.Status != "succeeded" && op.Status != "failed" {
 		printed := map[int]string{}
-		last, err := fleet.Follow(ctx, it.get, op.ID, fleet.FollowOptions{Poll: followEvery, Sleep: deps.sleep, Progress: func(op fleet.Operation) {
-			for _, line := range stepLines(printed, op) {
-				if o.named {
-					line = it.label + ": " + line
-				}
-				o.say(o.errs, "  %s\n", line)
+		named := func(line string) string {
+			if o.named {
+				return it.label + ": " + line
 			}
-		}})
+			return line
+		}
+		follow := fleet.FollowOptions{Poll: followEvery, Sleep: deps.sleep, Progress: func(op fleet.Operation) {
+			for _, line := range stepLines(printed, op) {
+				o.say(o.errs, "  %s\n", named(line))
+			}
+		}}
+		if it.patient {
+			follow.WaitOut = func(err error) {
+				o.say(o.errs, "  %s\n", named(fmt.Sprintf("… the manager does not answer (%s), waiting", err)))
+			}
+		}
+		last, err := fleet.Follow(ctx, it.get, op.ID, follow)
 		if last.ID != "" {
 			res.op = last
 		}
