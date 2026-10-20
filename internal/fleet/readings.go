@@ -466,7 +466,17 @@ func FilterAudit(entries []AuditEntry, f AuditFilter, limit int) (out []AuditEnt
 	return out, total
 }
 
-// AuditTable is the entries as a table in the order given: time (in loc), who (an ARN shortened), action, target and
+// shortTarget is an audit target with its ARN shortened: the target itself, or the ARN of "<arn> as <name>" (an
+// onboarding's), the name kept; any other target as it is.
+func shortTarget(t string) string {
+	arn, name, as := strings.Cut(t, " as ")
+	if as {
+		return ShortARN(arn) + " as " + name
+	}
+	return ShortARN(t)
+}
+
+// AuditTable is the entries as a table in the order given: time (in loc), who and target (ARNs shortened), action and
 // result. "no audit entries" when there are none.
 func AuditTable(entries []AuditEntry, loc *time.Location) string {
 	if len(entries) == 0 {
@@ -474,7 +484,7 @@ func AuditTable(entries []AuditEntry, loc *time.Location) string {
 	}
 	rows := [][]string{{"WHEN", "WHO", "ACTION", "TARGET", "RESULT"}}
 	for _, e := range entries {
-		rows = append(rows, []string{When(e.At, loc), ShortARN(e.Who), e.Action, orNone(e.Target), orNone(e.Result)})
+		rows = append(rows, []string{When(e.At, loc), ShortARN(e.Who), e.Action, orNone(shortTarget(e.Target)), orNone(e.Result)})
 	}
 	return Table(rows)
 }

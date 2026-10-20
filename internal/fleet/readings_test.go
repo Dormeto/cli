@@ -144,3 +144,22 @@ func TestOverviewTextWithABlockMissing(t *testing.T) {
 		t.Errorf("a failed block is absent: %v", j)
 	}
 }
+
+func TestAuditTableShortensARNsOfWhoAndTarget(t *testing.T) {
+	es := parse[[]AuditEntry](t, `[
+	 {"id":"1","at":"2026-10-19T10:00:00Z","who":"arn:aws:sts::111122223333:assumed-role/Ci/run-42","action":"operation-onboard","target":"arn:aws:elasticloadbalancing:eu-west-3:111122223333:targetgroup/web/0123456789abcdef as Web","result":"ok"},
+	 {"id":"2","at":"2026-10-19T09:00:00Z","who":"ana@example.com","action":"pause","target":"router/w-1","result":"ok"},
+	 {"id":"3","at":"2026-10-19T08:00:00Z","who":"x","action":"operation-onboard","target":"arn:aws:elasticloadbalancing:eu-west-3:111122223333:targetgroup/api/0123456789abcdef","result":"ok"}]`)
+	got := AuditTable(es, time.UTC)
+	for _, want := range []string{"Ci/run-42", "web/0123456789abcdef as Web", "ana@example.com", "router/w-1", "api/0123456789abcdef "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "arn:") {
+		t.Errorf("an ARN is left whole: %q", got)
+	}
+	if out, _ := FilterAudit(es, AuditFilter{Target: "targetgroup/web"}, 0); len(out) != 1 || out[0].ID != "1" {
+		t.Errorf("the target filter must match the full value: %v", out)
+	}
+}
