@@ -55,7 +55,7 @@ func newRoot(b build) *cobra.Command {
 
 // managerCommands are the commands that call the manager's API, with deps.
 func managerCommands(deps fleetDeps) []*cobra.Command {
-	return []*cobra.Command{newRouters(deps), newWorkloads(deps)}
+	return []*cobra.Command{newRouters(deps), newWorkloads(deps), newWhoami(deps), newAPI(deps)}
 }
 
 func orDefault(s, d string) string {

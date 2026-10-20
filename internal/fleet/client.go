@@ -113,6 +113,12 @@ func New(httpClient *http.Client, baseURL, region string, creds aws.CredentialsP
 	}
 }
 
+// BaseURL is the API's endpoint the client calls.
+func (c *Client) BaseURL() string { return c.base }
+
+// Region is the region the client signs for: the API's.
+func (c *Client) Region() string { return c.region }
+
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
