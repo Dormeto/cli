@@ -7,9 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -70,7 +67,7 @@ func (p Plan) Text() string {
 		for _, s := range p.Upgrade {
 			rows = append(rows, []string{"  " + s.Router, s.From + " → " + s.To})
 		}
-		b.WriteString(table(rows))
+		b.WriteString(Table(rows))
 	}
 	if len(p.Skipped) > 0 {
 		fmt.Fprintf(&b, "%d skipped\n", len(p.Skipped))
@@ -78,24 +75,9 @@ func (p Plan) Text() string {
 		for _, s := range p.Skipped {
 			rows = append(rows, []string{"  " + s.Router, s.Reason})
 		}
-		b.WriteString(table(rows))
+		b.WriteString(Table(rows))
 	}
 	return b.String()
-}
-
-// Operation is the manager's operation, as far as the upgrade reads it.
-type Operation struct {
-	ID     string          `json:"id"`
-	Type   string          `json:"type"`
-	Status string          `json:"status"` // running, succeeded or failed
-	Steps  []OperationStep `json:"steps"`
-}
-
-// OperationStep is one step of an operation: pending, running, done, skipped or failed.
-type OperationStep struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
 }
 
 // Operations starts and reads the manager's operations.
@@ -110,17 +92,11 @@ func NewOperations(c *Client) Operations { return apiOperations{c} }
 type apiOperations struct{ c *Client }
 
 func (a apiOperations) Start(ctx context.Context, router string) (Operation, error) {
-	var out struct {
-		Operation Operation `json:"operation"`
-	}
-	err := a.c.Post(ctx, "/operations", map[string]string{"type": "upgrade-router", "router": router}, &out)
-	return out.Operation, err
+	return StartOperation(ctx, a.c, map[string]any{"type": "upgrade-router", "router": router})
 }
 
 func (a apiOperations) Get(ctx context.Context, id string) (Operation, error) {
-	var op Operation
-	err := a.c.Get(ctx, "/operations/"+id, nil, &op)
-	return op, err
+	return GetOperation(a.c)(ctx, id)
 }
 
 // Outcome is what became of an upgrade. Status: succeeded, failed (it did not start, or ended failed), running (the
@@ -215,45 +191,6 @@ type UpgradeOptions struct {
 	Progress    func(Event) // called one at a time
 }
 
-// refusedAfter is how many reads of an operation in a row may fail for a reason that will not pass (a 403 or 404, the
-// credentials, an unreadable answer) before it is given up as unknown. A network error, 429 or 5xx is waited out: the
-// upgrade runs in the manager, and the context bounds the wait.
-const refusedAfter = 3
-
-// transient tells whether err is worth waiting out: a network error, 429 or 5xx. Any other error (the credentials, an
-// answer that cannot be read, a 4xx refusal) will not pass by itself.
-func transient(err error) bool {
-	var ne net.Error
-	var ue *url.Error
-	var ae *APIError
-	switch {
-	case errors.As(err, &ae):
-		return ae.Status == http.StatusTooManyRequests || ae.Status >= 500
-	case errors.As(err, &ue), errors.As(err, &ne):
-		return true
-	}
-	return false
-}
-
-// mayHaveStarted tells whether a failed start leaves the operation possibly created in the manager: a 5xx, a transport
-// error, or a 2xx answer that cannot be read (a 4xx refusal, or an error before the request is sent, did not start it).
-func mayHaveStarted(err error) bool {
-	var unreadable *unreadableError
-	if errors.Is(err, ErrNotSent) {
-		return false
-	}
-	if errors.As(err, &unreadable) {
-		return true
-	}
-	var ae *APIError
-	if errors.As(err, &ae) {
-		return ae.Status >= 500
-	}
-	var ne net.Error
-	var ue *url.Error
-	return errors.As(err, &ue) || errors.As(err, &ne)
-}
-
 // startUnknown is how a start whose outcome is not known is reported.
 func startUnknown(err error) string {
 	return "the manager may have started it, check its Operations view (" + err.Error() + ")"
@@ -324,7 +261,7 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 		if ctx.Err() != nil { // cut short in the call: the manager may or may not have started it
 			return ended("unknown", "interrupted while starting: "+startUnknown(err))
 		}
-		if mayHaveStarted(err) {
+		if MayHaveStarted(err) {
 			return ended("unknown", startUnknown(err))
 		}
 		return ended("failed", err.Error())
@@ -334,30 +271,23 @@ func follow(ctx context.Context, api Operations, st Step, o UpgradeOptions, repo
 	}
 	out.Operation = op.ID
 	report(Event{Outcome: out})
-	for failures := 0; ; {
-		switch op.Status {
-		case "succeeded":
-			return ended("succeeded", "")
-		case "failed":
-			return ended("failed", failure(op))
-		}
-		if err := o.Sleep(ctx, o.Poll); err != nil {
-			out.Status, out.Duration = "running", o.Now().Sub(began)
-			return out
-		}
-		next, err := api.Get(ctx, op.ID)
-		switch {
-		case err == nil:
-			failures, op = 0, next
-		case ctx.Err() != nil:
-			out.Status, out.Duration = "running", o.Now().Sub(began)
-			return out
-		case !transient(err):
-			if failures++; failures >= refusedAfter {
-				return ended("unknown", "cannot read the operation: "+err.Error())
+	if op.Status != "succeeded" && op.Status != "failed" {
+		var err error
+		if op, err = Follow(ctx, api.Get, op.ID, FollowOptions{Poll: o.Poll, Sleep: o.Sleep}); err != nil {
+			if ctx.Err() != nil { // the run stopped following: the upgrade goes on in the manager
+				out.Status, out.Duration = "running", o.Now().Sub(began)
+				return out
 			}
+			return ended("unknown", "cannot read the operation: "+err.Error())
 		}
 	}
+	switch op.Status {
+	case "succeeded":
+		return ended("succeeded", "")
+	case "failed":
+		return ended("failed", failure(op))
+	}
+	return ended("unknown", fmt.Sprintf("the operation is %q", op.Status))
 }
 
 // failure is the operation's failed step and its detail.

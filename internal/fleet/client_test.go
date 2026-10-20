@@ -279,3 +279,47 @@ func TestParseTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestRawGetIsRetriedAndANon2xxIsNoError(t *testing.T) {
+	var calls atomic.Int32
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/iam/workloads" || r.URL.Query().Get("limit") != "1" {
+			t.Errorf("request %s %s", r.Method, r.URL)
+		}
+		if calls.Add(1) == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		w.WriteHeader(404)
+		io.WriteString(w, `{"error":"not_found","message":"no route"}`)
+	})
+	status, data, err := c.Raw(context.Background(), "GET", "/workloads", url.Values{"limit": {"1"}}, nil)
+	if err != nil || status != 404 || string(data) != `{"error":"not_found","message":"no route"}` || calls.Load() != 2 {
+		t.Errorf("status %d, data %q, err %v, calls %d", status, data, err, calls.Load())
+	}
+}
+
+func TestRawPostSendsTheBodyOnce(t *testing.T) {
+	var calls atomic.Int32
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		b, _ := io.ReadAll(r.Body)
+		if string(b) != `{"a":1}` || r.Header.Get("Content-Type") != "application/json" || !strings.Contains(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256") {
+			t.Errorf("body %q, headers %v", b, r.Header)
+		}
+		w.WriteHeader(503)
+		io.WriteString(w, "later")
+	})
+	status, data, err := c.Raw(context.Background(), "POST", "/x", nil, []byte(`{"a":1}`))
+	if err != nil || status != 503 || string(data) != "later" || calls.Load() != 1 {
+		t.Errorf("status %d, data %q, err %v, calls %d", status, data, err, calls.Load())
+	}
+}
+
+func TestRawCredentialsFailingIsNotSent(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("called") })
+	c.creds = aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) { return aws.Credentials{}, errors.New("expired") })
+	if _, _, err := c.Raw(context.Background(), "GET", "/me", nil, nil); !errors.Is(err, ErrNotSent) {
+		t.Errorf("err = %v", err)
+	}
+}

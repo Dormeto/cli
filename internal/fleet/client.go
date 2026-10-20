@@ -30,11 +30,14 @@ const maxAnswer = 32 << 20
 // the manager.
 var ErrNotSent = errors.New("not started")
 
-// APIError is a refusal from API Gateway (Gateway) or from the manager (Code and Message).
+// APIError is a refusal from API Gateway (Gateway) or from the manager (Code and Message; OperationID, the operation
+// that holds the target, of a 409; Errors, the problems a 400 lists).
 type APIError struct {
 	Status        int
 	Code, Message string
 	Gateway       bool
+	OperationID   string
+	Errors        []string
 
 	retryAfter    time.Duration // the Retry-After of a 429 or 503, when it has one and it is readable
 	hasRetryAfter bool
@@ -82,6 +85,8 @@ func (e *APIError) Error() string {
 		return hint
 	case e.Gateway && e.Status == http.StatusNotFound:
 		return "the manager's API has no /iam routes: the manager predates them, update it to 0.15.0 or later"
+	case e.Message != "" && e.OperationID != "":
+		return fmt.Sprintf("%s (operation %s: dormeto operations watch %s)", e.Message, e.OperationID, e.OperationID)
 	case e.Message != "":
 		return e.Message
 	}
@@ -177,38 +182,43 @@ func (c *Client) Delete(ctx context.Context, path string, out any) error {
 	return c.do(ctx, http.MethodDelete, path, nil, out)
 }
 
+// Raw calls method /iam<path>?query with body as it is (nil for none, else sent as JSON) and gives the answer's status
+// and body: a non-2xx is no error here. A GET is retried as Get is.
+func (c *Client) Raw(ctx context.Context, method, path string, query url.Values, body []byte) (status int, data []byte, err error) {
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	for i := 1; ; i++ {
+		var h http.Header
+		status, h, data, err = c.send(ctx, method, path, body)
+		retry := err == nil && method == http.MethodGet && i < getAttempts && (status == http.StatusTooManyRequests || status >= 500)
+		if !retry {
+			return status, data, err
+		}
+		wait := time.Duration(i) * c.backoff
+		if status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+			if d, ok := retryAfter(h.Get("Retry-After"), c.now()); ok {
+				wait = d
+			}
+		}
+		if wait <= 0 {
+			continue
+		}
+		if serr := c.sleep(ctx, wait); serr != nil {
+			return 0, nil, serr
+		}
+	}
+}
+
 func (c *Client) do(ctx context.Context, method, path string, payload []byte, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, c.base+"/iam"+path, bytes.NewReader(payload))
+	status, h, data, err := c.send(ctx, method, path, payload)
 	if err != nil {
 		return err
 	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	cr, err := c.creds.Retrieve(ctx)
-	if err != nil {
-		return &notSentError{fmt.Errorf("AWS credentials: %w", err)}
-	}
-	sum := sha256.Sum256(payload)
-	if err := c.signer.SignHTTP(ctx, cr, req, hex.EncodeToString(sum[:]), "execute-api", c.region, c.now()); err != nil {
-		return &notSentError{fmt.Errorf("sign the request: %w", err)}
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
-	if err != nil {
-		return err
-	}
-	if len(data) > maxAnswer {
-		return fmt.Errorf("the manager's answer is too large (over %d MiB)", maxAnswer>>20)
-	}
-	if resp.StatusCode >= 300 {
-		ae := parseError(resp.StatusCode, data)
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-			ae.retryAfter, ae.hasRetryAfter = retryAfter(resp.Header.Get("Retry-After"), c.now())
+	if status >= 300 {
+		ae := parseError(status, data)
+		if status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+			ae.retryAfter, ae.hasRetryAfter = retryAfter(h.Get("Retry-After"), c.now())
 		}
 		return ae
 	}
@@ -221,9 +231,52 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte, ou
 	return nil
 }
 
-// parseError reads API Gateway's {"message"} or the manager's {"error","message"}; the former has no error code.
+// send makes one signed request and reads its answer, whatever its status.
+func (c *Client) send(ctx context.Context, method, path string, payload []byte) (int, http.Header, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+"/iam"+path, bytes.NewReader(payload))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	cr, err := c.creds.Retrieve(ctx)
+	if err != nil {
+		return 0, nil, nil, &notSentError{fmt.Errorf("AWS credentials: %w", err)}
+	}
+	sum := sha256.Sum256(payload)
+	if err := c.signer.SignHTTP(ctx, cr, req, hex.EncodeToString(sum[:]), "execute-api", c.region, c.now()); err != nil {
+		return 0, nil, nil, &notSentError{fmt.Errorf("sign the request: %w", err)}
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	if len(data) > maxAnswer {
+		return 0, nil, nil, fmt.Errorf("the manager's answer is too large (over %d MiB)", maxAnswer>>20)
+	}
+	return resp.StatusCode, resp.Header, data, nil
+}
+
+// parseError reads API Gateway's {"message"} or the manager's {"error","message"} (with "operationId" or "errors"); the
+// former has no error code.
 func parseError(status int, data []byte) *APIError {
-	var b struct{ Error, Message string }
+	var b struct {
+		Error, Message string
+		OperationID    string          `json:"operationId"`
+		Errors         json.RawMessage `json:"errors"`
+	}
 	_ = json.Unmarshal(data, &b)
-	return &APIError{Status: status, Code: b.Error, Message: b.Message, Gateway: b.Error == "" && (status == http.StatusForbidden || status == http.StatusNotFound) && b.Message != ""}
+	ae := &APIError{Status: status, Code: b.Error, Message: b.Message, OperationID: b.OperationID,
+		Gateway: b.Error == "" && (status == http.StatusForbidden || status == http.StatusNotFound) && b.Message != ""}
+	var problems []string
+	if json.Unmarshal(b.Errors, &problems) == nil { // a list of texts, else none
+		ae.Errors = problems
+	}
+	return ae
 }

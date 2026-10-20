@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/Dormeto/cli/internal/install"
@@ -17,17 +16,6 @@ const none = "—"
 // unknown version, or none available, is not outdated).
 func (r Router) Outdated(available string) bool {
 	return r.Version != "" && available != "" && install.CompareVersions(r.Version, available) < 0
-}
-
-// table aligns rows (the first is the header) in columns two spaces apart.
-func table(rows [][]string) string {
-	var b strings.Builder
-	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	for _, r := range rows {
-		fmt.Fprintln(w, strings.TrimRight(strings.Join(r, "\t"), "\t"))
-	}
-	_ = w.Flush()
-	return b.String()
 }
 
 func orNone(s string) string {
@@ -78,7 +66,7 @@ func RoutersTable(rs []Router, available string) string {
 		}
 		rows = append(rows, []string{r.Name, orNone(r.Account), r.Region, r.Source, version, orNone(r.Health.Status), count})
 	}
-	return table(rows)
+	return Table(rows)
 }
 
 // RoutersSummary is the line under the table: the version available and how many of rs are below it.
@@ -116,27 +104,9 @@ func WorkloadsTable(ws []Workload, now time.Time) string {
 		if since == "" {
 			since = w.UpdatedAt
 		}
-		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), w.State, orNone(strings.Join(tags, ",")), age(since, now)})
+		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), w.State, orNone(strings.Join(tags, ",")), Age(since, now)})
 	}
-	return table(rows)
-}
-
-// age is the time from the RFC 3339 instant to now, in its largest whole unit; "—" when unknown.
-func age(at string, now time.Time) string {
-	t, err := time.Parse(time.RFC3339, at)
-	if err != nil {
-		return none
-	}
-	switch d := now.Sub(t); {
-	case d < time.Minute:
-		return "<1m"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d/time.Minute))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d/time.Hour))
-	default:
-		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
-	}
+	return Table(rows)
 }
 
 // WorkloadsSummary is the line under the table: the total, with the count per state of the rows listed when they are
