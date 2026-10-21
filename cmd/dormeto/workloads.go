@@ -136,8 +136,8 @@ func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.
 
 // confirmWorkloads lists the targets on --dry-run (done: true), else asks on a terminal when there are several, or
 // always (the destructive commands), and --yes is absent (done: true when declined), the targets listed first; it
-// refuses without a terminal. confirmNames, with what in the dry run's line, and question taking the count in words
-// ("Offboard %s?": "Offboard 1 workload?").
+// refuses without a terminal. It is confirmNames with what in the dry run's line, and question taking the count in
+// words ("Offboard %s?": "Offboard 1 workload?").
 func confirmWorkloads(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, always, dryRun, yes bool) (done bool, err error) {
 	names := make([]string, len(targets))
 	for i, t := range targets {
