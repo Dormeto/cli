@@ -93,6 +93,20 @@ func TestFollowGivesUpAfterThree403sWithTheLastRecord(t *testing.T) {
 	}
 }
 
+// A transient error between two refusals does not start the count of refusals again; a record read does.
+func TestFollowCountsRefusalsAcrossTransientErrors(t *testing.T) {
+	forbidden := &APIError{Status: 403, Gateway: true, Message: "Forbidden"}
+	unavailable := &APIError{Status: 503, Message: "later"}
+	r := &reads{answers: []any{forbidden, unavailable, forbidden, unavailable, forbidden, op("succeeded")}}
+	if _, err := Follow(t.Context(), r.get, "op-1", followOptions(new([]Operation))); !errors.Is(err, forbidden) || r.n != 5 {
+		t.Errorf("err %v after %d reads, want the third refusal at read 5", err, r.n)
+	}
+	r = &reads{answers: []any{forbidden, forbidden, op("running"), forbidden, forbidden, op("succeeded")}}
+	if got, err := Follow(t.Context(), r.get, "op-1", followOptions(new([]Operation))); err != nil || got.Status != "succeeded" {
+		t.Errorf("a record between the refusals: %+v, %v", got, err)
+	}
+}
+
 func TestFollowReturnsTheLastRecordOnACancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	r := &reads{answers: []any{op("running", "slot", "running"), op("running", "slot", "done", "onboard", "running")}}

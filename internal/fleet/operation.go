@@ -181,9 +181,10 @@ type FollowOptions struct {
 	WaitOut func(error)
 }
 
-// refusedAfter is how many reads of an operation in a row may fail for a reason that will not pass (a 403 or 404, the
-// credentials, an unreadable answer) before it is given up. A network error, 429 or 5xx is waited out: the operation
-// runs in the manager, and the context bounds the wait.
+// refusedAfter is how many reads of an operation may fail for a reason that will not pass (a 403 or 404, the
+// credentials, an unreadable answer) before it is given up: a read that succeeds starts the count again, a transient
+// error between two refusals does not. A network error, 429 or 5xx is waited out: the operation runs in the manager,
+// and the context bounds the wait.
 const refusedAfter = 3
 
 // Follow reads the operation id with get, at once then every Poll, until it is no longer running, and gives its last
