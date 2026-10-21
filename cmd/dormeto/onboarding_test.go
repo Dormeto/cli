@@ -151,14 +151,12 @@ func TestOnboardRefusalsSendNothing(t *testing.T) {
 		{tgAPI, "--set-tag", "novalue"},
 		{tgAPI, "--set-tag", "dormeto:x=1"},
 		{tgAPI, "--set-tag", "a=1", "--set-tag", "a=2"},
-		{tgAPI, "--name", ""},
 		{tgAPI, "--name", strings.Repeat("n", 65)},
 		{tgAPI, "--timeout", "0s"},
 		{tgWeb},    // two accounts
 		{"nobody"}, // unknown
 		{},
 		{tgAPI, tgWeb},
-		{"kube", "--fallback-type", "t3a.medium"},
 	} {
 		a := pendingAPI()
 		a.pending = append(a.pending, k8s)
@@ -174,12 +172,24 @@ func TestOnboardRefusalsSendNothing(t *testing.T) {
 	}
 }
 
-func TestOnboardKubernetesCandidateTakesNoFallbackButOnboards(t *testing.T) {
+// The router has no rule against fallback types for a Kubernetes workload: they are sent as for any other.
+func TestOnboardKubernetesCandidateSendsItsFallbackTypes(t *testing.T) {
 	k8s := `{"id":"arn:aws:elasticloadbalancing:eu-west-1:111111111111:targetgroup/kube/0123456789abcdef","account":"111111111111","region":"eu-west-1","status":"pending-onboarding","backend":{"kind":"k8s","id":"x"}}`
 	a := &obAPI{pending: []string{k8s}}
-	r := runOB(t, a, nil, "workloads", "onboard", "kube", "--no-wait")
-	if r.exit != 0 || len(a.writes) != 1 {
+	r := runOB(t, a, nil, "workloads", "onboard", "kube", "--fallback-type", "t3a.medium", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"fallbackInstanceTypes":["t3a.medium"]`) {
 		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+// An empty or blank --name is no name, as the manager takes it: the target group's name is the default.
+func TestOnboardEmptyNameIsTheDefaultName(t *testing.T) {
+	for _, name := range []string{"", "   "} {
+		a := pendingAPI()
+		r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--name", name, "--no-wait")
+		if r.exit != 0 || len(a.writes) != 1 || strings.Contains(a.writes[0], `"name"`) {
+			t.Errorf("--name %q: exit %d, writes %q, stderr %q", name, r.exit, a.writes, r.stderr)
+		}
 	}
 }
 

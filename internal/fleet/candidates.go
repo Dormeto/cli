@@ -69,9 +69,6 @@ func (c Candidate) MarshalJSON() ([]byte, error) {
 	return json.Marshal(candidateFields(c))
 }
 
-// Kubernetes tells whether the candidate is a Kubernetes workload (its backend is "k8s"), as the dashboard does.
-func (c Candidate) Kubernetes() bool { return c.Backend != nil && c.Backend.Kind == "k8s" }
-
 // Name is the candidate's target group name, or its id when it has no target group.
 func (c Candidate) Name() string {
 	switch {

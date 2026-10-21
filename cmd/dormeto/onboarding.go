@@ -66,12 +66,12 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Start the manager's onboarding of a candidate pending onboarding, given by its id (the target group's ARN) or\n" +
 			"the name of its target group (an unknown or ambiguous name exits 2, its ARNs listed, nothing sent), and follow\n" +
 			"it; then print the workload as <router>/<workload id>. It sends what the dashboard's dialog sends: --name (the\n" +
-			"workload's display name, 1 to 64 characters), --idle-minutes (5 to 1440, 15 by default), --wake-mode (any, or\n" +
-			"browser: only the waiter page, the header or a wake rule wakes), --database (an RDS instance identifier, or\n" +
-			"cluster:<identifier>: stopped after the application, started before it), --fallback-type (an EC2 instance type\n" +
-			"such as t3a.medium, at most 5; EC2 candidates only) and --set-tag (Dormeto tags k=v; administrators). --no-wait\n" +
-			"only starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
-			"`dormeto operations watch <id>`. Needs an operator.",
+			"workload's display name, up to 64 characters; empty, the target group's name), --idle-minutes (5 to 1440, 15 by\n" +
+			"default), --wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an\n" +
+			"RDS instance identifier, or cluster:<identifier>: stopped after the application, started before it),\n" +
+			"--fallback-type (an EC2 instance type such as t3a.medium, at most 5; for the EC2 instances of a workload) and\n" +
+			"--set-tag (Dormeto tags k=v; administrators). --no-wait only starts it; Ctrl-C and --timeout stop following,\n" +
+			"the operation goes on in the manager: `dormeto operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
 			var tags map[string]string
@@ -80,8 +80,8 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			case err != nil:
 			case len(args) != 1 || strings.TrimSpace(args[0]) == "":
 				err = usagef("name exactly one candidate (its id or target group name)")
-			case c.Flags().Changed("name") && (name == "" || utf8.RuneCountInString(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f })):
-				err = usagef("--name: 1 to 64 characters, no control characters")
+			case utf8.RuneCountInString(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+				err = usagef("--name: at most 64 characters, no control characters")
 			case idle < 5 || idle > 1440:
 				err = usagef("--idle-minutes: %d is not from 5 to 1440", idle)
 			case wakeMode != "any" && wakeMode != "browser":
@@ -110,9 +110,6 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				cand := chosen[0]
-				if len(fallbacks) > 0 && cand.Kubernetes() {
-					return usagef("--fallback-type: %s is a Kubernetes workload, which has no EC2 instances to fall back to", cand.Name())
-				}
 				settings := map[string]any{"idleMinutes": idle, "wakeMode": wakeMode}
 				if len(fallbacks) > 0 {
 					settings["fallbackInstanceTypes"] = fallbacks
@@ -142,11 +139,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "the workload's display name, 1 to 64 characters (default: the target group's name)")
+	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's name)")
 	fl.IntVar(&idle, "idle-minutes", 15, "the idle window, 5 to 1440 minutes")
 	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser")
 	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier> (repeatable)")
-	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium (repeatable, at most 5; EC2 candidates only)")
+	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium (repeatable, at most 5; for the EC2 instances of a workload)")
 	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
