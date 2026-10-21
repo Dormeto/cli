@@ -289,6 +289,23 @@ func TestDiscoveryDismissByIDAndJSON(t *testing.T) {
 	}
 }
 
+// An id (a target group's ARN) is sent as given, whatever the candidate's status: the manager dismisses any candidate it
+// knows. Only names are resolved, among those pending onboarding.
+func TestDiscoveryDismissSendsAFullARNAsGiven(t *testing.T) {
+	eligible := tgARN("111111111111", "batch") // not pending onboarding
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {row("111111111111", "web", "pending-onboarding")}}}
+	r := runDiscovery(t, a, nil, "", "dismiss", eligible)
+	if r.exit != 0 || len(a.requests) != 1 || a.requests[0] != `POST /iam/discovery/dismiss {"ids":["`+eligible+`"]}` || r.stdout != "dismissed 1 candidate: batch\n" {
+		t.Errorf("an ARN alone: exit %d, requests %q, stdout %q, stderr %q", r.exit, a.requests, r.stdout, r.stderr)
+	}
+	a.requests, a.writes = nil, nil
+	r = runDiscovery(t, a, nil, "", "dismiss", eligible, "web", eligible)
+	want := `POST /iam/discovery/dismiss {"ids":["` + eligible + `","` + tgARN("111111111111", "web") + `"]}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want || !strings.Contains(a.requests[0], "status=pending-onboarding") {
+		t.Errorf("an ARN and a name: exit %d, requests %q, stderr %q", r.exit, a.requests, r.stderr)
+	}
+}
+
 func TestDiscoveryDismissResolvesEverythingBeforeSending(t *testing.T) {
 	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {
 		row("111111111111", "api", "pending-onboarding"), row("222222222222", "api", "pending-onboarding"), row("111111111111", "web", "pending-onboarding"),

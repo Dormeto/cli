@@ -2,8 +2,9 @@ package main
 
 // `dormeto discovery`: the manager's discovery of workloads (status, run, candidates, dismiss, restore, access and the
 // configuration), through its /iam routes. A run can be waited for; dismiss and restore take the candidates by id or by
-// their target group's name, resolved before anything is sent (an id is an ARN: it travels in bodies only); the
-// configuration is replaced as the file is, after a confirmation. Exit codes as the fleet commands.
+// their target group's name, the names resolved before anything is sent (an id is an ARN: it travels in bodies only;
+// dismiss sends it as given); the configuration is replaced as the file is, after a confirmation. Exit codes as the
+// fleet commands.
 
 import (
 	"context"
@@ -285,13 +286,13 @@ func newDiscoveryDismiss(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "dismiss <candidate>...", Short: "Dismiss candidates: they leave the pending onboarding", SilenceErrors: true,
-		Long: "Dismiss candidates that are pending onboarding, each given by its id (the target group's ARN) or the name of\n" +
-			"its target group. Every name is resolved before anything is sent: an unknown one, or one that names the target\n" +
-			"groups of several accounts or regions (their ARNs are listed), exits 2 and nothing is dismissed. --note says why\n" +
-			"(cut at 256 characters). `discovery restore` brings them back. --json prints the manager's candidates.\n" +
-			"Needs an operator.",
+		Long: "Dismiss candidates, each given by its id (the target group's ARN, sent as it is: a candidate of any status) or\n" +
+			"the name of its target group, among those pending onboarding. Every name is resolved before anything is sent: an\n" +
+			"unknown one, or one that names the target groups of several accounts or regions (their ARNs are listed), exits 2\n" +
+			"and nothing is dismissed. --note says why (cut at 256 characters). `discovery restore` brings them back. --json\n" +
+			"prints the manager's candidates. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
-			return moveCandidates(c, f, deps, args, "pending-onboarding", "dismiss", "dismissed", cutNote(note), asJSON)
+			return moveCandidates(c, f, deps, args, "pending-onboarding", "dismiss", "dismissed", cutNote(note), true, asJSON)
 		},
 	}
 	cmd.Flags().StringVar(&note, "note", "", "why they are dismissed (256 characters at most)")
@@ -307,7 +308,7 @@ func newDiscoveryRestore(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"resolved among the dismissed ones before anything is sent as `discovery dismiss` does. --json prints the\n" +
 			"manager's candidates. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
-			return moveCandidates(c, f, deps, args, "dismissed", "restore", "restored", "", asJSON)
+			return moveCandidates(c, f, deps, args, "dismissed", "restore", "restored", "", false, asJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's candidates")
@@ -322,20 +323,17 @@ func cutNote(note string) string {
 	return string([]rune(note)[:maxNote])
 }
 
-// moveCandidates resolves refs among the candidates of status from, then sends their ids, 100 at a time, to
-// POST /discovery/<action> (with the note when there is one): the ids never go in a path. It prints what was done, past
-// ("dismissed 3 candidates"), or under --json the candidates the manager answered.
-func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []string, from, action, past, note string, asJSON bool) error {
+// moveCandidates resolves refs among the candidates of status from (with idsAsGiven, an id is sent as it is: see
+// chooseCandidates), then sends their ids, 100 at a time, to POST /discovery/<action> (with the note when there is one):
+// the ids never go in a path. It prints what was done, past ("dismissed 3 candidates"), or under --json the candidates
+// the manager answered.
+func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []string, from, action, past, note string, idsAsGiven, asJSON bool) error {
 	refs, err := candidateRefs(refs)
 	if err != nil {
 		return finish(c, err)
 	}
 	return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-		all, err := fleet.ListCandidates(ctx, api, from, "", "", 0)
-		if err != nil {
-			return err
-		}
-		chosen, err := resolveCandidates(all, refs, from)
+		chosen, err := chooseCandidates(ctx, api, refs, from, idsAsGiven)
 		if err != nil {
 			return err
 		}
@@ -370,6 +368,37 @@ func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []stri
 		}
 		return failure
 	})
+}
+
+// chooseCandidates resolves each ref among the candidates of status from, in the order given, each candidate once. With
+// idsAsGiven, a ref that is an ARN (a candidate's id) is taken as it is, whatever its candidate's status, and the
+// candidates are listed only when a name is given.
+func chooseCandidates(ctx context.Context, api *fleet.Client, refs []string, from string, idsAsGiven bool) ([]fleet.Candidate, error) {
+	asGiven := func(ref string) bool { return idsAsGiven && strings.HasPrefix(ref, "arn:") }
+	var all []fleet.Candidate
+	if slices.ContainsFunc(refs, func(ref string) bool { return !asGiven(ref) }) { // a name to resolve
+		var err error
+		if all, err = fleet.ListCandidates(ctx, api, from, "", "", 0); err != nil {
+			return nil, err
+		}
+	}
+	var out []fleet.Candidate
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		cand := fleet.Candidate{ID: ref}
+		if !asGiven(ref) {
+			found, err := resolveCandidates(all, []string{ref}, from)
+			if err != nil {
+				return nil, err
+			}
+			cand = found[0]
+		}
+		if !seen[cand.ID] {
+			seen[cand.ID] = true
+			out = append(out, cand)
+		}
+	}
+	return out, nil
 }
 
 // namesText is ": a, b" for a few candidates, nothing for many.
