@@ -94,10 +94,7 @@ func runUpgrade(ctx context.Context, c *cobra.Command, deps fleetDeps, api *flee
 		return usageError{err}
 	}
 	plan := fleet.PlanUpgrade(rows, routers.Available)
-	info := c.OutOrStdout() // the plan and the progress; the result alone is on stdout with --json
-	if o.asJSON {
-		info = c.ErrOrStderr()
-	}
+	info := textOut(c) // the plan and the progress; the result alone is on stdout with --json
 	fmt.Fprint(info, plan.Text())
 	result := func(r fleet.Result) error {
 		if r.Skipped == nil {

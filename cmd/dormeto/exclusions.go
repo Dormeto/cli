@@ -120,7 +120,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				ops, err := runOperations(ctx, c, deps, opItems(api, []string{text}, func(ctx context.Context, _ int) (fleet.Operation, error) {
 					return fleet.Exclude(ctx, api, exclusionBody(target, r, end, set))
 				}), 1, wait)
-				return printStarted(c, asJSON, ops, err)
+				return printStartedOne(c, asJSON, ops, err)
 			})
 		},
 	}

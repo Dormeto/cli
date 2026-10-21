@@ -42,7 +42,7 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "wake", "Wake %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "wake", "Wake %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				ok, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Post(ctx, t.Path("/wake"), nil, &raw); err != nil {
@@ -85,7 +85,7 @@ func newWorkloadsNap(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err := w.targets.check(args, false); err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "nap", "Put %d workloads to sleep?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "nap", "Put %s to sleep?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Post(ctx, t.Path("/nap"), nil, &raw); err != nil {
@@ -138,7 +138,7 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				body.Until = end.UTC().Format("2006-01-02T15:04:05Z")
 				lasts = "until " + end.In(now.Location()).Format("2006-01-02 15:04 MST")
 			}
-			return w.run(c, args, "pause "+lasts+": would act on", "Pause %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "pause "+lasts+": would act on", "Pause %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Post(ctx, t.Path("/pause"), body, &raw); err != nil {
@@ -192,7 +192,7 @@ func newWorkloadsRename(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args[:1], fmt.Sprintf("rename to %q: would act on", name), "Rename %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args[:1], fmt.Sprintf("rename to %q: would act on", name), "Rename %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Post(ctx, t.Path("/rename"), map[string]string{"name": name}, &raw); err != nil {
@@ -306,7 +306,7 @@ func newWorkloadsTags(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			edit := tagEdit{set: set, unset: unsets, clear: clear}
-			return w.run(c, args, "change the tags of", "Change the tags of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "change the tags of", "Change the tags of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				// Read and check every workload before sending any, so that a refused result sends nothing.
 				type plan struct {
 					tags    map[string]string

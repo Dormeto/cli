@@ -118,7 +118,7 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					start: func(ctx context.Context) (fleet.Operation, error) { return fleet.StartOperation(ctx, api, body) },
 					get:   fleet.GetOperation(api),
 				}}, 1, wait)
-				return printStarted(c, asJSON, ops, err)
+				return printStartedOne(c, asJSON, ops, err)
 			})
 		},
 	}
@@ -177,40 +177,36 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// routerCalls POSTs body to each router's route in turn: its line (what say makes of the answer) goes to stdout, its
+// routerCalls POSTs body to each router's route in turn: its line (what say makes of the answer) goes to textOut, its
 // failure to stderr as "router: message"; the others go on, and a failure makes the exit 1. Under --json the answers of
-// those that succeeded are printed instead, by router.
+// those that succeeded are printed on stdout, by router ({} for none), even when the run is cut short.
 func routerCalls(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string, suffix string, body any, asJSON bool,
 	say func(answer json.RawMessage) string) error {
 	answers := map[string]json.RawMessage{}
-	failed := false
-	for _, name := range names {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		var raw json.RawMessage
-		if err := api.Post(ctx, routerPath(name, suffix), body, &raw); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+	call := func() error {
+		failed := false
+		for _, name := range names {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			fmt.Fprintf(c.ErrOrStderr(), "%s: %s\n", name, err)
-			failed = true
-			continue
+			var raw json.RawMessage
+			if err := api.Post(ctx, routerPath(name, suffix), body, &raw); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				fmt.Fprintf(c.ErrOrStderr(), "%s: %s\n", name, err)
+				failed = true
+				continue
+			}
+			answers[name] = orRaw(raw)
+			fmt.Fprintf(textOut(c), "%s: %s\n", name, say(raw))
 		}
-		answers[name] = raw
-		if !asJSON {
-			fmt.Fprintf(c.OutOrStdout(), "%s: %s\n", name, say(raw))
+		if failed {
+			return exitCode(1)
 		}
+		return nil
 	}
-	if asJSON && len(answers) > 0 {
-		if err := printJSON(c.OutOrStdout(), answers); err != nil {
-			return err
-		}
-	}
-	if failed {
-		return exitCode(1)
-	}
-	return nil
+	return printResult(c, asJSON, answers, call())
 }
 
 func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {

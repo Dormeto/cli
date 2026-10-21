@@ -231,6 +231,55 @@ func TestOffboardIsAlwaysConfirmed(t *testing.T) {
 	}
 }
 
+// One target asked always: the question lists it and counts it in words.
+func TestOffboardQuestionNamesTheWorkload(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, askingTerminal(false), "workloads", "offboard", "prod-eu/w-1")
+	if r.exit != 0 || len(a.writes) != 0 || r.stdout != "  prod-eu/w-1\nOffboard 1 workload? [y/N]\nnot confirmed: nothing sent\n" {
+		t.Errorf("exit %d, writes %q, stdout %q", r.exit, a.writes, r.stdout)
+	}
+	r = runOB(t, a, askingTerminal(false), "workloads", "exclude", "prod-eu/w-1", "prod-eu/w-2", "--reason", "x")
+	if r.exit != 0 || len(a.writes) != 0 || r.stdout != "  prod-eu/w-1\n  prod-eu/w-2\nExclude the target group of 2 workloads from discovery? [y/N]\nnot confirmed: nothing sent\n" {
+		t.Errorf("exclude: exit %d, writes %q, stdout %q", r.exit, a.writes, r.stdout)
+	}
+}
+
+// Offboard and exclude take several targets: --json prints an array whatever their number, [] when none started.
+func TestOffboardAndExcludeJSONIsAnArray(t *testing.T) {
+	r := runOB(t, &obAPI{}, nil, "workloads", "offboard", "prod-eu/w-1", "--yes", "--json")
+	var ops []map[string]any
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &ops) != nil || len(ops) != 1 || ops[0]["type"] != "offboard" {
+		t.Errorf("offboard: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runOB(t, &obAPI{conflicts: map[string]string{"w-1": "op-9"}}, nil, "workloads", "offboard", "prod-eu/w-1", "--yes", "--json")
+	if r.exit != 1 || strings.TrimSpace(r.stdout) != "[]" {
+		t.Errorf("offboard refused: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runOB(t, &obAPI{}, nil, "workloads", "exclude", "prod-eu/w-1", "--reason", "x", "--yes", "--json")
+	ops = nil
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &ops) != nil || len(ops) != 1 || ops[0]["type"] != "exclude" {
+		t.Errorf("exclude: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runOB(t, &obAPI{}, nil, "exclusions", "lift", "e1", "--json")
+	ops = nil
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &ops) != nil || len(ops) != 1 {
+		t.Errorf("lift: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}
+
+// exclusions add takes one target: --json prints its operation, {} when it did not start.
+func TestExclusionsAddJSONIsAnObject(t *testing.T) {
+	r := runOB(t, &obAPI{}, nil, "exclusions", "add", "--account", "111111111111", "--reason", "x", "--yes", "--json")
+	var op map[string]any
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &op) != nil || op["type"] != "exclude" {
+		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runOB(t, &obAPI{}, askingTerminal(false), "exclusions", "add", "--account", "111111111111", "--reason", "x", "--json")
+	if r.exit != 0 || !strings.Contains(r.stdout, `"confirmed": false`) || !strings.Contains(r.stderr, "Exclude account 111111111111 from discovery? [y/N]") {
+		t.Errorf("declined: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
 func TestOffboardOfThreeRunsTwoAtATime(t *testing.T) {
 	a := &obAPI{}
 	r := runOB(t, a, nil, "workloads", "offboard", "prod-eu/w-1", "prod-eu/w-2", "prod-eu/w-3", "--yes", "--concurrency", "2")

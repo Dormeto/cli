@@ -244,10 +244,7 @@ type updateRun struct {
 // what --json prints (nil when GET /update could not be read, or for a usage error). Under --json, what is said along the
 // way goes to stderr.
 func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client) (*updateRun, error) {
-	info := c.OutOrStdout()
-	if u.asJSON {
-		info = c.ErrOrStderr()
-	}
+	info := textOut(c)
 	s, err := fleet.GetUpdate(ctx, api)
 	if err != nil {
 		return nil, err

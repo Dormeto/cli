@@ -108,11 +108,7 @@ func newDiscoveryRun(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					fmt.Fprintln(c.OutOrStdout(), "discovery run requested: dormeto discovery status shows it")
 					return nil
 				}
-				info := c.OutOrStdout()
-				if asJSON {
-					info = c.ErrOrStderr()
-				}
-				fmt.Fprintln(info, "discovery run requested, waiting for it")
+				fmt.Fprintln(textOut(c), "discovery run requested, waiting for it")
 				followed, cancel := deps.timeout(ctx, timeout)
 				defer cancel()
 				st, err := waitForRun(followed, deps, api, before, refusedBefore)

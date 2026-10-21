@@ -321,6 +321,51 @@ func TestConfirmNames(t *testing.T) {
 	}
 }
 
+// askingTerminal is a terminal that writes each question on the writer the command gives it, then answers answer.
+func askingTerminal(answer bool) func(*fleetDeps) {
+	return func(d *fleetDeps) {
+		d.terminal = func(io.Reader) bool { return true }
+		d.confirm = func(_ context.Context, _ io.Reader, out io.Writer, q string) (bool, error) {
+			fmt.Fprintf(out, "%s [y/N]\n", q)
+			return answer, nil
+		}
+	}
+}
+
+// Under --json, stdout holds JSON alone: the question, the dry run's list and "not confirmed" go to stderr, and a dry run
+// or a declined question prints what it stopped at.
+func TestConfirmNamesUnderJSON(t *testing.T) {
+	run := func(answer, dryRun bool) (done bool, err error, stdout, stderr string) {
+		var deps fleetDeps
+		askingTerminal(answer)(&deps)
+		c := &cobra.Command{}
+		c.Flags().Bool("json", true, "")
+		var o, e bytes.Buffer
+		c.SetOut(&o)
+		c.SetErr(&e)
+		c.SetIn(strings.NewReader(""))
+		done, err = confirmNames(t.Context(), c, deps, []string{"r1", "r2"}, "router", "Uninstall r1, r2?", true, dryRun, false)
+		return done, err, o.String(), e.String()
+	}
+	done, err, stdout, stderr := run(true, true)
+	if !done || err != nil || stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"r1\",\n    \"r2\"\n  ]\n}\n" || stderr != "dry run: 2 routers, nothing sent\n  r1\n  r2\n" {
+		t.Errorf("dry run: done %v, err %v, stdout %q, stderr %q", done, err, stdout, stderr)
+	}
+	done, err, stdout, stderr = run(false, false)
+	var declined struct {
+		Confirmed *bool
+		Targets   []string
+	}
+	if !done || err != nil || json.Unmarshal([]byte(stdout), &declined) != nil || declined.Confirmed == nil || *declined.Confirmed || !slices.Equal(declined.Targets, []string{"r1", "r2"}) ||
+		stderr != "Uninstall r1, r2? [y/N]\nnot confirmed: nothing sent\n" {
+		t.Errorf("declined: done %v, err %v, stdout %q, stderr %q", done, err, stdout, stderr)
+	}
+	done, err, stdout, stderr = run(true, false)
+	if done || err != nil || stdout != "" || stderr != "Uninstall r1, r2? [y/N]\n" {
+		t.Errorf("confirmed: done %v, err %v, stdout %q, stderr %q", done, err, stdout, stderr)
+	}
+}
+
 func errorsAsUsage(err error) bool {
 	_, ok := err.(usageError)
 	return ok

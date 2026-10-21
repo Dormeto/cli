@@ -25,6 +25,7 @@ type wrAPI struct {
 	statuses []string          // the states GET …/{id} reports, the last one repeated
 	reads    int
 	refuse   map[string]string // write path -> 409 message
+	listing  string            // the answer of GET /workloads, when set
 }
 
 func (a *wrAPI) handler() http.HandlerFunc {
@@ -43,7 +44,7 @@ func (a *wrAPI) handler() http.HandlerFunc {
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/iam/workloads":
-			io.WriteString(w, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"},{"workloadId":"w-2","router":"prod-eu","state":"ASLEEP"}],"total":2,"cursor":null}`)
+			io.WriteString(w, orString(a.listing, `{"workloads":[{"workloadId":"w-1","router":"prod-eu","state":"ASLEEP"},{"workloadId":"w-2","router":"prod-eu","state":"ASLEEP"}],"total":2,"cursor":null}`))
 		case r.Method == http.MethodGet:
 			key := strings.TrimPrefix(r.URL.Path, "/iam/workloads/")
 			st := `{"state":"AWAKE"`
@@ -55,6 +56,12 @@ func (a *wrAPI) handler() http.HandlerFunc {
 				st += `,"tags":` + t
 			}
 			io.WriteString(w, st+"}")
+		case strings.HasSuffix(r.URL.Path, "/wake"):
+			io.WriteString(w, `{"state":"WAKING"}`)
+		case strings.HasSuffix(r.URL.Path, "/resume"):
+			io.WriteString(w, `{"resumed":true}`)
+		case strings.HasSuffix(r.URL.Path, "/schedule") && r.Method == http.MethodDelete:
+			io.WriteString(w, `{"cleared":true}`)
 		case strings.HasSuffix(r.URL.Path, "/nap"):
 			w.WriteHeader(202)
 			io.WriteString(w, `{"accepted":true}`)
@@ -368,12 +375,12 @@ func TestWriteJSONOfEveryWorkloadWrite(t *testing.T) {
 		args []string
 		key  string
 	}{
-		"wake":           {[]string{"wake", "prod-eu/w-1"}, ""},
+		"wake":           {[]string{"wake", "prod-eu/w-1"}, "state"},
 		"pause":          {[]string{"pause", "prod-eu/w-1", "--reason", "x"}, "woken"},
 		"rename":         {[]string{"rename", "prod-eu/w-1", "n"}, "name"},
 		"tags":           {[]string{"tags", "prod-eu/w-1", "--set", "a=1"}, "tags"},
 		"keep-awake":     {[]string{"keep-awake", "prod-eu/w-1", "--for", "1h"}, "woken"},
-		"resume":         {[]string{"resume", "prod-eu/w-1"}, ""},
+		"resume":         {[]string{"resume", "prod-eu/w-1"}, "resumed"},
 		"schedule clear": {[]string{"schedule", "clear", "prod-eu/w-1"}, "cleared"},
 	} {
 		a := &wrAPI{}
@@ -382,7 +389,7 @@ func TestWriteJSONOfEveryWorkloadWrite(t *testing.T) {
 		if r.exit != 0 || len(m) != 1 || m["prod-eu/w-1"] == nil {
 			t.Errorf("%s: exit %d stdout %q stderr %q", name, r.exit, r.stdout, r.stderr)
 		}
-		if c.key != "" && m["prod-eu/w-1"][c.key] == nil && name != "schedule clear" {
+		if m["prod-eu/w-1"][c.key] == nil {
 			t.Errorf("%s: no %q in %q", name, c.key, r.stdout)
 		}
 		if !strings.Contains(r.stderr, "prod-eu/w-1: ") {
@@ -442,5 +449,40 @@ func TestWakeWaitJSONKeepsStdoutToTheAnswers(t *testing.T) {
 	jsonOut(t, r.stdout)
 	if r.exit != 0 || !strings.Contains(r.stderr, "prod-eu/w-1: awake") {
 		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
+	}
+}
+
+// Under --json, a command where no target succeeded prints its empty shape, so that stdout always parses.
+func TestWriteJSONOfNoneSucceededIsEmpty(t *testing.T) {
+	a := &wrAPI{refuse: map[string]string{"/iam/workloads/prod-eu/w-1/nap": "paused"}}
+	r := runWR(t, a, nil, "nap", "prod-eu/w-1", "--json")
+	if r.exit != 1 || strings.TrimSpace(r.stdout) != "{}" {
+		t.Errorf("refused: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	// No workload resolved, a router did not answer: nothing is acted on, and that is said.
+	a = &wrAPI{listing: `{"workloads":[],"total":0,"cursor":null,"errors":[{"router":"lost","message":"timed out"}]}`}
+	r = runWR(t, a, nil, "nap", "--tag", "env=dev", "--json")
+	if r.exit != 1 || len(a.writes) != 0 || strings.TrimSpace(r.stdout) != "{}" || !strings.Contains(r.stderr, "router lost did not answer") {
+		t.Errorf("none resolved: exit %d, writes %q, stdout %q, stderr %q", r.exit, a.writes, r.stdout, r.stderr)
+	}
+}
+
+// A workload write's question lists its targets first and counts them in words; under --json all of it goes to stderr
+// and stdout says what the dry run or the declined question stopped at.
+func TestWorkloadQuestionsListTheTargets(t *testing.T) {
+	a := &wrAPI{}
+	r := runWR(t, a, askingTerminal(false), "nap", "--tag", "env=dev")
+	if r.exit != 0 || len(a.writes) != 0 || r.stdout != "  prod-eu/w-1\n  prod-eu/w-2\nPut 2 workloads to sleep? [y/N]\nnot confirmed: nothing sent\n" {
+		t.Errorf("nap: exit %d, writes %q, stdout %q", r.exit, a.writes, r.stdout)
+	}
+	r = runWR(t, a, askingTerminal(false), "nap", "--tag", "env=dev", "--json")
+	if r.exit != 0 || len(a.writes) != 0 || r.stderr != "  prod-eu/w-1\n  prod-eu/w-2\nPut 2 workloads to sleep? [y/N]\nnot confirmed: nothing sent\n" ||
+		r.stdout != "{\n  \"confirmed\": false,\n  \"targets\": [\n    \"prod-eu/w-1\",\n    \"prod-eu/w-2\"\n  ]\n}\n" {
+		t.Errorf("nap --json: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	r = runWR(t, a, nil, "nap", "--tag", "env=dev", "--dry-run", "--json")
+	if r.exit != 0 || len(a.writes) != 0 || r.stderr != "dry run: nap 2 workloads, nothing sent\n  prod-eu/w-1\n  prod-eu/w-2\n" ||
+		r.stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"prod-eu/w-1\",\n    \"prod-eu/w-2\"\n  ]\n}\n" {
+		t.Errorf("dry run --json: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }

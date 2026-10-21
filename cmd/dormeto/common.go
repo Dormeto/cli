@@ -68,10 +68,7 @@ type opResult struct {
 // manager with how to follow it. It gives the records of the operations started, in the items' order, as last read; the
 // error is exit 1 when one failed or was not followed to its end (the run's signal exit wins).
 func runOperations(ctx context.Context, c *cobra.Command, deps fleetDeps, items []opItem, concurrency int, w waitFlags) ([]fleet.Operation, error) {
-	o := opOutput{info: c.OutOrStdout(), errs: c.ErrOrStderr(), mu: &sync.Mutex{}, named: len(items) > 1}
-	if asJSON, _ := c.Flags().GetBool("json"); asJSON {
-		o.info = c.ErrOrStderr()
-	}
+	o := opOutput{info: textOut(c), errs: c.ErrOrStderr(), mu: &sync.Mutex{}, named: len(items) > 1}
 	followed, cancel := ctx, context.CancelFunc(func() {})
 	if w.timeout > 0 { // none is no limit: the context alone ends the following
 		followed, cancel = deps.timeout(ctx, w.timeout)
@@ -290,36 +287,78 @@ func failedText(op fleet.Operation) string {
 	return s
 }
 
+// textOut is where a command says what it does and asks its questions: stdout, or stderr under its --json, whose
+// stdout holds the JSON alone.
+func textOut(c *cobra.Command) io.Writer {
+	if jsonFlag(c) {
+		return c.ErrOrStderr()
+	}
+	return c.OutOrStdout()
+}
+
+// jsonFlag tells whether the command runs with --json (false for a command without it).
+func jsonFlag(c *cobra.Command) bool {
+	asJSON, _ := c.Flags().GetBool("json")
+	return asJSON
+}
+
 // confirmNames is asked before acting on names (each a noun: "router", "workload"): on --dry-run it lists them instead
-// (done: true); else, on a terminal, question is asked when there are several names, or always (done: true when it is
-// declined: nothing is sent); --yes skips the question, and is needed without a terminal. question is asked as it is
-// written: it names the targets and what happens.
+// (done: true); else it asks question (see ask). question is asked as it is written: it names the targets and what
+// happens.
 func confirmNames(ctx context.Context, c *cobra.Command, deps fleetDeps, names []string, noun, question string, always, dryRun, yes bool) (done bool, err error) {
-	out := c.OutOrStdout()
 	n := len(names)
 	if dryRun {
-		listDryRun(out, fmt.Sprintf("%d %s", n, fleet.Plural(n, noun)), names)
-		return true, nil
+		return true, stopDryRun(c, fmt.Sprintf("%d %s", n, fleet.Plural(n, noun)), names)
 	}
+	return ask(ctx, c, deps, names, noun, question, always, yes, false)
+}
+
+// ask asks question on a terminal when there are several names, or always (done: true when it is declined: nothing is
+// sent), the names listed first when listed; --yes skips it, and is needed without a terminal. It is asked on textOut,
+// and under --json a declined question prints {"confirmed":false,"targets":[…]} on stdout.
+func ask(ctx context.Context, c *cobra.Command, deps fleetDeps, names []string, noun, question string, always, yes, listed bool) (done bool, err error) {
+	n := len(names)
 	if (n < 2 && !always) || yes {
 		return false, nil
 	}
 	if !deps.terminal(c.InOrStdin()) {
 		return false, usagef("confirmation needed: pass --yes to act on %d %s without a terminal", n, fleet.Plural(n, noun))
 	}
+	out := textOut(c)
+	if listed {
+		listNames(out, names)
+	}
 	ok, err := deps.confirm(ctx, c.InOrStdin(), out, question)
-	if err != nil {
+	if err != nil || ok {
 		return false, err
 	}
-	if !ok {
-		fmt.Fprintln(out, "not confirmed: nothing sent")
+	fmt.Fprintln(out, "not confirmed: nothing sent")
+	return true, printStop(c, "confirmed", false, names)
+}
+
+// stopDryRun says what a dry run would act on (listDryRun, on textOut) and, under --json, prints
+// {"dryRun":true,"targets":[…]} on stdout.
+func stopDryRun(c *cobra.Command, what string, names []string) error {
+	listDryRun(textOut(c), what, names)
+	return printStop(c, "dryRun", true, names)
+}
+
+// printStop prints, under --json, why nothing was sent and to what: {<key>: <value>, "targets": [names]}.
+func printStop(c *cobra.Command, key string, value bool, names []string) error {
+	if !jsonFlag(c) {
+		return nil
 	}
-	return !ok, nil
+	return printJSON(c.OutOrStdout(), map[string]any{key: value, "targets": emptyIfNil(names)})
 }
 
 // listDryRun prints what a dry run would act on: "dry run: <what>, nothing sent", then each name.
 func listDryRun(out io.Writer, what string, names []string) {
 	fmt.Fprintf(out, "dry run: %s, nothing sent\n", what)
+	listNames(out, names)
+}
+
+// listNames prints each name on its line, indented.
+func listNames(out io.Writer, names []string) {
 	for _, n := range names {
 		fmt.Fprintf(out, "  %s\n", n)
 	}
@@ -409,16 +448,32 @@ func checkLimit(limit int) error {
 // regionName is an AWS region as the manager accepts one (eu-west-1).
 var regionName = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
 
-// printStarted prints, under --json, the operations that started (whatever err is), then returns err.
+// printStarted prints, under --json, the operations that started (whatever err is) as an array, [] when none did: the
+// shape of a command that takes several targets. Then it returns err.
 func printStarted(c *cobra.Command, asJSON bool, ops []fleet.Operation, err error) error {
-	if asJSON && len(ops) > 0 {
-		var v any = ops
-		if len(ops) == 1 {
-			v = ops[0]
-		}
-		if perr := printJSON(c.OutOrStdout(), v); perr != nil && err == nil {
-			err = perr
-		}
+	if ops == nil {
+		ops = []fleet.Operation{}
+	}
+	return printResult(c, asJSON, ops, err)
+}
+
+// printStartedOne is printStarted for a command that takes one target: its operation as an object, {} when it did not
+// start.
+func printStartedOne(c *cobra.Command, asJSON bool, ops []fleet.Operation, err error) error {
+	var v any = struct{}{}
+	if len(ops) > 0 {
+		v = ops[0]
+	}
+	return printResult(c, asJSON, v, err)
+}
+
+// printResult prints v under --json, whatever err is, then returns err (or the printing's error when err is nil).
+func printResult(c *cobra.Command, asJSON bool, v any, err error) error {
+	if !asJSON {
+		return err
+	}
+	if perr := printJSON(c.OutOrStdout(), v); perr != nil && err == nil {
+		err = perr
 	}
 	return err
 }

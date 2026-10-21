@@ -160,10 +160,7 @@ func watch(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Cli
 	if label == "" {
 		label = op.ID
 	}
-	info, errs := c.OutOrStdout(), c.ErrOrStderr()
-	if asJSON {
-		info = errs
-	}
+	info, errs := textOut(c), c.ErrOrStderr()
 	if op.Status == "running" {
 		followed, cancel := deps.timeout(ctx, timeout)
 		defer cancel()

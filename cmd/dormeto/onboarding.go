@@ -133,8 +133,8 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				ops, err := runOperations(ctx, c, deps, opItems(api, []string{label}, func(ctx context.Context, _ int) (fleet.Operation, error) {
 					return fleet.StartOperation(ctx, api, body)
 				}), 1, wait)
-				sayOnboarded(ctx, c, api, ops, asJSON)
-				return printStarted(c, asJSON, ops, err)
+				sayOnboarded(ctx, c, api, ops)
+				return printStartedOne(c, asJSON, ops, err)
 			})
 		},
 	}
@@ -150,14 +150,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// sayOnboarded prints "onboarded <router>/<workload id>" for each onboarding that succeeded (stderr under --json). The
-// operation names the workload and, to an administrator, its router in its context; else the router of its account and
-// region is looked up.
-func sayOnboarded(ctx context.Context, c *cobra.Command, api *fleet.Client, ops []fleet.Operation, asJSON bool) {
-	out := c.OutOrStdout()
-	if asJSON {
-		out = c.ErrOrStderr()
-	}
+// sayOnboarded prints "onboarded <router>/<workload id>" for each onboarding that succeeded (on textOut). The operation
+// names the workload and, to an administrator, its router in its context; else the router of its account and region is
+// looked up.
+func sayOnboarded(ctx context.Context, c *cobra.Command, api *fleet.Client, ops []fleet.Operation) {
+	out := textOut(c)
 	for _, op := range ops {
 		if op.Type != "onboard" || op.Status != "succeeded" {
 			continue
@@ -212,7 +209,7 @@ func newWorkloadsOffboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "offboard", "Offboard %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "offboard", "Offboard %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				labels := make([]string, len(targets))
 				for i, t := range targets {
 					labels[i] = t.String()
@@ -281,7 +278,7 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "exclude the target group of", "Exclude the target groups of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "exclude the target group of", "Exclude the target group of %s from discovery?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				labels := make([]string, len(targets))
 				for i, t := range targets {
 					labels[i] = t.String()

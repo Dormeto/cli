@@ -134,25 +134,20 @@ func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.
 	return out, incomplete, nil
 }
 
-// confirmTargets lists the targets on --dry-run (done: true), asks on a terminal when there are several and --yes is
-// absent (done: true when declined), and refuses without a terminal: confirmNames, with what in the dry run's line and
-// question taking the count.
-func confirmTargets(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, dryRun, yes bool) (done bool, err error) {
-	return confirmWorkloads(ctx, c, deps, targets, what, question, false, dryRun, yes)
-}
-
-// confirmWorkloads is confirmTargets that asks even for one target when always (the destructive commands).
+// confirmWorkloads lists the targets on --dry-run (done: true), else asks on a terminal when there are several, or
+// always (the destructive commands), and --yes is absent (done: true when declined), the targets listed first; it
+// refuses without a terminal. confirmNames, with what in the dry run's line, and question taking the count in words
+// ("Offboard %s?": "Offboard 1 workload?").
 func confirmWorkloads(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, always, dryRun, yes bool) (done bool, err error) {
 	names := make([]string, len(targets))
 	for i, t := range targets {
 		names[i] = t.String()
 	}
-	n := len(names)
+	count := fmt.Sprintf("%d %s", len(names), fleet.Plural(len(names), "workload"))
 	if dryRun {
-		listDryRun(c.OutOrStdout(), fmt.Sprintf("%s %d %s", what, n, fleet.Plural(n, "workload")), names)
-		return true, nil
+		return true, stopDryRun(c, what+" "+count, names)
 	}
-	return confirmNames(ctx, c, deps, names, "workload", fmt.Sprintf(question, n), always, false, yes)
+	return ask(ctx, c, deps, names, "workload", fmt.Sprintf(question, count), always, yes, true)
 }
 
 // applyAll runs do for each target in turn: its line goes to stdout, its failure to stderr as "target: message"; the
@@ -184,7 +179,7 @@ func applyAll(ctx context.Context, c *cobra.Command, targets []fleet.Target, do 
 
 // applyAnswers is applyAll for commands with --json: do also gives the API's answer for the target. Without asJSON the
 // lines go to stdout as applyAll prints them; with it they go to stderr, and the answers of the targets that succeeded
-// are printed on stdout, by target, even when the exit is 1.
+// are printed on stdout, by target ({} for none), even when the exit is 1.
 func applyAnswers(ctx context.Context, c *cobra.Command, targets []fleet.Target, asJSON bool, do func(fleet.Target) (line string, answer json.RawMessage, err error)) ([]fleet.Target, error) {
 	answers := map[string]json.RawMessage{}
 	ok, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
@@ -199,12 +194,7 @@ func applyAnswers(ctx context.Context, c *cobra.Command, targets []fleet.Target,
 		}
 		return line, nil
 	})
-	if asJSON && len(answers) > 0 {
-		if perr := printJSON(c.OutOrStdout(), answers); perr != nil && err == nil {
-			err = perr
-		}
-	}
-	return ok, err
+	return ok, printResult(c, asJSON, answers, err)
 }
 
 // waitAwakeJSON is waitAwake, its lines on stderr under --json (stdout holds the answers alone).
@@ -260,8 +250,8 @@ func (w *writeCommand) run(c *cobra.Command, args []string, what, question strin
 			}
 			return err
 		}
-		if len(targets) == 0 {
-			return report(nil)
+		if len(targets) == 0 { // none resolved, a router did not answer: act on none, so that --json prints its empty shape
+			return report(act(ctx, api, nil))
 		}
 		if done, err := confirmWorkloads(ctx, c, w.deps, targets, what, question, w.always, w.dryRun, w.yes); done || err != nil {
 			return report(err)
@@ -304,7 +294,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				Until      string `json:"until"`
 				KeepAsleep bool   `json:"keepAsleep"`
 			}{why, end.UTC().Format("2006-01-02T15:04:05Z"), false}
-			return w.run(c, args, "keep awake until "+end.Format("2006-01-02 15:04 MST")+": would act on", "Keep %d workloads awake?",
+			return w.run(c, args, "keep awake until "+end.Format("2006-01-02 15:04 MST")+": would act on", "Keep %s awake?",
 				func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 					ok, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 						var raw json.RawMessage
@@ -473,7 +463,7 @@ func newWorkloadsResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err := w.targets.check(args, false); err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "resume", "Resume %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "resume", "Resume %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Post(ctx, t.Path("/resume"), nil, &raw); err != nil {
@@ -605,7 +595,7 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "set the schedule of", "Set the schedule of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "set the schedule of", "Set the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var res struct {
 						Schedule       json.RawMessage   `json:"schedule"`
@@ -693,7 +683,7 @@ func newScheduleClear(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err := w.targets.check(args, false); err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "clear the schedule of", "Clear the schedule of %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "clear the schedule of", "Clear the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Delete(ctx, t.Path("/schedule"), &raw); err != nil {

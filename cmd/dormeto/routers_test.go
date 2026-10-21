@@ -4,14 +4,23 @@ package main
 // they print, the refusals that send nothing.
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/spf13/cobra"
+
+	"github.com/Dormeto/cli/internal/fleet"
 )
 
 const routerDetailsAnswer = `{"name":"prod-eu","region":"eu-west-1","account":"111111111111","source":"manager",
@@ -34,7 +43,9 @@ type routersAPI struct {
 	notPaused map[string]bool
 	refuse    map[string]string // router -> the pause's 400 message
 	noAccess  bool
+	fail      bool // the operations end failed
 	ops       []string
+	onPost    func(router string) // called on each pause or resume, before it is answered
 }
 
 func (a *routersAPI) handler(w http.ResponseWriter, r *http.Request) {
@@ -64,10 +75,14 @@ func (a *routersAPI) handler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(202)
 		fmt.Fprintf(w, `{"operation":{"id":"op-1","type":%q,"status":"running","target":{"router":%q,"account":%q,"region":"eu-west-1"},"steps":[]}}`, req.Type, req.Router, req.Account)
 	case r.Method == http.MethodGet && path == "/iam/operations/op-1":
-		fmt.Fprintf(w, `{"id":"op-1","type":%q,"status":"succeeded","target":{},"steps":[],"createdAt":"2026-10-19T08:00:00.000Z","finishedAt":"2026-10-19T08:01:00.000Z"}`, a.ops[0])
+		status := map[bool]string{false: "succeeded", true: "failed"}[a.fail]
+		fmt.Fprintf(w, `{"id":"op-1","type":%q,"status":%q,"target":{},"steps":[],"createdAt":"2026-10-19T08:00:00.000Z","finishedAt":"2026-10-19T08:01:00.000Z"}`, a.ops[0], status)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/pause"):
 		a.posted = append(a.posted, path+" "+string(body))
 		router := strings.TrimSuffix(strings.TrimPrefix(path, "/iam/routers/"), "/pause")
+		if a.onPost != nil {
+			a.onPost(router)
+		}
 		if msg := a.refuse[router]; msg != "" {
 			w.WriteHeader(400)
 			fmt.Fprintf(w, `{"error":"bad_request","message":%q}`, msg)
@@ -285,5 +300,92 @@ func TestRoutersResumeSaysResumedOrNotPaused(t *testing.T) {
 	}
 	if r := runRouters(t, a, nil, "resume"); r.exit != 2 {
 		t.Errorf("no router: exit %d", r.exit)
+	}
+}
+
+// Under --json, pause and resume print the manager's answers by router on stdout ({} when none succeeded) and their lines
+// on stderr; a dry run and a declined question print what they stopped at.
+func TestRoutersPauseAndResumeJSON(t *testing.T) {
+	r := runRouters(t, &routersAPI{refuse: map[string]string{"r2": "too old"}}, nil, "pause", "r1", "r2", "--reason", "x", "--yes", "--json")
+	var answers map[string]map[string]any
+	if r.exit != 1 || json.Unmarshal([]byte(r.stdout), &answers) != nil || len(answers) != 1 || answers["r1"]["woken"] == nil {
+		t.Errorf("pause: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	if r.stderr != "r1: paused, woke w-1, w-2\nr2: too old\n" {
+		t.Errorf("pause: stderr %q", r.stderr)
+	}
+	r = runRouters(t, &routersAPI{refuse: map[string]string{"r1": "too old"}}, nil, "pause", "r1", "--reason", "x", "--json")
+	if r.exit != 1 || strings.TrimSpace(r.stdout) != "{}" {
+		t.Errorf("none paused: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runRouters(t, &routersAPI{notPaused: map[string]bool{"r2": true}}, nil, "resume", "r1", "r2", "--yes", "--json")
+	answers = nil
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &answers) != nil || answers["r1"]["resumed"] != true || answers["r2"]["resumed"] != false {
+		t.Errorf("resume: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	if r.stderr != "r1: resumed\nr2: not paused\n" {
+		t.Errorf("resume: stderr %q", r.stderr)
+	}
+	a := &routersAPI{}
+	r = runRouters(t, a, nil, "pause", "r1", "r2", "--reason", "x", "--dry-run", "--json")
+	if r.exit != 0 || len(a.posted) != 0 || r.stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"r1\",\n    \"r2\"\n  ]\n}\n" || r.stderr != "dry run: 2 routers, nothing sent\n  r1\n  r2\n" {
+		t.Errorf("dry run: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	r = runRouters(t, a, askingTerminal(false), "uninstall", "prod-eu", "--json")
+	if r.exit != 0 || len(a.posted) != 0 || r.stdout != "{\n  \"confirmed\": false,\n  \"targets\": [\n    \"prod-eu\"\n  ]\n}\n" || r.stderr != "Uninstall prod-eu? [y/N]\nnot confirmed: nothing sent\n" {
+		t.Errorf("declined: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+// Interrupted, pause still prints the answers of the routers it paused, so that what was done is known.
+func TestRoutersPauseInterruptedPrintsTheAnswersCollected(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	a := &routersAPI{onPost: func(router string) {
+		if router == "r2" {
+			cancel()
+		}
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(a.handler))
+	defer srv.Close()
+	api := fleet.New(srv.Client(), srv.URL, "eu-west-1", credentials.NewStaticCredentialsProvider("AKID", "secret", ""), time.Now)
+	c := &cobra.Command{}
+	c.Flags().Bool("json", true, "")
+	var o, e bytes.Buffer
+	c.SetOut(&o)
+	c.SetErr(&e)
+	err := routerCalls(ctx, c, api, []string{"r1", "r2", "r3"}, "/pause", map[string]string{"reason": "x"}, true, func(json.RawMessage) string { return "paused" })
+	var answers map[string]any
+	if !errors.Is(err, context.Canceled) || json.Unmarshal(o.Bytes(), &answers) != nil || len(answers) != 1 || answers["r1"] == nil {
+		t.Errorf("err %v, stdout %q, stderr %q", err, o.String(), e.String())
+	}
+	if e.String() != "r1: paused\n" {
+		t.Errorf("stderr %q", e.String())
+	}
+}
+
+// One target, one object: install prints its operation, failed or not, and {} when it did not start.
+func TestRoutersInstallJSONIsTheOperation(t *testing.T) {
+	r := runRouters(t, &routersAPI{fail: true}, nil, "install", "--account", "123456789012", "--router-region", "eu-west-1", "--json")
+	var op map[string]any
+	if r.exit != 1 || json.Unmarshal([]byte(r.stdout), &op) != nil || op["id"] != "op-1" || op["status"] != "failed" {
+		t.Errorf("failed: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	r = runRouters(t, &routersAPI{noAccess: true}, nil, "install", "--account", "123456789012", "--router-region", "eu-west-1", "--json")
+	if r.exit != 1 || strings.TrimSpace(r.stdout) != "{}" {
+		t.Errorf("refused: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}
+
+// Several targets, an array: uninstall prints its operations, [] when none started.
+func TestRoutersUninstallJSONIsAnArray(t *testing.T) {
+	r := runRouters(t, &routersAPI{}, nil, "uninstall", "prod-eu", "--yes", "--json")
+	var ops []map[string]any
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &ops) != nil || len(ops) != 1 || ops[0]["id"] != "op-1" {
+		t.Errorf("one: exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runRouters(t, &routersAPI{noAccess: true}, nil, "uninstall", "prod-eu", "--yes", "--json")
+	if r.exit != 1 || strings.TrimSpace(r.stdout) != "[]" {
+		t.Errorf("refused: exit %d, stdout %q", r.exit, r.stdout)
 	}
 }
