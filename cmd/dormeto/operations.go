@@ -36,7 +36,7 @@ func newOperationsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"it (an ARN shortened to its last two parts) and its age. --running keeps those still running; --type keeps the\n" +
 			"types given (repeatable or comma-separated: onboard, offboard, install-router, upgrade-router, uninstall-router,\n" +
 			"exclude, lift-exclusion, update-manager, ...); --limit caps the rows (50; 0 for all). --json prints the\n" +
-			"manager's records, after these filters.",
+			"manager's answer, {operations}, its records after these filters.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if err := checkLimit(limit); err != nil {
 				return finish(c, err)
@@ -51,7 +51,7 @@ func newOperationsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if shown == nil {
 						shown = []fleet.Operation{}
 					}
-					return printJSON(c.OutOrStdout(), shown)
+					return printJSON(c.OutOrStdout(), map[string]any{"operations": shown})
 				}
 				out := c.OutOrStdout()
 				fmt.Fprint(out, fleet.OperationsTable(shown, deps.now()))
@@ -66,7 +66,7 @@ func newOperationsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&running, "running", false, "only the operations still running")
 	fl.StringSliceVar(&types, "type", nil, "only operations of these types (repeatable or comma-separated)")
 	fl.IntVar(&limit, "limit", 50, "at most this many operations, the newest (0: all)")
-	fl.BoolVar(&asJSON, "json", false, "print the manager's records")
+	fl.BoolVar(&asJSON, "json", false, "print the manager's answer, {operations}, after the filters")
 	return cmd
 }
 

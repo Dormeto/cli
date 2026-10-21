@@ -221,8 +221,9 @@ func TestUsersList(t *testing.T) {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 	r = runAccess(t, a, nil, "users", "list", "--json")
-	if !strings.Contains(r.stdout, `"extra": 1`) {
-		t.Errorf("--json drops fields: %q", r.stdout)
+	var got struct{ Users []map[string]any } // the API's object
+	if json.Unmarshal([]byte(r.stdout), &got) != nil || len(got.Users) != 2 || got.Users[0]["extra"] != 1.0 {
+		t.Errorf("--json is not the API's object with every field: %q", r.stdout)
 	}
 }
 
@@ -233,6 +234,11 @@ func TestGroupsListAndShow(t *testing.T) {
 	r := runAccess(t, a, nil, "groups", "list")
 	if r.exit != 0 || !strings.Contains(r.stdout, "pay") || !strings.Contains(r.stdout, "payments") || !strings.Contains(r.stdout, "3h") {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r = runAccess(t, a, nil, "groups", "list", "--json")
+	var got struct{ Groups []map[string]any } // the API's object
+	if json.Unmarshal([]byte(r.stdout), &got) != nil || len(got.Groups) != 1 || got.Groups[0]["updatedBy"] == nil {
+		t.Errorf("groups list --json: %q", r.stdout)
 	}
 	r = runAccess(t, a, nil, "groups", "show", "pay")
 	for _, want := range []string{"2026-10-19 09:00 UTC by Ops/ana", "team=a: read,wake", "every workload: read"} {

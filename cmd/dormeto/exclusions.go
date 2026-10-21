@@ -30,7 +30,8 @@ func newExclusionsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "list", Short: "List the exclusions: target, reason, who, until, the workloads paused and the state", Args: noArgs, SilenceErrors: true,
 		Long: "List the manual exclusions: id, target, reason, who excluded it, until when (local time zone), the workloads it\n" +
-			"paused by name, and its state (active, expired, or lifting while a lift runs). --json prints the manager's rows.",
+			"paused by name, and its state (active, expired, or lifting while a lift runs). --json prints the manager's\n" +
+			"answer, {exclusions}.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				es, err := fleet.ListExclusions(ctx, api)
@@ -41,14 +42,14 @@ func newExclusionsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if es == nil {
 						es = []fleet.Exclusion{}
 					}
-					return printJSON(c.OutOrStdout(), es)
+					return printJSON(c.OutOrStdout(), map[string]any{"exclusions": es})
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.ExclusionsText(es, deps.now().Location()))
 				return nil
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's rows")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer, {exclusions}")
 	return cmd
 }
 

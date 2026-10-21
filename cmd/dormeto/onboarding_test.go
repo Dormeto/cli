@@ -460,7 +460,8 @@ func TestExclusionsListText(t *testing.T) {
 func TestExclusionsListJSONKeepsTheRows(t *testing.T) {
 	a := &obAPI{exclusions: exclusionsAnswer}
 	r := runOB(t, a, nil, "exclusions", "list", "--json")
-	if r.exit != 0 || !strings.Contains(r.stdout, `"expired": true`) || !strings.Contains(r.stdout, `"liftedAt"`) {
+	var got struct{ Exclusions []map[string]any } // the API's object
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &got) != nil || len(got.Exclusions) != 3 || got.Exclusions[1]["expired"] != true || got.Exclusions[2]["liftedAt"] == nil {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 	r = runOB(t, &obAPI{exclusions: `{"exclusions":[]}`}, nil, "exclusions", "list")

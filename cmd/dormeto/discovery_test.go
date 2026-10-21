@@ -244,12 +244,12 @@ func TestDiscoveryCandidatesTable(t *testing.T) {
 func TestDiscoveryCandidatesJSONIsTheRows(t *testing.T) {
 	a := &disAPI{candidates: map[string][]string{"managed": {row("111111111111", "api", "managed")}}}
 	r := runDiscovery(t, a, nil, "", "candidates", "--status", "managed", "--json")
-	var got []map[string]any
-	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &got) != nil || len(got) != 1 || got[0]["requests7d"] != 42.0 {
+	var got map[string][]map[string]any // the API's object: its rows, every page merged, no cursor
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &got) != nil || len(got) != 1 || len(got["candidates"]) != 1 || got["candidates"][0]["requests7d"] != 42.0 {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 	r = runDiscovery(t, a, nil, "", "candidates", "--status", "gone", "--json")
-	if strings.TrimSpace(r.stdout) != "[]" {
+	if strings.TrimSpace(r.stdout) != "{\n  \"candidates\": []\n}" {
 		t.Errorf("no candidates: stdout %q", r.stdout)
 	}
 }
@@ -389,9 +389,13 @@ func TestDiscoveryAccessReadsEveryPage(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 	r = runDiscovery(t, a, nil, "", "access", "--json")
-	var got struct{ Accounts []map[string]any }
-	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &got) != nil || len(got.Accounts) != 5 {
+	var got map[string]json.RawMessage // the API's object: every page merged, no cursor
+	var accounts []map[string]any
+	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &got) != nil || json.Unmarshal(got["accounts"], &accounts) != nil || len(accounts) != 5 || got["counts"] == nil {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
+	}
+	if _, ok := got["cursor"]; ok {
+		t.Errorf("a page's cursor: %q", r.stdout)
 	}
 	if r := runDiscovery(t, a, nil, "", "access", "--limit", "0"); r.exit != 0 || strings.Count(r.stdout, "missing: no role") != 5 {
 		t.Errorf("limit 0 is all: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)

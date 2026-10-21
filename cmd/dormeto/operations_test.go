@@ -100,13 +100,17 @@ func TestOperationsListDefaultsAndLimit(t *testing.T) {
 		t.Errorf("stdout %q", r.stdout)
 	}
 	r = runReading(t, a, nil, "operations", "list", "--limit", "2", "--json")
-	var got []struct{ ID string }
-	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got) != 2 || got[0].ID != "op-3" || got[1].ID != "op-2" {
+	var got struct{ Operations []struct{ ID string } } // the API's object, its rows after the filters
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Operations) != 2 || got.Operations[0].ID != "op-3" || got.Operations[1].ID != "op-2" {
 		t.Errorf("%v: %q", err, r.stdout)
 	}
 	r = runReading(t, a, nil, "operations", "list", "--limit", "0", "--type", "onboard,upgrade-router", "--json")
-	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got) != 4 {
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Operations) != 4 {
 		t.Errorf("%v: %q", err, r.stdout)
+	}
+	r = runReading(t, a, nil, "operations", "list", "--type", "lift-exclusion", "--json")
+	if strings.TrimSpace(r.stdout) != "{\n  \"operations\": []\n}" {
+		t.Errorf("none: %q", r.stdout)
 	}
 	for _, args := range [][]string{{"operations", "list", "--limit", "-1"}, {"operations", "list", "extra"}} {
 		b := &readAPI{routes: map[string]string{"/operations": operationsList}}

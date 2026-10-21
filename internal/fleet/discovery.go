@@ -222,7 +222,7 @@ type AccessReport struct {
 		Unchecked        int `json:"unchecked"`
 	} `json:"counts"`
 	Accounts   []AccessRow `json:"accounts"`
-	Cursor     *string     `json:"cursor"`
+	Cursor     *string     `json:"cursor,omitempty"` // the next page's, read here, never printed
 	Delegation string      `json:"delegation"`
 	CheckedAt  string      `json:"checkedAt"`
 	Forwarders *struct {
@@ -261,11 +261,13 @@ func (r *AccessReport) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &r.raw)
 }
 
-// MarshalJSON is the first page's answer with the accounts of every page read and the cursor after the last.
+// MarshalJSON is the first page's answer with the accounts of every page read, and no page's cursor.
 func (r AccessReport) MarshalJSON() ([]byte, error) {
 	if r.raw == nil {
 		type fields AccessReport
-		return json.Marshal(fields(r))
+		f := fields(r)
+		f.Cursor = nil
+		return json.Marshal(f)
 	}
 	m := make(map[string]json.RawMessage, len(r.raw))
 	for k, v := range r.raw {
@@ -276,7 +278,7 @@ func (r AccessReport) MarshalJSON() ([]byte, error) {
 		rows = []json.RawMessage{}
 	}
 	m["accounts"], _ = json.Marshal(rows)
-	m["cursor"], _ = json.Marshal(r.Cursor)
+	delete(m, "cursor")
 	return json.Marshal(m)
 }
 

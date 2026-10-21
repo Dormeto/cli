@@ -47,7 +47,7 @@ func newUsersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "list", Short: "List the users: role, groups, status and MFA", Args: noArgs, SilenceErrors: true,
 		Long: "List the users: email, role, custom groups, status (disabled when they are), whether their authenticator is\n" +
-			"set up and the age of the account. --json prints the manager's rows. Needs an administrator.",
+			"set up and the age of the account. --json prints the manager's answer, {users}. Needs an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				us, err := fleet.ListUsers(ctx, api)
@@ -58,14 +58,14 @@ func newUsersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if us == nil {
 						us = []fleet.User{}
 					}
-					return printJSON(c.OutOrStdout(), us)
+					return printJSON(c.OutOrStdout(), map[string]any{"users": us})
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.UsersText(us, deps.now()))
 				return nil
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's rows")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer, {users}")
 	return cmd
 }
 

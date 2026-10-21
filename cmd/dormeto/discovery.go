@@ -194,8 +194,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "List the candidates of one status (default pending-onboarding): target group, account, region, hosts, idle\n" +
 			"hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
 			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
-			"manager's).\n" +
-			"--json prints the rows as the manager sends them.",
+			"manager's). --json prints the manager's answer, {candidates}, every page in it.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var err error
 			switch {
@@ -218,8 +217,8 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if asJSON {
-					return printJSON(c.OutOrStdout(), orEmpty(cs))
+				if asJSON { // every page merged: no cursor
+					return printJSON(c.OutOrStdout(), map[string]any{"candidates": orEmpty(cs)})
 				}
 				fmt.Fprint(c.OutOrStdout(), candidatesText(cs, status))
 				return nil
@@ -231,7 +230,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&account, "account", "", "only the candidates of this AWS account (12 digits)")
 	fl.StringVar(&region, "candidate-region", "", "only the candidates in this region of --account (--region is the manager's)")
 	fl.IntVar(&limit, "limit", 0, "stop at this many candidates (0, the default: all)")
-	fl.BoolVar(&asJSON, "json", false, "print the candidates as the manager sends them")
+	fl.BoolVar(&asJSON, "json", false, "print the manager's answer, {candidates}, every page in it")
 	return cmd
 }
 
@@ -442,7 +441,7 @@ func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "access", Short: "Show the accounts whose discovery or command role is missing", Args: noArgs, SilenceErrors: true,
 		Long: "Show the organization access of the last run: how many accounts are ready, the delegation policy, the event\n" +
 			"forwarders, and a table of the accounts that are not ready with what is missing. Every page is read unless\n" +
-			"--limit stops at that many accounts (0: all). --json prints the manager's answer.",
+			"--limit stops at that many accounts (0: all). --json prints the manager's answer, every page in it.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if err := checkLimit(limit); err != nil {
 				return finish(c, err)

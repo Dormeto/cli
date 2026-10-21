@@ -39,7 +39,7 @@ func newGroupsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "list", Short: "List the custom groups and their grants", Args: noArgs, SilenceErrors: true,
 		Long: "List the custom groups: name, description, how many grants and the age of the last change. --json prints the\n" +
-			"manager's rows. Needs an administrator.",
+			"manager's answer, {groups}. Needs an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				gs, err := fleet.ListGroups(ctx, api)
@@ -50,14 +50,14 @@ func newGroupsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if gs == nil {
 						gs = []fleet.Group{}
 					}
-					return printJSON(c.OutOrStdout(), gs)
+					return printJSON(c.OutOrStdout(), map[string]any{"groups": gs})
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.GroupsText(gs, deps.now()))
 				return nil
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's rows")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer, {groups}")
 	return cmd
 }
 
