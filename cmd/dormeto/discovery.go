@@ -81,8 +81,9 @@ func newDiscoveryRun(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "run", Short: "Ask for a discovery run now", Args: noArgs, SilenceErrors: true,
 		Long: "Ask the manager for a discovery run now; it runs on its own. With --wait, read the last run every 5 seconds\n" +
 			"until a new run has ended (printed as `discovery status` does) or the manager refused this one because another\n" +
-			"was in progress (exit 1). Ctrl-C and --timeout stop waiting, the run goes on in the manager. --json prints\n" +
-			"the manager's answer, with --wait the status once the run ended. Needs an operator.",
+			"was in progress (exit 1); a read that fails for a passing reason (a network error, 429, 5xx) is waited out.\n" +
+			"Ctrl-C and --timeout stop waiting, the run goes on in the manager. --json prints the manager's answer, with\n" +
+			"--wait the status once the run ended. Needs an operator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if timeout <= 0 {
 				return finish(c, usagef("--timeout: %s is not a positive duration", timeout))
@@ -163,7 +164,8 @@ func startedAt(r *fleet.RunRecord) string {
 }
 
 // waitForRun reads GET /discovery every runPoll until the last run is not the one started at before and has ended, or a
-// run refused since refusedBefore shows; the status read last, or the error that stopped the reading (the context's).
+// run refused since refusedBefore shows; the status read last, or the error that stopped the reading (the context's, or
+// one that will not pass: a transient one is waited out, as an operation's reads are).
 func waitForRun(ctx context.Context, deps fleetDeps, api *fleet.Client, before, refusedBefore string) (fleet.DiscoveryStatus, error) {
 	for {
 		if err := deps.sleep(ctx, runPoll); err != nil {
@@ -171,6 +173,9 @@ func waitForRun(ctx context.Context, deps fleetDeps, api *fleet.Client, before, 
 		}
 		var st fleet.DiscoveryStatus
 		if err := api.Get(ctx, "/discovery", nil, &st); err != nil {
+			if fleet.Transient(err) && ctx.Err() == nil {
+				continue
+			}
 			return st, err
 		}
 		if st.Refused != nil && st.Refused.StartedAt != refusedBefore {

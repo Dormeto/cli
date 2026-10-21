@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// disAPI is a fake manager for discovery: its candidates per status, the runs GET /discovery shows in turn, and every
-// write it received.
+// disAPI is a fake manager for discovery: its candidates per status, the runs GET /discovery shows in turn (or "!<status>"
+// for a refusal), and every write it received.
 type disAPI struct {
 	mu         sync.Mutex
 	candidates map[string][]string // status -> the candidates' JSON rows
@@ -55,6 +55,13 @@ func (a *disAPI) handler() http.HandlerFunc {
 		case r.URL.Path == "/iam/discovery" && r.Method == http.MethodGet:
 			i := min(a.statusGets, len(a.statuses)-1)
 			a.statusGets++
+			if code, refused := strings.CutPrefix(a.statuses[i], "!"); refused { // "!503": that status
+				n, _ := strconv.Atoi(code)
+				w.Header().Set("Retry-After", "0") // the client tries again at once
+				w.WriteHeader(n)
+				io.WriteString(w, `{"message":"refused `+code+`"}`)
+				return
+			}
 			io.WriteString(w, a.statuses[i])
 		case r.URL.Path == "/iam/discovery/run":
 			w.WriteHeader(202)
@@ -170,6 +177,21 @@ func TestDiscoveryRunWaitIgnoresTheOldRun(t *testing.T) {
 	}
 	if !strings.HasPrefix(a.requests[0], "GET /iam/discovery ") || !strings.HasPrefix(a.requests[1], "POST /iam/discovery/run") {
 		t.Errorf("the last run is read before the POST: %q", a.requests[:2])
+	}
+}
+
+// A read that fails for a transient reason (here 503, after the client's own three tries) is waited out, as an
+// operation's is; one that will not pass ends the wait.
+func TestDiscoveryRunWaitWaitsOutTransientErrors(t *testing.T) {
+	a := &disAPI{statuses: []string{statusAnswer(oldRun, ""), "!503", "!503", "!503", statusAnswer(newRunDone, "")}}
+	r := runDiscovery(t, a, nil, "", "run", "--wait")
+	if r.exit != 0 || a.statusGets != 5 || !strings.Contains(r.stdout, "2026-10-19 11:59 UTC, manual by me@x.io, ok, 20s") {
+		t.Errorf("503: exit %d, gets %d, stdout %q, stderr %q", r.exit, a.statusGets, r.stdout, r.stderr)
+	}
+	a = &disAPI{statuses: []string{statusAnswer(oldRun, ""), "!403", statusAnswer(newRunDone, "")}}
+	r = runDiscovery(t, a, nil, "", "run", "--wait")
+	if r.exit != 1 || a.statusGets != 2 || !strings.Contains(r.stderr, "refused 403") {
+		t.Errorf("403: exit %d, gets %d, stderr %q", r.exit, a.statusGets, r.stderr)
 	}
 }
 

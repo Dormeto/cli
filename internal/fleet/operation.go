@@ -213,7 +213,7 @@ func Follow(ctx context.Context, get func(context.Context, string) (Operation, e
 				told[msg] = true
 				o.WaitOut(err)
 			}
-		case !transient(err):
+		case !Transient(err):
 			if failures++; failures >= refusedAfter {
 				return last, err
 			}
@@ -240,9 +240,9 @@ func stepsChanged(seen map[int]string, op Operation) bool {
 	return changed
 }
 
-// transient tells whether err is worth waiting out: a network error, 429 or 5xx. Any other error (the credentials, an
+// Transient tells whether err is worth waiting out: a network error, 429 or 5xx. Any other error (the credentials, an
 // answer that cannot be read, a 4xx refusal) will not pass by itself.
-func transient(err error) bool {
+func Transient(err error) bool {
 	var ne net.Error
 	var ue *url.Error
 	var ae *APIError
