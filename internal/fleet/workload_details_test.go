@@ -59,3 +59,11 @@ func TestHistoryCauseText(t *testing.T) {
 		}
 	}
 }
+
+func TestHoursIsSingularForOneAlone(t *testing.T) {
+	for in, want := range map[float64]string{1: "1 hour", 1.5: "1.5 hours", 0.5: "0.5 hours", 300: "300 hours", 0: "0 hours", 1.02: "1 hour"} {
+		if got := hours(in); got != want {
+			t.Errorf("hours(%v) = %q, want %q", in, got, want)
+		}
+	}
+}

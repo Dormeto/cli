@@ -163,3 +163,11 @@ func TestAuditTableShortensARNsOfWhoAndTarget(t *testing.T) {
 		t.Errorf("the target filter must match the full value: %v", out)
 	}
 }
+
+func TestSharesOrderTheStatesByTimeEvenBelowASecondApart(t *testing.T) {
+	var s FleetStates
+	s.States7d.Totals = map[string]float64{"ASLEEP": 0.4, "AWAKE": 0.6}
+	if got := s.Shares(); got != "AWAKE 60%, ASLEEP 40%" {
+		t.Errorf("Shares = %q", got)
+	}
+}

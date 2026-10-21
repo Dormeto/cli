@@ -241,15 +241,12 @@ func GroupText(g Group, loc *time.Location) string {
 	})
 }
 
-// byName is "by <who>" for a person, whose ARN names them by its last segment.
+// byName is "by <who>" for a person, an ARN shortened as ShortARN does.
 func byName(who string) string {
 	if who == "" {
 		return ""
 	}
-	if strings.HasPrefix(who, "arn:") {
-		who = who[strings.LastIndex(who, "/")+1:]
-	}
-	return "by " + who
+	return "by " + ShortARN(who)
 }
 
 // ListUsers reads GET /users.

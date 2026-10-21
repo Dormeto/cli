@@ -235,7 +235,7 @@ func TestGroupsListAndShow(t *testing.T) {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 	r = runAccess(t, a, nil, "groups", "show", "pay")
-	for _, want := range []string{"2026-10-19 09:00 UTC by ana", "team=a: read,wake", "every workload: read"} {
+	for _, want := range []string{"2026-10-19 09:00 UTC by Ops/ana", "team=a: read,wake", "every workload: read"} {
 		if r.exit != 0 || !strings.Contains(r.stdout, want) {
 			t.Errorf("show lacks %q: exit %d, %q", want, r.exit, r.stdout)
 		}

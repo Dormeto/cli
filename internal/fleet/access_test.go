@@ -87,7 +87,7 @@ func TestAccessText(t *testing.T) {
 	g := Group{Name: "pay", Description: "payments", UpdatedAt: "2026-10-19T09:00:00Z", UpdatedBy: "arn:aws:sts::1:assumed-role/Ops/ana",
 		Grants: []Grant{{Tags: map[string]string{"team": "a", "env": "dev"}, Permissions: []string{"read", "wake"}}, {Tags: map[string]string{}, Permissions: []string{"read"}}}}
 	got = GroupText(g, time.UTC)
-	for _, want := range []string{"2026-10-19 09:00 UTC by ana", "env=dev,team=a: read,wake", "every workload: read"} {
+	for _, want := range []string{"2026-10-19 09:00 UTC by Ops/ana", "env=dev,team=a: read,wake", "every workload: read"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("group text lacks %q:\n%s", want, got)
 		}

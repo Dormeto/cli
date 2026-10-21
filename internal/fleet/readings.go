@@ -4,6 +4,7 @@ package fleet
 // lists and the audit log. Each answer keeps the API's JSON, so that --json prints every field.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -507,7 +508,7 @@ func (s FleetStates) Shares() string {
 		return ""
 	}
 	keys := sortedKeys(s.States7d.Totals)
-	slices.SortStableFunc(keys, func(a, b string) int { return int(s.States7d.Totals[b] - s.States7d.Totals[a]) })
+	slices.SortStableFunc(keys, func(a, b string) int { return cmp.Compare(s.States7d.Totals[b], s.States7d.Totals[a]) })
 	var parts []string
 	for _, k := range keys {
 		if v := s.States7d.Totals[k]; v > 0 {

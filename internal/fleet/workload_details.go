@@ -558,9 +558,13 @@ func USD(v float64) string {
 	return map[bool]string{true: "-", false: ""}[v < 0] + "$" + whole + "." + cents
 }
 
-// hours is a number of hours, "300 hours", whole when it is.
+// hours is a number of hours, "300 hours", whole when it is; "1 hour" alone is singular.
 func hours(h float64) string {
-	return num(h) + " " + Plural(int(h), "hour")
+	n := num(h)
+	if n == "1" {
+		return n + " hour"
+	}
+	return n + " hours"
 }
 
 // num is a number without trailing zeros, one decimal at most.

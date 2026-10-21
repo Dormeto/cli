@@ -391,7 +391,7 @@ func TestExclusionsListText(t *testing.T) {
 	if r.exit != 0 {
 		t.Fatalf("exit %d, stderr %q", r.exit, r.stderr)
 	}
-	for _, want := range []string{"target group tg-a", "migrating", "2026-10-25 08:00 UTC", "api, w-2", "expired", "lifting", "account sandbox (222222222222)", "load balancer lb"} {
+	for _, want := range []string{"target group tg-a", "migrating", "R/ann", "2026-10-25 08:00 UTC", "api, w-2", "expired", "lifting", "account sandbox (222222222222)", "load balancer lb"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout lacks %q: %s", want, r.stdout)
 		}

@@ -232,6 +232,7 @@ func TestTargetText(t *testing.T) {
 		{OperationTarget{Account: "1", Region: "eu-west-1", TargetGroupARN: "arn:aws:elasticloadbalancing:eu-west-1:1:targetgroup/api-tg/0123456789abcdef"}, "api-tg"},
 		{OperationTarget{Account: "1", Region: "eu-west-1"}, "1/eu-west-1"},
 		{OperationTarget{Account: "1", ExclusionID: "ex-1"}, "exclusion ex-1"},
+		{OperationTarget{Account: "111111111111"}, "111111111111"},
 	} {
 		if got := (Operation{Target: c.target}).TargetText(); got != c.want {
 			t.Errorf("%+v: %q, want %q", c.target, got, c.want)

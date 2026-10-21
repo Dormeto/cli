@@ -112,11 +112,7 @@ func ExclusionsText(es []Exclusion, loc *time.Location) string {
 		for _, p := range e.Paused {
 			paused = append(paused, orStr(p.Name, p.WorkloadID))
 		}
-		by := e.By
-		if strings.HasPrefix(by, "arn:") { // who is recorded as an ARN: its last segment names the person
-			by = by[strings.LastIndex(by, "/")+1:]
-		}
-		rows = append(rows, []string{e.ID, e.Target.Text(), e.Reason, by, orStr(When(e.ExpiresAt, loc), none), orStr(strings.Join(paused, ", "), none), e.State()})
+		rows = append(rows, []string{e.ID, e.Target.Text(), e.Reason, ShortARN(e.By), orStr(When(e.ExpiresAt, loc), none), orStr(strings.Join(paused, ", "), none), e.State()})
 	}
 	return Table(rows)
 }
