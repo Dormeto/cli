@@ -79,10 +79,11 @@ func newManagerStatus(f *fleetFlags, deps fleetDeps) *cobra.Command {
 func newManagerCheck(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var enable, disable, alert, noAlert, asJSON bool
 	cmd := &cobra.Command{
-		Use: "check (--enable [--alert|--no-alert] | --disable)", Short: "Turn the daily check for new versions on or off", Args: noArgs, SilenceErrors: true,
+		Use: "check (--enable [--alert|--no-alert] | --disable [--no-alert])", Short: "Turn the daily check for new versions on or off", Args: noArgs, SilenceErrors: true,
 		Long: "Turn the manager's daily check for new versions on (--enable) or off (--disable). --alert also sends a new\n" +
 			"version to the alert topic, --no-alert stops that; with --enable alone the alert stays as it is. Turning the\n" +
-			"check off turns its alert off. --json prints the manager's answer. Needs an administrator.",
+			"check off turns its alert off (--no-alert says so, --alert is refused). --json prints the manager's answer.\n" +
+			"Needs an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var err error
 			switch {
@@ -90,8 +91,8 @@ func newManagerCheck(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("give exactly one of --enable and --disable")
 			case alert && noAlert:
 				err = usagef("give --alert or --no-alert, not both")
-			case disable && (alert || noAlert):
-				err = usagef("--alert and --no-alert go with --enable")
+			case disable && alert: // --no-alert is what --disable sends
+				err = usagef("--alert goes with --enable")
 			}
 			if err != nil {
 				return finish(c, err)
@@ -121,7 +122,7 @@ func newManagerCheck(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&enable, "enable", false, "check daily for new versions")
 	fl.BoolVar(&disable, "disable", false, "stop the daily check (and its alert)")
 	fl.BoolVar(&alert, "alert", false, "with --enable, also send a new version to the alert topic")
-	fl.BoolVar(&noAlert, "no-alert", false, "with --enable, do not send it to the alert topic")
+	fl.BoolVar(&noAlert, "no-alert", false, "do not send it to the alert topic (what --disable does)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }

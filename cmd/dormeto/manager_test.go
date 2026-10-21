@@ -275,7 +275,6 @@ func TestManagerStatusOfATerraformInstall(t *testing.T) {
 func TestManagerCheckRefusalsSendNothing(t *testing.T) {
 	for _, args := range [][]string{
 		{"check", "--disable", "--alert"},
-		{"check", "--disable", "--no-alert"},
 		{"check"},
 		{"check", "--alert"},
 		{"check", "--enable", "--disable"},
@@ -289,7 +288,7 @@ func TestManagerCheckRefusalsSendNothing(t *testing.T) {
 		}
 	}
 	r := runManager(t, &managerAPI{}, nil, "check", "--disable", "--alert")
-	if r.stderr != "--alert and --no-alert go with --enable\n" {
+	if r.stderr != "--alert goes with --enable\n" {
 		t.Errorf("stderr %q", r.stderr)
 	}
 }
@@ -304,9 +303,10 @@ func TestManagerCheckEnableKeepsTheAlert(t *testing.T) {
 		t.Errorf("stdout %q", r.stdout)
 	}
 	for args, body := range map[string]string{
-		"--enable --no-alert": `{"alert":false,"enabled":true}`,
-		"--enable --alert":    `{"alert":true,"enabled":true}`,
-		"--disable":           `{"alert":false,"enabled":false}`,
+		"--enable --no-alert":  `{"alert":false,"enabled":true}`,
+		"--enable --alert":     `{"alert":true,"enabled":true}`,
+		"--disable":            `{"alert":false,"enabled":false}`,
+		"--disable --no-alert": `{"alert":false,"enabled":false}`, // what --disable sends
 	} {
 		m := &managerAPI{check: `{"enabled":true,"alert":true,"result":null}`}
 		r := runManager(t, m, nil, append([]string{"check"}, strings.Fields(args)...)...)
