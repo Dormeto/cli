@@ -22,11 +22,18 @@ import (
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
-// maxRouterPause is the longest a router pause lasts, as the manager accepts it.
-const maxRouterPause = 366 * 24 * time.Hour
-
 // maxReason is the longest reason of a pause, in characters.
 const maxReason = 256
+
+// pauseReason is --reason of a pause as the manager keeps it (pauseRequest, a router's or a workload's): trimmed, 1 to
+// 256 characters.
+func pauseReason(reason string) (string, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || utf8.RuneCountInString(reason) > maxReason {
+		return "", usagef("--reason: give 1 to %d characters", maxReason)
+	}
+	return reason, nil
+}
 
 // uninstallConcurrency bounds the uninstalls started at once.
 const uninstallConcurrency = 3
@@ -224,14 +231,13 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
-			reason = strings.TrimSpace(reason)
-			if err == nil && (reason == "" || utf8.RuneCountInString(reason) > maxReason) {
-				err = usagef("--reason: give 1 to %d characters", maxReason)
+			if err == nil {
+				reason, err = pauseReason(reason)
 			}
 			var end time.Time
 			var set bool
 			if err == nil {
-				end, set, err = endOf(deps.now(), dur, until, maxRouterPause, false)
+				end, set, err = endOf(deps.now(), dur, until, maxPause, false)
 			}
 			if err != nil {
 				return finish(c, err)

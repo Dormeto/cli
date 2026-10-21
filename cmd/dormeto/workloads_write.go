@@ -19,7 +19,7 @@ import (
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
-// maxPause is the longest a pause lasts: the manager's 366 days.
+// maxPause is the longest a pause lasts, a router's or a workload's: the manager's 366 days.
 const maxPause = 366 * 24 * time.Hour
 
 func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
@@ -122,13 +122,8 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err == nil {
 				err = w.targets.check(args, false)
 			}
-			reason = strings.TrimSpace(reason)
-			switch {
-			case err != nil:
-			case reason == "":
-				err = usagef("--reason: a reason is needed (1 to 256 characters)")
-			case utf8.RuneCountInString(reason) > 256:
-				err = usagef("--reason: at most 256 characters (%d given)", utf8.RuneCountInString(reason))
+			if err == nil {
+				reason, err = pauseReason(reason)
 			}
 			if err != nil {
 				return finish(c, err)

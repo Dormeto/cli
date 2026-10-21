@@ -184,6 +184,12 @@ func TestPauseRefusalsSendNothing(t *testing.T) {
 	if r := runWR(t, a, nil, "pause", "prod-eu/w-1", "--reason", "x", "--for", "366d"); r.exit != 0 {
 		t.Errorf("366d: exit %d: %s", r.exit, r.stderr)
 	}
+	// The manager's rule of a pause's reason is the routers' (pauseRequest): the same check, the same words.
+	for _, reason := range []string{"  ", long} {
+		if r := runWR(t, &wrAPI{}, nil, "pause", "prod-eu/w-1", "--reason", reason); r.stderr != "--reason: give 1 to 256 characters\n" {
+			t.Errorf("reason of %d characters: stderr %q", len(reason), r.stderr)
+		}
+	}
 }
 
 func TestRenameSendsTheTrimmedName(t *testing.T) {
