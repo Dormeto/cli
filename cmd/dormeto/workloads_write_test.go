@@ -60,8 +60,11 @@ func (a *wrAPI) handler() http.HandlerFunc {
 			io.WriteString(w, `{"accepted":true}`)
 		case strings.HasSuffix(r.URL.Path, "/pause"):
 			io.WriteString(w, `{"woken":["w-1"]}`)
-		case strings.HasSuffix(r.URL.Path, "/rename"):
+		case strings.HasSuffix(r.URL.Path, "/rename") && r.Method == http.MethodPost: // the manager routes POST alone
 			io.WriteString(w, `{"workloadId":"w-1","name":"checkout api"}`)
+		case strings.HasSuffix(r.URL.Path, "/rename"):
+			w.WriteHeader(404)
+			io.WriteString(w, `{"error":"not_found","message":"no route for `+r.Method+` `+r.URL.Path+`"}`)
 		case strings.HasSuffix(r.URL.Path, "/tags"):
 			io.WriteString(w, `{"workloadId":"w-1","tags":{}}`)
 		default:
@@ -189,7 +192,7 @@ func TestRenameSendsTheTrimmedName(t *testing.T) {
 	if r.exit != 0 {
 		t.Fatalf("exit %d: %s", r.exit, r.stderr)
 	}
-	if want := []string{`PUT /iam/workloads/prod-eu/w-1/rename {"name":"checkout api"}`}; !reflect.DeepEqual(a.writes, want) {
+	if want := []string{`POST /iam/workloads/prod-eu/w-1/rename {"name":"checkout api"}`}; !reflect.DeepEqual(a.writes, want) {
 		t.Errorf("writes %q", a.writes)
 	}
 	if !strings.Contains(r.stdout, "prod-eu/w-1: renamed to checkout api") {

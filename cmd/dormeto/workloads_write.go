@@ -200,7 +200,7 @@ func newWorkloadsRename(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			return w.run(c, args[:1], fmt.Sprintf("rename to %q: would act on", name), "Rename %d workloads?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
-					if err := api.Put(ctx, t.Path("/rename"), map[string]string{"name": name}, &raw); err != nil {
+					if err := api.Post(ctx, t.Path("/rename"), map[string]string{"name": name}, &raw); err != nil {
 						return "", nil, err
 					}
 					var res struct{ Name string }
