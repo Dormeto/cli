@@ -284,7 +284,8 @@ func newWorkloadsTags(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"every --set, and sent only when they changed (\"unchanged\" otherwise). Tags are given by flags alone, a key may\n" +
 			"hold \"/\". The manager's rules are checked first: at most 50 tags, a key of 1 to 128 characters, a value of up\n" +
 			"to 256, letters, digits, spaces and _ . : / = + - @, no key starting with dormeto:. Routers 0.30.0 and later;\n" +
-			"administrators. A refusal of one workload is printed for it, the others go on (exit 1).",
+			"administrators. A refusal of one workload is printed for it, the others go on (exit 1). --json prints the\n" +
+			"manager's answers by <router>/<workload>, each {workloadId, tags}: the tags as they are for one unchanged.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			err := w.targets.check(args, false)
@@ -339,8 +340,8 @@ func newWorkloadsTags(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					switch {
 					case p.err != nil:
 						return "", nil, p.err
-					case !p.changed: // no PUT: the answer is the tags as they are
-						current, _ := json.Marshal(map[string]map[string]string{"tags": p.tags})
+					case !p.changed: // no PUT: the answer is the PUT's shape, the tags as they are
+						current, _ := json.Marshal(map[string]any{"workloadId": t.ID, "tags": p.tags})
 						return t.String() + ": unchanged\n", current, nil
 					}
 					var raw json.RawMessage

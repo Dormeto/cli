@@ -405,6 +405,27 @@ func TestTagsJSONHoldsTheCurrentTagsOfTheUnchanged(t *testing.T) {
 	if r.exit != 0 || len(a.writes) != 0 || tags["a"] != "1" || !strings.Contains(r.stderr, "unchanged") {
 		t.Errorf("exit %d writes %q stdout %q stderr %q", r.exit, a.writes, r.stdout, r.stderr)
 	}
+	if m["prod-eu/w-1"]["workloadId"] != "w-1" { // the shape of the PUT's answer
+		t.Errorf("the unchanged answer lacks the workload's id: %q", r.stdout)
+	}
+}
+
+// The help says what each command does: offboard and exclude always ask, schedule show's --json takes no value.
+func TestWorkloadWritesHelp(t *testing.T) {
+	for _, cmd := range []string{"offboard", "exclude"} {
+		r := runWR(t, &wrAPI{}, nil, cmd, "--help")
+		if !strings.Contains(r.stdout, "--yes ") || !strings.Contains(r.stdout, "do not ask for confirmation (needed without a terminal)") || strings.Contains(r.stdout, "of several targets") {
+			t.Errorf("%s --help: %q", cmd, r.stdout)
+		}
+	}
+	r := runWR(t, &wrAPI{}, nil, "schedule", "show", "--help")
+	if !strings.Contains(r.stdout, "      --json   print {schedule, next, maintenanceDue}") {
+		t.Errorf("schedule show --help: %q", r.stdout)
+	}
+	r = runWR(t, &wrAPI{}, nil, "tags", "--help")
+	if !strings.Contains(r.stdout, `{"workloadId", "tags"}`) && !strings.Contains(r.stdout, "{workloadId, tags}") {
+		t.Errorf("tags --help says nothing of --json: %q", r.stdout)
+	}
 }
 
 func TestWakeWaitJSONKeepsStdoutToTheAnswers(t *testing.T) {

@@ -235,7 +235,11 @@ func (w *writeCommand) bindShared(cmd *cobra.Command) {
 // bindConfirmation binds --dry-run and --yes alone (rename takes no --tag).
 func (w *writeCommand) bindConfirmation(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&w.dryRun, "dry-run", false, "list the targets and stop")
-	cmd.Flags().BoolVar(&w.yes, "yes", false, "do not ask for confirmation of several targets (needed without a terminal)")
+	yes := "do not ask for confirmation of several targets (needed without a terminal)"
+	if w.always {
+		yes = "do not ask for confirmation (needed without a terminal)"
+	}
+	cmd.Flags().BoolVar(&w.yes, "yes", false, yes)
 }
 
 // run resolves, confirms and calls act with the targets.
@@ -571,7 +575,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print {schedule, next, maintenanceDue}, as `schedule set --file` accepts")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print {schedule, next, maintenanceDue}, as schedule set --file accepts")
 	return cmd
 }
 
