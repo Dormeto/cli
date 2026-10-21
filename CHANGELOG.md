@@ -18,9 +18,13 @@
   operation names it, `(operation <id>: dormeto operations watch <id>)`, in `routers upgrade` too.
 - Writes on several workloads or routers are confirmed on a terminal, and the destructive ones always are
   (`routers uninstall`, `workloads offboard`, `workloads exclude`, `exclusions add`, `users disable`, `users role`,
-  `groups delete`, `discovery config set`, `manager update`); `--yes` without a terminal, `--dry-run` where a preview
-  exists. Every command has `--json`, the manager's answer after the CLI's own filters on stdout alone, `keep-awake`,
-  `resume` and `schedule set|clear` included.
+  `groups delete`, `discovery config set`, `manager update`); the question of a workload write lists its targets;
+  `--yes` without a terminal, `--dry-run` where a preview exists.
+- Every command has `--json`, the manager's answer after the CLI's own filters on stdout alone (questions, dry-run
+  lists and progress go to stderr), `keep-awake`, `resume` and `schedule set|clear` included. A list prints the API's
+  object (`{users: […]}`), every page in it; the commands that start operations print an array when they take several
+  targets and an object when they take one; a dry run prints `{"dryRun": true, "targets": […]}` and a declined
+  confirmation `{"confirmed": false, "targets": […]}`; a command where nothing succeeded prints `[]` or `{}`.
 - `--region` is always the manager's region: a router's is `--router-region` (`routers install`, as `routers list`), a
   candidate's `--candidate-region` (`discovery candidates`). A candidate is named by its id or its target group's name.
 - `--for` takes whole days first (`3d`, `1d12h`), `workloads keep-awake --for` included (up to 7 days); its message for

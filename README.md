@@ -509,17 +509,17 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   `--tag key=value` (repeatable; every workload that carries all the tags, all pages of the listing), never both, and a
   `--tag` that matches nothing exits 2. When a router does not answer (or the listing cannot be completed), the
   workloads resolved are acted on, then the command names what could not be resolved and exits 1 (`--wait` still
-  waits for the resolved ones). A discovery
-  candidate is its id (the target group's ARN) or the name of its target group when it is unique among the candidates
-  of the status the command works on; an ambiguous name exits 2 and lists the matching ARNs. A user is an email, a
-  group a name, an operation and an exclusion their id.
+  waits for the resolved ones). A discovery candidate is its id (the target group's ARN) or the name of its target
+  group when it is unique among the candidates of the status the command works on; an ambiguous name exits 2 and lists
+  the matching ARNs. A user is an email, a group a name, an operation and an exclusion their id.
 - **Regions.** `--region` is always the manager's region. A router's region is `--router-region` (`routers list`,
   `upgrade`, `install`), a candidate's `--candidate-region` (`discovery candidates`).
 - **Confirmation.** On a terminal, a write on several workloads or routers is confirmed, and these always are, even for
   one target: `routers uninstall`, `workloads offboard`, `workloads exclude`, `exclusions add`, `users disable`,
   `users role`, `groups delete`, `discovery config set` and `manager update`. The question names the targets and what
-  happens. Without a terminal, `--yes` is required (exit 2). A declined confirmation sends nothing and exits 0.
-  `--dry-run`, where a command has it, lists the targets and sends nothing.
+  happens; a workload write lists its targets first (`Offboard 1 workload?`). Without a terminal, `--yes` is required
+  (exit 2). A declined confirmation sends nothing and exits 0. `--dry-run`, where a command has it, lists the targets
+  and sends nothing.
 - **Operations.** Onboarding, offboarding, the install, upgrade and uninstall of routers, exclusions and their lifting,
   and the manager's update are operations of the manager. The CLI starts them and follows them, reading each every 5
   seconds: `started <type> <id> for <target>`, each step on stderr as it changes (`  … install router`,
@@ -538,8 +538,18 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   sent), never more strictly than the manager does.
 - **Output.** Lists are tables; `show` commands print labelled lines. Times in lists are ages (`45m`, `3h`, `2d`); in
   `show`, the audit and operations, local times with their zone (`2026-10-21 14:05 CEST`). The manager's refusals are
-  printed as it words them, on stderr. Every command has `--json`: the manager's answer, after the CLI's own filters,
-  on stdout alone; lines and progress then go to stderr.
+  printed as it words them, on stderr.
+- **JSON.** Every command has `--json`: the manager's answer, after the CLI's own filters, on stdout alone; lines,
+  progress, questions and dry-run lists then go to stderr, so that stdout always parses:
+  - a list prints the API's object, its rows under the API's key after the filters, every page in it and no page's
+    cursor (`{users: […]}`, `{operations: […]}`, `{candidates: […]}`);
+  - a command that starts operations prints them as an array when it takes several targets (`routers uninstall`,
+    `workloads offboard` and `exclude`, `exclusions lift`), whatever their number, `[]` when none started, and as an
+    object when it takes one (`routers install`, `workloads onboard`, `exclusions add`), `{}` when it did not start;
+  - the other writes on several targets print the manager's answers by target (`<router>/<workload>`, or the router),
+    `{}` when none succeeded;
+  - a dry run prints `{"dryRun": true, "targets": […]}` and a declined confirmation `{"confirmed": false, "targets":
+    […]}` (exit 0); `routers upgrade` and `manager update` print their own result instead.
 
 ### Exit codes
 
@@ -576,8 +586,8 @@ policies, from the narrowest.
 It still reads everything an administrator reads through the `/iam/*` routes: the users and their emails, the audit,
 the update state.
 
-**Wake and nap.** Read the workloads (`workloads list`, `show`, `history`, `idle-window`, the `--tag` selections), wake
-them (`--wait` included) and nap them, and nothing else:
+**Wake and nap.** Check the caller (`whoami`), read the workloads (`workloads list`, `show`, `history`, `idle-window`,
+the `--tag` selections), wake them (`--wait` included) and nap them, and nothing else:
 
 ```json
 {
@@ -586,6 +596,8 @@ them (`--wait` included) and nap them, and nothing else:
     "Effect": "Allow",
     "Action": "execute-api:Invoke",
     "Resource": [
+      "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/me",
+      "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/health",
       "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/workloads",
       "arn:aws:execute-api:<region>:<account>:<api id>/*/GET/iam/workloads/*",
       "arn:aws:execute-api:<region>:<account>:<api id>/*/POST/iam/workloads/*/wake",
@@ -738,7 +750,8 @@ dormeto routers uninstall staging-eu --yes --no-wait
 - `uninstall` starts an `uninstall-router` operation for each router, 3 at once at most, and follows them. It is always
   confirmed on a terminal. The operation's "check empty" step refuses a router that still has workloads: offboard them
   first.
-- `--json`: the operations, as the manager last said them.
+- `--json`: the operations, as the manager last said them: `install`'s as an object (`{}` when it did not start),
+  `uninstall`'s as an array (`[]` when none started).
 
 ### routers pause and resume
 
@@ -757,7 +770,8 @@ dormeto routers resume prod-eu
   to 366 days, `--until` within 366 days; without either, the pause lasts until `routers resume`.
 - `resume`: the workloads follow their schedule and idle rules again; a router that was not paused says `not paused`.
 - Several routers are confirmed on a terminal. A router refused does not stop the others (exit 1). `--json` prints the
-  manager's answers, by router.
+  manager's answers, by router (`{}` when none succeeded, the answers collected when Ctrl-C stops it); the lines go to
+  stderr.
 
 ### workloads list
 
@@ -826,9 +840,11 @@ dormeto workloads tags prod-eu/w-1 --set team=payments --unset owner
   key given twice is refused (exit 2). The manager's rules are checked first: at most 50 tags, a key of 1 to 128
   characters, a value of up to 256, letters, digits, spaces and `_ . : / = + - @`, no key starting with `dormeto:`.
   Routers 0.30.0 and later.
-- More than one target is confirmed on a terminal; `--yes` skips it and is needed without one; `--dry-run` lists the
-  targets and sends nothing. The other workloads go on when one is refused, and the exit is 1. `--json` prints the
-  manager's answers of those that succeeded, by `<router>/<workload>`; the lines and failures go to stderr.
+- More than one target is confirmed on a terminal, its targets listed before the question; `--yes` skips it and is
+  needed without one; `--dry-run` lists the targets and sends nothing. The other workloads go on when one is refused,
+  and the exit is 1. `--json` prints the manager's answers of those that succeeded, by `<router>/<workload>` (`{}`
+  when none did); the lines and failures go to stderr. For a workload `tags` leaves unchanged, the answer is its tags
+  as they are, in the manager's shape: `{workloadId, tags}`.
 
 ### Keeping workloads awake and scheduling them
 
@@ -888,7 +904,8 @@ dormeto workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry
 dormeto workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
 ```
 
-All three take `--no-wait`, `--timeout <d>` and `--json` (the operations, as the manager last said them).
+All three take `--no-wait`, `--timeout <d>` and `--json`: the operations, as the manager last said them, `onboard`'s
+as an object, `offboard`'s and `exclude`'s as an array.
 
 ```sh
 dormeto discovery candidates
@@ -900,14 +917,14 @@ dormeto workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
 - `onboard` starts the onboarding of a candidate pending onboarding, given by its id (the target group's ARN) or the
   name of its target group, follows it, then prints the new workload as `onboarded <router>/<workload id>`. An unknown
   or ambiguous name exits 2 (its ARNs listed) and sends nothing. It sends what the dashboard's Onboard dialog sends:
-  - `--name`: the workload's display name, 1 to 64 characters (the target group's name by default);
+  - `--name`: the workload's display name, up to 64 characters (the target group's name by default, or when empty);
   - `--idle-minutes`: the idle window, 5 to 1440 minutes (15 by default);
   - `--wake-mode`: `any` request that passes the filters (the default), or `browser` (only the waiting page's script
     or the `x-dormeto-wake: 1` header wakes it);
   - `--database`: a companion RDS instance identifier, or `cluster:<identifier>`, stopped after the application and
     started before it (repeatable);
   - `--fallback-type`: an EC2 instance type, such as `t3a.medium`, tried in order at a wake when AWS has no capacity
-    for the instance's own type (at most 5, EC2 candidates only);
+    for the instance's own type (at most 5; for the EC2 instances of a workload);
   - `--set-tag key=value`: a Dormeto tag of the new workload (repeatable). It is `--set-tag`, not `--tag`, which selects
     targets everywhere else.
 - `offboard` starts the offboarding of each workload, at most `--concurrency` at once (1 to 20, 4 by default): the
@@ -954,7 +971,8 @@ dormeto exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
   time zone.
 - `run` asks the manager for a run now; it runs on its own. With `--wait`, the last run is read every 5 seconds until a
   run newer than the request has ended, then printed as `status` does; a run the manager refused, because another was in
-  progress, exits 1. Ctrl-C and `--timeout` (30m by default) stop waiting, the run going on in the manager. `--json`
+  progress, exits 1. A read that fails for a passing reason (a network error, 429, 5xx) is waited out, as the following
+  of an operation does. Ctrl-C and `--timeout` (30m by default) stop waiting, the run going on in the manager. `--json`
   prints the manager's answer, with `--wait` the status once the run ended.
 
 ### discovery candidates, dismiss and restore
@@ -962,20 +980,22 @@ dormeto exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 - `candidates` lists the candidates of one `--status` (`pending-onboarding` by default; `pending-offboarding`,
   `managed`, `ineligible`, `dismissed`, `excluded`, `out-of-scope`, `gone`): target group, account, region, hosts, idle
   hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every page
-  is read unless `--limit` stops at that many. `--account` keeps one AWS account, `--candidate-region` one region of it
-  (it needs `--account`; `--region` is the manager's).
-- `dismiss` takes candidates out of the pending onboarding, each given by its id or the name of its target group,
-  resolved among the candidates pending onboarding before anything is sent: an unknown name, or one that names the
-  target groups of several accounts or regions (their ARNs are listed), exits 2 and nothing is dismissed. `--note` says
-  why (cut at 256 characters).
-- `restore` brings dismissed candidates back, resolved among the dismissed ones in the same way.
-- `--json` prints the candidates as the manager sends them.
+  is read unless `--limit` stops at that many (0, the default, reads all). `--account` keeps one AWS account,
+  `--candidate-region` one region of it (it needs `--account`; `--region` is the manager's). `--json` prints the
+  manager's answer, `{candidates}`, every page in it.
+- `dismiss` takes candidates out of the pending onboarding, each given by its id, sent as it is whatever the
+  candidate's status, or the name of its target group, resolved among the candidates pending onboarding before anything
+  is sent: an unknown name, or one that names the target groups of several accounts or regions (their ARNs are listed),
+  exits 2 and nothing is dismissed. `--note` says why (cut at 256 characters).
+- `restore` brings dismissed candidates back, each id or name resolved among the dismissed ones in the same way.
+- `dismiss` and `restore` print, with `--json`, the candidates as the manager answers them.
 
 ### discovery access
 
 `access` shows the organization access of the last run: how many accounts are ready, the delegation policy, the event
 forwarders, and a table of the accounts that are not ready with what is missing (the discovery or the command role).
-Every page is read unless `--limit` stops at that many accounts.
+Every page is read unless `--limit` stops at that many accounts (0, the default, reads all). `--json` prints the
+manager's answer, every page in it.
 
 ### discovery config show and set
 
@@ -989,16 +1009,18 @@ Every page is read unless `--limit` stops at that many accounts.
 ### exclusions
 
 - `exclusions list` lists the manual exclusions: id, target, reason, who excluded it, until when (local time zone), the
-  workloads it paused by name, and its state (`active`, `expired`, or `lifting` while a lift runs).
+  workloads it paused by name, and its state (`active`, `expired`, or `lifting` while a lift runs). `--json` prints the
+  manager's answer, `{exclusions}`.
 - `exclusions add` excludes one target from discovery: an application target group (`--target-group <arn>`), an
   application load balancer (`--load-balancer <arn>`) or a whole account (`--account <12 digits>`). The manager pauses
   its managed workloads (an `exclude` operation, followed). `--reason` is 1 to 246 characters; `--for` is up to 366
   days, `--until` within 366 days; without either, the exclusion lasts until it is lifted. It is always confirmed on a
-  terminal; `--dry-run` names the target and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json`.
+  terminal; `--dry-run` names the target and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json` (its
+  operation, an object).
 - `exclusions lift <id>...` lifts each exclusion (its id is in `exclusions list`) and follows the operations: the
   workloads it paused are resumed, then the exclusion is deleted. One that stays listed (a workload could not be
   resumed) is lifted again by running the command again. An exclusion another operation holds is refused with that
-  operation's id, the others go on (exit 1).
+  operation's id, the others go on (exit 1). `--json` prints the operations, an array.
 
 ## Operations
 
@@ -1021,7 +1043,7 @@ dormeto operations watch 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
   shortened to its last two parts) and its age. `--running` keeps those still running; `--type` the types given
   (repeatable or comma-separated: `onboard`, `offboard`, `install-router`, `upgrade-router`, `uninstall-router`,
   `exclude`, `lift-exclusion`, `update-manager`, ...); `--limit` caps the rows (50 by default; 0 for all). `--json`
-  prints the manager's records, after these filters.
+  prints the manager's answer, `{operations}`, its records after these filters.
 - `show` prints one operation: type, target, status, who started it, its times (local time zone) and error, then its
   steps with their status, how long each took and what it says.
 - `watch` follows an operation, printing its steps on stderr as they change, until it ends: exit 0 when it succeeded, 1
@@ -1060,7 +1082,7 @@ dormeto users groups ana@example.com          # no group: clears them
 ### users
 
 - `list`: email, role, custom groups, status (`disabled` when they are), whether their authenticator is set up, and
-  the age of the account.
+  the age of the account. `--json` prints the manager's answer, `{users}`.
 - `invite`: the manager emails the user a temporary password. `--role` is `member` (sees only what their groups grant),
   `viewer`, `operator` or `admin`; `--group`, repeated, puts them in existing custom groups. The answer says whether
   the invitation was sent or waits for the address to be verified.
@@ -1074,8 +1096,8 @@ dormeto users groups ana@example.com          # no group: clears them
 
 ### groups
 
-- `list`: name, description, how many grants and the age of the last change. `show`: the description, who changed it
-  last and when, and each grant.
+- `list`: name, description, how many grants and the age of the last change (`--json`: the manager's answer,
+  `{groups}`). `show`: the description, who changed it last and when, and each grant.
 - `create`: the name is 1 to 48 lower-case letters, digits and hyphens, not starting with `dmt-`; the description at
   most 200 characters.
 - `update` changes the description, or replaces the grants: the grants given replace the group's (take `groups show`
@@ -1140,7 +1162,7 @@ is updated by changing the module's `source`.
 
 ```sh
 dormeto manager status [--json]
-dormeto manager check (--enable [--alert | --no-alert] | --disable) [--json]
+dormeto manager check (--enable [--alert | --no-alert] | --disable [--no-alert]) [--json]
 dormeto manager changes [--to <version>] [--json]
 dormeto manager update [--version <version>] [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
 ```
@@ -1156,8 +1178,9 @@ dormeto manager update --version 0.18.0
   with Terraform), the version last applied, the newer versions (with their router version, or why one cannot be
   applied from the manager), the last install build, a request waiting for its build, the plan ready to apply and its
   summary, and the daily check (`not available` in a manager without it). `--json` prints `{version, update, check}`.
-- `check --enable` checks daily for new versions, `--disable` stops it (and its alert). `--alert` also sends a new
-  version to the alert topic, `--no-alert` stops that; with `--enable` alone the alert stays as it is.
+- `check --enable` checks daily for new versions, `--disable` stops it (and its alert: `--no-alert` may say so,
+  `--alert` is refused). `--alert` also sends a new version to the alert topic, `--no-alert` stops that; with
+  `--enable` alone the alert stays as it is.
 - `changes` prints the release notes of the versions the manager offers, newest first, up to `--to` (the newest by
   default), with a note where a version asks for an access change that the update does not apply. A manager installed
   with the CLI only.

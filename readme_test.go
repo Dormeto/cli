@@ -169,7 +169,8 @@ func TestReadmeManagerPoliciesAreIAMPolicies(t *testing.T) {
 			t.Errorf("resource %q is not a route of the manager's API under /iam/", r)
 		}
 	}
-	for _, want := range []string{"/*/GET/iam/*", "/*/POST/iam/workloads/*/wake", "/*/POST/iam/workloads/*/nap", "/*/*/iam/*"} {
+	// The wake-and-nap policy reads /me and /health too, so that whoami, run first, works under it.
+	for _, want := range []string{"/*/GET/iam/*", "/*/GET/iam/me", "/*/GET/iam/health", "/*/POST/iam/workloads/*/wake", "/*/POST/iam/workloads/*/nap", "/*/*/iam/*"} {
 		if !slices.ContainsFunc(resources, func(r string) bool { return strings.HasSuffix(r, want) }) {
 			t.Errorf("no policy has the resource .../%s", want)
 		}
