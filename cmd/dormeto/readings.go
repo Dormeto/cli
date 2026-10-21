@@ -239,8 +239,8 @@ func newAudit(deps fleetDeps) *cobra.Command {
 		if since != "" {
 			filter.Since, err = sinceTime(since, deps.now())
 		}
-		if err == nil && limit < 0 {
-			err = usagef("--limit: %d is negative (0 lists all)", limit)
+		if err == nil {
+			err = checkLimit(limit)
 		}
 		if err != nil {
 			return finish(c, err)

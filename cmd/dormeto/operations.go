@@ -38,8 +38,8 @@ func newOperationsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"exclude, lift-exclusion, update-manager, ...); --limit caps the rows (50; 0 for all). --json prints the\n" +
 			"manager's records, after these filters.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if limit < 0 {
-				return finish(c, usagef("--limit: %d is negative (0 lists all)", limit))
+			if err := checkLimit(limit); err != nil {
+				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				ops, err := fleet.ListOperations(ctx, api)

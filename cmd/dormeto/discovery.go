@@ -192,7 +192,8 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "candidates", Short: "List the discovery candidates of a status", Args: noArgs, SilenceErrors: true,
 		Long: "List the candidates of one status (default pending-onboarding): target group, account, region, hosts, idle\n" +
 			"hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
-			"page is read unless --limit stops at that many. --candidate-region needs --account (--region is the manager's).\n" +
+			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
+			"manager's).\n" +
 			"--json prints the rows as the manager sends them.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var err error
@@ -206,7 +207,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			case region != "" && !regionName.MatchString(region):
 				err = usagef("--candidate-region: %q is not a region such as eu-west-1", region)
 			default:
-				err = positiveLimit(c, limit)
+				err = checkLimit(limit)
 			}
 			if err != nil {
 				return finish(c, err)
@@ -228,17 +229,9 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&status, "status", "pending-onboarding", "the status: "+strings.Join(fleet.CandidateStatuses, ", "))
 	fl.StringVar(&account, "account", "", "only the candidates of this AWS account (12 digits)")
 	fl.StringVar(&region, "candidate-region", "", "only the candidates in this region of --account (--region is the manager's)")
-	fl.IntVar(&limit, "limit", 0, "stop at this many candidates (default: all)")
+	fl.IntVar(&limit, "limit", 0, "stop at this many candidates (0, the default: all)")
 	fl.BoolVar(&asJSON, "json", false, "print the candidates as the manager sends them")
 	return cmd
-}
-
-// positiveLimit refuses a --limit that was given and is not positive.
-func positiveLimit(c *cobra.Command, limit int) error {
-	if c.Flags().Changed("limit") && limit < 1 {
-		return usagef("--limit: %d is not a positive number", limit)
-	}
-	return nil
 }
 
 func orEmpty(cs []fleet.Candidate) []fleet.Candidate {
@@ -448,9 +441,9 @@ func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "access", Short: "Show the accounts whose discovery or command role is missing", Args: noArgs, SilenceErrors: true,
 		Long: "Show the organization access of the last run: how many accounts are ready, the delegation policy, the event\n" +
 			"forwarders, and a table of the accounts that are not ready with what is missing. Every page is read unless\n" +
-			"--limit stops at that many accounts. --json prints the manager's answer.",
+			"--limit stops at that many accounts (0: all). --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := positiveLimit(c, limit); err != nil {
+			if err := checkLimit(limit); err != nil {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
@@ -466,7 +459,7 @@ func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 0, "stop at this many accounts (default: all)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "stop at this many accounts (0, the default: all)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }

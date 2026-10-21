@@ -232,6 +232,14 @@ func TestDiscoveryCandidatesJSONIsTheRows(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCandidatesLimit0IsAll(t *testing.T) {
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {row("111111111111", "api", "pending-onboarding"), row("111111111111", "web", "pending-onboarding")}}}
+	r := runDiscovery(t, a, nil, "", "candidates", "--limit", "0")
+	if r.exit != 0 || !strings.Contains(r.stdout, "api") || !strings.Contains(r.stdout, "web") || strings.Contains(a.requests[0], "limit=0") {
+		t.Errorf("exit %d, requests %q, stdout %q, stderr %q", r.exit, a.requests, r.stdout, r.stderr)
+	}
+}
+
 func TestDiscoveryCandidatesRefusedFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"candidates", "--status", "bogus"},
@@ -363,8 +371,11 @@ func TestDiscoveryAccessReadsEveryPage(t *testing.T) {
 	if r.exit != 0 || json.Unmarshal([]byte(r.stdout), &got) != nil || len(got.Accounts) != 5 {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
-	if r := runDiscovery(t, a, nil, "", "access", "--limit", "0"); r.exit != 2 {
-		t.Errorf("limit 0: exit %d", r.exit)
+	if r := runDiscovery(t, a, nil, "", "access", "--limit", "0"); r.exit != 0 || strings.Count(r.stdout, "missing: no role") != 5 {
+		t.Errorf("limit 0 is all: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	if r := runDiscovery(t, a, nil, "", "access", "--limit", "-1"); r.exit != 2 || r.stderr != "--limit: -1 is negative (0 lists all)\n" {
+		t.Errorf("limit -1: exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
 

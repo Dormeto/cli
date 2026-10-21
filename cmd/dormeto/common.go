@@ -398,6 +398,14 @@ func limitText(d time.Duration) string {
 	return fmt.Sprintf("%dh (%d %s)", int(d/time.Hour), days, fleet.Plural(days, "day"))
 }
 
+// checkLimit refuses a negative --limit; 0 is all.
+func checkLimit(limit int) error {
+	if limit < 0 {
+		return usagef("--limit: %d is negative (0 lists all)", limit)
+	}
+	return nil
+}
+
 // regionName is an AWS region as the manager accepts one (eu-west-1).
 var regionName = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
 
