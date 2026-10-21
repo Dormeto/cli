@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
@@ -197,7 +198,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			switch {
 			case !slices.Contains(fleet.CandidateStatuses, status):
 				err = usagef("--status: %q is not one of %s", status, strings.Join(fleet.CandidateStatuses, ", "))
-			case account != "" && !accountID.MatchString(account):
+			case account != "" && !discover.IsAccountID(account):
 				err = usagef("--account: %q is not 12 digits", account)
 			case region != "" && account == "":
 				err = usagef("--candidate-region needs --account")

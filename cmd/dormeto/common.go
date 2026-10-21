@@ -398,10 +398,8 @@ func limitText(d time.Duration) string {
 	return fmt.Sprintf("%dh (%d %s)", int(d/time.Hour), days, fleet.Plural(days, "day"))
 }
 
-var (
-	accountID  = regexp.MustCompile(`^[0-9]{12}$`)
-	regionName = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
-)
+// regionName is an AWS region as the manager accepts one (eu-west-1).
+var regionName = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
 
 // printStarted prints, under --json, the operations that started (whatever err is), then returns err.
 func printStarted(c *cobra.Command, asJSON bool, ops []fleet.Operation, err error) error {

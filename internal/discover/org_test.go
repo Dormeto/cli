@@ -210,3 +210,11 @@ func TestLoadInventoryProgressAfterEachOrganizationalUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIsAccountID(t *testing.T) {
+	for s, want := range map[string]bool{"111111111111": true, "000000000000": true, "11111111111": false, "1111111111111": false, "11111111111a": false, "١١١١١١١١١١١١": false, "": false, " 111111111111": false} {
+		if IsAccountID(s) != want {
+			t.Errorf("IsAccountID(%q) = %t", s, !want)
+		}
+	}
+}

@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Dormeto/cli/internal/discover"
 )
 
 // Domain is the custom domain of the dashboard and its sign-in page.
@@ -73,12 +75,10 @@ const (
 var (
 	envRe        = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,8}[a-z0-9])?$`)
 	regionRe     = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d{1,2}$`)
-	versionRe    = regexp.MustCompile(`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
 	emailRe      = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 	certRe       = regexp.MustCompile(`^arn:aws[a-z-]*:acm:us-east-1:\d{12}:certificate/.+$`)
 	varNameRe    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	roleNameRe   = regexp.MustCompile(`^([A-Za-z0-9+=,.@_-]+/)*[A-Za-z0-9+=,.@_-]{1,64}$`)
-	accountIDRe  = regexp.MustCompile(`^\d{12}$`)
 	buildRoleRe  = regexp.MustCompile(`^arn:aws[a-z-]*:iam::\d{12}:role/.+$`)
 	tagCharsRe   = regexp.MustCompile(`^[\p{L}\p{Z}\p{N}_.:/=+\-@]*$`)
 	reservedVars = []string{"env", "organization_id", "discovery_mode", "admin_emails", "domain", "ses_identity", "email_from", "install"}
@@ -92,7 +92,7 @@ func (s Settings) Validate() error {
 	if err := validRegion(s.Region); err != nil {
 		return err
 	}
-	if s.Version != "" && !versionRe.MatchString(s.Version) {
+	if s.Version != "" && !IsVersion(s.Version) {
 		return fmt.Errorf("--version: %q is not a version (for example 0.11.0)", s.Version)
 	}
 	if s.Mode != "organization" && s.Mode != "account" {
@@ -143,7 +143,7 @@ func (s Settings) Validate() error {
 		ids  []string
 	}{{"accounts", s.Accounts}, {"exclude-accounts", s.ExcludeAccounts}, {"discovery-only", s.DiscoveryOnly}} {
 		for _, id := range l.ids {
-			if !accountIDRe.MatchString(id) {
+			if !discover.IsAccountID(id) {
 				return fmt.Errorf("--%s: %q is not a 12-digit account id", l.flag, id)
 			}
 		}

@@ -95,7 +95,7 @@ func MoveState(source []byte, module string, p Project, terraform string) (Moved
 	switch {
 	case head.Version != 4:
 		return Moved{}, fmt.Errorf("state format version %d, not 4", head.Version)
-	case !versionRe.MatchString(head.TerraformVersion):
+	case !IsVersion(head.TerraformVersion):
 		return Moved{}, fmt.Errorf("terraform_version %q is not a version", head.TerraformVersion)
 	case CompareVersions(head.TerraformVersion, terraform) > 0:
 		return Moved{}, fmt.Errorf("written by Terraform %s, newer than the install's %s", head.TerraformVersion, terraform)

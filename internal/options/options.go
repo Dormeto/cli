@@ -88,7 +88,6 @@ const defaultRole = "OrganizationAccountAccessRole"
 
 var (
 	regionRe  = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d+$`)
-	accountRe = regexp.MustCompile(`^\d{12}$`)
 	wholeRe   = regexp.MustCompile(`^\d+$`)
 	decimalRe = regexp.MustCompile(`^\d+(\.\d+)?$`)
 )
@@ -253,7 +252,7 @@ func Parse(args []string) (Options, error) {
 			return Options{}, usageErr("--accounts: one AWS account id or more, such as 111111111111,222222222222")
 		}
 		for _, a := range accounts {
-			if !accountRe.MatchString(a) {
+			if !discover.IsAccountID(a) {
 				return Options{}, usageErr("--accounts: not an AWS account id: " + a)
 			}
 		}

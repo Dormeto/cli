@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	"github.com/Dormeto/cli/internal/kubernetes"
 )
@@ -131,6 +132,12 @@ type Account struct {
 	OUPath []string          `json:"ouPath"` // root first, parent last
 	Tags   map[string]string `json:"tags"`
 }
+
+// accountID is an AWS account id, as discovery's configuration checks one (config.ts ACCOUNT_ID) and the manager's API.
+var accountID = regexp.MustCompile(`^[0-9]{12}$`)
+
+// IsAccountID tells whether s is an AWS account id: 12 digits.
+func IsAccountID(s string) bool { return accountID.MatchString(s) }
 
 // OU is an organizational unit (the root included, with a nil parent).
 type OU struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -277,6 +278,13 @@ func TestParseTarget(t *testing.T) {
 		if _, err := ParseTarget(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	notFound := &APIError{Status: 404, Code: "not_found", Message: "no such route"}
+	if !IsNotFound(notFound) || !IsNotFound(fmt.Errorf("savings: %w", notFound)) || IsNotFound(&APIError{Status: 403}) || IsNotFound(errors.New("404")) || IsNotFound(nil) {
+		t.Error("IsNotFound")
 	}
 }
 

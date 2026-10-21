@@ -55,6 +55,14 @@ func releaseFiles(v string) []string {
 	}
 }
 
+func TestIsVersion(t *testing.T) {
+	for v, want := range map[string]bool{"0.18.1": true, "1.2.3-rc.1": true, "10.0.0-a-b.c": true, "1.2": false, "v1.2.3": false, "1.2.3-": false, "1.2.3 ": false, "": false, "١.2.3": false} {
+		if IsVersion(v) != want {
+			t.Errorf("IsVersion(%q) = %t", v, !want)
+		}
+	}
+}
+
 func TestLatest(t *testing.T) {
 	h := fakeHTTP{bodies: map[string]string{ReleasesURL + "/latest.json": `{"version":"0.12.0","router":"0.29.0","published":"x"}`}}
 	v, err := Latest(context.Background(), h)

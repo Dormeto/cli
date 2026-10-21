@@ -7,10 +7,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -540,8 +538,7 @@ func ReadOverview(ctx context.Context, c *Client) Overview {
 	var o Overview
 	o.Missing = map[string]bool{}
 	fail := func(route string, err error) {
-		var ae *APIError
-		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+		if IsNotFound(err) {
 			o.Missing[blockOf[route]] = true
 			return
 		}

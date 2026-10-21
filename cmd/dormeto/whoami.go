@@ -28,10 +28,8 @@ func newWhoami(deps fleetDeps) *cobra.Command {
 			if err := api.Get(ctx, "/me", nil, &me); err != nil {
 				return err
 			}
-			var health struct {
-				Version string `json:"version"`
-			}
-			if err := api.Get(ctx, "/health", nil, &health); err != nil {
+			version, err := managerVersion(ctx, api)
+			if err != nil {
 				return err
 			}
 			if asJSON {
@@ -39,7 +37,7 @@ func newWhoami(deps fleetDeps) *cobra.Command {
 					Me      json.RawMessage `json:"me"`
 					Version string          `json:"version"`
 					APIURL  string          `json:"apiUrl"`
-				}{orRaw(me), health.Version, api.BaseURL()})
+				}{orRaw(me), version, api.BaseURL()})
 			}
 			var who struct{ Email, Role string }
 			if err := json.Unmarshal(orRaw(me), &who); err != nil {
@@ -50,7 +48,7 @@ func newWhoami(deps fleetDeps) *cobra.Command {
 				env = ""
 			}
 			fmt.Fprint(c.OutOrStdout(), fleet.Labelled([][2]string{
-				{"arn", who.Email}, {"role", who.Role}, {"manager", health.Version}, {"api url", api.BaseURL()}, {"env", env}, {"region", api.Region()},
+				{"arn", who.Email}, {"role", who.Role}, {"manager", version}, {"api url", api.BaseURL()}, {"env", env}, {"region", api.Region()},
 			}))
 			return nil
 		})

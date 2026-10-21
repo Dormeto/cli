@@ -9,12 +9,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/install"
 )
 
 // managerChangelog is where the release notes of a manager the CLI did not install are read.
@@ -26,12 +26,6 @@ func newManager(deps fleetDeps) *cobra.Command {
 	f.bind(cmd)
 	cmd.AddCommand(newManagerStatus(f, deps), newManagerCheck(f, deps), newManagerChanges(f, deps), newManagerUpdate(f, deps))
 	return cmd
-}
-
-// notFound tells whether err is the manager's 404: a service this manager does not have.
-func notFound(err error) bool {
-	var ae *fleet.APIError
-	return errors.As(err, &ae) && ae.Status == http.StatusNotFound
 }
 
 // managerVersion is the version the manager's /health gives.
@@ -67,7 +61,7 @@ func newManagerStatus(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				switch {
 				case err == nil:
 					m.Check = &check
-				case !notFound(err):
+				case !fleet.IsNotFound(err):
 					return err
 				}
 				if asJSON {
@@ -143,7 +137,7 @@ func newManagerChanges(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"with a note where a version asks for an access change that the update does not apply. --json prints the\n" +
 			"manager's answer. Needs an administrator and a manager installed with the CLI.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if to != "" && !fleet.IsVersion(to) {
+			if to != "" && !install.IsVersion(to) {
 				return finish(c, usagef("--to: %q is not a version such as 1.2.3", to))
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
@@ -168,7 +162,7 @@ func newManagerChanges(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 				}
 				changes, err := fleet.GetChanges(ctx, api, to)
-				if notFound(err) { // the route exists only in a manager installed with the CLI
+				if fleet.IsNotFound(err) { // the route exists only in a manager installed with the CLI
 					return errors.New("installed with Terraform: its release notes are at " + managerChangelog)
 				}
 				if err != nil {
@@ -202,7 +196,7 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := u.wait.check()
-			if err == nil && u.version != "" && !fleet.IsVersion(u.version) {
+			if err == nil && u.version != "" && !install.IsVersion(u.version) {
 				err = usagef("--version: %q is not a version such as 1.2.3", u.version)
 			}
 			if err != nil {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
@@ -94,7 +95,7 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := wait.check()
-			if err == nil && !accountID.MatchString(account) {
+			if err == nil && !discover.IsAccountID(account) {
 				err = usagef("--account: %q is not 12 digits", account)
 			}
 			if err == nil && !regionName.MatchString(region) {

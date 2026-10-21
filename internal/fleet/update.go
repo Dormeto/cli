@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -18,12 +17,6 @@ import (
 
 // accessProcedure is the page that says how an organization's access is applied again.
 const accessProcedure = "https://dormeto.com/organization-access.html"
-
-// versionText is a version as the manager accepts one: 1.2.3, with an optional pre-release.
-var versionText = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
-
-// IsVersion tells whether v is a version the manager accepts (1.2.3, 1.2.3-rc.1).
-func IsVersion(v string) bool { return versionText.MatchString(v) }
 
 // VersionEntry is a version the manager can be updated to: its router version, the CLI it needs, when it was published,
 // whether it is the release staged in the install bucket, and why it cannot be applied from the manager (Disabled).
@@ -124,7 +117,7 @@ func (s UpdateState) MarshalJSON() ([]byte, error) { return s.marshal(updateStat
 func (s UpdateState) Newest() string {
 	newest := ""
 	for _, v := range s.Versions {
-		if IsVersion(v.Version) && install.CompareVersions(v.Version, s.Version) > 0 && (newest == "" || install.CompareVersions(v.Version, newest) > 0) {
+		if install.IsVersion(v.Version) && install.CompareVersions(v.Version, s.Version) > 0 && (newest == "" || install.CompareVersions(v.Version, newest) > 0) {
 			newest = v.Version
 		}
 	}

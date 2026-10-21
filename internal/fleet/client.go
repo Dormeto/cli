@@ -38,9 +38,6 @@ type APIError struct {
 	Gateway       bool
 	OperationID   string
 	Errors        []string
-
-	retryAfter    time.Duration // the Retry-After of a 429 or 503, when it has one and it is readable
-	hasRetryAfter bool
 }
 
 // notSentError is an error from before the request left; it is ErrNotSent.
@@ -93,6 +90,12 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("the manager's API answered %d", e.Status)
 }
 
+// IsNotFound tells whether err is a 404 answer: a route, or a service, this manager does not have.
+func IsNotFound(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) && ae.Status == http.StatusNotFound
+}
+
 // Client calls the manager's /iam routes, signing each request with SigV4 for execute-api.
 type Client struct {
 	http    *http.Client
@@ -132,34 +135,10 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // Get calls GET /iam<path>?query and decodes the JSON answer into out (nil to ignore it).
 func (c *Client) Get(ctx context.Context, path string, query url.Values, out any) error {
-	u := path
 	if len(query) > 0 {
-		u += "?" + query.Encode()
+		path += "?" + query.Encode()
 	}
-	var err error
-	for i := 1; i <= getAttempts; i++ {
-		err = c.do(ctx, http.MethodGet, u, nil, out)
-		if err == nil || !retryable(err) || i == getAttempts {
-			return err
-		}
-		wait := time.Duration(i) * c.backoff
-		if ae, ok := err.(*APIError); ok && ae.hasRetryAfter {
-			wait = ae.retryAfter
-		}
-		if wait <= 0 { // a Retry-After of zero (or past): at once
-			continue
-		}
-		if serr := c.sleep(ctx, wait); serr != nil {
-			return serr
-		}
-	}
-	return err
-}
-
-// retryable tells whether err is an answer worth another try: 429 or 5xx.
-func retryable(err error) bool {
-	e, ok := err.(*APIError)
-	return ok && (e.Status == http.StatusTooManyRequests || e.Status >= 500)
+	return c.do(ctx, http.MethodGet, path, nil, out)
 }
 
 // Post calls POST /iam<path> with body as JSON (nil for none) and decodes the answer into out; never retried.
@@ -194,11 +173,34 @@ func (c *Client) Raw(ctx context.Context, method, path string, query url.Values,
 	if len(query) > 0 {
 		path += "?" + query.Encode()
 	}
+	return c.exchange(ctx, method, path, body)
+}
+
+// do is exchange, a non-2xx answer an *APIError and a 2xx one decoded into out (nil to ignore it).
+func (c *Client) do(ctx context.Context, method, path string, payload []byte, out any) error {
+	status, data, err := c.exchange(ctx, method, path, payload)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return parseError(status, data)
+	}
+	if out == nil || len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return &unreadableError{fmt.Errorf("decode the manager's answer: %w", err)}
+	}
+	return nil
+}
+
+// exchange sends the request and gives its answer's status and body. A GET answered 429 or 5xx is tried again, up to
+// getAttempts in all, after the Retry-After of a 429 or 503 when it is readable (zero or past: at once), else after a
+// backoff that grows with each try; any other request is sent once.
+func (c *Client) exchange(ctx context.Context, method, path string, payload []byte) (int, []byte, error) {
 	for i := 1; ; i++ {
-		var h http.Header
-		status, h, data, err = c.send(ctx, method, path, body)
-		retry := err == nil && method == http.MethodGet && i < getAttempts && (status == http.StatusTooManyRequests || status >= 500)
-		if !retry {
+		status, h, data, err := c.send(ctx, method, path, payload)
+		if err != nil || method != http.MethodGet || i == getAttempts || (status != http.StatusTooManyRequests && status < 500) {
 			return status, data, err
 		}
 		wait := time.Duration(i) * c.backoff
@@ -210,31 +212,10 @@ func (c *Client) Raw(ctx context.Context, method, path string, query url.Values,
 		if wait <= 0 {
 			continue
 		}
-		if serr := c.sleep(ctx, wait); serr != nil {
-			return 0, nil, serr
+		if err := c.sleep(ctx, wait); err != nil {
+			return 0, nil, err
 		}
 	}
-}
-
-func (c *Client) do(ctx context.Context, method, path string, payload []byte, out any) error {
-	status, h, data, err := c.send(ctx, method, path, payload)
-	if err != nil {
-		return err
-	}
-	if status >= 300 {
-		ae := parseError(status, data)
-		if status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
-			ae.retryAfter, ae.hasRetryAfter = retryAfter(h.Get("Retry-After"), c.now())
-		}
-		return ae
-	}
-	if out == nil || len(bytes.TrimSpace(data)) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return &unreadableError{fmt.Errorf("decode the manager's answer: %w", err)}
-	}
-	return nil
 }
 
 // send makes one signed request and reads its answer, whatever its status.

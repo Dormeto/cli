@@ -21,6 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/smithy-go"
+
+	"github.com/Dormeto/cli/internal/discover"
 )
 
 // Verdict is how a check came out.
@@ -503,7 +505,7 @@ func narrowed(principal string, arns []string) []string {
 // rootAccount is the account of a principal that is an account's root (arn:<partition>:iam::<account>:root, or the bare
 // account id).
 func rootAccount(principal string) (string, bool) {
-	if accountIDRe.MatchString(principal) {
+	if discover.IsAccountID(principal) {
 		return principal, true
 	}
 	parts := strings.SplitN(principal, ":", 6)

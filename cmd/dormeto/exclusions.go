@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
@@ -85,7 +86,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("--target-group: %q is not the ARN of an application target group", tg)
 			case lb != "" && !fleet.IsLoadBalancerARN(lb):
 				err = usagef("--load-balancer: %q is not the ARN of an application load balancer", lb)
-			case account != "" && !accountID.MatchString(account):
+			case account != "" && !discover.IsAccountID(account):
 				err = usagef("--account: %q is not 12 digits", account)
 			}
 			switch {

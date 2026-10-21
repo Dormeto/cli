@@ -55,14 +55,6 @@ func TestNewestIsTheHighestVersionAboveTheRunningOne(t *testing.T) {
 	}
 }
 
-func TestIsVersion(t *testing.T) {
-	for v, want := range map[string]bool{"0.18.1": true, "1.2.3-rc.1": true, "10.0.0-a-b.c": true, "1.2": false, "v1.2.3": false, "1.2.3-": false, "1.2.3 ": false, "": false} {
-		if IsVersion(v) != want {
-			t.Errorf("IsVersion(%q) = %t", v, !want)
-		}
-	}
-}
-
 func TestUpdatePlanText(t *testing.T) {
 	s := parse[UpdateState](t, cliUpdateState)
 	want := "plan       0.18.0, build dmt-prod-install:cccc\n" +

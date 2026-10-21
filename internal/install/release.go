@@ -34,9 +34,9 @@ type Release struct {
 }
 
 var (
-	managerVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
-	sumLineRe        = regexp.MustCompile(`^([0-9a-fA-F]{64}) [ *](\S.*)$`)
-	zipRe            = regexp.MustCompile(`^terraform-aws-dormeto-(.+)\.zip$`)
+	versionRe = regexp.MustCompile(`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
+	sumLineRe = regexp.MustCompile(`^([0-9a-fA-F]{64}) [ *](\S.*)$`)
+	zipRe     = regexp.MustCompile(`^terraform-aws-dormeto-(.+)\.zip$`)
 )
 
 // get reads one URL; any status but 200 is an error naming the URL and the status (notFound: true for a 404).
@@ -116,7 +116,7 @@ func (e *NotPublishedError) Error() string {
 }
 
 func resolvePublished(ctx context.Context, h HTTP, version string) (Release, error) {
-	if !managerVersionRe.MatchString(version) {
+	if !IsVersion(version) {
 		return Release{}, fmt.Errorf("%q is not a manager version (like 0.11.0)", version)
 	}
 	base := ReleasesURL + "/" + version
@@ -236,6 +236,10 @@ func AtLeast(version, floor string) bool {
 	b, _ := splitVersion(floor)
 	return compareCore(a, b) >= 0
 }
+
+// IsVersion tells whether v is a version as the manager and its releases write one: 1.2.3, with an optional
+// pre-release (1.2.3-rc.1).
+func IsVersion(v string) bool { return versionRe.MatchString(v) }
 
 // CompareVersions is semver precedence: major.minor.patch numerically, then a pre-release sorts before its release,
 // pre-releases compared as strings.
