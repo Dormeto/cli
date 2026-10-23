@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- The hibernation of workloads' EC2 instances, set at its three levels (manager 0.19.0, routers 0.32.0): `dormeto
+  settings show` and `settings set --hibernate true|false` for the manager's default, `routers settings <router>...
+  --hibernate true|false|inherit`, `workloads settings (<router>/<workload>... | --tag k=v...) --hibernate
+  true|false|inherit` and `workloads onboard --hibernate true|false`. Several targets are confirmed on a terminal
+  (`--yes` without one, `--dry-run` lists them); a workload written by Terraform is refused with the manager's text
+  (exit 1); `--json` prints the manager's answers.
+- `routers show` prints the router's hibernate setting (its own, or `inherit (manager: on, read 2m ago)`, or the
+  built-in default) and `workloads show` the value, where it comes from and which instances were launched with
+  hibernation; nothing for a router before 0.32.0.
+
 ## 0.6.0
 
 - Every operation of the manager from the command line, a verb per action of the dashboard, through the manager's

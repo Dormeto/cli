@@ -40,6 +40,7 @@ type WorkloadDetails struct {
 		WakeTimeoutSeconds *int `json:"wakeTimeoutSeconds"`
 		MaxHolders         *int `json:"maxHolders"`
 	} `json:"settings"`
+	Hibernation    *Hibernation    `json:"hibernation"`
 	Pauses         []Pause         `json:"pauses"`
 	Schedule       json.RawMessage `json:"schedule"`
 	Next           []NextEvent     `json:"next"`
@@ -122,12 +123,17 @@ func (d WorkloadDetails) settingsText() string {
 		}
 		return format(*v)
 	}
+	var hibernate, instances string
+	if h := d.Hibernation; h != nil {
+		hibernate, instances = h.Text(), h.Readiness()
+	}
 	return block(Labelled([][2]string{
 		{"idle window", n(s.IdleMinutes, func(v int) string { return fmt.Sprintf("%d min", v) })},
 		{"hold", n(s.WaitSeconds, func(v int) string { return Seconds(v) })},
 		{"drain", n(s.DrainSeconds, func(v int) string { return Seconds(v) })},
 		{"wake timeout", n(s.WakeTimeoutSeconds, func(v int) string { return Seconds(v) })},
 		{"held requests", n(s.MaxHolders, func(v int) string { return fmt.Sprintf("≤ %d", v) })},
+		{"hibernate", hibernate}, {"hibernate readiness", instances},
 	}))
 }
 

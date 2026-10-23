@@ -182,6 +182,23 @@ func TestOnboardKubernetesCandidateSendsItsFallbackTypes(t *testing.T) {
 	}
 }
 
+// --hibernate false goes in the settings; inherit is no onboarding value (leave the flag out), as is anything but true
+// or false.
+func TestOnboardSendsHibernateAndRefusesInherit(t *testing.T) {
+	a := pendingAPI()
+	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--hibernate", "false", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"hibernate":false,"idleMinutes":15,"wakeMode":"any"}`) {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	for _, v := range []string{"inherit", "maybe", ""} {
+		a := pendingAPI()
+		r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--hibernate", v, "--no-wait")
+		if r.exit != 2 || len(a.writes) != 0 {
+			t.Errorf("--hibernate %q: exit %d, writes %q", v, r.exit, a.writes)
+		}
+	}
+}
+
 // An empty or blank --name is no name, as the manager takes it: the target group's name is the default.
 func TestOnboardEmptyNameIsTheDefaultName(t *testing.T) {
 	for _, name := range []string{"", "   "} {

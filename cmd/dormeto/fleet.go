@@ -263,7 +263,7 @@ func newRouters(deps fleetDeps) *cobra.Command {
 	cmd := fleetCommand("routers", "List, show, install, upgrade, pause and uninstall the manager's routers")
 	f.bind(cmd)
 	cmd.AddCommand(newRoutersList(f, deps), newRoutersUpgrade(f, deps), newRoutersShow(f, deps), newRoutersInstall(f, deps),
-		newRoutersUninstall(f, deps), newRoutersPause(f, deps), newRoutersResume(f, deps))
+		newRoutersUninstall(f, deps), newRoutersPause(f, deps), newRoutersResume(f, deps), newRoutersSettings(f, deps))
 	return cmd
 }
 
@@ -344,7 +344,7 @@ func newWorkloads(deps fleetDeps) *cobra.Command {
 	cmd.AddCommand(newWorkloadsList(f, deps), newWorkloadsKeepAwake(f, deps), newWorkloadsResume(f, deps), newWorkloadsSchedule(f, deps),
 		newWorkloadsShow(f, deps), newWorkloadsHistory(f, deps), newWorkloadsIdleWindow(f, deps),
 		newWorkloadsWake(f, deps), newWorkloadsNap(f, deps), newWorkloadsPause(f, deps), newWorkloadsRename(f, deps), newWorkloadsTags(f, deps),
-		newWorkloadsOnboard(f, deps), newWorkloadsOffboard(f, deps), newWorkloadsExclude(f, deps))
+		newWorkloadsOnboard(f, deps), newWorkloadsOffboard(f, deps), newWorkloadsExclude(f, deps), newWorkloadsSettings(f, deps))
 	return cmd
 }
 

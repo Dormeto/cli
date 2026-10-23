@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers show`, `install`, `uninstall`, `pause` and `resume`: one router's details, and the operations on
+// `dormeto routers show`, `install`, `uninstall`, `pause`, `resume` and `settings`: one router's details, and the operations on
 // routers through the manager's /iam routes. Install and uninstall are operations, followed as `routers upgrade`'s are;
 // pause and resume are a call per router, one refused does not stop the others (exit 1 at the end). Several routers, and
 // always an uninstall, are confirmed on a terminal (--yes without one; --dry-run lists them). Exit codes as the fleet
@@ -78,7 +78,7 @@ func newRoutersShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if asJSON {
 					return printJSON(c.OutOrStdout(), d)
 				}
-				fmt.Fprint(c.OutOrStdout(), d.Text(deps.now().Location()))
+				fmt.Fprint(c.OutOrStdout(), d.Text(deps.now().Location(), deps.now()))
 				return nil
 			})
 		},
@@ -177,10 +177,16 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// routerCalls POSTs body to each router's route in turn: its line (what say makes of the answer) goes to textOut, its
+// routerCalls POSTs body to each router's route in turn (see routerSends).
+func routerCalls(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string, suffix string, body any, asJSON bool,
+	say func(answer json.RawMessage) string) error {
+	return routerSends(ctx, c, api, names, suffix, false, body, asJSON, say)
+}
+
+// routerSends sends body (POST, or PUT with put) to each router's route in turn: its line (what say makes of the answer) goes to textOut, its
 // failure to stderr as "router: message"; the others go on, and a failure makes the exit 1. Under --json the answers of
 // those that succeeded are printed on stdout, by router ({} for none), even when the run is cut short.
-func routerCalls(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string, suffix string, body any, asJSON bool,
+func routerSends(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string, suffix string, put bool, body any, asJSON bool,
 	say func(answer json.RawMessage) string) error {
 	answers := map[string]json.RawMessage{}
 	call := func() error {
@@ -190,7 +196,11 @@ func routerCalls(ctx context.Context, c *cobra.Command, api *fleet.Client, names
 				return err
 			}
 			var raw json.RawMessage
-			if err := api.Post(ctx, routerPath(name, suffix), body, &raw); err != nil {
+			send := api.Post
+			if put {
+				send = api.Put
+			}
+			if err := send(ctx, routerPath(name, suffix), body, &raw); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -310,6 +320,50 @@ func newRoutersResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
+	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
+	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
+	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
+	return cmd
+}
+
+func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
+	var (
+		hibernate   string
+		dryRun, yes bool
+		asJSON      bool
+	)
+	cmd := &cobra.Command{
+		Use: "settings <router>... --hibernate true|false|inherit", Short: "Set the hibernation of the workloads of routers",
+		SilenceErrors: true,
+		Long: "Set whether the EC2 instances of the routers' workloads are launched with hibernation and hibernated at a nap:\n" +
+			"true or false for the router, inherit to follow the manager's default (`dormeto settings set`). A workload's\n" +
+			"own setting wins over it. Routers 0.32.0 and later; an older one is refused with the version to upgrade it to.\n" +
+			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +
+			"the others (exit 1). Needs an administrator.",
+		RunE: func(c *cobra.Command, args []string) error {
+			names, err := routerNames(args)
+			var value *bool
+			if err == nil {
+				value, err = parseHibernate(hibernate, true)
+			}
+			if err != nil {
+				return finish(c, err)
+			}
+			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
+				question := fmt.Sprintf("Set hibernate %s on %s?", hibernateWord(value), strings.Join(names, ", "))
+				if done, err := confirmNames(ctx, c, deps, names, "router", question, false, dryRun, yes); done || err != nil {
+					return err
+				}
+				return routerSends(ctx, c, api, names, "/settings", true, map[string]*bool{"hibernate": value}, asJSON, func(raw json.RawMessage) string {
+					var a struct{ Settings struct{ Hibernate *bool } }
+					_ = json.Unmarshal(raw, &a)
+					return "hibernate " + hibernateWord(a.Settings.Hibernate)
+				})
+			})
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the manager's default)")
 	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")

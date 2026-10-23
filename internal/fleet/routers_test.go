@@ -13,7 +13,7 @@ func TestRouterDetailsTextMinimalAnswer(t *testing.T) {
 	if err := json.Unmarshal([]byte(in), &d); err != nil {
 		t.Fatal(err)
 	}
-	got := d.Text(time.UTC)
+	got := d.Text(time.UTC, time.Now())
 	for _, want := range []string{"version         0.31.0\n", "no scheduled run recorded", "check-failures —", "0, 0 paused", "idle check schedule      — (terraform)", "off (terraform)", "ip lists                 none", "no-wake rules            none"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lacks %q in\n%s", want, got)
@@ -43,7 +43,7 @@ func TestRouterDetailsTextIPListDownloadInTheZone(t *testing.T) {
 	if err := json.Unmarshal([]byte(in), &d); err != nil {
 		t.Fatal(err)
 	}
-	if got := d.Text(time.FixedZone("CEST", 2*3600)); !strings.Contains(got, "bots: 12 entries, downloaded 2026-10-19 10:00 CEST") {
+	if got := d.Text(time.FixedZone("CEST", 2*3600), time.Now()); !strings.Contains(got, "bots: 12 entries, downloaded 2026-10-19 10:00 CEST") {
 		t.Errorf("got\n%s", got)
 	}
 }

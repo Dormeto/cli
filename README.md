@@ -631,6 +631,9 @@ needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pau
 | `routers pause`, `resume` | `POST /routers/{router}/pause`, `POST /routers/{router}/resume` |
 | `workloads wake`, `nap`, `pause` and `keep-awake`, `resume`, `rename` | `POST /workloads/{router}/{id}/wake` (`nap`, `pause`, `resume`, `rename`) |
 | `workloads tags` | `PUT /workloads/{router}/{id}/tags` |
+| `settings set` | `PUT /settings/workloads` |
+| `routers settings` | `PUT /routers/{router}/settings` |
+| `workloads settings` | `PUT /workloads/{router}/{id}/settings` |
 | `workloads schedule set`, `clear` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
 | `workloads exclude`, `exclusions add` | `POST /exclusions` |
 | `exclusions lift` | `DELETE /exclusions/{id}` |
@@ -656,7 +659,7 @@ To find the API by name, the caller also needs `apigateway:GET`; `--api-url` doe
 Versions: every command needs manager 0.15.0 or later (the `/iam/` routes): an older one answers `Not Found`, and the
 CLI says to update it. A command a router is too old for is refused with the version to upgrade it to, printed as the
 manager words it: `routers show` and the pauses need routers 0.16.0, `workloads rename` 0.20.0, `workloads tags` 0.30.0,
-schedules 0.31.0. The manager refuses to demote or disable its last enabled administrator from manager 0.18.0 (409, "the
+schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0). The manager refuses to demote or disable its last enabled administrator from manager 0.18.0 (409, "the
 last administrator: give the admin role to another user first"); an older manager does not, and the CLI does not check
 it itself, so there `users role` and `users disable` can leave no person able to administer the manager.
 
@@ -895,11 +898,49 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
   schedule (`null`, `{"schedule": null}`, or the output of a router before 0.31.0) is refused with exit 2.
 - `schedule clear` removes the schedule.
 
+### Hibernation
+
+```sh
+dormeto settings show [--json]
+dormeto settings set --hibernate true|false [--json]
+dormeto routers settings <router>... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
+dormeto workloads settings <target>... | --tag k=v... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
+```
+
+```sh
+dormeto settings show
+dormeto settings set --hibernate false
+dormeto routers settings prod-eu --hibernate inherit
+dormeto workloads settings --tag env=dev --hibernate true --yes
+```
+
+From CLI 0.7.0, whether the EC2 instances of a workload are launched with hibernation and hibernated, not stopped,
+when it naps, is
+set at three levels; the most specific that is set wins: the workload, then its router, then the manager's default
+(on, for a router that reads none). A workload with fallback instance types never hibernates.
+
+- `settings show` prints the manager's default and who changed it and when: `Hibernate: on (changed by ann at 2026-10-19
+  10:00 CEST)`. `settings set` changes it (administrators) and prints what the manager says: the routers apply it at
+  their next check, within 5 minutes.
+- `routers settings` sets one router's value for the workloads that set none, `inherit` to follow the manager's default
+  (administrators; routers 0.32.0 and later, an older one is refused with the version to upgrade it to).
+- `workloads settings` sets a workload's own value, `inherit` to follow its router's (operators and administrators;
+  routers 0.32.0 and later). A workload written by Terraform is refused (`set hibernate in its workload module`).
+- Several routers or workloads are confirmed on a terminal; `--yes` skips it and is needed without one; `--dry-run`
+  lists the targets and sends nothing. A refusal is printed for its target, the others go on (exit 1). `--json` prints
+  the manager's answers (by router, or by `<router>/<workload>`).
+- `routers show` prints a `hibernate` line in its configuration: its own value, or `inherit (manager: on, read 2m ago)`
+  (an error of the last read after it), or `inherit (built-in default: on)` for a router that reads no manager
+  settings. `workloads show` prints the value and where it comes from (`on, from the router`) and, when the router lists
+  the instances, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`. Nothing is printed for a
+  router before 0.32.0.
+
 ### Onboarding, offboarding and excluding workloads
 
 ```sh
 dormeto workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
                           [--database <id>|cluster:<id>]... [--fallback-type <type>]... [--set-tag k=v]...
+                          [--hibernate true|false]
 dormeto workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry-run] [--yes]
 dormeto workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
 ```
@@ -926,7 +967,9 @@ dormeto workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
   - `--fallback-type`: an EC2 instance type, such as `t3a.medium`, tried in order at a wake when AWS has no capacity
     for the instance's own type (at most 5; for the EC2 instances of a workload);
   - `--set-tag key=value`: a Dormeto tag of the new workload (repeatable). It is `--set-tag`, not `--tag`, which selects
-    targets everywhere else.
+    targets everywhere else;
+  - `--hibernate true|false`: hibernation of its EC2 instances (see [Hibernation](#hibernation)); without it the
+    workload inherits its router's setting, then the manager's. `inherit` is not a value here: leave the flag out.
 - `offboard` starts the offboarding of each workload, at most `--concurrency` at once (1 to 20, 4 by default): the
   workload is woken, its application given back as it was, and it leaves Dormeto. It is always confirmed on a terminal.
 - `exclude` excludes each workload's target group from discovery, with a reason: the manager pauses its managed

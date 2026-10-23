@@ -58,6 +58,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		databases      []string
 		fallbacks      []string
 		setTags        []string
+		hibernate      string
 		wait           waitFlags
 		asJSON         bool
 	)
@@ -70,7 +71,9 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"default), --wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an\n" +
 			"RDS instance identifier, or cluster:<identifier>: stopped after the application, started before it),\n" +
 			"--fallback-type (an EC2 instance type such as t3a.medium, at most 5; for the EC2 instances of a workload) and\n" +
-			"--set-tag (Dormeto tags k=v; administrators). --no-wait only starts it; Ctrl-C and --timeout stop following,\n" +
+			"--set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernation of its EC2 instances,\n" +
+			"routers 0.32.0 and later; without it the workload inherits the router's or the manager's). --no-wait only\n" +
+			"starts it; Ctrl-C and --timeout stop following,\n" +
 			"the operation goes on in the manager: `dormeto operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
@@ -97,6 +100,10 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err == nil {
 				tags, err = parseTagFlag("--set-tag", setTags)
 			}
+			var hibernating *bool
+			if err == nil && c.Flags().Changed("hibernate") {
+				hibernating, err = parseHibernate(hibernate, false)
+			}
 			if err != nil {
 				return finish(c, err)
 			}
@@ -122,6 +129,9 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						dbs = append(dbs, map[string]string{"kind": "rds-instance", "id": d})
 					}
 				}
+				if hibernating != nil {
+					settings["hibernate"] = *hibernating
+				}
 				body := map[string]any{"type": "onboard", "candidateId": cand.ID, "settings": settings, "databases": dbs}
 				if name != "" {
 					body["name"] = name
@@ -145,6 +155,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier> (repeatable)")
 	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium (repeatable, at most 5; for the EC2 instances of a workload)")
 	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
+	fl.StringVar(&hibernate, "hibernate", "", "hibernate the EC2 instances at a nap: true or false (default: inherit)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd

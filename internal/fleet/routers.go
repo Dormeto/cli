@@ -29,8 +29,10 @@ type RouterDetails struct {
 		NoWakeRules    Configured[[]NoWake]   `json:"noWakeRules"`
 		Metrics        Configured[*bool]      `json:"metrics"`
 	} `json:"configuration"`
-	Pauses    []Pause `json:"pauses"`
-	Workloads struct {
+	Settings        *RouterSettings  `json:"settings"`
+	ManagerSettings *ManagerSettings `json:"managerSettings"`
+	Pauses          []Pause          `json:"pauses"`
+	Workloads       struct {
 		Total          int            `json:"total"`
 		ByState        map[string]int `json:"byState"`
 		Paused         int            `json:"paused"`
@@ -145,9 +147,9 @@ func (d RouterDetails) MarshalJSON() ([]byte, error) {
 	return json.Marshal(routerDetailsFields(d))
 }
 
-// Text is the details as labelled lines, times in loc: the router, its health and figures, its pauses, then its
+// Text is the details as labelled lines, times in loc (ages from now): the router, its health and figures, its pauses, then its
 // configuration with where each setting is set.
-func (d RouterDetails) Text(loc *time.Location) string {
+func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	h := d.Health
 	version := orNone(d.Router.Version)
 	if d.Router.Build != "" {
@@ -194,7 +196,8 @@ func (d RouterDetails) Text(loc *time.Location) string {
 	if c.IPListsCatalog != nil {
 		conf = append(conf, [2]string{"manager's ip lists", withSource(listsText(c.IPListsCatalog.Value.Lists), c.IPListsCatalog.Source)})
 	}
-	conf = append(conf, [2]string{"no-wake rules", withSource(rulesText(c.NoWakeRules.Value), c.NoWakeRules.Source)})
+	conf = append(conf, [2]string{"no-wake rules", withSource(rulesText(c.NoWakeRules.Value), c.NoWakeRules.Source)},
+		[2]string{"hibernate", d.hibernateText(loc, now)})
 	return Labelled(rows) + "\nconfiguration\n" + indent(Labelled(conf))
 }
 
