@@ -29,6 +29,7 @@ type RouterDetails struct {
 		NoWakeRules    Configured[[]NoWake]   `json:"noWakeRules"`
 		Metrics        Configured[*bool]      `json:"metrics"`
 	} `json:"configuration"`
+	Description     *Description     `json:"description"`
 	Settings        *RouterSettings  `json:"settings"`
 	ManagerSettings *ManagerSettings `json:"managerSettings"`
 	Pauses          []Pause          `json:"pauses"`
@@ -198,7 +199,7 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	}
 	conf = append(conf, [2]string{"no-wake rules", withSource(rulesText(c.NoWakeRules.Value), c.NoWakeRules.Source)},
 		[2]string{"hibernate", d.hibernateText(loc, now)})
-	return Labelled(rows) + "\nconfiguration\n" + indent(Labelled(conf))
+	return Labelled(rows) + d.Description.block(loc) + "\nconfiguration\n" + indent(Labelled(conf))
 }
 
 func deref(s *string) string {

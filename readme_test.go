@@ -93,11 +93,11 @@ func TestReadmeSections(t *testing.T) {
 // The manager's commands of CLI 0.7.0, as `dormeto --help` and each group's --help list them.
 var managerCommands = []string{
 	"whoami", "api", "overview",
-	"routers list", "routers show", "routers install", "routers uninstall", "routers upgrade", "routers pause", "routers resume", "routers settings",
+	"routers list", "routers show", "routers install", "routers uninstall", "routers upgrade", "routers pause", "routers resume", "routers settings", "routers description",
 	"workloads list", "workloads show", "workloads history", "workloads idle-window", "workloads wake", "workloads nap",
 	"workloads pause", "workloads keep-awake", "workloads resume", "workloads rename", "workloads tags",
 	"workloads schedule show", "workloads schedule set", "workloads schedule clear",
-	"workloads settings", "workloads onboard", "workloads offboard", "workloads exclude", "settings show", "settings set",
+	"workloads settings", "workloads description", "workloads onboard", "workloads offboard", "workloads exclude", "settings show", "settings set",
 	"discovery status", "discovery run", "discovery candidates", "discovery dismiss", "discovery restore", "discovery access",
 	"discovery config show", "discovery config set",
 	"exclusions list", "exclusions add", "exclusions lift",

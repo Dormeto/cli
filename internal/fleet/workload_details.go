@@ -40,6 +40,7 @@ type WorkloadDetails struct {
 		WakeTimeoutSeconds *int `json:"wakeTimeoutSeconds"`
 		MaxHolders         *int `json:"maxHolders"`
 	} `json:"settings"`
+	Description    *Description    `json:"description"`
 	Hibernation    *Hibernation    `json:"hibernation"`
 	Pauses         []Pause         `json:"pauses"`
 	Schedule       json.RawMessage `json:"schedule"`
@@ -98,6 +99,7 @@ func (d WorkloadDetails) Text(router string, loc *time.Location) string {
 		{"workload", router + "/" + d.WorkloadID}, {"name", d.Name}, {"state", state}, {"failure", failure}, {"url", d.URL},
 		{"account", d.Account}, {"region", d.Region}, {"router version", version}, {"tags", strings.Join(tags, ", ")},
 	}))
+	b.WriteString(d.Description.block(loc))
 	section := func(title, text string) {
 		if text != "" {
 			b.WriteString("\n" + title + "\n" + text)

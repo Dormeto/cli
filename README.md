@@ -634,6 +634,8 @@ needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pau
 | `settings set` | `PUT /settings/workloads` |
 | `routers settings` | `PUT /routers/{router}/settings` |
 | `workloads settings` | `PUT /workloads/{router}/{id}/settings` |
+| `routers description` | `PUT /routers/{router}/description`, `DELETE` on the same path |
+| `workloads description` | `PUT /workloads/{router}/{id}/description`, `DELETE` on the same path |
 | `workloads schedule set`, `clear` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
 | `workloads exclude`, `exclusions add` | `POST /exclusions` |
 | `exclusions lift` | `DELETE /exclusions/{id}` |
@@ -936,6 +938,34 @@ workload itself (a hibernated instance cannot change type).
   settings. `workloads show` prints the value and where it comes from (`on, from the router`) and, when the router lists
   the instances, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`. Nothing is printed for a
   router before 0.32.0.
+
+### Descriptions
+
+```sh
+dormeto workloads description <router>/<workload> [--set <text> | --file <path or -> | --clear] [--json]
+dormeto routers description <router> [--set <text> | --file <path or -> | --clear] [--json]
+```
+
+```sh
+dormeto workloads description prod-eu/w-1
+dormeto workloads description prod-eu/w-1 --set "Shop front, owned by payments"
+dormeto routers description prod-eu --file runbook.md
+cat notes.md | dormeto routers description prod-eu --file -
+dormeto workloads description prod-eu/w-1 --clear
+```
+
+From CLI 0.7.0 (manager 0.19.0), a workload or a router can carry a short description in Markdown: what it is, who owns
+it, where its runbook is. The dashboard draws it; the CLI prints it as written.
+
+- Without a flag, the command prints the text as written (raw Markdown), then `— ann@x.io, 2026-10-19 10:00 CEST`
+  (who wrote it and when), or `no description`.
+- `--set` gives the text, `--file` reads it from a file (`-` for standard input), `--clear` removes it; give at most one
+  (more is a usage error, exit 2). The text is at most 4,000 characters and holds no control character other than line
+  feed and tab; an empty text clears. The manager's refusal is printed (exit 1).
+- A workload's description is written by operators and administrators, a router's by administrators. `--json` prints the
+  manager's answer.
+- `workloads show` and `routers show` print the description, indented, under their header lines; nothing for none, or
+  for a manager before 0.19.0.
 
 ### Onboarding, offboarding and excluding workloads
 

@@ -11,6 +11,10 @@
 - `routers show` prints the router's hibernate setting (its own, or `inherit (manager: on, read 2m ago)`, or the
   built-in default) and `workloads show` the value, where it comes from and which instances were launched with
   hibernation; nothing for a router before 0.32.0.
+- The optional Markdown description of a workload or a router (manager 0.19.0): `workloads description
+  <router>/<workload>` and `routers description <router>` print it as written, with who wrote it and when, or `no
+  description`; `--set <text>`, `--file <path or ->` and `--clear` (at most one, else exit 2) write it; `--json`
+  prints the manager's answer. `workloads show` and `routers show` print it, indented, under their header lines.
 
 ## 0.6.0
 
