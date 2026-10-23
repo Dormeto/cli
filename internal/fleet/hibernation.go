@@ -67,11 +67,10 @@ func (d RouterDetails) hibernateText(loc *time.Location, now time.Time) string {
 	if m.ReadAt != "" {
 		read = "read " + Age(m.ReadAt, now) + " ago"
 	}
-	text := fmt.Sprintf("inherit (manager: %s, %s)", value, read)
 	if m.Error != "" {
-		text += ", " + m.Error
+		read += "; last read failed: " + m.Error
 	}
-	return text
+	return fmt.Sprintf("inherit (manager: %s, %s)", value, read)
 }
 
 // fromText is where a workload's value comes from.

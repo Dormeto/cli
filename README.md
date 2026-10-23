@@ -934,10 +934,10 @@ workload itself (a hibernated instance cannot change type).
   lists the targets and sends nothing. A refusal is printed for its target, the others go on (exit 1). `--json` prints
   the manager's answers (by router, or by `<router>/<workload>`).
 - `routers show` prints a `hibernate` line in its configuration: its own value, or `inherit (manager: on, read 2m ago)`
-  (an error of the last read after it), or `inherit (built-in default: on)` for a router that reads no manager
+  (`; last read failed: <error>` inside the parentheses when the last read failed), or `inherit (built-in default: on)` for a router that reads no manager
   settings. `workloads show` prints the value and where it comes from (`on, from the router`) and, when the router lists
-  the instances, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`. Nothing is printed for a
-  router before 0.32.0.
+  the instances and hibernation is on, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`.
+  Nothing is printed for a router before 0.32.0.
 
 ### Descriptions
 
@@ -961,9 +961,11 @@ it, where its runbook is. The dashboard draws it; the CLI prints it as written.
   (who wrote it and when), or `no description`.
 - `--set` gives the text, `--file` reads it from a file (`-` for standard input), `--clear` removes it; give at most one
   (more is a usage error, exit 2). The text is at most 4,000 characters and holds no control character other than line
-  feed and tab; an empty text clears. The manager's refusal is printed (exit 1).
-- A workload's description is written by operators and administrators, a router's by administrators. `--json` prints the
-  manager's answer.
+  feed and tab; an empty `--set` text clears. A `--file` that is empty, not UTF-8 text or over 64 KiB is refused (exit 2:
+  use `--clear` to remove), a leading byte order mark is dropped. The manager's refusal is printed (exit 1). Reading
+  with a manager before 0.19.0 (or when its read failed) is an error, not `no description` (exit 1).
+- A workload's description is written by operators and administrators, a router's by administrators. `--json` prints
+  `{"description": …}`, as the manager answers a write.
 - `workloads show` and `routers show` print the description, indented, under their header lines; nothing for none, or
   for a manager before 0.19.0.
 

@@ -160,16 +160,6 @@ func TestWorkloadsSettingsRefusesABadValueOrNoTarget(t *testing.T) {
 	}
 }
 
-func TestOnboardRefusesInheritAndABadHibernate(t *testing.T) {
-	for _, v := range []string{"inherit", "maybe"} {
-		a := &routersAPI{}
-		r := runFleetWith(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, "workloads", "onboard", "tg", "--hibernate", v)
-		if r.exit != 2 || len(a.posted) != 0 {
-			t.Errorf("%s: exit %d, posted %q, stderr %q", v, r.exit, a.posted, r.stderr)
-		}
-	}
-}
-
 func TestRoutersShowPrintsTheHibernation(t *testing.T) {
 	show := func(extra string) string {
 		a := &routersAPI{}
@@ -188,7 +178,7 @@ func TestRoutersShowPrintsTheHibernation(t *testing.T) {
 	}
 	for name, c := range map[string]struct{ extra, want string }{
 		"inherit": {`"settings":{"hibernate":null,"by":null,"at":null},"managerSettings":{"url":"s3://b/settings.json","hibernate":true,"readAt":"2026-10-19T11:58:00.000Z","error":null},`, "inherit (manager: on, read 2m ago)"},
-		"error":   {`"settings":{"hibernate":null},"managerSettings":{"url":"s3://b/settings.json","hibernate":true,"readAt":"2026-10-19T11:58:00.000Z","error":"AccessDenied"},`, "inherit (manager: on, read 2m ago), AccessDenied"},
+		"error":   {`"settings":{"hibernate":null},"managerSettings":{"url":"s3://b/settings.json","hibernate":true,"readAt":"2026-10-19T11:58:00.000Z","error":"AccessDenied"},`, "inherit (manager: on, read 2m ago; last read failed: AccessDenied)"},
 		"default": {`"settings":{"hibernate":null},"managerSettings":null,`, "built-in default: on"},
 		"no url":  {`"settings":{"hibernate":null},"managerSettings":{"url":null},`, "built-in default: on"},
 		"router":  {`"settings":{"hibernate":false,"by":"ann@x.io","at":"2026-10-19T10:00:00.000Z"},"managerSettings":null,`, "off (set on this router by ann@x.io, 2026-10-19 10:00 UTC)"},
@@ -238,5 +228,39 @@ func TestWorkloadsShowPrintsTheHibernationAndReadiness(t *testing.T) {
 	}
 	if out := show(""); strings.Contains(out, "hibernat") {
 		t.Errorf("an old router prints a hibernation line:\n%s", out)
+	}
+}
+
+// A manager before 0.19.0 answers the new routes "no route for …".
+func TestSettingsCommandsOnAnOldManagerSayWhichVersionIsNeeded(t *testing.T) {
+	old := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		io.WriteString(w, `{"error":"not_found","message":"no route for `+r.Method+` `+r.URL.Path+`"}`)
+	}
+	for _, args := range [][]string{
+		{"settings", "show"},
+		{"settings", "set", "--hibernate", "true"},
+		{"routers", "settings", "r1", "--hibernate", "true"},
+		{"workloads", "settings", "prod-eu/w-1", "--hibernate", "true"},
+	} {
+		r := runFleetWith(t, &fakeAPI{custom: old}, "eu-west-1", nil, args...)
+		if r.exit != 1 || !strings.Contains(r.stderr, "needs manager 0.19.0 or later (no route for ") {
+			t.Errorf("%q: exit %d, stderr %q", args, r.exit, r.stderr)
+		}
+	}
+}
+
+func TestSettingsConfirmationReadsToTheValueForTheTargets(t *testing.T) {
+	for _, c := range []struct{ value, want string }{{"true", "Set hibernate to on for "}, {"false", "Set hibernate to off for "}, {"inherit", "Set hibernate to inherit for "}} {
+		var asked []string
+		runFleetWith(t, &fakeAPI{custom: (&wrAPI{}).handler()}, "eu-west-1", withTerminal(false, &asked), "routers", "settings", "prod-eu", "prod-us", "--hibernate", c.value)
+		if len(asked) != 1 || asked[0] != c.want+"prod-eu, prod-us?" {
+			t.Errorf("routers %s: asked %q", c.value, asked)
+		}
+		asked = nil
+		runFleetWith(t, &fakeAPI{custom: (&wrAPI{}).handler()}, "eu-west-1", withTerminal(false, &asked), "workloads", "settings", "prod-eu/w-1", "prod-eu/w-2", "--hibernate", c.value)
+		if len(asked) != 1 || !strings.HasPrefix(asked[0], c.want) {
+			t.Errorf("workloads %s: asked %q", c.value, asked)
+		}
 	}
 }

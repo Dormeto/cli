@@ -79,8 +79,8 @@ func save(path, text string) error {
 	return os.WriteFile(path, []byte(text), 0o644)
 }
 
-// plural is "1 account" or "5 accounts" at a time.
-func plural(n int, word string) string {
+// Plural is "1 account" or "5 accounts" at a time.
+func Plural(n int, word string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, word)
 	}
@@ -232,7 +232,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 	}
 	views := progress.Options{Now: deps.Now, Log: deps.Log, Status: deps.Status}
 
-	deps.Log(fmt.Sprintf("Phase 1: discovery (%s at a time)", plural(o.Parallel, "account")))
+	deps.Log(fmt.Sprintf("Phase 1: discovery (%s at a time)", Plural(o.Parallel, "account")))
 	targets := make([]discover.Target, len(reached.Accounts))
 	for i, a := range reached.Accounts {
 		targets[i] = discover.Target{Account: a.Account, Credentials: a.Credentials}
@@ -255,7 +255,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 	// Excluded by their tags before their requests are read.
 	regions, excluded := estimate.ExcludeByTags(discovered, o.ExcludeTags)
 
-	deps.Log(fmt.Sprintf("Phase 2: requests (%s at a time)", plural(o.Parallel, "region")))
+	deps.Log(fmt.Sprintf("Phase 2: requests (%s at a time)", Plural(o.Parallel, "region")))
 	// An account's CloudWatch in a region, with its credentials as asked for that region (a role renewed in time).
 	cloudwatchOf := func(ctx context.Context, account, region string) (metrics.CloudWatchPort, error) {
 		var creds *aws.Credentials
@@ -355,7 +355,7 @@ func reachingView(deps Deps) (say func(string), listing func(discover.InventoryP
 			return
 		}
 		walking = true
-		deps.Status.Update(fmt.Sprintf("  Listing the organization's accounts: %d/%s read · %s", p.Read, plural(p.Found, "organizational unit"), plural(p.Accounts, "account")))
+		deps.Status.Update(fmt.Sprintf("  Listing the organization's accounts: %d/%s read · %s", p.Read, Plural(p.Found, "organizational unit"), Plural(p.Accounts, "account")))
 	}
 	return say, listing
 }

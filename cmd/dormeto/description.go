@@ -5,16 +5,20 @@ package main
 // --set, --file and --clear is a usage error (2).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dormeto/cli/internal/cli"
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
@@ -51,22 +55,59 @@ func (d *descriptionFlags) request(c *cobra.Command) (method string, body any, w
 	case fl.Changed("set"):
 		return "PUT", map[string]string{"text": d.set}, true, nil
 	case fl.Changed("file"):
-		var data []byte
-		var err error
-		switch d.file {
-		case "":
-			return "", nil, false, usagef("--file: name a file (- for standard input)")
-		case "-":
-			data, err = io.ReadAll(c.InOrStdin())
-		default:
-			data, err = os.ReadFile(d.file)
-		}
+		text, err := d.fileText(c.InOrStdin())
 		if err != nil {
-			return "", nil, false, usagef("--file: %v", err)
+			return "", nil, false, err
 		}
-		return "PUT", map[string]string{"text": string(data)}, true, nil
+		return "PUT", map[string]string{"text": text}, true, nil
 	}
 	return "", nil, false, nil
+}
+
+// maxFileBytes bounds what --file reads: far over the manager's 4,000 characters, short of a pipe by mistake.
+const maxFileBytes = 64 << 10
+
+// fileText is the text of --file: a path or - for standard input. Unlike --set "" and --clear, a file that is empty
+// (or only white space) is refused, not taken for a clear: it is the one input that is empty by accident (a mistyped
+// command piped in). A leading byte order mark is dropped.
+func (d *descriptionFlags) fileText(stdin io.Reader) (string, error) {
+	var in io.Reader = stdin
+	name := "standard input"
+	switch d.file {
+	case "":
+		return "", usagef("--file: name a file (- for standard input)")
+	case "-":
+	default:
+		f, err := os.Open(d.file)
+		if err != nil {
+			return "", usagef("--file: %v", err)
+		}
+		defer f.Close()
+		in, name = f, d.file
+	}
+	data, err := io.ReadAll(io.LimitReader(in, maxFileBytes+1))
+	switch {
+	case err != nil:
+		return "", usagef("--file: %v", err)
+	case len(data) > maxFileBytes:
+		return "", usagef("--file: larger than 64 KiB")
+	case !utf8.Valid(data):
+		return "", usagef("--file: not UTF-8 text")
+	}
+	data = bytes.TrimPrefix(data, []byte("\ufeff"))
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", usagef("--file: %s is empty (use --clear to remove the description)", name)
+	}
+	return string(data), nil
+}
+
+// needsManager019 words the answer of a manager before 0.19.0 to a route it does not have; any other error is as it is.
+func needsManager019(err error) error {
+	var ae *fleet.APIError
+	if errors.As(err, &ae) && ae.Status == 404 && !ae.Gateway && strings.HasPrefix(ae.Message, "no route for") {
+		return fmt.Errorf("needs manager 0.19.0 or later (%s)", ae.Message)
+	}
+	return err
 }
 
 // newDescription builds the command of one kind: target gives the name the answer is said under and the route of the
@@ -95,12 +136,7 @@ func newDescription(f *fleetFlags, deps fleetDeps, use, short, long string, targ
 					if err := api.Get(ctx, detail, nil, &raw); err != nil {
 						return err
 					}
-					return printRead(c, raw, asJSON, func(a struct{ Description *fleet.Description }) string {
-						if a.Description == nil || strings.TrimSpace(a.Description.Text) == "" {
-							return "no description\n"
-						}
-						return a.Description.Printed(deps.now().Location())
-					})
+					return printDescription(c, raw, asJSON, deps.now().Location())
 				}
 				var err error
 				if method == "DELETE" {
@@ -109,13 +145,13 @@ func newDescription(f *fleetFlags, deps fleetDeps, use, short, long string, targ
 					err = api.Put(ctx, detail+"/description", body, &raw)
 				}
 				if err != nil {
-					return err
+					return needsManager019(err)
 				}
 				return printRead(c, raw, asJSON, func(a struct{ Description *fleet.Description }) string {
 					if a.Description == nil {
 						return label + ": description cleared\n"
 					}
-					return fmt.Sprintf("%s: description set (%d characters)\n", label, utf8.RuneCountInString(a.Description.Text))
+					return fmt.Sprintf("%s: description set (%s)\n", label, cli.Plural(utf8.RuneCountInString(a.Description.Text), "character"))
 				})
 			})
 		},
@@ -123,6 +159,34 @@ func newDescription(f *fleetFlags, deps fleetDeps, use, short, long string, targ
 	d.bind(cmd)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
+}
+
+// printDescription prints what a detail answer holds of the description. A key that is null is no description; a key
+// that is absent (a manager before 0.19.0, or one whose read failed) is an error, so that no client offers to write over
+// a text it could not see. --json prints the same {"description": …} as the writes.
+func printDescription(c *cobra.Command, detail json.RawMessage, asJSON bool, loc *time.Location) error {
+	var a struct{ Description json.RawMessage }
+	if err := json.Unmarshal(detail, &a); err != nil {
+		return fmt.Errorf("decode the manager's answer: %w", err)
+	}
+	if a.Description == nil {
+		return errors.New("the manager did not return the description (manager 0.19.0 or later, or its read failed)")
+	}
+	if asJSON {
+		return printJSON(c.OutOrStdout(), struct {
+			Description json.RawMessage `json:"description"`
+		}{a.Description})
+	}
+	var d *fleet.Description
+	if err := json.Unmarshal(a.Description, &d); err != nil {
+		return fmt.Errorf("decode the manager's answer: %w", err)
+	}
+	if d == nil || strings.TrimSpace(d.Text) == "" {
+		fmt.Fprintln(c.OutOrStdout(), "no description")
+		return nil
+	}
+	fmt.Fprint(c.OutOrStdout(), d.Printed(loc))
+	return nil
 }
 
 func newWorkloadsDescription(f *fleetFlags, deps fleetDeps) *cobra.Command {

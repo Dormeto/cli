@@ -81,7 +81,7 @@ func newSettingsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
 				if err := api.Get(ctx, "/settings/workloads", nil, &raw); err != nil {
-					return err
+					return needsManager019(err)
 				}
 				return printRead(c, raw, asJSON, func(g globalSettings) string { return g.line(deps.now().Location()) + "\n" })
 			})
@@ -110,7 +110,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
 				if err := api.Put(ctx, "/settings/workloads", map[string]bool{"hibernate": *value}, &raw); err != nil {
-					return err
+					return needsManager019(err)
 				}
 				return printRead(c, raw, asJSON, func(g globalSettings) string {
 					return g.line(deps.now().Location()) + "\n" + g.Note + "\n"
@@ -134,9 +134,9 @@ func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the workloads nap: true\n" +
 			"or false for the workload, inherit to follow its router's setting, then the manager's. A workload with fallback\n" +
 			"instance types does not hibernate unless it is set true on the workload itself (a hibernated instance cannot\n" +
-			"change type). A workload written by Terraform is refused (set hibernate in its workload\n" +
-			"module), as is one on a router before 0.32.0; a refusal is printed for that workload, the others go on (exit 1).\n" +
-			"Several targets are confirmed on a terminal. Needs an operator.",
+			"change type). A workload written by Terraform is refused (set hibernate in its workload module), as is one on\n" +
+			"a router before 0.32.0; a refusal is printed for that workload, the others go on (exit 1). Several targets are\n" +
+			"confirmed on a terminal. Needs an operator.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			err := w.targets.check(args, false)
@@ -147,12 +147,12 @@ func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "hibernate "+hibernateWord(value)+": would act on", "Set hibernate "+hibernateWord(value)+" on %s?",
+			return w.run(c, args, "hibernate "+hibernateWord(value)+": would act on", "Set hibernate to "+hibernateWord(value)+" for %s?",
 				func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 					_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 						var raw json.RawMessage
 						if err := api.Put(ctx, t.Path("/settings"), map[string]*bool{"hibernate": value}, &raw); err != nil {
-							return "", nil, err
+							return "", nil, needsManager019(err)
 						}
 						var a struct {
 							Settings    struct{ Hibernate *bool }
