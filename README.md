@@ -659,9 +659,10 @@ To find the API by name, the caller also needs `apigateway:GET`; `--api-url` doe
 Versions: every command needs manager 0.15.0 or later (the `/iam/` routes): an older one answers `Not Found`, and the
 CLI says to update it. A command a router is too old for is refused with the version to upgrade it to, printed as the
 manager words it: `routers show` and the pauses need routers 0.16.0, `workloads rename` 0.20.0, `workloads tags` 0.30.0,
-schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0). The manager refuses to demote or disable its last enabled administrator from manager 0.18.0 (409, "the
-last administrator: give the admin role to another user first"); an older manager does not, and the CLI does not check
-it itself, so there `users role` and `users disable` can leave no person able to administer the manager.
+schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0). The manager refuses to demote or disable its last
+enabled administrator from manager 0.18.0 (409, "the last administrator: give the admin role to another user first");
+an older manager does not, and the CLI does not check it itself, so there `users role` and `users disable` can leave no
+person able to administer the manager.
 
 ### routers list
 
@@ -914,10 +915,11 @@ dormeto routers settings prod-eu --hibernate inherit
 dormeto workloads settings --tag env=dev --hibernate true --yes
 ```
 
-From CLI 0.7.0, whether the EC2 instances of a workload are launched with hibernation and hibernated, not stopped,
-when it naps, is
-set at three levels; the most specific that is set wins: the workload, then its router, then the manager's default
-(on, for a router that reads none). A workload with fallback instance types never hibernates.
+From CLI 0.7.0, whether the EC2 instances that were launched with hibernation are hibernated, not stopped, when a
+workload naps is set at three levels; the most specific that is set wins: the workload, then its router, then the
+manager's default (on, for a router that reads none). Dormeto never launches or changes an instance: every other
+instance is stopped as before. A workload with fallback instance types does not hibernate unless it is set true on the
+workload itself (a hibernated instance cannot change type).
 
 - `settings show` prints the manager's default and who changed it and when: `Hibernate: on (changed by ann at 2026-10-19
   10:00 CEST)`. `settings set` changes it (administrators) and prints what the manager says: the routers apply it at

@@ -229,6 +229,13 @@ func TestWorkloadsShowPrintsTheHibernationAndReadiness(t *testing.T) {
 	if out := show(`,"hibernation":{"hibernate":true,"from":"router","instances":null}`); strings.Contains(out, "instance") {
 		t.Errorf("null instances print a line:\n%s", out)
 	}
+	// off, or fallback types: every instance is stopped, so no readiness line
+	for _, from := range []string{"manager", "fallback-types"} {
+		off := `,"hibernation":{"hibernate":false,"from":"` + from + `","instances":[{"id":"i-0abc","configured":false}]}`
+		if out := show(off); strings.Contains(out, "stopped instead") || strings.Contains(out, "launched with hibernation") {
+			t.Errorf("%s: a readiness line with hibernation off:\n%s", from, out)
+		}
+	}
 	if out := show(""); strings.Contains(out, "hibernat") {
 		t.Errorf("an old router prints a hibernation line:\n%s", out)
 	}

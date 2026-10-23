@@ -74,8 +74,9 @@ func newSettingsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "show", Short: "Show the manager's default hibernation of workloads", Args: noArgs, SilenceErrors: true,
-		Long: "Show whether the EC2 instances of workloads are launched with hibernation by default, in every router that reads\n" +
-			"the manager's settings, and who changed it and when. --json prints the manager's answer.",
+		Long: "Show whether the EC2 instances launched with hibernation are hibernated, not stopped, when a workload naps, by\n" +
+			"default in every router that reads the manager's settings, and who changed it and when. --json prints the\n" +
+			"manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
@@ -97,9 +98,10 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "set --hibernate true|false", Short: "Set the manager's default hibernation of workloads", Args: noArgs, SilenceErrors: true,
-		Long: "Set whether the EC2 instances of workloads are launched with hibernation by default: true or false, for every\n" +
-			"router that reads the manager's settings and does not set its own, from its next check (within 5 minutes). A\n" +
-			"router's or a workload's own setting wins over it. Needs an administrator. --json prints the manager's answer.",
+		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when a workload naps: true\n" +
+			"or false by default, for every router that reads the manager's settings and does not set its own, from its next\n" +
+			"check (within 5 minutes). Every other instance is stopped as before. A router's or a workload's own setting wins\n" +
+			"over it. Needs an administrator. --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			value, err := parseHibernate(hibernate, false)
 			if err != nil {
@@ -129,9 +131,10 @@ func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "settings (<router>/<workload>... | --tag k=v...) --hibernate true|false|inherit", Short: "Set the hibernation of workloads",
-		Long: "Set whether the EC2 instances of the workloads are launched with hibernation and hibernated at a nap: true or\n" +
-			"false for the workload, inherit to follow its router's setting, then the manager's. A workload with fallback\n" +
-			"instance types never hibernates. A workload written by Terraform is refused (set hibernate in its workload\n" +
+		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the workloads nap: true\n" +
+			"or false for the workload, inherit to follow its router's setting, then the manager's. A workload with fallback\n" +
+			"instance types does not hibernate unless it is set true on the workload itself (a hibernated instance cannot\n" +
+			"change type). A workload written by Terraform is refused (set hibernate in its workload\n" +
 			"module), as is one on a router before 0.32.0; a refusal is printed for that workload, the others go on (exit 1).\n" +
 			"Several targets are confirmed on a terminal. Needs an operator.",
 		SilenceErrors: true,

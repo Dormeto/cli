@@ -335,8 +335,8 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "settings <router>... --hibernate true|false|inherit", Short: "Set the hibernation of the workloads of routers",
 		SilenceErrors: true,
-		Long: "Set whether the EC2 instances of the routers' workloads are launched with hibernation and hibernated at a nap:\n" +
-			"true or false for the router, inherit to follow the manager's default (`dormeto settings set`). A workload's\n" +
+		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the routers'\n" +
+			"workloads nap: true or false for the router, inherit to follow the manager's default (`dormeto settings set`). A workload's\n" +
 			"own setting wins over it. Routers 0.32.0 and later; an older one is refused with the version to upgrade it to.\n" +
 			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +
 			"the others (exit 1). Needs an administrator.",

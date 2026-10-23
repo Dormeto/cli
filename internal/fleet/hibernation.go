@@ -99,9 +99,10 @@ func (h Hibernation) Text() string {
 	return OnOff(h.Hibernate) + ", " + fromText(h.From)
 }
 
-// Readiness is which instances were launched with hibernation; "" when the router lists none.
+// Readiness is which instances were launched with hibernation; "" when the router lists none, or when the value is off
+// (every instance is stopped then, whatever it was launched with).
 func (h Hibernation) Readiness() string {
-	if h.Instances == nil || len(*h.Instances) == 0 {
+	if !h.Hibernate || h.Instances == nil || len(*h.Instances) == 0 {
 		return ""
 	}
 	var without []string

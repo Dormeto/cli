@@ -70,11 +70,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"workload's display name, up to 64 characters; empty, the target group's name), --idle-minutes (5 to 1440, 15 by\n" +
 			"default), --wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an\n" +
 			"RDS instance identifier, or cluster:<identifier>: stopped after the application, started before it),\n" +
-			"--fallback-type (an EC2 instance type such as t3a.medium, at most 5; for the EC2 instances of a workload) and\n" +
-			"--set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernation of its EC2 instances,\n" +
-			"routers 0.32.0 and later; without it the workload inherits the router's or the manager's). --no-wait only\n" +
-			"starts it; Ctrl-C and --timeout stop following,\n" +
-			"the operation goes on in the manager: `dormeto operations watch <id>`. Needs an operator.",
+			"--fallback-type (an EC2 instance type such as t3a.medium, at most 5; for the EC2 instances of a workload),\n" +
+			"--set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernate its instances launched\n" +
+			"with hibernation at a nap; routers 0.32.0 and later; without it the workload inherits the router's or the\n" +
+			"manager's). --no-wait only starts it; Ctrl-C and --timeout stop following, the operation goes on in the\n" +
+			"manager: `dormeto operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
 			var tags map[string]string
