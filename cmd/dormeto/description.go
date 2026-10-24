@@ -133,8 +133,8 @@ func newDescription(f *fleetFlags, deps fleetDeps, use, short, long string, targ
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
 				if !write {
-					if err := api.Get(ctx, detail, nil, &raw); err != nil {
-						return err
+					if err := api.Get(ctx, detail+"/description", nil, &raw); err != nil {
+						return needsManager019(err)
 					}
 					return printDescription(c, raw, asJSON, deps.now().Location())
 				}
@@ -161,16 +161,15 @@ func newDescription(f *fleetFlags, deps fleetDeps, use, short, long string, targ
 	return cmd
 }
 
-// printDescription prints what a detail answer holds of the description. A key that is null is no description; a key
-// that is absent (a manager before 0.19.0, or one whose read failed) is an error, so that no client offers to write over
-// a text it could not see. --json prints the same {"description": …} as the writes.
+// printDescription prints what the description route answers. A key that is null is no description; a key that is absent
+// is an error, so that no client offers to write over a text it could not see. --json prints the same {"description": …} as the writes.
 func printDescription(c *cobra.Command, detail json.RawMessage, asJSON bool, loc *time.Location) error {
 	var a struct{ Description json.RawMessage }
 	if err := json.Unmarshal(detail, &a); err != nil {
 		return fmt.Errorf("decode the manager's answer: %w", err)
 	}
 	if a.Description == nil {
-		return errors.New("the manager did not return the description (manager 0.19.0 or later, or its read failed)")
+		return errors.New("the manager did not return the description")
 	}
 	if asJSON {
 		return printJSON(c.OutOrStdout(), struct {

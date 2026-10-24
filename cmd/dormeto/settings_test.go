@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -228,6 +229,74 @@ func TestWorkloadsShowPrintsTheHibernationAndReadiness(t *testing.T) {
 	}
 	if out := show(""); strings.Contains(out, "hibernat") {
 		t.Errorf("an old router prints a hibernation line:\n%s", out)
+	}
+}
+
+// show prints a workload whose status is the body's extra members.
+func showWorkloadWith(t *testing.T, extra string) string {
+	t.Helper()
+	a := &showAPI{status: 200, body: `{"workloadId":"w-1","state":"ASLEEP","settings":{"idleMinutes":15}` + extra + `}`}
+	r := runFleetWith(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, "workloads", "show", "prod-eu/w-1")
+	if r.exit != 0 {
+		t.Fatalf("exit %d: %s", r.exit, r.stderr)
+	}
+	return r.stdout
+}
+
+// The backends decide, not hibernation.instances: null instances is also a failed describe.
+func TestWorkloadsShowSaysHibernationDoesNotApplyWithoutAnInstanceBackend(t *testing.T) {
+	re := regexp.MustCompile(`(?m)^ +hibernate +does not apply \(standalone EC2 instances only\)$`)
+	hib := `,"hibernation":{"hibernate":true,"from":"router","instances":[{"id":"i-0abc","configured":false}]}`
+	for name, backends := range map[string]string{
+		"asg":   `,"backends":[{"kind":"asg","id":"a"},{"kind":"rds-instance","id":"d"}]`,
+		"none":  `,"backends":[]`,
+		"other": `,"backends":[{"kind":"k8s","id":"k"}]`,
+	} {
+		out := showWorkloadWith(t, hib+backends)
+		if !re.MatchString(out) || strings.Contains(out, "on, from the router") || strings.Contains(out, "stopped instead") {
+			t.Errorf("%s: no 'does not apply' line, or a value line with it:\n%s", name, out)
+		}
+	}
+	// an instance backend with a failed describe still applies
+	out := showWorkloadWith(t, `,"hibernation":{"hibernate":true,"from":"router","instances":null},"backends":[{"kind":"asg","id":"a"},{"kind":"instance","id":"i"}]`)
+	if strings.Contains(out, "does not apply") || !strings.Contains(out, "on, from the router") {
+		t.Errorf("an instance backend:\n%s", out)
+	}
+	// a router before 0.32.0 reports no hibernation: nothing is printed
+	if out := showWorkloadWith(t, `,"backends":[{"kind":"asg","id":"a"}]`); strings.Contains(out, "hibernat") {
+		t.Errorf("an old router prints a hibernation line:\n%s", out)
+	}
+}
+
+func TestWorkloadsShowSaysTheRouterHasNotReadTheManagersSettings(t *testing.T) {
+	out := showWorkloadWith(t, `,"hibernation":{"hibernate":false,"from":"manager","unknown":true,"manager":{"hibernate":null,"readAt":null,"error":null},"instances":[{"id":"i-0abc","configured":true}]},"backends":[{"kind":"instance","id":"i"}]`)
+	mustContain(t, out, "off for now: the router has not read the manager's settings yet (naps stop)")
+	if strings.Contains(out, "off, from the manager") || strings.Contains(out, "launched with hibernation") {
+		t.Errorf("the plain value or readiness is printed:\n%s", out)
+	}
+}
+
+func TestWorkloadsShowSaysTheNextNapStopsAfterAFreshBoot(t *testing.T) {
+	line := "the next nap stops the instances (a fresh boot after 59 days hibernated)"
+	out := showWorkloadWith(t, `,"hibernation":{"hibernate":true,"from":"router","freshBoot":true},"backends":[{"kind":"instance","id":"i"}]`)
+	mustContain(t, out, "on, from the router", line)
+	if out := showWorkloadWith(t, `,"hibernation":{"hibernate":true,"from":"router","freshBoot":false},"backends":[{"kind":"instance","id":"i"}]`); strings.Contains(out, "fresh boot") {
+		t.Errorf("a fresh boot line without one:\n%s", out)
+	}
+}
+
+func TestRoutersShowSaysTheManagersSettingsAreUnknown(t *testing.T) {
+	for name, c := range map[string]struct{ m, want string }{
+		"not read":  {`{"url":"s3://b/settings.json","hibernate":null,"readAt":null,"error":null}`, "inherit (manager: unknown, not read yet: naps stop)"},
+		"read fail": {`{"url":"s3://b/settings.json","hibernate":null,"readAt":null,"error":"AccessDenied"}`, "inherit (manager: unknown, AccessDenied: naps stop)"},
+	} {
+		h := func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, strings.Replace(routerDetailsAnswer, `"pauses":`, `"settings":{"hibernate":null},"managerSettings":`+c.m+`,"pauses":`, 1))
+		}
+		r := runFleetWith(t, &fakeAPI{custom: h}, "eu-west-1", nil, "routers", "show", "prod-eu")
+		if r.exit != 0 || !strings.Contains(r.stdout, c.want) {
+			t.Errorf("%s: exit %d, no %q in\n%s", name, r.exit, c.want, r.stdout)
+		}
 	}
 }
 

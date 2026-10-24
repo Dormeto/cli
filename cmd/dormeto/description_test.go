@@ -20,8 +20,9 @@ const descriptionJSON = `{"text":"# Shop\n\nOwned by **payments**.","by":"ann@x.
 type descAPI struct {
 	mu          sync.Mutex
 	writes      []string
-	description string // what GET reports; "" for none
-	refuse      int    // the status every write answers, when set
+	reads       []string // the paths GET asked for
+	description string   // what GET reports; "" for none
+	refuse      int      // the status every write answers, when set
 }
 
 func (a *descAPI) handler(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,17 @@ func (a *descAPI) handler(w http.ResponseWriter, r *http.Request) {
 	if a.description == "absent" { // a manager before 0.19.0
 		field = ""
 	}
+	if r.Method == http.MethodGet {
+		a.reads = append(a.reads, r.URL.Path)
+	}
 	switch {
+	case r.Method == http.MethodGet && (r.URL.Path == "/iam/workloads/prod-eu/w-1/description" || r.URL.Path == "/iam/routers/prod-eu/description"):
+		if a.description == "absent" { // a manager before 0.19.0
+			w.WriteHeader(404)
+			io.WriteString(w, `{"error":"not_found","message":"no route for GET `+r.URL.Path+`"}`)
+			return
+		}
+		io.WriteString(w, `{`+strings.TrimSuffix(field, ",")+`}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/iam/workloads/prod-eu/w-1":
 		io.WriteString(w, `{"workloadId":"w-1","state":"AWAKE",`+field+`"settings":{}}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/iam/routers/prod-eu":
@@ -82,13 +93,23 @@ func TestDescriptionWithoutOneSaysSoWhenNull(t *testing.T) {
 	}
 }
 
-// An answer without the key is a manager before 0.19.0, or one whose read failed: never "no description", so that
-// nobody writes over a text that could not be seen.
-func TestDescriptionAbsentFromTheAnswerIsAnErrorNotNoDescription(t *testing.T) {
-	want := "the manager did not return the description (manager 0.19.0 or later, or its read failed)"
+// The read goes to the description routes, which answer from the manager's store: the router is not asked.
+func TestDescriptionReadUsesTheDescriptionRoute(t *testing.T) {
+	for args, route := range map[string]string{"workloads description prod-eu/w-1": "/iam/workloads/prod-eu/w-1/description", "routers description prod-eu": "/iam/routers/prod-eu/description"} {
+		a := &descAPI{description: descriptionJSON}
+		r := runDesc(t, a, "", strings.Fields(args)...)
+		if r.exit != 0 || !reflect.DeepEqual(a.reads, []string{route}) {
+			t.Errorf("%s: exit %d, reads %q, stderr %q", args, r.exit, a.reads, r.stderr)
+		}
+	}
+}
+
+// A manager before 0.19.0 has no route to read either: never "no description", so that nobody writes over a text that
+// could not be seen.
+func TestDescriptionReadOnAnOldManagerSaysWhichVersionIsNeeded(t *testing.T) {
 	for _, args := range [][]string{{"workloads", "description", "prod-eu/w-1"}, {"routers", "description", "prod-eu"}, {"routers", "description", "prod-eu", "--json"}} {
 		r := runDesc(t, &descAPI{description: "absent"}, "", args...)
-		if r.exit != 1 || r.stdout != "" || !strings.Contains(r.stderr, want) {
+		if r.exit != 1 || r.stdout != "" || !strings.Contains(r.stderr, "needs manager 0.19.0 or later (no route for GET /iam/") {
 			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, r.exit, r.stdout, r.stderr)
 		}
 	}

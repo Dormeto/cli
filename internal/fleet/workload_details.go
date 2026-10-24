@@ -40,8 +40,11 @@ type WorkloadDetails struct {
 		WakeTimeoutSeconds *int `json:"wakeTimeoutSeconds"`
 		MaxHolders         *int `json:"maxHolders"`
 	} `json:"settings"`
-	Description    *Description    `json:"description"`
-	Hibernation    *Hibernation    `json:"hibernation"`
+	Description *Description `json:"description"`
+	Hibernation *Hibernation `json:"hibernation"`
+	Backends    *[]struct {
+		Kind string `json:"kind"`
+	} `json:"backends"`
 	Pauses         []Pause         `json:"pauses"`
 	Schedule       json.RawMessage `json:"schedule"`
 	Next           []NextEvent     `json:"next"`
@@ -128,6 +131,12 @@ func (d WorkloadDetails) settingsText() string {
 	var hibernate, instances string
 	if h := d.Hibernation; h != nil {
 		hibernate, instances = h.Text(), h.Readiness()
+		if h.FreshBoot && !h.Unknown {
+			hibernate += "\n" + freshBootText
+		}
+		if !d.hasInstanceBackend() {
+			hibernate, instances = notApplyText, ""
+		}
 	}
 	return block(Labelled([][2]string{
 		{"idle window", n(s.IdleMinutes, func(v int) string { return fmt.Sprintf("%d min", v) })},
@@ -137,6 +146,20 @@ func (d WorkloadDetails) settingsText() string {
 		{"held requests", n(s.MaxHolders, func(v int) string { return fmt.Sprintf("≤ %d", v) })},
 		{"hibernate", hibernate}, {"hibernate readiness", instances},
 	}))
+}
+
+// hasInstanceBackend is whether the workload has a standalone EC2 instance, the only backend that hibernates. A router
+// that lists no backends is not known to have none.
+func (d WorkloadDetails) hasInstanceBackend() bool {
+	if d.Backends == nil {
+		return true
+	}
+	for _, b := range *d.Backends {
+		if b.Kind == "instance" {
+			return true
+		}
+	}
+	return false
 }
 
 // scheduleText is the schedule as `workloads schedule show` prints it, without the target's line; "" when the router

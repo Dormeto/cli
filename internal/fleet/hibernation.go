@@ -28,6 +28,9 @@ type ManagerSettings struct {
 type Hibernation struct {
 	Hibernate bool   `json:"hibernate"`
 	From      string `json:"from"`
+	// Unknown: the router has not read the manager's settings yet, or every read failed; naps stop meanwhile.
+	Unknown   bool `json:"unknown"`
+	FreshBoot bool `json:"freshBoot"`
 	Instances *[]struct {
 		ID         string `json:"id"`
 		Configured bool   `json:"configured"`
@@ -59,10 +62,10 @@ func (d RouterDetails) hibernateText(loc *time.Location, now time.Time) string {
 	if m == nil || m.URL == nil {
 		return "inherit (built-in default: on)"
 	}
-	value := "on" // the router's own default until it has read a value
-	if m.Hibernate != nil {
-		value = OnOff(*m.Hibernate)
+	if m.Hibernate == nil { // nothing read: the router stops at naps until it has
+		return fmt.Sprintf("inherit (manager: unknown, %s: naps stop)", orElse(m.Error, "not read yet"))
 	}
+	value := OnOff(*m.Hibernate)
 	read := "not read yet"
 	if m.ReadAt != "" {
 		read = "read " + Age(m.ReadAt, now) + " ago"
@@ -90,8 +93,20 @@ func fromText(from string) string {
 	return from
 }
 
+// unknownText is said for a workload whose router has no value of the manager's yet.
+const unknownText = "off for now: the router has not read the manager's settings yet (naps stop)"
+
+// freshBootText is said when the instances have been hibernated for as long as a fresh boot is due.
+const freshBootText = "the next nap stops the instances (a fresh boot after 59 days hibernated)"
+
+// notApplyText is said for a workload with no standalone EC2 instance.
+const notApplyText = "does not apply (standalone EC2 instances only)"
+
 // Text is the hibernation as "on, from the router" ("off: the workload has fallback instance types").
 func (h Hibernation) Text() string {
+	if h.Unknown {
+		return unknownText
+	}
 	if h.From == "fallback-types" {
 		return fromText(h.From)
 	}
@@ -101,7 +116,7 @@ func (h Hibernation) Text() string {
 // Readiness is which instances were launched with hibernation; "" when the router lists none, or when the value is off
 // (every instance is stopped then, whatever it was launched with).
 func (h Hibernation) Readiness() string {
-	if !h.Hibernate || h.Instances == nil || len(*h.Instances) == 0 {
+	if h.Unknown || !h.Hibernate || h.Instances == nil || len(*h.Instances) == 0 {
 		return ""
 	}
 	var without []string

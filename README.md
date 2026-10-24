@@ -934,10 +934,16 @@ workload itself (a hibernated instance cannot change type).
   lists the targets and sends nothing. A refusal is printed for its target, the others go on (exit 1). `--json` prints
   the manager's answers (by router, or by `<router>/<workload>`).
 - `routers show` prints a `hibernate` line in its configuration: its own value, or `inherit (manager: on, read 2m ago)`
-  (`; last read failed: <error>` inside the parentheses when the last read failed), or `inherit (built-in default: on)` for a router that reads no manager
-  settings. `workloads show` prints the value and where it comes from (`on, from the router`) and, when the router lists
-  the instances and hibernation is on, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`.
-  Nothing is printed for a router before 0.32.0.
+  (`; last read failed: <error>` inside the parentheses when the last read failed), or `inherit (built-in default: on)`
+  for a router that reads no manager settings. When the router has no value of the manager's yet (not read, or every
+  read failed) it is `inherit (manager: unknown, not read yet: naps stop)` (the error in place of `not read yet` when
+  there is one): the workloads are stopped, not hibernated, until it reads one.
+- `workloads show` prints the value and where it comes from (`on, from the router`) and, when the router lists the
+  instances and hibernation is on, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`. A
+  workload with no standalone EC2 instance among its backends prints `does not apply (standalone EC2 instances only)`
+  instead. While the router has not read the manager's settings it prints `off for now: the router has not read the
+  manager's settings yet (naps stop)`; after 59 days hibernated it adds `the next nap stops the instances (a fresh boot
+  after 59 days hibernated)`. Nothing is printed for a router before 0.32.0.
 
 ### Descriptions
 
@@ -963,9 +969,10 @@ it, where its runbook is. The dashboard draws it; the CLI prints it as written.
   (more is a usage error, exit 2). The text is at most 4,000 characters and holds no control character other than line
   feed and tab; an empty `--set` text clears. A `--file` that is empty, not UTF-8 text or over 64 KiB is refused (exit 2:
   use `--clear` to remove), a leading byte order mark is dropped. The manager's refusal is printed (exit 1). Reading
-  with a manager before 0.19.0 (or when its read failed) is an error, not `no description` (exit 1).
+  reads the manager's store (`GET .../description`), so it works when the router cannot be reached; with a manager
+  before 0.19.0 it is `needs manager 0.19.0 or later (…)`, not `no description` (exit 1).
 - A workload's description is written by operators and administrators, a router's by administrators. `--json` prints
-  `{"description": …}`, as the manager answers a write.
+  `{"description": …}`, as the manager answers a read or a write.
 - `workloads show` and `routers show` print the description, indented, under their header lines; nothing for none, or
   for a manager before 0.19.0.
 
