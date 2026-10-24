@@ -17,8 +17,10 @@ func TestSharedCasesClustersOfAndKubernetesBackend(t *testing.T) {
 	ran := 0
 	for _, c := range parity.Load(t, "scan").Cases {
 		var in struct {
-			Function string          `json:"function"`
-			Reader   string          `json:"reader"`
+			Function string `json:"function"`
+			Reader   string `json:"reader"`
+			Router   string `json:"router"`
+			Where    struct{ Account, Region string }
 			Groups   []group         `json:"groups"`
 			Answers  json.RawMessage `json:"answers"`
 		}
@@ -28,10 +30,13 @@ func TestSharedCasesClustersOfAndKubernetesBackend(t *testing.T) {
 		if in.Function != "clustersOf" && in.Function != "kubernetesBackend" {
 			continue
 		}
+		if in.Router != "" {
+			continue // the estimate runs before any install: no router, no proxy
+		}
 		ran++
 		t.Run(c.Name, func(t *testing.T) {
 			ports := kubernetestest.RecordedPortsJSON(t, in.Answers)
-			ports.Reader = in.Reader
+			ports.Reader, ports.Account, ports.Region = in.Reader, in.Where.Account, in.Where.Region
 			ctx := context.Background()
 			clusters, err := kubernetes.ClustersOf(ctx, ports)
 			if err != nil {

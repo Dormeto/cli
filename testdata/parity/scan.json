@@ -1,7 +1,7 @@
 {
   "manager": "0.18.0",
-  "router": "0.31.0",
-  "commit": "6ff8a1a05d7a913cf6e2a39e92f003162029f949",
+  "router": "0.33.0",
+  "commit": "a6ca2e35bd8eb4dd0da07acc1e6a81e52233c691",
   "cases": [
     {
       "name": "scanRegion: the region of the router discovery cases: one candidate per application target group, one per rule forwarding to none",
@@ -5504,7 +5504,7 @@
         "clusters": [
           {
             "name": "eks-private",
-            "reason": "the cluster's endpoint is private (or limited to some addresses): Dormeto reaches it with the in-cluster agent (R10.6)"
+            "reason": "the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of 111122223333 eu-west-1: install it"
           }
         ]
       }
@@ -16620,6 +16620,10 @@
       "name": "clustersOf: the region's clusters, those it cannot reach or read with the reason",
       "input": {
         "function": "clustersOf",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "answers": {
           "eks.describeCluster": [
             {
@@ -16964,11 +16968,11 @@
         },
         {
           "name": "private",
-          "reason": "the cluster's endpoint is private (or limited to some addresses): Dormeto reaches it with the in-cluster agent (R10.6)"
+          "reason": "the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of 111122223333 eu-west-1: install it"
         },
         {
           "name": "office",
-          "reason": "the cluster's endpoint is private (or limited to some addresses): Dormeto reaches it with the in-cluster agent (R10.6)"
+          "reason": "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
         },
         {
           "name": "denied",
@@ -16977,9 +16981,590 @@
       ]
     },
     {
+      "name": "clustersOf: with the account's router, a private cluster is read through its proxy, one without its proxy says so",
+      "input": {
+        "function": "clustersOf",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
+        "router": "dmt-dev",
+        "answers": {
+          "eks.describeCluster": [
+            {
+              "input": {
+                "name": "proxied"
+              },
+              "output": {
+                "cluster": {
+                  "name": "proxied",
+                  "endpoint": "https://proxied.example",
+                  "version": "1.36",
+                  "certificateAuthority": {
+                    "data": ""
+                  },
+                  "resourcesVpcConfig": {
+                    "endpointPublicAccess": false,
+                    "endpointPrivateAccess": true,
+                    "vpcId": "vpc-1"
+                  },
+                  "accessConfig": {
+                    "authenticationMode": "API"
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "name": "limited"
+              },
+              "output": {
+                "cluster": {
+                  "name": "limited",
+                  "endpoint": "https://limited.example",
+                  "version": "1.36",
+                  "certificateAuthority": {
+                    "data": ""
+                  },
+                  "resourcesVpcConfig": {
+                    "endpointPublicAccess": true,
+                    "endpointPrivateAccess": true,
+                    "vpcId": "vpc-1",
+                    "publicAccessCidrs": ["198.51.100.0/24"]
+                  },
+                  "accessConfig": {
+                    "authenticationMode": "API"
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "name": "unproxied"
+              },
+              "output": {
+                "cluster": {
+                  "name": "unproxied",
+                  "endpoint": "https://unproxied.example",
+                  "version": "1.36",
+                  "certificateAuthority": {
+                    "data": ""
+                  },
+                  "resourcesVpcConfig": {
+                    "endpointPublicAccess": false,
+                    "endpointPrivateAccess": true,
+                    "vpcId": "vpc-1"
+                  },
+                  "accessConfig": {
+                    "authenticationMode": "API"
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "name": "office"
+              },
+              "output": {
+                "cluster": {
+                  "name": "office",
+                  "endpoint": "https://office.example",
+                  "version": "1.36",
+                  "certificateAuthority": {
+                    "data": ""
+                  },
+                  "resourcesVpcConfig": {
+                    "endpointPublicAccess": true,
+                    "publicAccessCidrs": ["198.51.100.0/24"],
+                    "vpcId": "vpc-1"
+                  },
+                  "accessConfig": {
+                    "authenticationMode": "API"
+                  }
+                }
+              }
+            }
+          ],
+          "eks.listClusters": [
+            {
+              "input": {},
+              "output": {
+                "clusters": ["proxied", "limited", "unproxied", "office"]
+              }
+            }
+          ],
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "proxied",
+                "path": "/apis/karpenter.sh/v1"
+              },
+              "output": {
+                "kind": "APIResourceList"
+              }
+            },
+            {
+              "input": {
+                "cluster": "limited",
+                "path": "/apis/karpenter.sh/v1"
+              },
+              "error": {
+                "name": "KubernetesError",
+                "message": "/apis/karpenter.sh/v1 not found",
+                "status": 404,
+                "reason": "NotFound"
+              }
+            }
+          ],
+          "kubernetes.list": [
+            {
+              "input": {
+                "cluster": "proxied",
+                "path": "/api/v1/pods"
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d9c-a1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "web-5d9c",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-5d9c-a2",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "web-5d9c",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.2"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "cache-0",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "cache"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "StatefulSet",
+                        "name": "cache",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-2-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.2.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "agent-x1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "agent"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "DaemonSet",
+                        "name": "agent",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "migrate-q",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "migrate"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "Job",
+                        "name": "migrate",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.2"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "lonely",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "lonely"
+                    }
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.3"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "api-1a-b",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "api"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "api-1a",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.4.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "api2-2b-c",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "api2"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "api2-2b",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.4.2"
+                  }
+                }
+              ]
+            },
+            {
+              "input": {
+                "cluster": "limited",
+                "path": "/api/v1/pods"
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d9c-a1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "web-5d9c",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-5d9c-a2",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "web-5d9c",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.2"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "cache-0",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "cache"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "StatefulSet",
+                        "name": "cache",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-2-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.2.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "agent-x1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "agent"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "DaemonSet",
+                        "name": "agent",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "migrate-q",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "migrate"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "Job",
+                        "name": "migrate",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.2"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "lonely",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "lonely"
+                    }
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.3"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "api-1a-b",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "api"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "api-1a",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.4.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "api2-2b-c",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "api2"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "api2-2b",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.4.2"
+                  }
+                }
+              ]
+            },
+            {
+              "input": {
+                "cluster": "limited",
+                "path": "/apis/apps/v1/namespaces/kube-system/deployments"
+              },
+              "output": []
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "proxied"
+              },
+              "output": {}
+            },
+            {
+              "input": {
+                "cluster": "limited"
+              },
+              "output": {}
+            },
+            {
+              "input": {
+                "cluster": "unproxied"
+              },
+              "error": {
+                "name": "KubernetesError",
+                "message": "the cluster's endpoint is private and its proxy dmt-dev-kube-unproxied is not set up: upgrade the router or set up its cluster access (Terraform: module kubernetes-proxy)",
+                "status": 0,
+                "reason": "NoProxy"
+              }
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "name": "proxied",
+          "reason": null
+        },
+        {
+          "name": "limited",
+          "reason": null
+        },
+        {
+          "name": "unproxied",
+          "reason": "the cluster's endpoint is private and its proxy is not set up: upgrade the router or set up its cluster access (Terraform: module kubernetes-proxy)"
+        },
+        {
+          "name": "office",
+          "reason": "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
+        }
+      ]
+    },
+    {
       "name": "kubernetesBackend: an Ingress in a group: its Deployment, the switch through Dormeto's Ingress, HPA, Argo CD, Karpenter",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/k8s-demo-web/1",
@@ -17560,6 +18145,10 @@
       "name": "kubernetesBackend: a lone Ingress (instance targets): its StatefulSet on Fargate, the switch by patching it, Flux",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/k8s-demo-cache/1",
@@ -18069,6 +18658,10 @@
       "name": "kubernetesBackend: KEDA: none in a cluster without its API",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/k8s-demo-web/1",
@@ -18654,6 +19247,10 @@
       "name": "kubernetesBackend: KEDA: unknown (null) when the cluster refuses to show its ScaledObjects",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/k8s-demo-web/1",
@@ -19239,6 +19836,10 @@
       "name": "kubernetesBackend: a target group no Ingress claims: a TargetGroupBinding; IP targets no pod has, instance targets: not Kubernetes",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/bound/1",
@@ -19671,6 +20272,10 @@
       "name": "kubernetesBackend: what cannot be napped as one owner, with each reason",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/x/1",
@@ -20261,6 +20866,10 @@
       "name": "kubernetesBackend: a cluster it cannot reach: its target groups ineligible with the cluster's reason",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/k8s-demo-web/1",
@@ -20319,12 +20928,16 @@
           ]
         }
       },
-      "output": ["cluster eks-demo: the cluster's endpoint is private (or limited to some addresses): Dormeto reaches it with the in-cluster agent (R10.6)", "cluster eks-gone not found in the region"]
+      "output": ["cluster eks-demo: the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of 111122223333 eu-west-1: install it", "cluster eks-gone not found in the region"]
     },
     {
       "name": "kubernetesBackend: pods gone (a workload asleep): its owner cannot be told",
       "input": {
         "function": "kubernetesBackend",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
         "groups": [
           {
             "arn": "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/k8s-demo-web/1",

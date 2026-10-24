@@ -199,7 +199,10 @@ The `ReadOnlyAccess` AWS managed policy covers them all: attach it to the profil
 member account.
 
 An EKS cluster's workloads are read through its Kubernetes API, which needs the profile's own EKS access entry on the
-cluster (the `AmazonEKSViewPolicy` access policy is enough). A cluster it cannot read is listed with the reason.
+cluster (the `AmazonEKSViewPolicy` access policy is enough). A cluster it cannot read is listed with the reason. A cluster whose endpoint is private (private access on, public
+endpoint closed or limited to some addresses) is read by the router through a proxy function in its VPC, so the estimate
+lists it with "install" the router of its account and region; one with private access off and a limited public endpoint
+says to turn private access on.
 
 ## Report
 
@@ -734,7 +737,8 @@ dormeto routers show <router> [--json]
 ```
 
 Shows one router as it tells its details: its version and build, its health and problems, the idle check (its schedule
-and last run), the Lambda and queue figures, the workloads by state, the pauses, the EKS clusters and the IP lists, then
+and last run), the Lambda and queue figures, the workloads by state, the pauses, the EKS clusters (each says whether the router reaches it directly or through its proxy function in
+the cluster's VPC, with the proxy's name and version) and the IP lists, then
 each configuration value with where it is set (`terraform`: the router's module; `manager`). Times are in the local
 time zone. `--json` prints the manager's answer.
 

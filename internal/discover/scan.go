@@ -186,7 +186,9 @@ func ScanRegion(ctx context.Context, ports ScanPorts, where Where, now time.Time
 	// A discovery role without EKS rights (accounts set up before 0.10.0) scans the region as before.
 	clusters := []kubernetes.Cluster{}
 	if ports.Kubernetes != nil {
-		got, err := kubernetes.ClustersOf(ctx, *ports.Kubernetes)
+		k := *ports.Kubernetes
+		k.Account, k.Region = where.Account, where.Region
+		got, err := kubernetes.ClustersOf(ctx, k)
 		if err != nil {
 			if !accessDenied.MatchString(awserr.Name(err) + " " + awserr.Message(err)) {
 				return ScanResult{}, err

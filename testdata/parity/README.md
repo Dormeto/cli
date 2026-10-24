@@ -1,6 +1,6 @@
 # Shared cases
 
-Manager 0.18.0, router 0.31.0, manager commit `6ff8a1a05d7a913cf6e2a39e92f003162029f949`.
+Manager 0.18.0, router 0.33.0, manager commit `a6ca2e35bd8eb4dd0da07acc1e6a81e52233c691`.
 
 Written by the manager's `scripts/parity/export.mjs`: the product's Node functions run over the corpus of
 `scripts/parity/cases/`, each case's input and output as JSON. Do not edit these files: export them again in the
@@ -183,11 +183,14 @@ Go `internal/discover`). `input.function` names the function:
   ports the scan is given: `elbv2` always, `autoscaling`, `ecs`, `cloudwatch`, `ec2`, `kubernetes` when listed
   (one not listed is absent from the Node `ScanPorts`: the scan reads nothing of it — no Auto Scaling groups, ECS
   services, idle hours, nodes or clusters). `kubernetes` is `eks` and the clusters' API (`kubernetes.of`, `get`,
-  `list`); `reader` names who reads the clusters in the reason of one refused (`DmtDiscoveryRole` when absent). Output: `{rules, clusters}` — the `ScannedRule`s in the scan's order, and the
+  `list`); `router`: as for `clustersOf`; `reader` names who reads the clusters in the reason of one refused (`DmtDiscoveryRole` when absent). Output: `{rules, clusters}` — the `ScannedRule`s in the scan's order, and the
   region's clusters as read (`{name, reason}`, `reason` null for one read); `{error: {name, message}}` when the scan
   fails.
-- `clustersOf`: `{reader?}`. Output: `[{name, reason}]`.
-- `kubernetesBackend`: `{groups, reader?}`: the clusters read once (`clustersOf`), then each group
+- `clustersOf`: `{where: {account, region}, reader?, router?}`; `router` (the name of the router of the account and region)
+  is on a kubernetes port when one is there: a cluster whose private access is on and whose public endpoint is not open to
+  `0.0.0.0/0` is read through its proxy (the recorded `kubernetes.of`), or, without `router`, not reached (`where` named in its
+  reason); private access off and the public endpoint limited: not reached either, with the router's `UNREACHABLE` text. Output: `[{name, reason}]`.
+- `kubernetesBackend`: `{where, groups, reader?}`: the clusters read once (`clustersOf`), then each group
   (`{arn, type, vpcId, tags, targets}`) traced in turn. Output: one result per group — the
   `{kind: "k8s", id, kubernetes}` backend, the reason it cannot be napped, or null (not Kubernetes).
 - `matches`: `{criterion, account, rule, inventory}`. Output: a boolean.
@@ -199,7 +202,7 @@ Go `internal/discover`). `input.function` names the function:
 
 Recorded answers used: `autoscaling.describeAutoScalingGroups`, `cloudwatch.getMetricData`, `ec2.describeInstances`, `ecs.describeServices`, `ecs.listClusters`, `ecs.listServices`, `eks.describeCluster`, `eks.listClusters`, `elbv2.describeListeners`, `elbv2.describeLoadBalancers`, `elbv2.describeRules`, `elbv2.describeTags`, `elbv2.describeTargetGroups`, `elbv2.describeTargetHealth`, `kubernetes.get`, `kubernetes.list`, `kubernetes.of`, `organizations.listAccountsForParent`, `organizations.listOrganizationalUnitsForParent`, `organizations.listRoots`, `organizations.listTagsForResource`.
 
-Cases (93):
+Cases (94):
 
 - scanRegion: the region of the router discovery cases: one candidate per application target group, one per rule forwarding to none
 - scanRegion: the idle hours of the last 7 days, for eligible and managed target groups only
@@ -218,6 +221,7 @@ Cases (93):
 - scanRegion: a lone Ingress patched: its own rule forwards to its target group and the waker
 - scanRegion: a customer rule with other conditions is not the workload's
 - clustersOf: the region's clusters, those it cannot reach or read with the reason
+- clustersOf: with the account's router, a private cluster is read through its proxy, one without its proxy says so
 - kubernetesBackend: an Ingress in a group: its Deployment, the switch through Dormeto's Ingress, HPA, Argo CD, Karpenter
 - kubernetesBackend: a lone Ingress (instance targets): its StatefulSet on Fargate, the switch by patching it, Flux
 - kubernetesBackend: KEDA: none in a cluster without its API

@@ -110,7 +110,7 @@ func (r region) DescribeCluster(_ context.Context, in DescribeClusterInput) (Des
 }
 
 func (r region) ports() Ports {
-	return Ports{EKS: r, Of: func(_ context.Context, name string) (Client, error) { return r.clients[name], nil }}
+	return Ports{EKS: r, Account: "111122223333", Region: "eu-west-1", Of: func(_ context.Context, name string) (Client, error) { return r.clients[name], nil }}
 }
 
 func one(client Client) region {
@@ -145,19 +145,23 @@ func asJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
-const privateReason = "the cluster's endpoint is private (or limited to some addresses): Dormeto reaches it with the in-cluster agent (R10.6)"
+const (
+	privateReason = "the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of 111122223333 eu-west-1: install it"
+	limitedReason = "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
+)
 
 func TestReadsTheClustersOfTheRegionThoseItCannotReachWithTheReason(t *testing.T) {
 	denied := &Error{Status: 401, Reason: "Unauthorized", Message: "Unauthorized"}
 	r := region{
-		names: []string{"eks-demo", "private", "office", "denied"},
+		names: []string{"eks-demo", "private", "limited-on", "office", "denied"},
 		clusters: map[string]*EKSCluster{
-			"eks-demo": eksCluster(publicVPC),
-			"private":  eksCluster(m{"endpointPublicAccess": false, "endpointPrivateAccess": true, "vpcId": "vpc-1"}),
-			"office":   eksCluster(m{"endpointPublicAccess": true, "publicAccessCidrs": []string{"198.51.100.0/24"}, "vpcId": "vpc-1"}),
-			"denied":   eksCluster(publicVPC),
+			"eks-demo":   eksCluster(publicVPC),
+			"private":    eksCluster(m{"endpointPublicAccess": false, "endpointPrivateAccess": true, "vpcId": "vpc-1"}),
+			"limited-on": eksCluster(m{"endpointPublicAccess": true, "endpointPrivateAccess": true, "publicAccessCidrs": []string{"198.51.100.0/24"}, "vpcId": "vpc-1"}),
+			"office":     eksCluster(m{"endpointPublicAccess": true, "publicAccessCidrs": []string{"198.51.100.0/24"}, "vpcId": "vpc-1"}),
+			"denied":     eksCluster(publicVPC),
 		},
-		clients: map[string]Client{"eks-demo": demo(true, nil), "private": &fakeAPI{}, "office": &fakeAPI{}, "denied": &fakeAPI{err: map[string]error{"/api/v1/pods": denied}}},
+		clients: map[string]Client{"eks-demo": demo(true, nil), "private": &fakeAPI{}, "limited-on": &fakeAPI{}, "office": &fakeAPI{}, "denied": &fakeAPI{err: map[string]error{"/api/v1/pods": denied}}},
 	}
 	got := mustClusters(t, r)
 	var summary []string
@@ -165,7 +169,7 @@ func TestReadsTheClustersOfTheRegionThoseItCannotReachWithTheReason(t *testing.T
 		summary = append(summary, fmt.Sprintf("%s|%s", c.Name, c.Reason))
 	}
 	want := []string{
-		"eks-demo|", "private|" + privateReason, "office|" + privateReason,
+		"eks-demo|", "private|" + privateReason, "limited-on|" + privateReason, "office|" + limitedReason,
 		"denied|the cluster does not let DmtDiscoveryRole read it (an access entry with AmazonEKSViewPolicy): Unauthorized",
 	}
 	if strings.Join(summary, "\n") != strings.Join(want, "\n") {
@@ -178,8 +182,8 @@ func TestReadsTheClustersOfTheRegionThoseItCannotReachWithTheReason(t *testing.T
 	p := r.ports()
 	p.Reader = "the profile"
 	again, err := ClustersOf(context.Background(), p)
-	if err != nil || !strings.Contains(again[3].Reason, "does not let the profile read it") {
-		t.Fatalf("%v %q", err, again[3].Reason)
+	if err != nil || !strings.Contains(again[4].Reason, "does not let the profile read it") {
+		t.Fatalf("%v %q", err, again[4].Reason)
 	}
 }
 

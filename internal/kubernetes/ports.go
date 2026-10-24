@@ -64,9 +64,12 @@ type EKSPort interface {
 // Ports are what discovery reads clusters through. Of gives the client of a
 // cluster by name (for real: its endpoint and certificate authority from
 // DescribeCluster, an EKS token). Reader names who reads the clusters, in the
-// reason of one refused (DmtDiscoveryRole when empty).
+// reason of one refused (DmtDiscoveryRole when empty). Account and Region name
+// the router to install, in the reason of a private cluster.
 type Ports struct {
-	EKS    EKSPort
-	Of     func(ctx context.Context, cluster string) (Client, error)
-	Reader string
+	EKS     EKSPort
+	Of      func(ctx context.Context, cluster string) (Client, error)
+	Reader  string
+	Account string
+	Region  string
 }

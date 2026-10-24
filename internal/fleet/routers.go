@@ -110,6 +110,15 @@ type ClusterCheck struct {
 	Missing   []string `json:"missing"`
 	Reason    string   `json:"reason"`
 	CheckedAt string   `json:"checkedAt"`
+	// Via is how the router reaches the cluster: "direct" or "proxy" (empty for a router before 0.33.0).
+	Via   string        `json:"via"`
+	Proxy *ClusterProxy `json:"proxy"`
+}
+
+// ClusterProxy is the proxy function of a cluster; Version is empty when it has not answered a ping.
+type ClusterProxy struct {
+	Name    string  `json:"name"`
+	Version *string `json:"version"`
 }
 
 // Pause is an active pause of the router (or of one of its workloads).
@@ -294,6 +303,15 @@ func clustersText(cs []ClusterCheck, loc *time.Location) string {
 			s = "missing " + strings.Join(c.Missing, "; ")
 		default:
 			s = c.Reason
+		}
+		switch {
+		case c.Via == "direct":
+			s += ", directly"
+		case c.Via == "proxy" && c.Proxy != nil:
+			s += ", through its proxy " + c.Proxy.Name
+			if c.Proxy.Version != nil && *c.Proxy.Version != "" {
+				s += " (" + *c.Proxy.Version + ")"
+			}
 		}
 		if c.CheckedAt != "" {
 			s += ", checked " + When(c.CheckedAt, loc)

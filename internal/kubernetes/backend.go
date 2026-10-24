@@ -155,7 +155,8 @@ func (r Result) MarshalJSON() ([]byte, error) {
 }
 
 const (
-	private     = "the cluster's endpoint is private (or limited to some addresses): Dormeto reaches it with the in-cluster agent (R10.6)"
+	private     = "the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of %s %s: install it"
+	unreachable = "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
 	clusterTag  = "elbv2.k8s.aws/cluster"
 	resourceTag = "ingress.k8s.aws/resource"
 	groupName   = "alb.ingress.kubernetes.io/group.name"
@@ -199,8 +200,9 @@ func ClustersOf(ctx context.Context, ports Ports) ([]Cluster, error) {
 		if out.Cluster != nil {
 			vpc = out.Cluster.ResourcesVpcConfig
 		}
-		reachable := false
+		reachable, privateAccess := false, false
 		if vpc != nil {
+			privateAccess = vpc.EndpointPrivateAccess
 			c.VPCID = vpc.VPCID
 			for _, cidr := range vpc.PublicAccessCidrs {
 				reachable = reachable || cidr == "0.0.0.0/0"
@@ -208,7 +210,13 @@ func ClustersOf(ctx context.Context, ports Ports) ([]Cluster, error) {
 			reachable = reachable && vpc.EndpointPublicAccess
 		}
 		if !reachable {
-			c.Reason = private
+			// The estimate runs before any install: no router is known, so a
+			// cluster behind its private access is reached by the proxy to come.
+			if privateAccess {
+				c.Reason = fmt.Sprintf(private, ports.Account, ports.Region)
+			} else {
+				c.Reason = unreachable
+			}
 			clusters = append(clusters, c)
 			continue
 		}
