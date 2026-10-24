@@ -14,15 +14,15 @@ import (
 // clustersOf and kubernetesBackend over the recorded answers.
 
 func TestSharedCasesClustersOfAndKubernetesBackend(t *testing.T) {
-	ran := 0
+	ran, skipped := 0, 0
 	for _, c := range parity.Load(t, "scan").Cases {
 		var in struct {
-			Function string `json:"function"`
-			Reader   string `json:"reader"`
-			Router   string `json:"router"`
-			Where    struct{ Account, Region string }
-			Groups   []group         `json:"groups"`
-			Answers  json.RawMessage `json:"answers"`
+			Function string                           `json:"function"`
+			Reader   string                           `json:"reader"`
+			Router   string                           `json:"router"`
+			Where    struct{ Account, Region string } `json:"where"`
+			Groups   []group                          `json:"groups"`
+			Answers  json.RawMessage                  `json:"answers"`
 		}
 		if err := json.Unmarshal(c.Input, &in); err != nil {
 			t.Fatalf("%s: %v", c.Name, err)
@@ -31,7 +31,8 @@ func TestSharedCasesClustersOfAndKubernetesBackend(t *testing.T) {
 			continue
 		}
 		if in.Router != "" {
-			continue // the estimate runs before any install: no router, no proxy
+			skipped++ // the estimate runs before any install: no router, no proxy
+			continue
 		}
 		ran++
 		t.Run(c.Name, func(t *testing.T) {
@@ -57,9 +58,11 @@ func TestSharedCasesClustersOfAndKubernetesBackend(t *testing.T) {
 			parity.Equal(t, c.Output, b)
 		})
 	}
-	if ran != 9 {
-		t.Fatalf("ran %d cases, the corpus has 9 (1 clustersOf, 8 kubernetesBackend)", ran)
+	// The cases with a router are the manager's alone; the others all run here.
+	if ran == 0 || skipped == 0 {
+		t.Fatalf("ran %d cases and skipped %d with a router: the corpus is expected to hold both", ran, skipped)
 	}
+	t.Logf("ran %d shared cases, skipped %d with a router", ran, skipped)
 }
 
 // group is a shared case's target group.

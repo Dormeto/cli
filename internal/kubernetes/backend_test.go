@@ -150,6 +150,26 @@ const (
 	limitedReason = "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
 )
 
+func TestPrivateReasonWithoutAnAccountOrRegionNamesItsAccountAndRegion(t *testing.T) {
+	r := region{
+		names:    []string{"private"},
+		clusters: map[string]*EKSCluster{"private": eksCluster(m{"endpointPublicAccess": false, "endpointPrivateAccess": true, "vpcId": "vpc-1"})},
+		clients:  map[string]Client{"private": &fakeAPI{}},
+	}
+	for _, where := range [][2]string{{"", "eu-west-1"}, {"111122223333", ""}, {"", ""}} {
+		p := r.ports()
+		p.Account, p.Region = where[0], where[1]
+		got, err := ClustersOf(context.Background(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strings.Replace(privateReason, "111122223333 eu-west-1", "its account and region", 1)
+		if got[0].Reason != want {
+			t.Errorf("%q: got %q", where, got[0].Reason)
+		}
+	}
+}
+
 func TestReadsTheClustersOfTheRegionThoseItCannotReachWithTheReason(t *testing.T) {
 	denied := &Error{Status: 401, Reason: "Unauthorized", Message: "Unauthorized"}
 	r := region{

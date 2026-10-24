@@ -16,10 +16,10 @@
   <router>/<workload>` and `routers description <router>` print it as written, with who wrote it and when, or `no
   description` (read from the manager's store, so it works when the router is out of reach); `--set <text>`, `--file <path or ->` and `--clear` (at most one, else exit 2) write it; `--json`
   prints the manager's answer. `workloads show` and `routers show` print it, indented, under their header lines.
-- Private EKS endpoints (manager 0.20.0, routers 0.33.0): `routers show` says for each cluster whether the router
+- Private EKS endpoints (manager 0.19.0, routers 0.33.0): `routers show` says for each cluster whether the router
   reaches it "directly" or "through its proxy <name> (<version>)" (nothing for a router before 0.33.0). The estimate
-  lists a cluster with a private endpoint with the reason "install the router of <account> <region>", and one whose
-  public endpoint is limited with private access off with the reason to turn private access on.
+  lists a cluster with a private endpoint with the reason "…set up with the router of <account> <region>: install it",
+  and one whose public endpoint is limited with private access off with the reason to turn private access on.
 
 ## 0.6.0
 

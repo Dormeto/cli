@@ -1,7 +1,7 @@
 {
   "manager": "0.18.0",
   "router": "0.33.0",
-  "commit": "a6ca2e35bd8eb4dd0da07acc1e6a81e52233c691",
+  "commit": "085149d58a23d9c085cf60e4f43390b71f127659",
   "cases": [
     {
       "name": "scanRegion: the region of the router discovery cases: one candidate per application target group, one per rule forwarding to none",
@@ -17554,6 +17554,317 @@
         {
           "name": "office",
           "reason": "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
+        }
+      ]
+    },
+    {
+      "name": "clustersOf: with the account's router, a proxy the discovery role may not invoke (absent, or an older organization access) is not set up",
+      "input": {
+        "function": "clustersOf",
+        "where": {
+          "account": "111122223333",
+          "region": "eu-west-1"
+        },
+        "router": "dmt-dev",
+        "answers": {
+          "eks.describeCluster": [
+            {
+              "input": {
+                "name": "refused"
+              },
+              "output": {
+                "cluster": {
+                  "name": "refused",
+                  "endpoint": "https://refused.example",
+                  "version": "1.36",
+                  "certificateAuthority": {
+                    "data": ""
+                  },
+                  "resourcesVpcConfig": {
+                    "endpointPublicAccess": false,
+                    "endpointPrivateAccess": true,
+                    "vpcId": "vpc-1"
+                  },
+                  "accessConfig": {
+                    "authenticationMode": "API"
+                  }
+                }
+              }
+            },
+            {
+              "input": {
+                "name": "proxied"
+              },
+              "output": {
+                "cluster": {
+                  "name": "proxied",
+                  "endpoint": "https://proxied.example",
+                  "version": "1.36",
+                  "certificateAuthority": {
+                    "data": ""
+                  },
+                  "resourcesVpcConfig": {
+                    "endpointPublicAccess": false,
+                    "endpointPrivateAccess": true,
+                    "vpcId": "vpc-1"
+                  },
+                  "accessConfig": {
+                    "authenticationMode": "API"
+                  }
+                }
+              }
+            }
+          ],
+          "eks.listClusters": [
+            {
+              "input": {},
+              "output": {
+                "clusters": ["refused", "proxied"]
+              }
+            }
+          ],
+          "kubernetes.get": [
+            {
+              "input": {
+                "cluster": "proxied",
+                "path": "/apis/karpenter.sh/v1"
+              },
+              "output": {
+                "kind": "APIResourceList"
+              }
+            }
+          ],
+          "kubernetes.list": [
+            {
+              "input": {
+                "cluster": "refused",
+                "path": "/api/v1/pods"
+              },
+              "error": {
+                "name": "KubernetesError",
+                "message": "GET /api/v1/pods: the proxy dmt-dev-kube-refused failed: User: arn:aws:sts::111122223333:assumed-role/DmtDiscoveryRole/dmt-dev-discovery is not authorized to perform: lambda:InvokeFunction on resource: arn:aws:lambda:eu-west-1:111122223333:function:dmt-dev-kube-refused because no identity-based policy allows the lambda:InvokeFunction action",
+                "status": 0,
+                "reason": "AccessDeniedException"
+              }
+            },
+            {
+              "input": {
+                "cluster": "proxied",
+                "path": "/api/v1/pods"
+              },
+              "output": [
+                {
+                  "metadata": {
+                    "name": "web-5d9c-a1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "web-5d9c",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "web-5d9c-a2",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "web"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "web-5d9c",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.1.2"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "cache-0",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "cache"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "StatefulSet",
+                        "name": "cache",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "fargate-ip-10-0-2-1.eu-west-1.compute.internal",
+                    "schedulerName": "fargate-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.2.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "agent-x1",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "agent"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "DaemonSet",
+                        "name": "agent",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "migrate-q",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "migrate"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "Job",
+                        "name": "migrate",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.2"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "lonely",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "lonely"
+                    }
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.3.3"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "api-1a-b",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "api"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "api-1a",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.4.1"
+                  }
+                },
+                {
+                  "metadata": {
+                    "name": "api2-2b-c",
+                    "namespace": "demo",
+                    "labels": {
+                      "app": "api2"
+                    },
+                    "ownerReferences": [
+                      {
+                        "kind": "ReplicaSet",
+                        "name": "api2-2b",
+                        "controller": true
+                      }
+                    ]
+                  },
+                  "spec": {
+                    "nodeName": "ip-10-0-1-1.eu-west-1.compute.internal",
+                    "schedulerName": "default-scheduler"
+                  },
+                  "status": {
+                    "phase": "Running",
+                    "podIP": "10.0.4.2"
+                  }
+                }
+              ]
+            }
+          ],
+          "kubernetes.of": [
+            {
+              "input": {
+                "cluster": "refused"
+              },
+              "output": {}
+            },
+            {
+              "input": {
+                "cluster": "proxied"
+              },
+              "output": {}
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "name": "refused",
+          "reason": "the cluster's endpoint is private and its proxy is not set up: upgrade the router or set up its cluster access (Terraform: module kubernetes-proxy) (or apply the organization access again)"
+        },
+        {
+          "name": "proxied",
+          "reason": null
         }
       ]
     },

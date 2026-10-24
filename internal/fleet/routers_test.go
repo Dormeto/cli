@@ -54,21 +54,21 @@ func TestRouterDetailsTextSaysHowEachClusterIsReached(t *testing.T) {
 	  {"name":"a","reachable":true,"allowed":true,"missing":[],"via":"direct"},
 	  {"name":"b","reachable":true,"allowed":true,"missing":[],"via":"proxy","proxy":{"name":"r-kube-b","version":"0.33.0"}},
 	  {"name":"c","reachable":false,"allowed":false,"missing":[],"reason":"no route","via":"proxy","proxy":{"name":"r-kube-c","version":null}},
-	  {"name":"d","reachable":true,"allowed":true,"missing":[]}]}`
+	  {"name":"d","reachable":true,"allowed":true,"missing":[]},
+	  {"name":"e","reachable":true,"allowed":true,"missing":[],"via":"direct","checkedAt":"2026-10-19T08:00:00.000Z"}]}`
 	if err := json.Unmarshal([]byte(in), &d); err != nil {
 		t.Fatal(err)
 	}
-	got := clustersText(d.Clusters, time.UTC)
-	for _, want := range []string{
+	lines := strings.Split(clustersText(d.Clusters, time.UTC), "\n")
+	for i, want := range []string{
 		"a: reachable, every right, directly",
 		"b: reachable, every right, through its proxy r-kube-b (0.33.0)",
-		"c: unreachable: no route, through its proxy r-kube-c\n",
+		"c: unreachable: no route, through its proxy r-kube-c",
+		"d: reachable, every right", // a router before 0.33.0 says nothing
+		"e: reachable, every right, directly, checked " + When("2026-10-19T08:00:00.000Z", time.UTC),
 	} {
-		if !strings.Contains(got+"\n", want) {
-			t.Errorf("missing %q in\n%s", want, got)
+		if i >= len(lines) || lines[i] != want {
+			t.Errorf("line %d: want %q in\n%s", i, want, strings.Join(lines, "\n"))
 		}
-	}
-	if strings.HasSuffix(strings.Split(got, "\n")[3], "directly") || strings.Contains(strings.Split(got, "\n")[3], "proxy") {
-		t.Errorf("a router before 0.33.0 says nothing: %q", got)
 	}
 }

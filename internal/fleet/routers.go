@@ -115,7 +115,7 @@ type ClusterCheck struct {
 	Proxy *ClusterProxy `json:"proxy"`
 }
 
-// ClusterProxy is the proxy function of a cluster; Version is empty when it has not answered a ping.
+// ClusterProxy is the proxy function of a cluster; Version is nil when it has not answered a ping.
 type ClusterProxy struct {
 	Name    string  `json:"name"`
 	Version *string `json:"version"`

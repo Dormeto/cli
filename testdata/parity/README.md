@@ -1,6 +1,6 @@
 # Shared cases
 
-Manager 0.18.0, router 0.33.0, manager commit `a6ca2e35bd8eb4dd0da07acc1e6a81e52233c691`.
+Manager 0.18.0, router 0.33.0, manager commit `085149d58a23d9c085cf60e4f43390b71f127659`.
 
 Written by the manager's `scripts/parity/export.mjs`: the product's Node functions run over the corpus of
 `scripts/parity/cases/`, each case's input and output as JSON. Do not edit these files: export them again in the
@@ -189,7 +189,10 @@ Go `internal/discover`). `input.function` names the function:
 - `clustersOf`: `{where: {account, region}, reader?, router?}`; `router` (the name of the router of the account and region)
   is on a kubernetes port when one is there: a cluster whose private access is on and whose public endpoint is not open to
   `0.0.0.0/0` is read through its proxy (the recorded `kubernetes.of`), or, without `router`, not reached (`where` named in its
-  reason); private access off and the public endpoint limited: not reached either, with the router's `UNREACHABLE` text. Output: `[{name, reason}]`.
+  reason); private access off and the public endpoint limited: not reached either, with the router's `UNREACHABLE` text. With
+  `router`, a private cluster whose proxy the role may not invoke (a call failing with the reason `AccessDeniedException`, or a
+  message saying `not authorized to perform: lambda:InvokeFunction`: an absent proxy has no tag, and Lambda checks the rights
+  first) has the reason of a proxy not set up followed by ` (or apply the organization access again)`. Output: `[{name, reason}]`.
 - `kubernetesBackend`: `{where, groups, reader?}`: the clusters read once (`clustersOf`), then each group
   (`{arn, type, vpcId, tags, targets}`) traced in turn. Output: one result per group — the
   `{kind: "k8s", id, kubernetes}` backend, the reason it cannot be napped, or null (not Kubernetes).
@@ -202,7 +205,7 @@ Go `internal/discover`). `input.function` names the function:
 
 Recorded answers used: `autoscaling.describeAutoScalingGroups`, `cloudwatch.getMetricData`, `ec2.describeInstances`, `ecs.describeServices`, `ecs.listClusters`, `ecs.listServices`, `eks.describeCluster`, `eks.listClusters`, `elbv2.describeListeners`, `elbv2.describeLoadBalancers`, `elbv2.describeRules`, `elbv2.describeTags`, `elbv2.describeTargetGroups`, `elbv2.describeTargetHealth`, `kubernetes.get`, `kubernetes.list`, `kubernetes.of`, `organizations.listAccountsForParent`, `organizations.listOrganizationalUnitsForParent`, `organizations.listRoots`, `organizations.listTagsForResource`.
 
-Cases (94):
+Cases (95):
 
 - scanRegion: the region of the router discovery cases: one candidate per application target group, one per rule forwarding to none
 - scanRegion: the idle hours of the last 7 days, for eligible and managed target groups only
@@ -222,6 +225,7 @@ Cases (94):
 - scanRegion: a customer rule with other conditions is not the workload's
 - clustersOf: the region's clusters, those it cannot reach or read with the reason
 - clustersOf: with the account's router, a private cluster is read through its proxy, one without its proxy says so
+- clustersOf: with the account's router, a proxy the discovery role may not invoke (absent, or an older organization access) is not set up
 - kubernetesBackend: an Ingress in a group: its Deployment, the switch through Dormeto's Ingress, HPA, Argo CD, Karpenter
 - kubernetesBackend: a lone Ingress (instance targets): its StatefulSet on Fargate, the switch by patching it, Flux
 - kubernetesBackend: KEDA: none in a cluster without its API

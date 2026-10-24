@@ -154,8 +154,16 @@ func (r Result) MarshalJSON() ([]byte, error) {
 	return []byte("null"), nil
 }
 
+// routerOf names the account and region of the router to install, or "its account and region" when either is unknown.
+func routerOf(account, region string) string {
+	if account == "" || region == "" {
+		return "its account and region"
+	}
+	return account + " " + region
+}
+
 const (
-	private     = "the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of %s %s: install it"
+	private     = "the cluster's endpoint is private: Dormeto reaches it through a proxy function in its VPC, set up with the router of %s: install it"
 	unreachable = "the cluster's public endpoint is limited to some addresses and its private access is off: turn on private access, and Dormeto reaches it from inside its VPC"
 	clusterTag  = "elbv2.k8s.aws/cluster"
 	resourceTag = "ingress.k8s.aws/resource"
@@ -213,7 +221,7 @@ func ClustersOf(ctx context.Context, ports Ports) ([]Cluster, error) {
 			// The estimate runs before any install: no router is known, so a
 			// cluster behind its private access is reached by the proxy to come.
 			if privateAccess {
-				c.Reason = fmt.Sprintf(private, ports.Account, ports.Region)
+				c.Reason = fmt.Sprintf(private, routerOf(ports.Account, ports.Region))
 			} else {
 				c.Reason = unreachable
 			}
