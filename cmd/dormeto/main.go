@@ -50,7 +50,7 @@ func newRoot(b build) *cobra.Command {
 	root.AddCommand(managerCommands(theFleetDeps())...)
 	v, _, _ := b.resolve()
 	root.AddCommand(newInstall(theInstallRuns, orDefault(v, "dev")), newUninstall(theInstallRuns, orDefault(v, "dev")))
-	root.AddCommand(newGcp(theGcpRuns))
+	root.AddCommand(newGcp(theGcpRuns, orDefault(v, "dev")))
 	return root
 }
 
