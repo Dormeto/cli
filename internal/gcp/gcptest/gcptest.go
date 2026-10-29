@@ -1,6 +1,14 @@
 // Package gcptest is a fake Google Cloud for tests: an httptest.Server and an http.Client whose transport sends every
 // request for a *.googleapis.com host to it, so production code keeps its real URLs. It routes by host and path, holds
 // state the tests set and inspect, and records the calls made. Tasks that need more resources add routes with Route.
+//
+// Besides the project (its IAM policy, its permissions, its services), it holds what `dormeto gcp install` creates:
+// custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues, the
+// policies of service accounts and queues, and long-running operations, done after OperationPolls polls. A resource of
+// an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's side effects are played: enabling
+// run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the project, and AccountLag refuses
+// the first bindings naming a service account just created ("does not exist", IAM's eventual consistency). Refuse makes
+// any call fail before the handlers.
 package gcptest
 
 import (
@@ -64,8 +72,32 @@ type Server struct {
 	Enabled         []string
 	ServicePageSize int
 
-	routes []route
-	calls  []Call
+	// Roles are the project's custom roles, by ID.
+	Roles map[string]*Role
+	// ServiceAccounts are the project's service accounts, by email.
+	ServiceAccounts map[string]*ServiceAccount
+	// TagKeys and TagValues are the tags, by name (tagKeys/<n>, tagValues/<n>).
+	TagKeys, TagValues map[string]*Tag
+	// Databases are the Firestore databases, by ID; Documents their documents' fields, by <database>/<document path>.
+	Databases map[string]*Database
+	Documents map[string]map[string]any
+	// Queues are the Cloud Tasks queues, by <region>/<queue>.
+	Queues map[string]*Queue
+	// Policies are the IAM policies of service accounts and queues, by resource name (projects/<id>/serviceAccounts/
+	// <email>, projects/<id>/locations/<region>/queues/<queue>).
+	Policies map[string]map[string]any
+	// OperationPolls is the number of polls after which an operation is done (0: done when created). New sets 1.
+	OperationPolls int
+	// AccountLag is how many setIamPolicy calls naming a service account created here are refused, per account, with
+	// "Service account … does not exist." (IAM's eventual consistency).
+	AccountLag int
+
+	routes   []route
+	calls    []Call
+	refusals []*Refusal
+	ops      map[string]*operation
+	lag      map[string]int
+	serial   int
 }
 
 type route struct {
@@ -80,6 +112,10 @@ func New(t testing.TB) *Server {
 	s := &Server{
 		ProjectID: "dormeto-dev", ProjectNumber: "1034397096264", State: "ACTIVE", HoldsAll: true,
 		Policy: map[string]any{"version": 1, "etag": "BwAAAA=="},
+		Roles:  map[string]*Role{}, ServiceAccounts: map[string]*ServiceAccount{}, TagKeys: map[string]*Tag{},
+		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
+		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1,
+		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -163,8 +199,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	s.calls = append(s.calls, Call{Method: r.Method, Host: r.Host, URL: full, Path: r.URL.Path, Body: string(body)})
+	refusal := s.refusal(r)
 	routes := slices.Clone(s.routes)
 	s.mu.Unlock()
+	if refusal != nil {
+		failWith(w, refusal.Code, refusal.Status, refusal.Message, refusal.Reason, nil)
+		return
+	}
 	for _, rt := range routes {
 		if rt.host == r.Host && strings.HasPrefix(r.URL.Path, rt.prefix) {
 			rt.h(w, r)
@@ -173,11 +214,24 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	path := r.URL.Path
 	switch {
-	case r.Host == "cloudresourcemanager.googleapis.com" && strings.HasPrefix(r.URL.Path, "/v3/projects/"):
-		s.resourceManager(w, r, strings.TrimPrefix(r.URL.Path, "/v3/projects/"), body)
-	case r.Host == "serviceusage.googleapis.com" && strings.HasPrefix(r.URL.Path, "/v1/projects/"):
-		s.serviceUsage(w, r, strings.TrimPrefix(r.URL.Path, "/v1/projects/"))
+	case r.Host == "cloudresourcemanager.googleapis.com" && strings.HasPrefix(path, "/v3/projects/"):
+		s.resourceManager(w, r, strings.TrimPrefix(path, "/v3/projects/"), body)
+	case r.Host == "cloudresourcemanager.googleapis.com" && (strings.HasPrefix(path, "/v3/tagKeys") || strings.HasPrefix(path, "/v3/tagValues")):
+		s.tags(w, r, body)
+	case r.Host == "cloudresourcemanager.googleapis.com" && strings.HasPrefix(path, "/v3/operations/"):
+		s.poll(w, strings.TrimPrefix(path, "/v3/"))
+	case r.Host == "serviceusage.googleapis.com" && strings.HasPrefix(path, "/v1/projects/"):
+		s.serviceUsage(w, r, strings.TrimPrefix(path, "/v1/projects/"), body)
+	case r.Host == "serviceusage.googleapis.com" && strings.HasPrefix(path, "/v1/operations/"):
+		s.poll(w, strings.TrimPrefix(path, "/v1/"))
+	case r.Host == "iam.googleapis.com":
+		s.iam(w, r, body)
+	case r.Host == "firestore.googleapis.com":
+		s.firestore(w, r, body)
+	case r.Host == "cloudtasks.googleapis.com":
+		s.cloudTasks(w, r, body)
 	default:
 		Fail(w, 404, "NOT_FOUND", "gcptest: no route for "+r.Method+" "+full)
 	}
@@ -229,6 +283,9 @@ func (s *Server) resourceManager(w http.ResponseWriter, r *http.Request, rest st
 			Fail(w, 403, "PERMISSION_DENIED", "Permission 'resourcemanager.projects.setIamPolicy' denied")
 			return
 		}
+		if s.lagging(w, in.Policy) {
+			return
+		}
 		s.Policy = in.Policy
 		Reply(w, s.Policy)
 	default:
@@ -236,8 +293,12 @@ func (s *Server) resourceManager(w http.ResponseWriter, r *http.Request, rest st
 	}
 }
 
-func (s *Server) serviceUsage(w http.ResponseWriter, r *http.Request, rest string) {
+func (s *Server) serviceUsage(w http.ResponseWriter, r *http.Request, rest string, body []byte) {
 	number, tail, _ := strings.Cut(rest, "/")
+	if tail == "services:batchEnable" && r.Method == http.MethodPost {
+		s.batchEnable(w, number, body)
+		return
+	}
 	if tail != "services" || r.Method != http.MethodGet {
 		Fail(w, 404, "NOT_FOUND", "gcptest: no route for "+r.Method+" "+r.URL.Path)
 		return
