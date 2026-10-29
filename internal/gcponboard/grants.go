@@ -162,7 +162,7 @@ func (x *run) stepOf(on string) string {
 
 // policyChanged reads the project's policy again and prints its difference from the last read, after step.
 func (x *run) policyChanged(step string) error {
-	p, err := read(x.ctx, x.d.Google, ProjectPolicy(x.n.project))
+	p, err := x.readPolicy(ProjectPolicy(x.n.project))
 	if err != nil {
 		return err
 	}

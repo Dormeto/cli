@@ -77,6 +77,8 @@ type Server struct {
 	// Enabled are the enabled services (names such as compute.googleapis.com). ServicePageSize splits the list in pages.
 	Enabled         []string
 	ServicePageSize int
+	// Propagating is, per API, how many more calls it answers SERVICE_DISABLED although enabled (Google propagating it).
+	Propagating map[string]int
 
 	// Roles are the project's custom roles, by ID.
 	Roles map[string]*Role
@@ -120,7 +122,7 @@ func New(t testing.TB) *Server {
 		Policy: map[string]any{"version": 1, "etag": "BwAAAA=="},
 		Roles:  map[string]*Role{}, ServiceAccounts: map[string]*ServiceAccount{}, TagKeys: map[string]*Tag{},
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
-		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1,
+		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -209,7 +211,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	routes := slices.Clone(s.routes)
 	s.mu.Unlock()
 	if refusal != nil {
-		failWith(w, refusal.Code, refusal.Status, refusal.Message, refusal.Reason, nil)
+		var metadata map[string]string
+		if refusal.Reason == "SERVICE_DISABLED" {
+			metadata = map[string]string{"service": r.Host}
+		}
+		failWith(w, refusal.Code, refusal.Status, refusal.Message, refusal.Reason, metadata)
 		return
 	}
 	for _, rt := range routes {

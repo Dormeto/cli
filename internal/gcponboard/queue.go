@@ -88,7 +88,7 @@ func (x *run) planQueue() (*step, error) {
 	rp := QueuePolicy(x.n.project, x.n.region, x.n.queue)
 	grant := true
 	if found {
-		p, err := read(x.ctx, x.d.Google, rp)
+		p, err := x.readPolicy(rp)
 		if err != nil {
 			return nil, err
 		}

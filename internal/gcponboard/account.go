@@ -58,7 +58,7 @@ func (x *run) planAccountBinding() (*step, error) {
 	g := x.grantOn("serviceAccount")
 	rp := ServiceAccountPolicy(x.n.project, x.n.email)
 	if x.accountExists {
-		p, err := read(x.ctx, x.d.Google, rp)
+		p, err := x.readPolicy(rp)
 		if err != nil {
 			return nil, err
 		}

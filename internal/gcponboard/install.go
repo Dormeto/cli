@@ -12,23 +12,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/install"
 )
 
 const (
-	// settleEvery and settleTries: a call Google is not ready for yet (an API just turned on, a service account just
-	// created) is tried again every 5 s for up to 60 s.
-	settleEvery = 5 * time.Second
-	settleTries = 12
+	// settleEvery: a call Google is not ready for yet is tried again every 5 s; accountTries: up to 60 s for a service
+	// account just created (IAM's eventual consistency); apiTries: up to 5 minutes for an API that is on but still
+	// answers SERVICE_DISABLED (Google says turning one on "may take a few minutes to propagate").
+	settleEvery  = 5 * time.Second
+	accountTries = 12
+	apiTries     = 60
 
 	exitInterrupted = 130
 )
+
+// settleTries are the retries of each reason why Google is not ready for a call yet (settle).
+var settleTries = map[string]int{"api": apiTries, "account": accountTries}
 
 // operationEvery is how often a long-running operation is polled; tests shorten it.
 var operationEvery = 2 * time.Second
@@ -71,8 +79,9 @@ type run struct {
 	number  string // the project's number
 	account string // the caller, from gcloud
 
-	turningOn []string // the APIs off at the start: the apis step turns them on
-	turnedOn  bool     // the apis step ran: its APIs may still answer SERVICE_DISABLED for a while
+	turningOn []string        // the APIs off at the start: the apis step turns them on
+	turnedOn  bool            // the apis step ran: its APIs are on, though they may answer SERVICE_DISABLED for a while
+	waitedFor map[string]bool // the APIs this run said it waits for
 
 	policy   *Policy // the project's IAM policy as last read
 	start    *Policy // the project's IAM policy as read at the start of this run, by the plan
@@ -108,7 +117,8 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 			}
 		}
 	}
-	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), granted: map[string]bool{}, google: map[string]bool{}}
+	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), granted: map[string]bool{}, google: map[string]bool{},
+		waitedFor: map[string]bool{}}
 }
 
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
@@ -224,7 +234,7 @@ func (x *run) checks() error {
 
 // plan reads the project's policy (the before snapshot of a first install), the record, then each step's resources.
 func (x *run) plan() error {
-	p, err := read(x.ctx, x.d.Google, ProjectPolicy(x.n.project))
+	p, err := x.readPolicy(ProjectPolicy(x.n.project))
 	if err != nil {
 		return err
 	}
@@ -347,30 +357,44 @@ func stepNames(steps []step) string {
 	return strings.Join(out, ", ")
 }
 
-// get reads a resource: false when it does not exist, or when its API is off (the apis step turns it on).
+// get reads a resource: false when it does not exist, or when its API is off (the apis step turns it on). An API that
+// is on but not answering yet is waited for (settle).
 func (x *run) get(api, u string, out any) (bool, error) {
-	err := x.d.Google.Do(x.ctx, "GET", u, nil, out)
-	switch {
-	case err == nil:
-		return true, nil
-	case gcp.IsNotFound(err), x.off(err, api):
-		return false, nil
-	}
-	return false, err
+	found := false
+	err := x.settle(func() error {
+		err := x.d.Google.Do(x.ctx, http.MethodGet, u, nil, out)
+		switch {
+		case err == nil:
+			found = true
+			return nil
+		case gcp.IsNotFound(err), x.off(err, api):
+			return nil
+		}
+		return err
+	})
+	return found, err
 }
 
-// off tells that err is Google's SERVICE_DISABLED for an API the apis step turns on.
-func (x *run) off(err error, api string) bool {
+// readPolicy reads a policy, waiting for an API that is on but not answering yet (settle).
+func (x *run) readPolicy(rp ResourcePolicy) (*Policy, error) {
+	var p *Policy
+	err := x.settle(func() error {
+		var err error
+		p, err = read(x.ctx, x.d.Google, rp)
+		return err
+	})
+	return p, err
+}
+
+// serviceDisabled is Google's SERVICE_DISABLED: an API off, or on and not propagated yet.
+func serviceDisabled(err error) bool {
 	var e *gcp.Error
-	if !errors.As(err, &e) || e.Reason != "SERVICE_DISABLED" {
-		return false
-	}
-	for _, a := range x.turningOn {
-		if a == api {
-			return true
-		}
-	}
-	return false
+	return errors.As(err, &e) && e.Reason == "SERVICE_DISABLED"
+}
+
+// off tells that err is Google's SERVICE_DISABLED for an API that is off and that the apis step will turn on.
+func (x *run) off(err error, api string) bool {
+	return serviceDisabled(err) && !x.turnedOn && slices.Contains(x.turningOn, api)
 }
 
 // call is a call of the apply, tried again while Google is not ready for it (settle).
@@ -378,30 +402,47 @@ func (x *run) call(method, u string, in, out any) error {
 	return x.settle(func() error { return x.d.Google.Do(x.ctx, method, u, in, out) })
 }
 
-// settle runs f again every 5 s, up to 60 s, while it fails because Google has not caught up with this run: an API
-// just turned on still answering SERVICE_DISABLED, or a binding naming the new service account answering that it does
-// not exist (IAM's eventual consistency).
+// settle runs f again every 5 s while it fails because Google has not caught up yet, in the plan as in the apply: an
+// API of the manifest that is on (or was just turned on) still answering SERVICE_DISABLED, up to 5 minutes; a binding
+// naming the new service account answering that it does not exist (IAM's eventual consistency), up to 60 s. Then the
+// error is the call's.
 func (x *run) settle(f func() error) error {
-	for try := 0; ; try++ {
+	tries := map[string]int{}
+	for {
 		err := f()
-		if err == nil || try == settleTries || !x.lagging(err) {
+		kind, api := x.lagging(err)
+		if err == nil || kind == "" || tries[kind] == settleTries[kind] {
 			return err
 		}
+		if kind == "api" && !x.waitedFor[api] {
+			x.waitedFor[api] = true
+			name := api
+			if name == "" {
+				name = "an API"
+			}
+			x.say("  … %s is on but does not answer yet: waiting for Google to propagate it (up to 5 minutes)", name)
+		}
+		tries[kind]++
 		if err := x.d.Sleep(x.ctx, settleEvery); err != nil {
 			return err
 		}
 	}
 }
 
-func (x *run) lagging(err error) bool {
+// lagging tells why Google is not ready for a call yet ("api" or "account", "" when it is another failure), and the
+// API a SERVICE_DISABLED names.
+func (x *run) lagging(err error) (kind, api string) {
 	var e *gcp.Error
 	if !errors.As(err, &e) {
-		return false
+		return "", ""
 	}
-	if e.Reason == "SERVICE_DISABLED" {
-		return x.turnedOn
+	if e.Reason == "SERVICE_DISABLED" && (e.Service == "" || slices.Contains(access.Load().APIs, e.Service)) {
+		return "api", e.Service
 	}
-	return e.Code == 400 && strings.Contains(strings.ToLower(e.Message), "service account") && strings.Contains(e.Message, "does not exist")
+	if e.Code == 400 && strings.Contains(strings.ToLower(e.Message), "service account") && strings.Contains(e.Message, "does not exist") {
+		return "account", ""
+	}
+	return "", ""
 }
 
 // longOperation is a long-running operation as a create answers it; Response is the created resource once done.

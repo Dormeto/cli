@@ -30,17 +30,27 @@ type googleTag struct {
 }
 
 // tag reads a tag key or value (kind tagKeys or tagValues) by its namespaced name. Resource Manager answers 403 for one
-// that does not exist (the permission to read it being held, as the checks proved): it is missing then.
+// that does not exist (the permission to read it being held, as the checks proved): it is missing then. Its API on but
+// not answering yet (SERVICE_DISABLED, also a 403) is waited for.
 func (x *run) tag(kind, namespaced string) (string, bool, error) {
 	var t googleTag
-	err := x.d.Google.Do(x.ctx, http.MethodGet, crmV3+kind+"/namespaced?name="+url.QueryEscape(namespaced), nil, &t)
-	switch {
-	case err == nil:
-		return t.Name, true, nil
-	case gcp.IsNotFound(err), gcp.IsDenied(err):
-		return "", false, nil
-	}
-	return "", false, err
+	found := false
+	err := x.settle(func() error {
+		err := x.d.Google.Do(x.ctx, http.MethodGet, crmV3+kind+"/namespaced?name="+url.QueryEscape(namespaced), nil, &t)
+		switch {
+		case err == nil:
+			found = true
+			return nil
+		case x.off(err, crmAPI):
+			return nil
+		case serviceDisabled(err):
+			return err
+		case gcp.IsNotFound(err), gcp.IsDenied(err):
+			return nil
+		}
+		return err
+	})
+	return t.Name, found, err
 }
 
 func (x *run) planTag() (*step, error) {

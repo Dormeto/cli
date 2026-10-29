@@ -148,13 +148,15 @@ func (g *gcloud) IdentityToken(ctx context.Context, audience string) (string, er
 	return g.printToken(ctx, args...)
 }
 
-// Error is a Google Cloud API error.
+// Error is a Google Cloud API error. Reason, Permission and Service are from its google.rpc.ErrorInfo: Service is the
+// API a SERVICE_DISABLED names.
 type Error struct {
 	Code       int
 	Status     string
 	Reason     string
 	Message    string
 	Permission string
+	Service    string
 }
 
 func (e *Error) Error() string {
@@ -221,7 +223,7 @@ func parseError(code int, body []byte) *Error {
 	for _, d := range p.Error.Details {
 		if strings.HasSuffix(d.Type, "google.rpc.ErrorInfo") {
 			e.Reason = d.Reason
-			e.Permission = d.Metadata["permission"]
+			e.Permission, e.Service = d.Metadata["permission"], d.Metadata["service"]
 			break
 		}
 	}

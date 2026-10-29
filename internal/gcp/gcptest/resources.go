@@ -100,10 +100,13 @@ func noRoute(w http.ResponseWriter, r *http.Request) {
 	Fail(w, 404, "NOT_FOUND", "gcptest: no route for "+r.Method+" "+r.Host+r.URL.Path)
 }
 
-// disabled answers SERVICE_DISABLED when api is not enabled.
+// disabled answers SERVICE_DISABLED when api is not enabled, or still propagating.
 func (s *Server) disabled(w http.ResponseWriter, api string) bool {
 	if slices.Contains(s.Enabled, api) {
-		return false
+		if s.Propagating[api] <= 0 {
+			return false
+		}
+		s.Propagating[api]--
 	}
 	failWith(w, 403, "PERMISSION_DENIED", fmt.Sprintf("%s has not been used in project %s before or it is disabled.", api, s.ProjectNumber),
 		"SERVICE_DISABLED", map[string]string{"service": api, "consumer": "projects/" + s.ProjectNumber})

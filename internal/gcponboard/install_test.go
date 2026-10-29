@@ -933,3 +933,33 @@ func TestInstallWarnsWhenBillingIsNotReadable(t *testing.T) {
 	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
 		"  ! billing not checked: google: 403 PERMISSION_DENIED: The caller does not have permission\n")
 }
+
+func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
+	g := newInstallRig(t)
+	// IAM's API, once on, answers SERVICE_DISABLED for longer than the first run waits (5 minutes, every 5 s: 61 calls),
+	// then for the next run's first 2 calls.
+	g.s.Propagating["iam.googleapis.com"] = 61 + 2
+	code, out := g.run(t, europe)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✓ apis: ", "  ✗ roles: google: 403 PERMISSION_DENIED (SERVICE_DISABLED): iam.googleapis.com has not been used",
+		"Done: apis. Not done: roles, ")
+	if len(*g.slept) != 60 || (*g.slept)[0] != 5*time.Second {
+		t.Fatalf("slept %d times: %v", len(*g.slept), *g.slept)
+	}
+
+	// The next run: the API is on (Service Usage says so) but not answering yet while planning; it waits, then plans.
+	code, out = g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
+		"  … iam.googleapis.com is on but does not answer yet: waiting for Google to propagate it (up to 5 minutes)\n"+
+		"Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  + role dormetoRouter \"Dormeto router\" (27 permissions)\n", "  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n",
+		"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
+	if !slices.Equal(*g.slept, []time.Duration{5 * time.Second, 5 * time.Second}) {
+		t.Fatalf("slept %v", *g.slept)
+	}
+}

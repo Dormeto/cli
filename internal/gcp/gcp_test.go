@@ -491,3 +491,15 @@ func TestWaitOperationRetriesAPollOnATransientError(t *testing.T) {
 		t.Fatalf("%v, %d requests", err, requests)
 	}
 }
+
+func TestErrorNamesTheDisabledService(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"off","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED","metadata":{"service":"iam.googleapis.com","consumer":"projects/1"}}]}}`))
+	}))
+	defer srv.Close()
+	var ge *Error
+	if err := newClient(srv).Do(context.Background(), "GET", srv.URL, nil, nil); !errors.As(err, &ge) || ge.Reason != "SERVICE_DISABLED" || ge.Service != "iam.googleapis.com" {
+		t.Fatalf("%#v", err)
+	}
+}
