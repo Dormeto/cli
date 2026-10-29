@@ -1,0 +1,335 @@
+// Package gcp is the CLI's Google Cloud client: REST over net/http with the
+// tokens of gcloud (no Google client library), Google's error JSON as *Error,
+// and the waiting of long-running and Compute Engine operations.
+package gcp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+)
+
+// now and sleep are the clock of the cache and of the polling; tests replace them.
+var (
+	now   = time.Now
+	sleep = func(ctx context.Context, d time.Duration) error {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			return nil
+		}
+	}
+)
+
+const tokenTTL = 5 * time.Minute
+
+// Runner runs a command and returns its standard output.
+type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+// ExecRunner is the default Runner, on os/exec; a failure carries stderr.
+func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%s: %w: %s", name, err, msg)
+		}
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return out, nil
+}
+
+// TokenSource gives the credentials of the Google account in use.
+type TokenSource interface {
+	AccessToken(ctx context.Context) (string, error)
+	IdentityToken(ctx context.Context, audience string) (string, error)
+	Account(ctx context.Context) (string, error)
+}
+
+type gcloud struct {
+	configuration string
+	run           Runner
+
+	mu      sync.Mutex
+	token   string
+	expires time.Time
+}
+
+// NewGcloud reads the tokens from gcloud's configuration (empty: the active
+// one). A nil run is ExecRunner.
+func NewGcloud(configuration string, run Runner) TokenSource {
+	if run == nil {
+		run = ExecRunner
+	}
+	return &gcloud{configuration: configuration, run: run}
+}
+
+func (g *gcloud) call(ctx context.Context, args ...string) (string, error) {
+	if g.configuration != "" {
+		args = append(args, "--configuration", g.configuration)
+	}
+	out, err := g.run(ctx, "gcloud", args...)
+	if err != nil {
+		return "", fmt.Errorf("gcloud %s: %w", strings.Join(args[:2], " "), err)
+	}
+	v := strings.TrimSpace(string(out))
+	if v == "" {
+		return "", fmt.Errorf("gcloud %s: empty answer", strings.Join(args[:2], " "))
+	}
+	return v, nil
+}
+
+func (g *gcloud) AccessToken(ctx context.Context) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.token != "" && now().Before(g.expires) {
+		return g.token, nil
+	}
+	t, err := g.call(ctx, "auth", "print-access-token")
+	if err != nil {
+		return "", err
+	}
+	g.token, g.expires = t, now().Add(tokenTTL)
+	return t, nil
+}
+
+func (g *gcloud) Account(ctx context.Context) (string, error) {
+	return g.call(ctx, "config", "get-value", "account")
+}
+
+func (g *gcloud) IdentityToken(ctx context.Context, audience string) (string, error) {
+	args := []string{"auth", "print-identity-token"}
+	// Cloud Run accepts gcloud's own token for a user without an audience;
+	// a service account needs one.
+	account, err := g.Account(ctx)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasSuffix(account, ".gserviceaccount.com") && audience != "" {
+		args = append(args, "--audiences="+audience)
+	}
+	return g.call(ctx, args...)
+}
+
+// Error is a Google Cloud API error.
+type Error struct {
+	Code       int
+	Status     string
+	Reason     string
+	Message    string
+	Permission string
+}
+
+func (e *Error) Error() string {
+	s := fmt.Sprintf("google: %d", e.Code)
+	if e.Status != "" {
+		s += " " + e.Status
+	}
+	if e.Reason != "" {
+		s += " (" + e.Reason + ")"
+	}
+	if e.Message != "" {
+		s += ": " + e.Message
+	}
+	if e.Permission != "" {
+		s += " [permission " + e.Permission + "]"
+	}
+	return s
+}
+
+func asError(err error) *Error {
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	return nil
+}
+
+// IsNotFound is a 404.
+func IsNotFound(err error) bool { e := asError(err); return e != nil && e.Code == 404 }
+
+// IsConflict is a 409.
+func IsConflict(err error) bool { e := asError(err); return e != nil && e.Code == 409 }
+
+// IsDenied is a 403.
+func IsDenied(err error) bool { e := asError(err); return e != nil && e.Code == 403 }
+
+// IsPrecondition is a 412, or a 400 whose status is FAILED_PRECONDITION.
+func IsPrecondition(err error) bool {
+	e := asError(err)
+	return e != nil && (e.Code == 412 || (e.Code == 400 && e.Status == "FAILED_PRECONDITION"))
+}
+
+func parseError(code int, body []byte) *Error {
+	var p struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Details []struct {
+				Type     string            `json:"@type"`
+				Reason   string            `json:"reason"`
+				Metadata map[string]string `json:"metadata"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &p) != nil || (p.Error.Message == "" && p.Error.Status == "" && p.Error.Code == 0) {
+		m := body
+		if len(m) > 200 {
+			m = m[:200]
+		}
+		return &Error{Code: code, Message: string(m)}
+	}
+	e := &Error{Code: code, Status: p.Error.Status, Message: p.Error.Message}
+	for _, d := range p.Error.Details {
+		if strings.HasSuffix(d.Type, "google.rpc.ErrorInfo") {
+			e.Reason = d.Reason
+			e.Permission = d.Metadata["permission"]
+			break
+		}
+	}
+	return e
+}
+
+// Client calls Google Cloud REST APIs as the account of Tokens.
+type Client struct {
+	HTTP   *http.Client
+	Tokens TokenSource
+}
+
+// Do sends in as JSON (when non-nil) and decodes the answer into out (when
+// non-nil). A non-2xx answer is an *Error.
+func (c *Client) Do(ctx context.Context, method, url string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	token, err := c.Tokens.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	h := c.HTTP
+	if h == nil {
+		h = http.DefaultClient
+	}
+	res, err := h.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return parseError(res.StatusCode, data)
+	}
+	if out != nil && len(bytes.TrimSpace(data)) > 0 {
+		return json.Unmarshal(data, out)
+	}
+	return nil
+}
+
+type operation struct {
+	Name  string `json:"name"`
+	Done  bool   `json:"done"`
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// WaitOperation polls a long-running operation until it is done.
+func WaitOperation(ctx context.Context, c *Client, url string, every, timeout time.Duration) error {
+	deadline := now().Add(timeout)
+	for {
+		var op operation
+		if err := c.Do(ctx, http.MethodGet, url, nil, &op); err != nil {
+			return err
+		}
+		if op.Done {
+			if op.Error != nil {
+				return &Error{Code: op.Error.Code, Message: op.Error.Message}
+			}
+			return nil
+		}
+		if now().Add(every).After(deadline) {
+			return fmt.Errorf("operation %s not done after %s", nameOr(op.Name, url), timeout)
+		}
+		if err := sleep(ctx, every); err != nil {
+			return err
+		}
+	}
+}
+
+type computeOperation struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Error  *struct {
+		Errors []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	} `json:"error"`
+}
+
+const computePoll = 2 * time.Second
+
+// WaitCompute polls a Compute Engine operation's selfLink until it is DONE.
+func WaitCompute(ctx context.Context, c *Client, selfLink string, timeout time.Duration) error {
+	deadline := now().Add(timeout)
+	for {
+		var op computeOperation
+		if err := c.Do(ctx, http.MethodGet, selfLink, nil, &op); err != nil {
+			return err
+		}
+		if op.Status == "DONE" {
+			if op.Error != nil && len(op.Error.Errors) > 0 {
+				msgs := make([]string, 0, len(op.Error.Errors))
+				for _, e := range op.Error.Errors {
+					msgs = append(msgs, e.Message)
+				}
+				return fmt.Errorf("compute operation %s failed: %s", nameOr(op.Name, selfLink), strings.Join(msgs, "; "))
+			}
+			return nil
+		}
+		if now().Add(computePoll).After(deadline) {
+			return fmt.Errorf("compute operation %s not done after %s", nameOr(op.Name, selfLink), timeout)
+		}
+		if err := sleep(ctx, computePoll); err != nil {
+			return err
+		}
+	}
+}
+
+func nameOr(name, fallback string) string {
+	if name != "" {
+		return name
+	}
+	return fallback
+}
