@@ -22,7 +22,8 @@ const recordPath = "install/record"
 // Record is the install record. Its rule: Grants and Resources are Dormeto's that are present after the install, added
 // by it or found by it (a run adds what it finds of the router's, so a record rebuilt after a loss is whole again);
 // Google lists the grants Google added during an install, never removed; Before is the project's bindings before the
-// first install. The uninstall removes only the grants that are not in Before. Image and RouterVersion are the router
+// first install, for the uninstall only (which removes only the grants that are not in it; an install's verification
+// compares with its own run's first read). Image and RouterVersion are the router
 // part's (empty for the access alone); times are RFC 3339 UTC; By is the gcloud account that ran the install.
 type Record struct {
 	CLI            string          `json:"cli"`

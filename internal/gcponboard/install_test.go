@@ -681,7 +681,8 @@ func TestVerifyNamesWhatDiffers(t *testing.T) {
 	x := newRun(context.Background(), g.d, europe)
 	x.number = "1034397096264"
 	rec := g.record(t)
-	x.rec = &rec
+	p := g.projectPolicy(t)
+	x.rec, x.start = &rec, &p
 	warnings, err := x.verify()
 	if len(warnings) != 0 {
 		t.Fatalf("warnings %v", warnings)
@@ -855,5 +856,23 @@ func TestInstallTakesTheTagIDsFromTheOperations(t *testing.T) {
 				t.Errorf("polls %d: no %s in %+v", polls, kind, rec.Resources)
 			}
 		}
+	}
+}
+
+func TestInstallDoesNotWarnOfWhatWasThereBeforeTheRun(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// Another router of the project, installed since, and a change the next run applies.
+	west4 := "serviceAccount:dmtr-europe-west4@dormeto-dev.iam.gserviceaccount.com"
+	grantInFake(t, g.s, "projects/dormeto-dev/roles/dormetoRouter", west4)
+	grantInFake(t, g.s, "roles/viewer", "user:earlier@example.com")
+	g.s.Lock()
+	g.s.Roles["dormetoRouter"].Stage = "BETA"
+	g.s.Unlock()
+	code, out := g.run(t, europe)
+	if code != 0 || !strings.Contains(out, "  ✓ verified:") || strings.Contains(out, "IAM change not made by this install") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }

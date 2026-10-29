@@ -75,8 +75,11 @@ type run struct {
 	turnedOn  bool     // the apis step ran: its APIs may still answer SERVICE_DISABLED for a while
 
 	policy   *Policy // the project's IAM policy as last read
+	start    *Policy // the project's IAM policy as read at the start of this run, by the plan
 	stale    bool    // a step that may change it ran since
 	lastStep string  // the last step applied
+	// granted and google are the project grants this run added and those it saw Google add (grantKey, role+member).
+	granted, google map[string]bool
 
 	rec           *Record
 	recorded      bool   // the record is in the database (read, or written by this run)
@@ -105,7 +108,7 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 			}
 		}
 	}
-	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region)}
+	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), granted: map[string]bool{}, google: map[string]bool{}}
 }
 
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
@@ -221,7 +224,7 @@ func (x *run) plan() error {
 	if err != nil {
 		return err
 	}
-	x.policy = p
+	x.policy, x.start = p, p
 	if err := x.loadRecord(); err != nil {
 		return err
 	}

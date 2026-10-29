@@ -124,6 +124,7 @@ func (x *run) planProjectBindings() (*step, error) {
 		}
 		for _, g := range missing {
 			x.rec.addGrant(recordGrant(g))
+			x.granted[grantKey(g.Grant)] = true
 		}
 		if err := x.policyChanged("projectBindings"); err != nil {
 			return "", err
@@ -194,6 +195,9 @@ func (x *run) differences(before, after *Policy, on, step string) {
 		}
 		line("+", g, "Google, after "+step)
 		x.rec.addGoogle(GoogleGrant{Role: g.Role, Member: g.Member, Step: step})
+		if on == "project" {
+			x.google[g.Role+"\x00"+g.Member] = true
+		}
 	}
 	for _, g := range removed {
 		line("-", g, "Google, after "+step)
