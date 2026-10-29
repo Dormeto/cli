@@ -264,6 +264,29 @@ type operation struct {
 	} `json:"error"`
 }
 
+// grpcCodes maps an operation's gRPC error code to the HTTP code and the status name.
+var grpcCodes = map[int]struct {
+	http   int
+	status string
+}{
+	3:  {400, "INVALID_ARGUMENT"},
+	4:  {504, "DEADLINE_EXCEEDED"},
+	5:  {404, "NOT_FOUND"},
+	6:  {409, "ALREADY_EXISTS"},
+	7:  {403, "PERMISSION_DENIED"},
+	8:  {429, "RESOURCE_EXHAUSTED"},
+	9:  {400, "FAILED_PRECONDITION"},
+	10: {409, "ABORTED"},
+	14: {503, "UNAVAILABLE"},
+}
+
+func fromGRPC(code int) (int, string) {
+	if m, ok := grpcCodes[code]; ok {
+		return m.http, m.status
+	}
+	return 500, "UNKNOWN"
+}
+
 // WaitOperation polls a long-running operation until it is done.
 func WaitOperation(ctx context.Context, c *Client, url string, every, timeout time.Duration) error {
 	deadline := now().Add(timeout)
@@ -274,7 +297,8 @@ func WaitOperation(ctx context.Context, c *Client, url string, every, timeout ti
 		}
 		if op.Done {
 			if op.Error != nil {
-				return &Error{Code: op.Error.Code, Message: op.Error.Message}
+				code, status := fromGRPC(op.Error.Code)
+				return &Error{Code: code, Status: status, Message: op.Error.Message}
 			}
 			return nil
 		}

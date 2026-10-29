@@ -137,14 +137,37 @@ func TestWaitOperation(t *testing.T) {
 
 func TestWaitOperationError(t *testing.T) {
 	fakeClock(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"name":"op1","done":true,"error":{"code":9,"message":"boom"}}`))
-	}))
-	defer srv.Close()
-	err := WaitOperation(context.Background(), newClient(srv), srv.URL, time.Second, time.Minute)
-	var ge *Error
-	if !errors.As(err, &ge) || ge.Message != "boom" || ge.Code != 9 {
-		t.Fatalf("got %v", err)
+	for _, tc := range []struct {
+		grpc, code int
+		status     string
+		pred       func(error) bool
+	}{
+		{3, 400, "INVALID_ARGUMENT", nil},
+		{4, 504, "DEADLINE_EXCEEDED", nil},
+		{5, 404, "NOT_FOUND", IsNotFound},
+		{6, 409, "ALREADY_EXISTS", IsConflict},
+		{7, 403, "PERMISSION_DENIED", IsDenied},
+		{8, 429, "RESOURCE_EXHAUSTED", nil},
+		{9, 400, "FAILED_PRECONDITION", IsPrecondition},
+		{10, 409, "ABORTED", IsConflict},
+		{14, 503, "UNAVAILABLE", nil},
+		{13, 500, "UNKNOWN", nil},
+		{99, 500, "UNKNOWN", nil},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"name":"op1","done":true,"error":{"code":%d,"message":"boom"}}`, tc.grpc)
+			}))
+			defer srv.Close()
+			err := WaitOperation(context.Background(), newClient(srv), srv.URL, time.Second, time.Minute)
+			var ge *Error
+			if !errors.As(err, &ge) || ge.Message != "boom" || ge.Code != tc.code || ge.Status != tc.status {
+				t.Fatalf("got %#v", err)
+			}
+			if tc.pred != nil && !tc.pred(err) {
+				t.Fatalf("predicate false for %v", err)
+			}
+		})
 	}
 }
 
