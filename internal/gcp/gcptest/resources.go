@@ -153,6 +153,21 @@ func (s *Server) operationBody(name string, op *operation) map[string]any {
 	return out
 }
 
+// FinishOperations finishes every operation still running, as Google does whether anyone polls it or not (a CLI that
+// stopped waiting).
+func (s *Server) FinishOperations() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.ops))
+	for name := range s.ops {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		s.finish(s.ops[name])
+	}
+}
+
 func (s *Server) poll(w http.ResponseWriter, name string) {
 	op, ok := s.ops[name]
 	if !ok {
@@ -165,7 +180,8 @@ func (s *Server) poll(w http.ResponseWriter, name string) {
 	Reply(w, s.operationBody(name, op))
 }
 
-// batchEnable enables services; turning run.googleapis.com on grants Cloud Run's service agent its role on the project.
+// batchEnable enables services; turning run.googleapis.com on grants Cloud Run's service agent its role on the project,
+// and compute.googleapis.com, with DefaultEditor, Editor to the default service account.
 func (s *Server) batchEnable(w http.ResponseWriter, number string, body []byte) {
 	var in struct {
 		ServiceIDs []string `json:"serviceIds"`
@@ -187,6 +203,9 @@ func (s *Server) batchEnable(w http.ResponseWriter, number string, body []byte) 
 			if api == "run.googleapis.com" {
 				s.Policy = addBinding(s.Policy, "roles/run.serviceAgent",
 					"serviceAccount:service-"+s.ProjectNumber+"@serverless-robot-prod.iam.gserviceaccount.com")
+			}
+			if api == "compute.googleapis.com" && s.DefaultEditor {
+				s.Policy = addBinding(s.Policy, "roles/editor", "serviceAccount:"+s.ProjectNumber+"-compute@developer.gserviceaccount.com")
 			}
 		}
 	})

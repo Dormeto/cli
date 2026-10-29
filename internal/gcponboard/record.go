@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const recordPath = "install/record"
@@ -38,6 +39,13 @@ type Record struct {
 	InstalledAt    string          `json:"installedAt"`
 	UpdatedAt      string          `json:"updatedAt"`
 	By             string          `json:"by"`
+	// Running is the step an install was at when it wrote the record without having finished ("" once one has): the
+	// next run shows the project's grants that appeared since and that the record does not explain, and records those of
+	// Google's service agents as Google's, after "<Running> (seen later)".
+	Running string `json:"running,omitempty"`
+	// Enabling are the APIs an apis step asked Google to turn on and did not see on before it stopped: the next run
+	// records those it finds on.
+	Enabling []string `json:"enabling,omitempty"`
 }
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role
@@ -56,7 +64,8 @@ type RecordGrant struct {
 	Condition *Condition `json:"condition,omitempty"`
 }
 
-// GoogleGrant is a grant Google added on its own during the install, after Step.
+// GoogleGrant is a grant Google added on its own during the install, after Step; "<step> (seen later)" when the run
+// after a stopped one found it (Google acting after the stop).
 type GoogleGrant struct {
 	Role   string `json:"role"`
 	Member string `json:"member"`
@@ -149,7 +158,7 @@ func (x *run) loadRecord() error {
 			if err := json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec); err != nil {
 				return fmt.Errorf("%s in database %s: %w", recordPath, x.n.database, err)
 			}
-			x.rec, x.recorded = &rec, true
+			x.rec, x.recorded, x.resumed = &rec, true, rec.Running != ""
 			return nil
 		}
 	}
@@ -161,7 +170,7 @@ func (x *run) loadRecord() error {
 			if err := json.Unmarshal(b, &rec); err != nil {
 				return fmt.Errorf("%s: %w (the record of an earlier install that stopped)", path, err)
 			}
-			x.rec = &rec
+			x.rec, x.resumed = &rec, true
 			return nil
 		case !errors.Is(err, fs.ErrNotExist):
 			return err
@@ -169,6 +178,66 @@ func (x *run) loadRecord() error {
 	}
 	x.rec = &Record{Before: bindingsOf(x.policy)}
 	return nil
+}
+
+// resume takes up the record of an install that did not finish. The APIs its apis step asked for and that are on now
+// are recorded. The project's grants that the record does not explain — neither in its before, nor the router's, nor
+// Google's as that install saw them, nor another Dormeto router's — appeared since it read the policy last: Google may
+// have acted after it stopped (an API's operation finishing). They are shown in the plan; those of Google's service
+// agents are recorded as Google's, after the step that install was at "(seen later)"; the others are only shown.
+func (x *run) resume() {
+	if !x.resumed {
+		return
+	}
+	x.recChanged = true // written again, finished
+	x.recordAPIs(x.enabled)
+	x.rec.Enabling = nil // those still off are the apis step's again
+	explained := &Policy{}
+	for _, b := range x.rec.Before {
+		explained.Bindings = append(explained.Bindings, Binding{Role: b.Role, Members: b.Members, Condition: b.Condition})
+	}
+	for _, g := range x.rec.Grants {
+		if g.On == "project" {
+			Add(explained, Grant{Role: g.Role, Member: g.Member, Condition: g.Condition})
+		}
+	}
+	for _, g := range x.rec.Google {
+		Add(explained, Grant{Role: g.Role, Member: g.Member})
+	}
+	step := x.rec.Running
+	if step == "" {
+		step = "install"
+	}
+	step += " (seen later)"
+	added, _ := Diff(explained, x.start)
+	for _, g := range added {
+		switch {
+		case x.ours(g), x.otherRouter(g.Member):
+		case x.serviceAgent(g.Member):
+			x.rec.addGoogle(GoogleGrant{Role: g.Role, Member: g.Member, Step: step})
+			x.sinceLast = append(x.sinceLast, "+ "+x.describe(g, "project")+" (Google, after "+step+")")
+		default:
+			x.sinceLast = append(x.sinceLast, "+ "+x.describe(g, "project")+" (not a Google service agent: not recorded)")
+		}
+	}
+}
+
+// serviceAgent tells that a member is one of Google's own accounts of the project: a service agent
+// (service-<number>@<…>.gserviceaccount.com), the Compute Engine default service account
+// (<number>-compute@developer.gserviceaccount.com) or the Google APIs service agent (<number>@cloudservices.…).
+func (x *run) serviceAgent(member string) bool {
+	email, ok := strings.CutPrefix(member, "serviceAccount:")
+	if !ok || x.number == "" {
+		return false
+	}
+	return email == x.number+"-compute@developer.gserviceaccount.com" || email == x.number+"@cloudservices.gserviceaccount.com" ||
+		(strings.HasPrefix(email, "service-"+x.number+"@") && strings.HasSuffix(email, ".gserviceaccount.com"))
+}
+
+// otherRouter tells that a member is another Dormeto router's service account in the project.
+func (x *run) otherRouter(member string) bool {
+	email, ok := strings.CutPrefix(member, "serviceAccount:")
+	return ok && email != x.n.email && strings.HasPrefix(email, "dmtr-") && strings.HasSuffix(email, "@"+x.n.project+".iam.gserviceaccount.com")
 }
 
 // complete fills the record's fields of this run.
@@ -249,6 +318,7 @@ func (x *run) planRecord() *step {
 		if err := x.catchUp(); err != nil {
 			return "", err
 		}
+		x.rec.Running = "" // the install's last write: finished
 		if err := x.writeRecord(); err != nil {
 			return "", err
 		}

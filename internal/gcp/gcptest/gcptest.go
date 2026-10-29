@@ -7,7 +7,8 @@
 // policies of service accounts and queues, and long-running operations, done after OperationPolls polls. A resource of
 // an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's side effects are played: enabling
 // run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the project, creating a Firestore
-// database grants roles/firestore.serviceAgent to Firestore's, and AccountLag refuses
+// database grants roles/firestore.serviceAgent to Firestore's, DefaultEditor grants Editor to the Compute Engine default
+// service account when compute.googleapis.com is enabled, and AccountLag refuses
 // the first bindings naming a service account just created ("does not exist", IAM's eventual consistency). Refuse makes
 // any call fail before the handlers.
 package gcptest
@@ -99,6 +100,9 @@ type Server struct {
 	// AccountLag is how many setIamPolicy calls naming a service account created here are refused, per account, with
 	// "Service account … does not exist." (IAM's eventual consistency).
 	AccountLag int
+	// DefaultEditor makes enabling compute.googleapis.com grant roles/editor to the Compute Engine default service
+	// account, as Google does in a project without the organization policy iam.automaticIamGrantsForDefaultServiceAccounts.
+	DefaultEditor bool
 
 	routes   []route
 	calls    []Call

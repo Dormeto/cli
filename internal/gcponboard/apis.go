@@ -28,6 +28,9 @@ func (x *run) planAPIs() (*step, error) {
 
 func (x *run) turnOnAPIs() (string, error) {
 	for batch := range slices.Chunk(x.turningOn, enableBatch) {
+		// Asked for, Google may turn them on even when this run stops waiting: a stopped run records those it finds on,
+		// and the next run those on by then.
+		x.rec.Enabling = append(x.rec.Enabling, batch...)
 		var op longOperation
 		in := map[string]any{"serviceIds": batch}
 		if err := x.call(http.MethodPost, serviceUsage+esc(x.number)+"/services:batchEnable", in, &op); err != nil {
@@ -37,12 +40,23 @@ func (x *run) turnOnAPIs() (string, error) {
 		if err := x.wait("https://serviceusage.googleapis.com/v1/", op, apisTimeout); err != nil {
 			return "", err
 		}
-		for _, api := range batch {
-			x.rec.addResource("api", api)
-		}
+		x.recordAPIs(batch)
 	}
 	if err := x.policyChanged("apis"); err != nil {
 		return "", err
 	}
 	return "turned on " + strings.Join(x.turningOn, ", "), nil
+}
+
+// recordAPIs records the APIs of the record's Enabling that are on: the install turned them on.
+func (x *run) recordAPIs(on []string) {
+	var still []string
+	for _, api := range x.rec.Enabling {
+		if slices.Contains(on, api) {
+			x.rec.addResource("api", api)
+		} else if !slices.Contains(still, api) {
+			still = append(still, api)
+		}
+	}
+	x.rec.Enabling = still
 }

@@ -91,11 +91,14 @@ type run struct {
 	granted, google map[string]bool
 
 	rec           *Record
-	recorded      bool   // the record is in the database (read, or written by this run)
-	recChanged    bool   // the plan found things the record lacks
-	database      bool   // the router's database exists
-	accountExists bool   // the router's service account exists
-	tagKey        string // the tag key dormeto's name, tagKeys/<n>, once known
+	resumed       bool     // the record is an unfinished install's: from the cache, or the database's with Running set
+	sinceLast     []string // the plan's lines of the project's grants that appeared since that install stopped
+	enabled       []string // the manifest's APIs on at the start
+	recorded      bool     // the record is in the database (read, or written by this run)
+	recChanged    bool     // the plan found things the record lacks
+	database      bool     // the router's database exists
+	accountExists bool     // the router's service account exists
+	tagKey        string   // the tag key dormeto's name, tagKeys/<n>, once known
 
 	steps []step
 	iam   []string // the IAM lines of the running step
@@ -224,7 +227,7 @@ func (x *run) checks() error {
 		return &stop{1, "  ✗ " + noBilling(x.n.project, x.r.Configuration) + "\nNothing was changed."}
 	}
 	x.number = rep.Project.Number
-	x.turningOn = rep.APIs.Missing
+	x.turningOn, x.enabled = rep.APIs.Missing, rep.APIs.Enabled
 	x.say("Checked: %s holds every permission dormeto gcp install needs in project %s.", rep.Account, x.n.project)
 	for _, w := range rep.Warnings {
 		x.say("  ! %s", w)
@@ -242,6 +245,7 @@ func (x *run) plan() error {
 	if err := x.loadRecord(); err != nil {
 		return err
 	}
+	x.resume()
 	planners := []func() (*step, error){x.planAPIs, x.planRoles, x.planServiceAccount, x.planTag, x.planDatabase,
 		x.planProjectBindings, x.planQueue, x.planAccountBinding}
 	for _, plan := range planners {
@@ -271,26 +275,43 @@ func (x *run) printPlan() {
 	if apis {
 		x.say("Turning APIs on can make Google add bindings of its own: they are shown after that step.")
 	}
-}
-
-// apply runs the steps in order. A refused step stops the run: what was done and what was not are said, and the done
-// part is kept in the record (or, before the database exists, in the cache) for the next run to continue.
-func (x *run) apply() error {
-	if !x.recorded {
-		if err := x.writeCache(); err != nil {
-			return err
+	if len(x.sinceLast) > 0 {
+		x.say("IAM changes since the last run, not Dormeto's:")
+		for _, l := range x.sinceLast {
+			x.say("  %s", l)
 		}
 	}
+}
+
+// apply runs the steps in order. A refused step stops the run: what Google did meanwhile is read again and said, what
+// was done and what was not are said, and the done part is kept in the record (or, before the database exists, in the
+// cache) for the next run to continue. Until the end the record names the step it is at (Running): a run stopped
+// without a word (killed) is known unfinished by the next one.
+func (x *run) apply() error {
 	for i, s := range x.steps {
 		x.iam = nil
+		x.rec.Running = s.name
+		if !x.recorded {
+			if err := x.writeCache(); err != nil {
+				if i == 0 {
+					return err
+				}
+				x.say("  ! %s", err)
+			}
+		}
 		done, err := s.apply()
 		if err != nil {
 			code := 1
 			if x.ctx.Err() != nil {
 				code = exitInterrupted
 			}
+			// What is left to do runs to its end: the person stopped the step, not the reading of what it did.
+			x.ctx = context.WithoutCancel(x.ctx)
 			x.say("  ✗ %s: %s", s.name, err)
+			notes := x.salvage(s.name)
 			x.printIAM()
+			x.warn(notes)
+			x.rec.Running = s.name
 			x.persist()
 			return &stop{code, fmt.Sprintf("Done: %s. Not done: %s. Run the same command again to continue.",
 				stepNames(x.steps[:i]), stepNames(x.steps[i:]))}
@@ -301,11 +322,6 @@ func (x *run) apply() error {
 			x.stale = true
 		}
 		x.lastStep = s.name
-		if !x.recorded {
-			if err := x.writeCache(); err != nil {
-				x.say("  ! %s", err)
-			}
-		}
 	}
 	warnings, err := x.verify()
 	if err != nil {
@@ -317,6 +333,28 @@ func (x *run) apply() error {
 	x.warn(warnings)
 	x.say("Installed the access of router %s in project %s.", x.n.router, x.n.project)
 	return nil
+}
+
+// salvage reads, once, what Google did during a step that stopped (refused, interrupted, timed out) after Google may
+// have acted on it: the project's policy, its difference printed and recorded as after any step (Google's grants to its
+// service agents when an API is turned on or the database created); and, for the apis step, the APIs on now. It
+// returns what it could not read.
+func (x *run) salvage(step string) []string {
+	var notes []string
+	if len(x.rec.Enabling) > 0 {
+		if on, err := enabledServices(x.ctx, x.d.Google, x.number); err != nil {
+			notes = append(notes, "the APIs turned on are not read again: "+err.Error())
+		} else {
+			x.recordAPIs(on)
+		}
+	}
+	p, err := read(x.ctx, x.d.Google, ProjectPolicy(x.n.project))
+	if err != nil {
+		return append(notes, fmt.Sprintf("the project's IAM policy is not read again after %s: %s; the next run shows what changed", step, err))
+	}
+	x.differences(x.policy, p, "project", step)
+	x.policy, x.stale = p, false
+	return notes
 }
 
 func (x *run) warn(warnings []string) {
@@ -334,7 +372,6 @@ func (x *run) printIAM() {
 
 // persist keeps what a stopped run did: in the record when it is in the database, else in the cache.
 func (x *run) persist() {
-	x.ctx = context.WithoutCancel(x.ctx)
 	var err error
 	if x.recorded {
 		err = x.writeRecord()

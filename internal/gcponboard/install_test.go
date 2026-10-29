@@ -24,6 +24,7 @@ const (
 	routerMember   = "serviceAccount:" + routerSA
 	runAgent       = "serviceAccount:service-1034397096264@serverless-robot-prod.iam.gserviceaccount.com"
 	firestoreAgent = "serviceAccount:service-1034397096264@gcp-sa-firestore.iam.gserviceaccount.com"
+	computeDefault = "serviceAccount:1034397096264-compute@developer.gserviceaccount.com"
 	recordDB       = "dmtr-europe-west1"
 )
 
@@ -961,5 +962,171 @@ func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
 		"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
 	if !slices.Equal(*g.slept, []time.Duration{5 * time.Second, 5 * time.Second}) {
 		t.Fatalf("slept %v", *g.slept)
+	}
+}
+
+// cached is the record waiting in the cache.
+func (g *installRig) cached(t *testing.T) Record {
+	t.Helper()
+	b, err := os.ReadFile(g.cacheFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r Record
+	if err := json.Unmarshal(b, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func apis(r Record) int {
+	n := 0
+	for _, res := range r.Resources {
+		if res.Kind == "api" {
+			n++
+		}
+	}
+	return n
+}
+
+// stopDuringTheAPIsWait stops the run (Ctrl-C) at its first poll of the APIs' operation; finish says whether Google
+// finishes turning them on right then (before the CLI reads again) or later.
+func stopDuringTheAPIsWait(t *testing.T, g *installRig, finish bool) context.Context {
+	old := operationEvery
+	operationEvery = time.Millisecond
+	t.Cleanup(func() { operationEvery = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	g.s.OperationPolls = 5
+	g.s.Route("serviceusage.googleapis.com", "/v1/operations/", func(w http.ResponseWriter, r *http.Request) {
+		if finish {
+			g.s.FinishOperations()
+		}
+		cancel()
+		gcptest.Reply(w, map[string]any{"name": strings.TrimPrefix(r.URL.Path, "/v1/"), "done": false})
+	})
+	return ctx
+}
+
+func TestInstallStoppedDuringAStepSaysGooglesChanges(t *testing.T) {
+	g := newInstallRig(t)
+	ctx := stopDuringTheAPIsWait(t, g, true)
+	g.out.Reset()
+	code := Install(ctx, g.d, europe)
+	out := g.out.String()
+	if code != 130 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "context canceled\n      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
+		"Done: none. Not done: apis, roles, ")
+	rec := g.cached(t)
+	if len(rec.Google) != 1 || rec.Google[0] != (GoogleGrant{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis"}) {
+		t.Errorf("google %+v", rec.Google)
+	}
+	if apis(rec) != 10 || len(rec.Enabling) != 0 || rec.Running != "apis" {
+		t.Errorf("resources %+v, enabling %v, running %q", rec.Resources, rec.Enabling, rec.Running)
+	}
+}
+
+func TestInstallSaysGooglesChangesWhenTheReadAfterAStepFails(t *testing.T) {
+	g := newInstallRig(t)
+	failed := false
+	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
+		if !failed && len(g.s.CallsTo("services:batchEnable")) == 1 {
+			failed = true
+			gcptest.Fail(w, 403, "PERMISSION_DENIED", "denied once")
+			return
+		}
+		g.s.Lock()
+		p := g.s.Policy
+		g.s.Unlock()
+		gcptest.Reply(w, p)
+	})
+	code, out := g.run(t, europe)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ apis: google: 403 PERMISSION_DENIED: denied once\n"+
+		"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
+		"Done: none. Not done: apis, ")
+	if rec := g.cached(t); len(rec.Google) != 1 || rec.Google[0].Member != runAgent || apis(rec) != 10 {
+		t.Fatalf("%+v", rec)
+	}
+	code, out = g.run(t, europe)
+	if code != 0 || strings.Contains(out, "since the last run") || strings.Contains(out, "IAM change not made") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); len(rec.Google) != 2 || rec.Google[0].Step != "apis" || rec.Google[1].Step != "database" || apis(rec) != 10 || rec.Running != "" {
+		t.Fatalf("%+v", rec)
+	}
+}
+
+func TestInstallAfterAStoppedRunRecordsGooglesChangesSeenLater(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.DefaultEditor = true
+	ctx := stopDuringTheAPIsWait(t, g, false)
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 || strings.Contains(g.out.String(), "IAM +") {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	if rec := g.cached(t); apis(rec) != 0 || len(rec.Enabling) != 10 {
+		t.Fatalf("%+v", rec)
+	}
+	// Google finishes turning the APIs on after the CLI stopped; someone grants a role, another router is installed.
+	g.s.FinishOperations()
+	grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
+	grantInFake(t, g.s, "projects/dormeto-dev/roles/dormetoRouter", "serviceAccount:dmtr-europe-west4@dormeto-dev.iam.gserviceaccount.com")
+
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "IAM changes since the last run, not Dormeto's:\n"+
+		"  + roles/editor to "+computeDefault+" on the project (Google, after apis (seen later))\n"+
+		"  + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis (seen later))\n"+
+		"  + roles/viewer to user:someone@example.com on the project (not a Google service agent: not recorded)\n")
+	if strings.Contains(out, "dmtr-europe-west4@dormeto-dev.iam.gserviceaccount.com on the project (") || strings.Contains(out, "\n  + API ") ||
+		strings.Contains(out, "IAM change not made by this install") {
+		t.Fatalf("%s", out)
+	}
+	rec := g.record(t)
+	want := []GoogleGrant{{Role: "roles/editor", Member: computeDefault, Step: "apis (seen later)"},
+		{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis (seen later)"},
+		{Role: "roles/firestore.serviceAgent", Member: firestoreAgent, Step: "database"}}
+	if !slices.Equal(rec.Google, want) {
+		t.Errorf("google %+v", rec.Google)
+	}
+	if apis(rec) != 10 || len(rec.Enabling) != 0 || rec.Running != "" || len(rec.Resources) != 17 {
+		t.Errorf("resources %+v, enabling %v, running %q", rec.Resources, rec.Enabling, rec.Running)
+	}
+	// Recorded: the next run has nothing to say.
+	if code, out := g.run(t, europe); code != 0 || !strings.Contains(out, "is up to date.") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallResumesTheUnfinishedRecordOfTheDatabase(t *testing.T) {
+	g := newInstallRig(t)
+	// The run is killed (no failure path) after the database step wrote the record: Google's grant comes later.
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: "cloudresourcemanager.googleapis.com", Path: "/v3/projects/dormeto-dev:setIamPolicy",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "denied"})
+	if code, out := g.run(t, europe); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec := g.record(t)
+	rec.Running = "database"
+	b, _ := json.Marshal(rec)
+	g.s.Lock()
+	g.s.Documents[recordDB+"/install/record"] = map[string]any{"data": map[string]any{"stringValue": string(b)}}
+	g.s.Unlock()
+	agent := "serviceAccount:service-1034397096264@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+	grantInFake(t, g.s, "roles/cloudtasks.serviceAgent", agent)
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "IAM changes since the last run, not Dormeto's:\n"+
+		"  + roles/cloudtasks.serviceAgent to "+agent+" on the project (Google, after database (seen later))\n")
+	if rec := g.record(t); rec.Running != "" || !slices.Contains(rec.Google, GoogleGrant{Role: "roles/cloudtasks.serviceAgent", Member: agent, Step: "database (seen later)"}) {
+		t.Fatalf("%+v", rec)
 	}
 }
