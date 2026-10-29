@@ -876,3 +876,33 @@ func TestInstallDoesNotWarnOfWhatWasThereBeforeTheRun(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+func TestInstallTestsOnlyItsOwnPermissions(t *testing.T) {
+	g := newInstallRig(t)
+	// A permission of another command that Google does not know does not stop install.
+	g.s.Invalid = map[string]bool{"run.services.create": true}
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if perms, _ := asked(t, g.s); !slices.Equal(perms, access.Needs("install")) {
+		t.Fatalf("asked %v\nwant %v", perms, access.Needs("install"))
+	}
+}
+
+func TestInstallNamesAPermissionGoogleRejects(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.Invalid = map[string]bool{"iam.roles.undelete": true}
+	code, out := g.run(t, europe)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "testIamPermissions rejects iam.roles.undelete (google: 400 INVALID_ARGUMENT: Permission iam.roles.undelete is not valid.)\n",
+		"Nothing was changed.\n")
+	if strings.Contains(out, "Plan for") {
+		t.Fatal(out)
+	}
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}

@@ -314,3 +314,44 @@ func TestServicesListingDeniedStillReports(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+// asked are the permissions of the testIamPermissions calls, sorted, without duplicates, and the number of calls that
+// asked one only.
+func asked(t *testing.T, s *gcptest.Server) (perms []string, single int) {
+	t.Helper()
+	for _, c := range s.CallsTo(":testIamPermissions") {
+		var in struct{ Permissions []string }
+		if err := json.Unmarshal([]byte(c.Body), &in); err != nil {
+			t.Fatal(err)
+		}
+		perms = append(perms, in.Permissions...)
+		if len(in.Permissions) == 1 {
+			single++
+		}
+	}
+	slices.Sort(perms)
+	return slices.Compact(perms), single
+}
+
+func TestCheckNamesThePermissionsGoogleRejects(t *testing.T) {
+	s := gcptest.New(t)
+	s.Invalid = map[string]bool{"run.services.create": true, "cloudscheduler.jobs.create": true}
+	d, out := deps(s)
+	_, err := Check(context.Background(), d, Request{Project: "dormeto-dev"})
+	if err == nil || !strings.Contains(err.Error(), "testIamPermissions rejects cloudscheduler.jobs.create, run.services.create (") ||
+		!strings.Contains(err.Error(), "Permission cloudscheduler.jobs.create is not valid.") {
+		t.Fatalf("%v", err)
+	}
+	// Each permission of the refused batch asked alone, then nothing else.
+	all, single := asked(t, s)
+	if single != len(all) {
+		t.Fatalf("%d asked alone of %d", single, len(all))
+	}
+	if m := s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+	if code := RunCheck(context.Background(), d, Request{Project: "dormeto-dev"}); code != 1 ||
+		!strings.Contains(out.String(), "testIamPermissions rejects cloudscheduler.jobs.create, run.services.create") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+}

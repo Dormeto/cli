@@ -6,6 +6,7 @@ package gcponboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,20 +108,61 @@ type projectBody struct {
 	State     string `json:"state"`
 }
 
-// testPermissions are the permissions of perms the caller holds, asked 100 at a time.
+// testPermissions are the permissions of perms the caller holds, asked 100 at a time. A batch Google refuses with a 400
+// (a permission it does not know) is asked again one permission at a time, still read-only, and the error names the
+// permissions refused.
 func testPermissions(ctx context.Context, c *gcp.Client, project string, perms []string) ([]string, error) {
 	held := []string{}
+	var rejected []string
+	var first error
 	for batch := range slices.Chunk(perms, permissionMax) {
-		var out struct {
-			Permissions []string `json:"permissions"`
+		got, err := testBatch(ctx, c, project, batch)
+		if err == nil {
+			held = append(held, got...)
+			continue
 		}
-		in := map[string]any{"permissions": batch}
-		if err := c.Do(ctx, http.MethodPost, crm+url.PathEscape(project)+":testIamPermissions", in, &out); err != nil {
+		if !invalid(err) {
 			return nil, err
 		}
-		held = append(held, out.Permissions...)
+		if first == nil {
+			first = err
+		}
+		for _, p := range batch {
+			got, err := testBatch(ctx, c, project, []string{p})
+			switch {
+			case err == nil:
+				held = append(held, got...)
+			case invalid(err):
+				rejected = append(rejected, p)
+			default:
+				return nil, err
+			}
+		}
+	}
+	switch {
+	case len(rejected) > 0:
+		return nil, fmt.Errorf("testIamPermissions rejects %s (%w)", strings.Join(rejected, ", "), first)
+	case first != nil:
+		return nil, first
 	}
 	return held, nil
+}
+
+func testBatch(ctx context.Context, c *gcp.Client, project string, perms []string) ([]string, error) {
+	var out struct {
+		Permissions []string `json:"permissions"`
+	}
+	in := map[string]any{"permissions": perms}
+	if err := c.Do(ctx, http.MethodPost, crm+url.PathEscape(project)+":testIamPermissions", in, &out); err != nil {
+		return nil, err
+	}
+	return out.Permissions, nil
+}
+
+// invalid is Google's 400 for a request it does not accept as written.
+func invalid(err error) bool {
+	var e *gcp.Error
+	return errors.As(err, &e) && e.Code == http.StatusBadRequest
 }
 
 func denied(err error) bool { return gcp.IsDenied(err) || gcp.IsNotFound(err) }
@@ -128,6 +170,11 @@ func denied(err error) bool { return gcp.IsDenied(err) || gcp.IsNotFound(err) }
 // Check tells, per command, the permissions the caller lacks in the project. A caller with no role in the project is a
 // report (every command refused), not an error; any other refusal by Google is an error.
 func Check(ctx context.Context, d Deps, r Request) (Report, error) {
+	return check(ctx, d, r, access.Commands())
+}
+
+// check is Check for some commands only: their permissions alone are asked (install asks exactly what its steps need).
+func check(ctx context.Context, d Deps, r Request, commands []string) (Report, error) {
 	account, err := d.Google.Tokens.Account(ctx)
 	if err != nil {
 		return Report{}, err
@@ -150,7 +197,7 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 	}
 
 	var all []string
-	for _, c := range access.Commands() {
+	for _, c := range commands {
 		all = append(all, access.Needs(c)...)
 	}
 	slices.Sort(all)
@@ -162,7 +209,7 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 		}
 		held = nil
 	}
-	for _, c := range access.Commands() {
+	for _, c := range commands {
 		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}}
 		for _, perm := range access.Needs(c) {
 			if rep.Visible && slices.Contains(held, perm) {

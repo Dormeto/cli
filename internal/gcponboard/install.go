@@ -189,9 +189,10 @@ func (x *run) validate() error {
 	return nil
 }
 
-// checks are `dormeto gcp check`'s verdict for install: every permission held, or the missing ones named and nothing done.
+// checks are `dormeto gcp check`'s verdict for install, its permissions alone asked: every permission held, or the
+// missing ones named and nothing done.
 func (x *run) checks() error {
-	rep, err := Check(x.ctx, x.d, x.r)
+	rep, err := check(x.ctx, x.d, x.r, []string{"install"})
 	if err != nil {
 		return err
 	}

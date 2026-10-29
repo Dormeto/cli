@@ -64,6 +64,8 @@ type Server struct {
 	// Held are the permissions the caller holds; HoldsAll (the default of New) holds every permission asked.
 	Held     map[string]bool
 	HoldsAll bool
+	// Invalid are permissions Google does not know: a testIamPermissions naming one answers 400 INVALID_ARGUMENT.
+	Invalid map[string]bool
 
 	// Policy is the project's IAM policy; PolicyDenied makes reading it a 403.
 	Policy       map[string]any
@@ -262,6 +264,12 @@ func (s *Server) resourceManager(w http.ResponseWriter, r *http.Request, rest st
 		if json.Unmarshal(body, &in) != nil || len(in.Permissions) == 0 || len(in.Permissions) > 100 {
 			Fail(w, 400, "INVALID_ARGUMENT", "between 1 and 100 permissions")
 			return
+		}
+		for _, p := range in.Permissions {
+			if s.Invalid[p] {
+				Fail(w, 400, "INVALID_ARGUMENT", "Permission "+p+" is not valid.")
+				return
+			}
 		}
 		held := []string{}
 		for _, p := range in.Permissions {
