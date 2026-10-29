@@ -92,19 +92,43 @@ func (g *gcloud) call(ctx context.Context, args ...string) (string, error) {
 	return v, nil
 }
 
+// printToken asks gcloud for a token; when gcloud cannot give one (its sign-in expired or revoked), the error says how to
+// sign in again.
+func (g *gcloud) printToken(ctx context.Context, args ...string) (string, error) {
+	t, err := g.call(ctx, args...)
+	if err != nil {
+		login := "gcloud auth login"
+		if g.configuration != "" {
+			login += " --configuration " + g.configuration
+		}
+		return "", fmt.Errorf("%w: sign in with %s, then run the same command again", err, login)
+	}
+	return t, nil
+}
+
 func (g *gcloud) AccessToken(ctx context.Context) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.token != "" && now().Before(g.expires) {
 		return g.token, nil
 	}
-	t, err := g.call(ctx, "auth", "print-access-token")
+	t, err := g.printToken(ctx, "auth", "print-access-token")
 	if err != nil {
 		return "", err
 	}
 	g.token, g.expires = t, now().Add(tokenTTL)
 	return t, nil
 }
+
+// dropAccessToken forgets the cached access token: Google refused it (expired before the cache's 5 minutes ran out).
+func (g *gcloud) dropAccessToken() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.token = ""
+}
+
+// dropper is a TokenSource that caches its access token.
+type dropper interface{ dropAccessToken() }
 
 func (g *gcloud) Account(ctx context.Context) (string, error) {
 	return g.call(ctx, "config", "get-value", "account")
@@ -121,7 +145,7 @@ func (g *gcloud) IdentityToken(ctx context.Context, audience string) (string, er
 	if strings.HasSuffix(account, ".gserviceaccount.com") && audience != "" {
 		args = append(args, "--audiences="+audience)
 	}
-	return g.call(ctx, args...)
+	return g.printToken(ctx, args...)
 }
 
 // Error is a Google Cloud API error.
@@ -210,27 +234,57 @@ type Client struct {
 	Tokens TokenSource
 }
 
-// Do sends in as JSON (when non-nil) and decodes the answer into out (when
-// non-nil). A non-2xx answer is an *Error.
+// Do sends in as JSON (when non-nil) and decodes the answer into out (when non-nil). A non-2xx answer is an *Error. A
+// 401 (the token expired before gcloud's cache knew it) drops the cached token and sends the request once more with a
+// new one from gcloud.
 func (c *Client) Do(ctx context.Context, method, url string, in, out any) error {
-	var body io.Reader
+	var payload []byte
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
 			return err
 		}
-		body = bytes.NewReader(b)
+		payload = b
 	}
+	refreshed := false
+	for {
+		code, data, err := c.send(ctx, method, url, payload)
+		if err != nil {
+			return err
+		}
+		if code == http.StatusUnauthorized && !refreshed {
+			refreshed = true
+			if d, ok := c.Tokens.(dropper); ok {
+				d.dropAccessToken()
+			}
+			continue
+		}
+		if code < 200 || code > 299 {
+			return parseError(code, data)
+		}
+		if out != nil && len(bytes.TrimSpace(data)) > 0 {
+			return json.Unmarshal(data, out)
+		}
+		return nil
+	}
+}
+
+// send sends one request (payload: its JSON body, nil for none) and returns the answer's code and body.
+func (c *Client) send(ctx context.Context, method, url string, payload []byte) (int, []byte, error) {
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
-		return err
+		return 0, nil, err
+	}
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	if in != nil {
+	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	h := c.HTTP
@@ -239,20 +293,14 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 	}
 	res, err := h.Do(req)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer res.Body.Close()
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return parseError(res.StatusCode, data)
-	}
-	if out != nil && len(bytes.TrimSpace(data)) > 0 {
-		return json.Unmarshal(data, out)
-	}
-	return nil
+	return res.StatusCode, data, nil
 }
 
 type operation struct {

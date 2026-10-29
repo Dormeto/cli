@@ -311,3 +311,79 @@ func TestAccessTokenCache(t *testing.T) {
 		t.Fatalf("calls %d", len(calls))
 	}
 }
+
+// numbered is a gcloud whose access tokens are AT1, AT2, … in turn; it counts its calls.
+func numbered(calls *int) Runner {
+	return func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		*calls++
+		return []byte(fmt.Sprintf("AT%d\n", *calls)), nil
+	}
+}
+
+func TestDoAsksGcloudAgainAfterA401(t *testing.T) {
+	var auths, bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		auths, bodies = append(auths, r.Header.Get("Authorization")), append(bodies, string(b))
+		if len(auths) == 1 {
+			w.WriteHeader(401)
+			_, _ = w.Write([]byte(`{"error":{"code":401,"message":"Request had invalid authentication credentials.","status":"UNAUTHENTICATED"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"x"}`))
+	}))
+	defer srv.Close()
+	calls := 0
+	c := &Client{HTTP: srv.Client(), Tokens: NewGcloud("dormeto-dev", numbered(&calls))}
+	var out struct{ Name string }
+	if err := c.Do(context.Background(), "POST", srv.URL, map[string]int{"a": 1}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || out.Name != "x" || strings.Join(auths, ",") != "Bearer AT1,Bearer AT2" || strings.Join(bodies, ",") != `{"a":1},{"a":1}` {
+		t.Fatalf("gcloud calls %d, auths %v, bodies %v, out %+v", calls, auths, bodies, out)
+	}
+	// The new token is the cached one now.
+	if err := c.Do(context.Background(), "GET", srv.URL, nil, nil); err != nil || calls != 2 || auths[2] != "Bearer AT2" {
+		t.Fatalf("%v, %d calls, %v", err, calls, auths)
+	}
+}
+
+func TestDoGivesUpAfterTwo401s(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(401)
+		_, _ = w.Write([]byte(`{"error":{"code":401,"message":"Request had invalid authentication credentials.","status":"UNAUTHENTICATED"}}`))
+	}))
+	defer srv.Close()
+	calls := 0
+	c := &Client{HTTP: srv.Client(), Tokens: NewGcloud("", numbered(&calls))}
+	err := c.Do(context.Background(), "GET", srv.URL, nil, nil)
+	var ge *Error
+	if !errors.As(err, &ge) || ge.Code != 401 || ge.Status != "UNAUTHENTICATED" || requests != 2 || calls != 2 {
+		t.Fatalf("%v: %d requests, %d gcloud calls", err, requests, calls)
+	}
+}
+
+func TestGcloudFailingToGiveATokenSaysToLogIn(t *testing.T) {
+	failing := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "config" {
+			return []byte("me@example.com\n"), nil
+		}
+		return nil, errors.New("exit status 1: Reauthentication failed.")
+	}
+	for configuration, want := range map[string]string{
+		"dormeto-dev": "gcloud auth login --configuration dormeto-dev",
+		"":            "gcloud auth login, then",
+	} {
+		g := NewGcloud(configuration, failing)
+		_, err := g.AccessToken(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "Reauthentication failed.") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", configuration, err)
+		}
+		_, err = g.IdentityToken(context.Background(), "")
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: identity: %v", configuration, err)
+		}
+	}
+}
