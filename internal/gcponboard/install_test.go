@@ -161,7 +161,10 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + grant roles/cloudtasks.enqueuer to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on queue dmtr-europe-west1
   + grant roles/iam.serviceAccountUser to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
   + record install/record in database dmtr-europe-west1
-Turning APIs on can make Google add bindings of its own: they are shown after that step.
+Turning APIs on and creating the database can make Google add bindings of its own: they are shown after those steps. Expected:
+  roles/editor to serviceAccount:1034397096264-compute@developer.gserviceaccount.com on the project, after apis (Compute Engine's default service account, in a project without an organization)
+  roles/run.serviceAgent to serviceAccount:service-1034397096264@serverless-robot-prod.iam.gserviceaccount.com on the project, after apis (Cloud Run's service agent)
+  roles/firestore.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-firestore.iam.gserviceaccount.com on the project, after database (Firestore's service agent)
 `
 
 func TestInstallDryRunPrintsThePlanOfAFreshProject(t *testing.T) {
@@ -1128,5 +1131,65 @@ func TestInstallResumesTheUnfinishedRecordOfTheDatabase(t *testing.T) {
 		"  + roles/cloudtasks.serviceAgent to "+agent+" on the project (Google, after database (seen later))\n")
 	if rec := g.record(t); rec.Running != "" || !slices.Contains(rec.Google, GoogleGrant{Role: "roles/cloudtasks.serviceAgent", Member: agent, Step: "database (seen later)"}) {
 		t.Fatalf("%+v", rec)
+	}
+}
+
+func TestInstallPlanSaysWhichBindingsGoogleIsExpectedToAdd(t *testing.T) {
+	dry := Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true}
+	// In an organization (its policy decides the default service account's Editor): only Cloud Run's and Firestore's.
+	g := newInstallRig(t)
+	g.s.Parent = "organizations/42"
+	code, out := g.run(t, dry)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + record install/record in database dmtr-europe-west1\n"+
+		"Turning APIs on and creating the database can make Google add bindings of its own: they are shown after those steps. Expected:\n"+
+		"  roles/run.serviceAgent to "+runAgent+" on the project, after apis (Cloud Run's service agent)\n"+
+		"  roles/firestore.serviceAgent to "+firestoreAgent+" on the project, after database (Firestore's service agent)\n")
+	if strings.Contains(out, "roles/editor") {
+		t.Fatal(out)
+	}
+
+	// The APIs on: the database alone.
+	g = newInstallRig(t)
+	g.s.Enabled = access.Load().APIs
+	code, out = g.run(t, dry)
+	if code != 0 || !strings.HasSuffix(out, "  + record install/record in database dmtr-europe-west1\n"+
+		"Creating the database can make Google add bindings of its own: they are shown after that step. Expected:\n"+
+		"  roles/firestore.serviceAgent to "+firestoreAgent+" on the project, after database (Firestore's service agent)\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+
+	// Firestore's service agent holding its role already (another database): nothing expected.
+	grantInFake(t, g.s, "roles/firestore.serviceAgent", firestoreAgent)
+	code, out = g.run(t, dry)
+	if code != 0 || !strings.HasSuffix(out, "  + record install/record in database dmtr-europe-west1\n"+
+		"Creating the database can make Google add bindings of its own: they are shown after that step.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallWarnsOfTheDefaultServiceAccountsEditorAfterTheAPIs(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.DefaultEditor = true
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	warning := "  ! the Compute Engine default service account 1034397096264-compute@developer.gserviceaccount.com has Editor on project dormeto-dev: Dormeto does not use it; remove the grant when nothing else needs it\n"
+	contains(t, out, "      IAM + roles/editor to "+computeDefault+" on the project (Google, after apis)\n"+
+		"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+warning+
+		"  ✓ roles: ")
+	if n := strings.Count(out, warning); n != 1 {
+		t.Fatalf("%d warnings:\n%s", n, out)
+	}
+	// There before the run, the check's warning is the only one.
+	g = newInstallRig(t)
+	g.s.DefaultEditor = true
+	grantInFake(t, g.s, "roles/editor", computeDefault)
+	code, out = g.run(t, europe)
+	if code != 0 || strings.Count(out, warning) != 1 || !strings.Contains(out, "dormeto-dev.\n"+warning+"Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }

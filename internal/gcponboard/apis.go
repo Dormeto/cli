@@ -1,7 +1,8 @@
 package gcponboard
 
 // The apis step: the manifest's APIs that are off, turned on 20 at a time (Service Usage's limit), each batch's
-// operation awaited; then the project's policy is read again and Google's bindings of the APIs shown and recorded.
+// operation awaited; then the project's policy is read again and Google's bindings of the APIs shown and recorded (and
+// the Compute Engine default service account's Editor, when Google granted it, warned of as the check does).
 
 import (
 	"net/http"

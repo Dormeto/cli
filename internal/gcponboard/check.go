@@ -312,23 +312,26 @@ func enabledServices(ctx context.Context, c *gcp.Client, number string) ([]strin
 // defaultServiceAccountWarning warns when the Compute Engine default service account has Editor on the project, and
 // says so when the policy cannot be read.
 func defaultServiceAccountWarning(ctx context.Context, c *gcp.Client, p ProjectInfo) []string {
-	var policy struct {
-		Bindings []struct {
-			Role    string   `json:"role"`
-			Members []string `json:"members"`
-		} `json:"bindings"`
-	}
-	in := map[string]any{"options": map[string]int{"requestedPolicyVersion": 3}}
-	if err := c.Do(ctx, http.MethodPost, ProjectPolicy(p.ID).Get, in, &policy); err != nil {
+	policy, err := read(ctx, c, ProjectPolicy(p.ID))
+	if err != nil {
 		return []string{"the IAM policy is not readable: the default service account was not checked"}
 	}
-	email := p.Number + "-compute@developer.gserviceaccount.com"
-	for _, b := range policy.Bindings {
-		if b.Role == "roles/editor" && slices.Contains(b.Members, "serviceAccount:"+email) {
-			return []string{fmt.Sprintf("the Compute Engine default service account %s has Editor on project %s: Dormeto does not use it; remove the grant when nothing else needs it", email, p.ID)}
-		}
+	if w := defaultEditor(policy, p.ID, p.Number); w != "" {
+		return []string{w}
 	}
 	return nil
+}
+
+// defaultEditor is the warning of the Compute Engine default service account holding Editor in a project's policy (""
+// when it does not): Google grants it when Compute Engine is turned on, unless an organization's policy forbids it.
+func defaultEditor(policy *Policy, project, number string) string {
+	email := number + "-compute@developer.gserviceaccount.com"
+	for _, g := range grantsOf(policy) {
+		if g.Role == "roles/editor" && g.Member == "serviceAccount:"+email {
+			return fmt.Sprintf("the Compute Engine default service account %s has Editor on project %s: Dormeto does not use it; remove the grant when nothing else needs it", email, project)
+		}
+	}
+	return ""
 }
 
 // PrintText prints the report, one line each.

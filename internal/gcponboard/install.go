@@ -77,6 +77,7 @@ type run struct {
 	r       Request
 	n       names
 	number  string // the project's number
+	parent  string // the project's organization or folder, "" for none
 	account string // the caller, from gcloud
 
 	turningOn []string        // the APIs off at the start: the apis step turns them on
@@ -100,8 +101,9 @@ type run struct {
 	accountExists bool     // the router's service account exists
 	tagKey        string   // the tag key dormeto's name, tagKeys/<n>, once known
 
-	steps []step
-	iam   []string // the IAM lines of the running step
+	steps        []step
+	iam          []string // the IAM lines of the running step
+	editorWarned bool     // the default service account's Editor, appeared during this run, was warned of
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {
@@ -226,7 +228,7 @@ func (x *run) checks() error {
 	if rep.NoBilling() {
 		return &stop{1, "  ✗ " + noBilling(x.n.project, x.r.Configuration) + "\nNothing was changed."}
 	}
-	x.number = rep.Project.Number
+	x.number, x.parent = rep.Project.Number, rep.Project.Parent
 	x.turningOn, x.enabled = rep.APIs.Missing, rep.APIs.Enabled
 	x.say("Checked: %s holds every permission dormeto gcp install needs in project %s.", rep.Account, x.n.project)
 	for _, w := range rep.Warnings {
@@ -265,21 +267,74 @@ func (x *run) plan() error {
 
 func (x *run) printPlan() {
 	x.say("Plan for project %s, router %s:", x.n.project, x.n.router)
-	apis := false
 	for _, s := range x.steps {
 		for _, l := range s.lines {
 			x.say("  %s", l)
 		}
-		apis = apis || s.name == "apis"
 	}
-	if apis {
-		x.say("Turning APIs on can make Google add bindings of its own: they are shown after that step.")
-	}
+	x.headsUp()
 	if len(x.sinceLast) > 0 {
 		x.say("IAM changes since the last run, not Dormeto's:")
 		for _, l := range x.sinceLast {
 			x.say("  %s", l)
 		}
+	}
+}
+
+// headsUp says, after the plan, that turning APIs on and creating the database can make Google add bindings of its own,
+// and names those Google is known to add, unless the policy holds them already: Editor to the Compute Engine default
+// service account when Compute Engine is turned on in a project without an organization (in one, its policy decides),
+// Cloud Run's service agent when Cloud Run is, Firestore's when the database is created.
+func (x *run) headsUp() {
+	apis, database := false, false
+	for _, s := range x.steps {
+		apis, database = apis || s.name == "apis", database || s.name == "database"
+	}
+	var line string
+	switch {
+	case apis && database:
+		line = "Turning APIs on and creating the database can make Google add bindings of its own: they are shown after those steps."
+	case apis:
+		line = "Turning APIs on can make Google add bindings of its own: they are shown after that step."
+	case database:
+		line = "Creating the database can make Google add bindings of its own: they are shown after that step."
+	default:
+		return
+	}
+	var expected []string
+	expect := func(role, email, step, who string) {
+		if g := (Grant{Role: role, Member: "serviceAccount:" + email}); !holds(x.policy, g) {
+			expected = append(expected, fmt.Sprintf("%s, after %s (%s)", x.describe(g, "project"), step, who))
+		}
+	}
+	if apis && x.parent == "" && slices.Contains(x.turningOn, "compute.googleapis.com") {
+		expect("roles/editor", x.number+"-compute@developer.gserviceaccount.com", "apis",
+			"Compute Engine's default service account, in a project without an organization")
+	}
+	if apis && slices.Contains(x.turningOn, "run.googleapis.com") {
+		expect("roles/run.serviceAgent", "service-"+x.number+"@serverless-robot-prod.iam.gserviceaccount.com", "apis", "Cloud Run's service agent")
+	}
+	if database {
+		expect("roles/firestore.serviceAgent", "service-"+x.number+"@gcp-sa-firestore.iam.gserviceaccount.com", "database", "Firestore's service agent")
+	}
+	if len(expected) > 0 {
+		line += " Expected:"
+	}
+	x.say("%s", line)
+	for _, e := range expected {
+		x.say("  %s", e)
+	}
+}
+
+// warnEditor warns, once, of the Compute Engine default service account's Editor when it appeared during this run
+// (there at the start, the checks warned of it): Google grants it when the apis step turns Compute Engine on.
+func (x *run) warnEditor() {
+	if x.editorWarned || defaultEditor(x.start, x.n.project, x.number) != "" {
+		return
+	}
+	if w := defaultEditor(x.policy, x.n.project, x.number); w != "" {
+		x.editorWarned = true
+		x.say("  ! %s", w)
 	}
 }
 
@@ -310,6 +365,7 @@ func (x *run) apply() error {
 			x.say("  ✗ %s: %s", s.name, err)
 			notes := x.salvage(s.name)
 			x.printIAM()
+			x.warnEditor()
 			x.warn(notes)
 			x.rec.Running = s.name
 			x.persist()
@@ -318,6 +374,7 @@ func (x *run) apply() error {
 		}
 		x.say("  ✓ %s: %s", s.name, done)
 		x.printIAM()
+		x.warnEditor()
 		if s.name != "apis" && s.name != "projectBindings" && s.name != "record" {
 			x.stale = true
 		}
