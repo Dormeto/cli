@@ -21,6 +21,58 @@ type Condition struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 	Expression  string `json:"expression"`
+	Location    string `json:"location,omitempty"`
+
+	extra map[string]json.RawMessage
+}
+
+type plainCondition Condition
+
+func (c *Condition) UnmarshalJSON(b []byte) error {
+	var v plainCondition
+	extra, err := unmarshalExtra(b, &v, "title", "description", "expression", "location")
+	if err != nil {
+		return err
+	}
+	*c = Condition(v)
+	c.extra = extra
+	return nil
+}
+
+func (c Condition) MarshalJSON() ([]byte, error) { return marshalExtra(plainCondition(c), c.extra) }
+
+// unmarshalExtra decodes b into v and returns the fields of b other than known.
+func unmarshalExtra(b []byte, v any, known ...string) (map[string]json.RawMessage, error) {
+	if err := json.Unmarshal(b, v); err != nil {
+		return nil, err
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(b, &all); err != nil {
+		return nil, err
+	}
+	for _, k := range known {
+		delete(all, k)
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+	return all, nil
+}
+
+// marshalExtra encodes v and adds the kept fields.
+func marshalExtra(v any, extra map[string]json.RawMessage) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil || len(extra) == 0 {
+		return b, err
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(b, &all); err != nil {
+		return nil, err
+	}
+	for k, x := range extra {
+		all[k] = x
+	}
+	return json.Marshal(all)
 }
 
 // Binding is a role given to members, under an optional condition.
@@ -28,7 +80,24 @@ type Binding struct {
 	Role      string     `json:"role"`
 	Members   []string   `json:"members"`
 	Condition *Condition `json:"condition,omitempty"`
+
+	extra map[string]json.RawMessage
 }
+
+type plainBinding Binding
+
+func (b *Binding) UnmarshalJSON(data []byte) error {
+	var v plainBinding
+	extra, err := unmarshalExtra(data, &v, "role", "members", "condition")
+	if err != nil {
+		return err
+	}
+	*b = Binding(v)
+	b.extra = extra
+	return nil
+}
+
+func (b Binding) MarshalJSON() ([]byte, error) { return marshalExtra(plainBinding(b), b.extra) }
 
 // Policy is an IAM policy. Fields the CLI does not know are kept as they were
 // read, so that writing the policy back never drops them.
@@ -40,43 +109,22 @@ type Policy struct {
 	extra map[string]json.RawMessage
 }
 
+type plainPolicy Policy
+
 // UnmarshalJSON keeps the fields other than version, etag and bindings.
 func (p *Policy) UnmarshalJSON(b []byte) error {
-	type plain Policy
-	var v plain
-	if err := json.Unmarshal(b, &v); err != nil {
+	var v plainPolicy
+	extra, err := unmarshalExtra(b, &v, "version", "etag", "bindings")
+	if err != nil {
 		return err
-	}
-	var all map[string]json.RawMessage
-	if err := json.Unmarshal(b, &all); err != nil {
-		return err
-	}
-	for _, k := range []string{"version", "etag", "bindings"} {
-		delete(all, k)
 	}
 	*p = Policy(v)
-	if len(all) > 0 {
-		p.extra = all
-	}
+	p.extra = extra
 	return nil
 }
 
 // MarshalJSON writes the known fields and the kept ones.
-func (p Policy) MarshalJSON() ([]byte, error) {
-	type plain Policy
-	b, err := json.Marshal(plain(p))
-	if err != nil || len(p.extra) == 0 {
-		return b, err
-	}
-	var all map[string]json.RawMessage
-	if err := json.Unmarshal(b, &all); err != nil {
-		return nil, err
-	}
-	for k, v := range p.extra {
-		all[k] = v
-	}
-	return json.Marshal(all)
-}
+func (p Policy) MarshalJSON() ([]byte, error) { return marshalExtra(plainPolicy(p), p.extra) }
 
 // Grant is one member of one role, under an optional condition.
 type Grant struct {

@@ -293,3 +293,28 @@ func TestUpdateGetsByQueryForCloudRun(t *testing.T) {
 		t.Fatalf("get %+v", g)
 	}
 }
+
+func TestUpdateKeepsOthersBindingFieldsUntouched(t *testing.T) {
+	theirs := `{"condition":{"description":"d","expression":"e","location":"l","title":"t","vendor":1},"members":["user:o"],"role":"roles/o","unknown":{"k":[1,2]}}`
+	var set string
+	client, url, _ := fake(t, func(n int, c call) (int, string) {
+		if strings.HasSuffix(c.path, ":setIamPolicy") {
+			set = c.body
+			return 200, `{"etag":"e2"}`
+		}
+		return 200, `{"version":3,"etag":"e","bindings":[` + theirs + `]}`
+	})
+	_, err := Update(context.Background(), client, ResourcePolicy{Get: url + "/r:getIamPolicy", Set: url + "/r:setIamPolicy"}, addX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var in struct {
+		Policy struct{ Bindings []json.RawMessage }
+	}
+	if err := json.Unmarshal([]byte(set), &in); err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Policy.Bindings) != 2 || string(in.Policy.Bindings[0]) != theirs {
+		t.Fatalf("binding changed:\n got %s\nwant %s", in.Policy.Bindings, theirs)
+	}
+}
