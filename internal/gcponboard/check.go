@@ -12,16 +12,29 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
+	"github.com/Dormeto/cli/internal/install"
 )
 
-// Deps are what the runs use: the Google client (its token source names the account), and the output.
+// Deps are what the runs use: the Google client (its token source names the account), the person's terminal, the output,
+// the clock, the cache directory and the CLI's version.
 type Deps struct {
 	Google *gcp.Client
-	Out    io.Writer
-	Err    io.Writer
+	// Prompter asks for a confirmation; only when Terminal (stdin is a terminal) and --yes is not given.
+	Prompter install.Prompter
+	Terminal bool
+	Out      io.Writer
+	Err      io.Writer
+	Now      func() time.Time
+	// Sleep waits between the retries of a call Google is not ready for yet.
+	Sleep func(ctx context.Context, d time.Duration) error
+	// Cache is the user's cache directory ($XDG_CACHE_HOME, else ~/.cache): an install's pending record waits in
+	// <Cache>/dormeto/gcp/ until the router's database holds it.
+	Cache   string
+	Version string // the CLI's own version
 }
 
 // Request is what the flags ask.
