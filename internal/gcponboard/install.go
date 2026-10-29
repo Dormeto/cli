@@ -9,6 +9,7 @@ package gcponboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -289,13 +290,22 @@ func (x *run) apply() error {
 			}
 		}
 	}
-	if err := x.verify(); err != nil {
+	warnings, err := x.verify()
+	if err != nil {
 		x.say("  ✗ verification: %s", err)
+		x.warn(warnings)
 		return &stop{1, "Run the same command again to change what differs."}
 	}
 	x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue")
+	x.warn(warnings)
 	x.say("Installed the access of router %s in project %s.", x.n.router, x.n.project)
 	return nil
+}
+
+func (x *run) warn(warnings []string) {
+	for _, w := range warnings {
+		x.say("  ! %s", w)
+	}
 }
 
 func (x *run) printIAM() {
@@ -387,13 +397,14 @@ func (x *run) lagging(err error) bool {
 	return e.Code == 400 && strings.Contains(strings.ToLower(e.Message), "service account") && strings.Contains(e.Message, "does not exist")
 }
 
-// longOperation is a long-running operation as a create answers it.
+// longOperation is a long-running operation as a create answers it; Response is the created resource once done.
 type longOperation struct {
 	Name  string `json:"name"`
 	Done  bool   `json:"done"`
 	Error *struct {
 		Code int `json:"code"`
 	} `json:"error"`
+	Response json.RawMessage `json:"response"`
 }
 
 // wait waits for an operation unless it is done already; base is its API's root (https://<host>/<version>/).

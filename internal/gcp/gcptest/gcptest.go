@@ -6,7 +6,8 @@
 // custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues, the
 // policies of service accounts and queues, and long-running operations, done after OperationPolls polls. A resource of
 // an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's side effects are played: enabling
-// run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the project, and AccountLag refuses
+// run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the project, creating a Firestore
+// database grants roles/firestore.serviceAgent to Firestore's, and AccountLag refuses
 // the first bindings naming a service account just created ("does not exist", IAM's eventual consistency). Refuse makes
 // any call fail before the handlers.
 package gcptest

@@ -77,7 +77,7 @@ func TestGcpInstallFlagsReadIntoTheRequest(t *testing.T) {
 	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "install" {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
-	want := gcponboard.Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, DryRun: true}
+	want := gcponboard.Request{Project: "dormeto-dev", Region: "europe-west1", Configuration: "dormeto-dev", Yes: true, DryRun: true}
 	if calls[0].r != want {
 		t.Fatalf("%+v", calls[0].r)
 	}

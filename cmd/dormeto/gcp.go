@@ -51,7 +51,7 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
 			code := run(ctx, gcpDeps(c, f.configuration, version), gcponboard.Request{
-				Project: f.project, Region: f.region, JSON: f.json, Yes: f.yes, DryRun: f.dryRun})
+				Project: f.project, Region: f.region, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun})
 			if s := signalled(); s != nil {
 				code = signalCode(s)
 			}

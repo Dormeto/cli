@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	routerSA     = "dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com"
-	routerMember = "serviceAccount:" + routerSA
-	runAgent     = "serviceAccount:service-1034397096264@serverless-robot-prod.iam.gserviceaccount.com"
-	recordDB     = "dmtr-europe-west1"
+	routerSA       = "dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com"
+	routerMember   = "serviceAccount:" + routerSA
+	runAgent       = "serviceAccount:service-1034397096264@serverless-robot-prod.iam.gserviceaccount.com"
+	firestoreAgent = "serviceAccount:service-1034397096264@gcp-sa-firestore.iam.gserviceaccount.com"
+	recordDB       = "dmtr-europe-west1"
 )
 
 var installNow = time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
@@ -195,7 +196,8 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 			"  ✓ serviceAccount: created "+routerSA+"\n"+
 			"  ✓ tag: created dormeto/managed\n"+
 			"  ✓ database: created dmtr-europe-west1 (Firestore Native, europe-west1), wrote install/record\n"+
-			"  ✓ projectBindings: granted 3 roles on the project\n",
+			"  ✓ projectBindings: granted 3 roles on the project\n"+
+			"      IAM + roles/firestore.serviceAgent to "+firestoreAgent+" on the project (Google, after database)\n",
 		"      IAM + projects/dormeto-dev/roles/dormetoRouter to "+routerMember+" on the project (Dormeto)\n",
 		"      IAM + roles/datastore.user to "+routerMember+` on the project, if "The router's database": resource.name == "projects/dormeto-dev/databases/dmtr-europe-west1" (Dormeto)`+"\n",
 		"  ✓ queue: created dmtr-europe-west1 (3 attempts, backoff 5 to 60 s), granted roles/cloudtasks.enqueuer on it\n"+
@@ -279,7 +281,8 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 		rec.InstalledAt != "2026-10-29T10:00:00Z" || rec.UpdatedAt != "2026-10-29T10:00:00Z" || rec.By != "me@example.com" {
 		t.Errorf("record %+v", rec)
 	}
-	if len(rec.Google) != 1 || rec.Google[0] != (GoogleGrant{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis"}) {
+	if len(rec.Google) != 2 || rec.Google[0] != (GoogleGrant{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis"}) ||
+		rec.Google[1] != (GoogleGrant{Role: "roles/firestore.serviceAgent", Member: firestoreAgent, Step: "database"}) {
 		t.Errorf("google %+v", rec.Google)
 	}
 	if len(rec.Before) != 1 || rec.Before[0].Role != "roles/owner" || !slices.Equal(rec.Before[0].Members, []string{"user:owner@example.com"}) {
@@ -398,7 +401,7 @@ func TestInstallUndeletesThenUpdatesADeletedRole(t *testing.T) {
 	}
 	want := []string{
 		"POST https://iam.googleapis.com/v1/projects/dormeto-dev/roles/dormetoRouter:undelete",
-		"PATCH https://iam.googleapis.com/v1/projects/dormeto-dev/roles/dormetoRouter?updateMask=title,description,includedPermissions",
+		"PATCH https://iam.googleapis.com/v1/projects/dormeto-dev/roles/dormetoRouter?updateMask=title,description,includedPermissions,stage",
 		"PATCH https://firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record",
 	}
 	if !slices.Equal(got, want) {
@@ -426,7 +429,7 @@ func TestInstallPatchesARoleThatDiffers(t *testing.T) {
 	contains(t, out, "  ~ role dormetoRouter: + compute.backendServices.create, - compute.example.permission\n",
 		"  ✓ roles: updated dormetoRouter\n", "  ✓ verified:")
 	patches := callsOf(g.s.CallsTo("/roles/dormetoRouter"), "PATCH")
-	if len(patches) != 1 || !strings.HasSuffix(patches[0].URL, "?updateMask=title,description,includedPermissions") {
+	if len(patches) != 1 || !strings.HasSuffix(patches[0].URL, "?updateMask=title,description,includedPermissions,stage") {
 		t.Fatalf("%+v", patches)
 	}
 	if !slices.Equal(g.s.Roles["dormetoRouter"].Permissions, access.Load().Roles["dormetoRouter"].Permissions) {
@@ -505,8 +508,9 @@ func TestInstallWaitsForOperations(t *testing.T) {
 			polls++
 		}
 	}
-	// batchEnable, the tag key and value, the database: 3 polls each.
-	if polls != 12 {
+	// batchEnable, the tag key and value, the database: 3 polls each; then each tag's operation once more for its
+	// response (gcp.WaitOperation does not return it).
+	if polls != 14 {
 		t.Fatalf("%d polls", polls)
 	}
 }
@@ -542,7 +546,7 @@ func TestInstallStopsAtARefusedStepAndContinuesAfter(t *testing.T) {
 	if len(rec.Before) != 1 || rec.Before[0].Role != "roles/owner" {
 		t.Errorf("before %+v", rec.Before)
 	}
-	if len(rec.Google) != 1 || rec.Google[0].Member != runAgent || rec.Google[0].Step != "apis" {
+	if len(rec.Google) != 2 || rec.Google[0].Member != runAgent || rec.Google[0].Step != "apis" || rec.Google[1].Step != "database" {
 		t.Errorf("google %+v", rec.Google)
 	}
 	if len(rec.Resources) != 17 {
@@ -569,7 +573,7 @@ func TestInstallKeepsTheBeforeOfAnEarlierRun(t *testing.T) {
 	if len(rec.Before) != 1 || rec.Before[0].Role != "roles/viewer" || rec.InstalledAt != "2026-10-28T09:00:00Z" {
 		t.Fatalf("%+v", rec)
 	}
-	if len(rec.Google) != 2 || rec.Google[0].Role != "roles/x.serviceAgent" || rec.Google[1].Member != runAgent {
+	if len(rec.Google) != 3 || rec.Google[0].Role != "roles/x.serviceAgent" || rec.Google[1].Member != runAgent {
 		t.Fatalf("%+v", rec.Google)
 	}
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
@@ -676,7 +680,12 @@ func TestVerifyNamesWhatDiffers(t *testing.T) {
 	g.s.Unlock()
 	x := newRun(context.Background(), g.d, europe)
 	x.number = "1034397096264"
-	err := x.verify()
+	rec := g.record(t)
+	x.rec = &rec
+	warnings, err := x.verify()
+	if len(warnings) != 0 {
+		t.Fatalf("warnings %v", warnings)
+	}
 	if err == nil || !strings.Contains(err.Error(), "role dormetoRouterBackends lacks compute.instances.stop") ||
 		!strings.Contains(err.Error(), "queue dmtr-europe-west1 lacks the grant of roles/cloudtasks.enqueuer") {
 		t.Fatal(err)
@@ -729,5 +738,122 @@ func TestServiceAccountPolicyIsReadWithAnEmptyBody(t *testing.T) {
 	var e *gcp.Error
 	if !errors.As(err, &e) || e.Code != 400 || e.Status != "INVALID_ARGUMENT" {
 		t.Fatalf("%v", err)
+	}
+}
+
+// grantInFake gives member role on the fake's project, as someone else would.
+func grantInFake(t *testing.T, s *gcptest.Server, role, member string) {
+	t.Helper()
+	s.Lock()
+	defer s.Unlock()
+	b, _ := json.Marshal(s.Policy)
+	var p Policy
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	Add(&p, Grant{Role: role, Member: member})
+	b, _ = json.Marshal(p)
+	var m map[string]any
+	json.Unmarshal(b, &m)
+	s.Policy = m
+}
+
+func TestVerifyWarnsOfAnIAMChangeNotMadeByThisInstall(t *testing.T) {
+	g := newInstallRig(t)
+	injected := false
+	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
+		// Someone grants a role after the install's last read, before its verification.
+		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 2 {
+			injected = true
+			grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
+		}
+		g.s.Lock()
+		p := g.s.Policy
+		g.s.Unlock()
+		gcptest.Reply(w, p)
+	})
+	code, out := g.run(t, europe)
+	if code != 0 || !injected {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue\n"+
+		"  ! IAM change not made by this install: + roles/viewer to user:someone@example.com on the project\n"+
+		"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
+	// Dormeto's grants, Google's recorded ones and the before are not warned of.
+	if n := strings.Count(out, "! IAM change not made by this install:"); n != 1 {
+		t.Fatalf("%d warnings:\n%s", n, out)
+	}
+}
+
+func TestInstallStopsOnADisabledServiceAccount(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	g.s.ServiceAccounts[routerSA].Disabled = true
+	g.s.Unlock()
+	before := len(g.s.Mutations())
+	r := europe
+	r.Configuration = "dormeto-dev"
+	code, out := g.run(t, r)
+	if code != 1 || strings.Contains(out, "up to date") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "The service account "+routerSA+" is disabled: enable it (gcloud iam service-accounts enable "+routerSA+
+		" --configuration dormeto-dev), then run the same command again.\n")
+	if after := len(g.s.Mutations()); after != before {
+		t.Fatalf("%d mutating calls", after-before)
+	}
+}
+
+func TestInstallPatchesARoleOfAnotherStage(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	g.s.Roles["dormetoRouter"].Stage = "BETA"
+	g.s.Unlock()
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ role dormetoRouter: stage GA\n", "  ✓ roles: updated dormetoRouter\n", "  ✓ verified:")
+	if g.s.Roles["dormetoRouter"].Stage != "GA" {
+		t.Fatal(g.s.Roles["dormetoRouter"].Stage)
+	}
+}
+
+func TestInstallTakesTheTagIDsFromTheOperations(t *testing.T) {
+	old := operationEvery
+	operationEvery = time.Millisecond
+	t.Cleanup(func() { operationEvery = old })
+	for _, polls := range []int{0, 1, 3} {
+		g := newInstallRig(t)
+		g.s.OperationPolls = polls
+		if code, out := g.run(t, europe); code != 0 {
+			t.Fatalf("polls %d: exit %d:\n%s", polls, code, out)
+		}
+		// The key is read once while planning (missing, so its value is not); never again after the creations.
+		if k, v := len(g.s.CallsTo("/v3/tagKeys/namespaced")), len(g.s.CallsTo("/v3/tagValues/namespaced")); k != 1 || v != 0 {
+			t.Fatalf("polls %d: %d key reads, %d value reads", polls, k, v)
+		}
+		rec := g.record(t)
+		for _, kind := range []string{"tagKey", "tagValue"} {
+			found := false
+			for _, r := range rec.Resources {
+				store := g.s.TagKeys
+				if kind == "tagValue" {
+					store = g.s.TagValues
+				}
+				if r.Kind == kind && store[r.Name] != nil {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("polls %d: no %s in %+v", polls, kind, rec.Resources)
+			}
+		}
 	}
 }

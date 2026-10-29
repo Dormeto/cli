@@ -349,6 +349,7 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 				Title               string   `json:"title"`
 				Description         string   `json:"description"`
 				IncludedPermissions []string `json:"includedPermissions"`
+				Stage               string   `json:"stage"`
 			}
 			json.Unmarshal(body, &in)
 			for _, field := range strings.Split(r.URL.Query().Get("updateMask"), ",") {
@@ -359,6 +360,8 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 					role.Description = in.Description
 				case "includedPermissions":
 					role.Permissions = in.IncludedPermissions
+				case "stage":
+					role.Stage = in.Stage
 				}
 			}
 		default:
@@ -497,7 +500,12 @@ func (s *Server) firestore(w http.ResponseWriter, r *http.Request, body []byte) 
 			return
 		}
 		d := &in
-		s.operate(w, "projects/"+s.ProjectID+"/databases/"+id+"/operations/"+s.next(), s.databaseBody(id, d), func() { s.Databases[id] = d })
+		s.operate(w, "projects/"+s.ProjectID+"/databases/"+id+"/operations/"+s.next(), s.databaseBody(id, d), func() {
+			s.Databases[id] = d
+			// Google's side effect: Firestore's service agent and its role, at the first database.
+			s.Policy = addBinding(s.Policy, "roles/firestore.serviceAgent",
+				"serviceAccount:service-"+s.ProjectNumber+"@gcp-sa-firestore.iam.gserviceaccount.com")
+		})
 		return
 	}
 	id, tail, _ := strings.Cut(strings.TrimPrefix(rest, "/"), "/")

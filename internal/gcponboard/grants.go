@@ -108,6 +108,9 @@ func (x *run) planProjectBindings() (*step, error) {
 		return nil, nil
 	}
 	return &step{name: "projectBindings", lines: lines, apply: func() (string, error) {
+		if err := x.catchUp(); err != nil {
+			return "", err
+		}
 		grants := make([]Grant, len(missing))
 		for i, g := range missing {
 			grants[i] = g.Grant
@@ -165,6 +168,16 @@ func (x *run) policyChanged(step string) error {
 	x.differences(x.policy, p, "project", step)
 	x.policy, x.stale = p, false
 	return nil
+}
+
+// catchUp reads the project's policy again when a step that may change it ran since the last read (roles,
+// serviceAccount, tag, database, queue, serviceAccountBinding: Google may grant its service agents at first use), the
+// difference attributed to the last step that ran.
+func (x *run) catchUp() error {
+	if !x.stale {
+		return nil
+	}
+	return x.policyChanged(x.lastStep)
 }
 
 // differences adds the IAM lines of a policy's change to the running step's; the grants that are not the router's are

@@ -37,9 +37,11 @@ type Deps struct {
 	Version string // the CLI's own version
 }
 
-// Request is what the flags ask.
+// Request is what the flags ask. Configuration is --gcloud-configuration ("": gcloud's active one), named in the
+// gcloud commands the CLI tells to run.
 type Request struct {
 	Project, Region, Image   string
+	Configuration            string
 	Yes, DryRun, JSON, Force bool
 }
 

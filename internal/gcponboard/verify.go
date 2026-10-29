@@ -1,7 +1,9 @@
 package gcponboard
 
 // The verification after the apply, read only: the router's grants in the project's, the queue's and the service
-// account's policies, the custom roles' permissions, the service account, the database and the queue.
+// account's policies, the custom roles' permissions, the service account, the database and the queue. The project's
+// policy must hold exactly the bindings before the first install, the router's grants and Google's recorded ones: any
+// other difference is said as a warning (someone else's change, not the install's to undo).
 
 import (
 	"errors"
@@ -10,22 +12,25 @@ import (
 	"strings"
 )
 
-func (x *run) verify() error {
+func (x *run) verify() (warnings []string, err error) {
 	var problems []string
 	add := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	lacks := func(rp ResourcePolicy, what string, grants ...accessGrant) {
+	lacks := func(rp ResourcePolicy, what string, grants ...accessGrant) *Policy {
 		p, err := read(x.ctx, x.d.Google, rp)
 		if err != nil {
 			add("the policy of %s: %s", what, err)
-			return
+			return nil
 		}
 		for _, g := range grants {
 			if !holds(p, g.Grant) {
 				add("%s lacks the grant of %s to %s", what, g.Role, g.Member)
 			}
 		}
+		return p
 	}
-	lacks(ProjectPolicy(x.n.project), "the project", x.grantsOn("project")...)
+	if p := lacks(ProjectPolicy(x.n.project), "the project", x.grantsOn("project")...); p != nil {
+		warnings = x.othersChanges(p)
+	}
 
 	for _, id := range roleIDs() {
 		want := x.wantRole(id)
@@ -36,6 +41,9 @@ func (x *run) verify() error {
 		}
 		if got.Deleted {
 			add("role %s is deleted", id)
+		}
+		if got.Stage != roleStage {
+			add("role %s is at stage %s, not %s", id, got.Stage, roleStage)
 		}
 		if missing := setDifference(want.Permissions, got.IncludedPermissions); len(missing) > 0 {
 			add("role %s lacks %s", id, strings.Join(inOrder(want.Permissions, missing), ", "))
@@ -77,9 +85,37 @@ func (x *run) verify() error {
 	}
 
 	if len(problems) > 0 {
-		return errors.New(strings.Join(problems, "; "))
+		return warnings, errors.New(strings.Join(problems, "; "))
 	}
-	return nil
+	return warnings, nil
+}
+
+// othersChanges are the differences of the project's policy from the record's before that are neither the router's
+// grants nor Google's recorded ones.
+func (x *run) othersChanges(p *Policy) []string {
+	before := &Policy{}
+	for _, b := range x.rec.Before {
+		before.Bindings = append(before.Bindings, Binding{Role: b.Role, Members: b.Members, Condition: b.Condition})
+	}
+	google := func(g Grant) bool {
+		for _, r := range x.rec.Google {
+			if r.Role == g.Role && r.Member == g.Member {
+				return true
+			}
+		}
+		return false
+	}
+	added, removed := Diff(before, p)
+	var out []string
+	for _, g := range added {
+		if !x.ours(g) && !google(g) {
+			out = append(out, "IAM change not made by this install: + "+x.describe(g, "project"))
+		}
+	}
+	for _, g := range removed {
+		out = append(out, "IAM change not made by this install: - "+x.describe(g, "project"))
+	}
+	return out
 }
 
 // inOrder are the items of some in the order of all.

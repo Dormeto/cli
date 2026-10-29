@@ -1,11 +1,13 @@
 package gcponboard
 
 // The tag step: the secure tag dormeto=managed of the project, on which the router's dormetoRouterBackends grant is
-// conditioned: the key dormeto, then its value managed, each created by an operation and then read by its namespaced
-// name (<project ID>/dormeto, <project ID>/dormeto/managed) for its ID. The workloads' onboarding binds the value to
+// conditioned: the key dormeto, then its value managed, each created by an operation whose response names it
+// (tagKeys/<n>, tagValues/<n>); planning reads them by their namespaced names (<project ID>/dormeto,
+// <project ID>/dormeto/managed). The workloads' onboarding binds the value to
 // their VMs and groups as the operator; the router itself holds no tag permission.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -75,27 +77,33 @@ func (x *run) planTag() (*step, error) {
 	}}, nil
 }
 
-// createTag creates a tag key (under the project) or value (under the key), waits for it and records its ID.
+// createTag creates a tag key (under the project) or value (under the key), waits for it and records its ID, taken
+// from the operation's response (a read by namespaced name right after the creation could miss it).
 func (x *run) createTag(kind, parent, short, description string) error {
 	var op longOperation
 	in := map[string]any{"parent": parent, "shortName": short, "description": description}
 	if err := x.call(http.MethodPost, crmV3+kind, in, &op); err != nil {
 		return err
 	}
-	if err := x.wait(crmV3, op, tagTimeout); err != nil {
-		return err
+	if !op.Done || op.Error != nil {
+		if err := x.wait(crmV3, op, tagTimeout); err != nil {
+			return err
+		}
+		// Done now: read once more for its response.
+		if err := x.call(http.MethodGet, crmV3+op.Name, nil, &op); err != nil {
+			return err
+		}
 	}
-	namespaced := x.n.project + "/dormeto"
-	if kind == "tagValues" {
-		namespaced += "/managed"
+	var t googleTag
+	if len(op.Response) > 0 {
+		if err := json.Unmarshal(op.Response, &t); err != nil {
+			return fmt.Errorf("the creation of %s answered %s: %w", short, op.Response, err)
+		}
 	}
-	name, found, err := x.tag(kind, namespaced)
-	switch {
-	case err != nil:
-		return err
-	case !found:
-		return fmt.Errorf("%s not found after its creation", namespaced)
+	if t.Name == "" {
+		return fmt.Errorf("the creation of %s answered no name (operation %s)", short, op.Name)
 	}
+	name := t.Name
 	if kind == "tagKeys" {
 		x.tagKey = name
 		x.rec.addResource("tagKey", name)

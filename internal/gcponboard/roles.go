@@ -2,7 +2,7 @@ package gcponboard
 
 // The roles step: the manifest's custom roles, dormetoRouter and dormetoRouterBackends, in the project. A missing one is
 // created (stage GA); a deleted one, whose ID cannot be reused for 37 days, is undeleted then updated; one whose title,
-// description or permissions differ is updated. The description names the CLI's version: Dormeto <version>: <the
+// description, permissions or stage differ is updated. The description names the CLI's version: Dormeto <version>: <the
 // manifest's description>.
 
 import (
@@ -15,13 +15,19 @@ import (
 	"github.com/Dormeto/cli/internal/gcp/access"
 )
 
-const iamAPI = "iam.googleapis.com"
+const (
+	iamAPI    = "iam.googleapis.com"
+	roleStage = "GA"
+	// roleFields are what an update writes.
+	roleFields = "title,description,includedPermissions,stage"
+)
 
 // googleRole is a custom role as IAM answers it.
 type googleRole struct {
 	Title               string   `json:"title"`
 	Description         string   `json:"description"`
 	IncludedPermissions []string `json:"includedPermissions"`
+	Stage               string   `json:"stage"`
 	Etag                string   `json:"etag"`
 	Deleted             bool     `json:"deleted"`
 }
@@ -85,7 +91,7 @@ func (x *run) planRoles() (*step, error) {
 	return &step{name: "roles", lines: lines, apply: func() (string, error) { return x.changeRoles(changes) }}, nil
 }
 
-// roleDifferences are what an update changes: the title, the description, each permission added and removed.
+// roleDifferences are what an update changes: the title, the description, each permission added and removed, the stage.
 func roleDifferences(got googleRole, want access.Role) []string {
 	var out []string
 	if got.Title != want.Title {
@@ -100,6 +106,9 @@ func roleDifferences(got googleRole, want access.Role) []string {
 	}
 	for _, p := range removed {
 		out = append(out, "- "+p)
+	}
+	if got.Stage != roleStage {
+		out = append(out, "stage "+roleStage)
 	}
 	return out
 }
@@ -123,7 +132,7 @@ func (x *run) changeRoles(changes []roleChange) (string, error) {
 		switch c.action {
 		case "create":
 			in := map[string]any{"roleId": c.id, "role": map[string]any{"title": c.want.Title, "description": c.want.Description,
-				"includedPermissions": c.want.Permissions, "stage": "GA"}}
+				"includedPermissions": c.want.Permissions, "stage": roleStage}}
 			if err := x.call(http.MethodPost, x.rolesURL(), in, nil); err != nil {
 				return "", err
 			}
@@ -148,6 +157,7 @@ func (x *run) changeRoles(changes []roleChange) (string, error) {
 }
 
 func (x *run) updateRole(c roleChange) error {
-	in := map[string]any{"title": c.want.Title, "description": c.want.Description, "includedPermissions": c.want.Permissions}
-	return x.call(http.MethodPatch, x.rolesURL()+"/"+c.id+"?updateMask=title,description,includedPermissions", in, nil)
+	in := map[string]any{"title": c.want.Title, "description": c.want.Description, "includedPermissions": c.want.Permissions,
+		"stage": roleStage}
+	return x.call(http.MethodPatch, x.rolesURL()+"/"+c.id+"?updateMask="+roleFields, in, nil)
 }

@@ -4,7 +4,10 @@ package gcponboard
 // missing; and, last of all, the serviceAccountBinding step: roles/iam.serviceAccountUser on that account to itself, so
 // that it signs its tasks' OIDC tokens as itself (the serviceAccount step's permissions).
 
-import "net/http"
+import (
+	"fmt"
+	"net/http"
+)
 
 func (x *run) accountURL() string {
 	return "https://iam.googleapis.com/v1/projects/" + esc(x.n.project) + "/serviceAccounts/" + esc(x.n.email)
@@ -15,9 +18,20 @@ func (x *run) accountName() string {
 }
 
 func (x *run) planServiceAccount() (*step, error) {
-	found, err := x.get(iamAPI, x.accountURL(), nil)
+	var got struct {
+		Disabled bool `json:"disabled"`
+	}
+	found, err := x.get(iamAPI, x.accountURL(), &got)
 	if err != nil {
 		return nil, err
+	}
+	if found && got.Disabled {
+		// No step enables it: changing an account's state is the owner's call, said with the command to run.
+		enable := "gcloud iam service-accounts enable " + x.n.email
+		if x.r.Configuration != "" {
+			enable += " --configuration " + x.r.Configuration
+		}
+		return nil, &stop{1, fmt.Sprintf("The service account %s is disabled: enable it (%s), then run the same command again.\nNothing was changed.", x.n.email, enable)}
 	}
 	if found {
 		x.accountExists = true
