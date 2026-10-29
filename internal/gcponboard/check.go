@@ -63,7 +63,11 @@ type Report struct {
 
 	// Visible is false when the caller has no role in the project; the APIs were then not checked.
 	Visible bool `json:"-"`
+	// APIsNote is why the APIs were not checked, when the services listing was refused.
+	APIsNote string `json:"-"`
 }
+
+const apisRefused = "APIs: not checked (serviceusage.services.list refused)"
 
 // OK tells that every command is allowed.
 func (r Report) OK() bool {
@@ -159,14 +163,19 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 	}
 
 	enabled, err := enabledServices(ctx, d.Google, rep.Project.Number)
-	if err != nil {
+	switch {
+	case gcp.IsDenied(err):
+		rep.APIsNote = apisRefused
+		rep.Warnings = append(rep.Warnings, apisRefused)
+	case err != nil:
 		return Report{}, err
-	}
-	for _, api := range access.Load().APIs {
-		if slices.Contains(enabled, api) {
-			rep.APIs.Enabled = append(rep.APIs.Enabled, api)
-		} else {
-			rep.APIs.Missing = append(rep.APIs.Missing, api)
+	default:
+		for _, api := range access.Load().APIs {
+			if slices.Contains(enabled, api) {
+				rep.APIs.Enabled = append(rep.APIs.Enabled, api)
+			} else {
+				rep.APIs.Missing = append(rep.APIs.Missing, api)
+			}
 		}
 	}
 
@@ -245,13 +254,19 @@ func PrintText(w io.Writer, r Report) error {
 			fmt.Fprintf(&b, "  ✗ %s: missing %s\n", c.Command, strings.Join(c.Missing, ", "))
 		}
 	}
-	if !r.Visible {
+	switch {
+	case !r.Visible:
 		b.WriteString("  APIs: not checked\n")
-	} else {
+	case r.APIsNote != "":
+		fmt.Fprintf(&b, "  %s\n", r.APIsNote)
+	default:
 		fmt.Fprintf(&b, "  APIs on: %s\n", listOrNone(r.APIs.Enabled))
 		fmt.Fprintf(&b, "  APIs off: %s\n", listOrNone(r.APIs.Missing))
 	}
 	for _, warning := range r.Warnings {
+		if warning == r.APIsNote {
+			continue
+		}
 		fmt.Fprintf(&b, "  ! %s\n", warning)
 	}
 	_, err := io.WriteString(w, b.String())

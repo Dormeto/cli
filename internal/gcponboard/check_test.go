@@ -273,3 +273,40 @@ func TestRunCheckExitCodes(t *testing.T) {
 		t.Fatalf("%d", code)
 	}
 }
+
+func TestServicesListingDeniedStillReports(t *testing.T) {
+	s := gcptest.New(t)
+	s.Route("serviceusage.googleapis.com", "/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		gcptest.Fail(w, 403, "PERMISSION_DENIED", "denied")
+	})
+	s.HoldsAll = false
+	s.Held = map[string]bool{}
+	for _, p := range access.Needs("check") {
+		if p != "serviceusage.services.list" {
+			s.Held[p] = true
+		}
+	}
+	d, out := deps(s)
+	r, err := Check(context.Background(), d, Request{Project: "dormeto-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := "APIs: not checked (serviceusage.services.list refused)"
+	if r.OK() || len(r.Commands) != 7 || !slices.Contains(r.Warnings, note) || len(r.APIs.Enabled) != 0 || len(r.APIs.Missing) != 0 {
+		t.Fatalf("%+v", r)
+	}
+	if !slices.Contains(command(t, r, "check").Missing, "serviceusage.services.list") {
+		t.Fatal("verdict lost")
+	}
+	PrintText(out, r)
+	if !strings.Contains(out.String(), "  APIs: not checked (serviceusage.services.list refused)\n") ||
+		strings.Contains(out.String(), "APIs on") || strings.Contains(out.String(), "! APIs") {
+		t.Fatal(out)
+	}
+	if code := RunCheck(context.Background(), d, Request{Project: "dormeto-dev", JSON: true}); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(out.String(), `"apis":{"enabled":[],"missing":[]}`) {
+		t.Fatal(out)
+	}
+}
