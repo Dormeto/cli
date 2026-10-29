@@ -264,18 +264,18 @@ func TestUpdateKeepsVersionWithoutCondition(t *testing.T) {
 
 func TestResourcePolicies(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		rp       ResourcePolicy
-		get, set string
-		query    bool
+		name             string
+		rp               ResourcePolicy
+		get, set         string
+		query, postQuery bool
 	}{
-		{"project", ProjectPolicy("p"), "https://cloudresourcemanager.googleapis.com/v3/projects/p:getIamPolicy", "https://cloudresourcemanager.googleapis.com/v3/projects/p:setIamPolicy", false},
-		{"serviceAccount", ServiceAccountPolicy("p", "s@p.iam.gserviceaccount.com"), "https://iam.googleapis.com/v1/projects/p/serviceAccounts/s@p.iam.gserviceaccount.com:getIamPolicy", "https://iam.googleapis.com/v1/projects/p/serviceAccounts/s@p.iam.gserviceaccount.com:setIamPolicy", false},
-		{"queue", QueuePolicy("p", "r", "q"), "https://cloudtasks.googleapis.com/v2/projects/p/locations/r/queues/q:getIamPolicy", "https://cloudtasks.googleapis.com/v2/projects/p/locations/r/queues/q:setIamPolicy", false},
-		{"run", RunPolicy("p", "r", "svc"), "https://run.googleapis.com/v2/projects/p/locations/r/services/svc:getIamPolicy?options.requestedPolicyVersion=3", "https://run.googleapis.com/v2/projects/p/locations/r/services/svc:setIamPolicy", true},
+		{"project", ProjectPolicy("p"), "https://cloudresourcemanager.googleapis.com/v3/projects/p:getIamPolicy", "https://cloudresourcemanager.googleapis.com/v3/projects/p:setIamPolicy", false, false},
+		{"serviceAccount", ServiceAccountPolicy("p", "s@p.iam.gserviceaccount.com"), "https://iam.googleapis.com/v1/projects/p/serviceAccounts/s@p.iam.gserviceaccount.com:getIamPolicy?options.requestedPolicyVersion=3", "https://iam.googleapis.com/v1/projects/p/serviceAccounts/s@p.iam.gserviceaccount.com:setIamPolicy", false, true},
+		{"queue", QueuePolicy("p", "r", "q"), "https://cloudtasks.googleapis.com/v2/projects/p/locations/r/queues/q:getIamPolicy", "https://cloudtasks.googleapis.com/v2/projects/p/locations/r/queues/q:setIamPolicy", false, false},
+		{"run", RunPolicy("p", "r", "svc"), "https://run.googleapis.com/v2/projects/p/locations/r/services/svc:getIamPolicy?options.requestedPolicyVersion=3", "https://run.googleapis.com/v2/projects/p/locations/r/services/svc:setIamPolicy", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.rp.Get != tc.get || tc.rp.Set != tc.set || tc.rp.GetByQuery != tc.query {
+			if tc.rp.Get != tc.get || tc.rp.Set != tc.set || tc.rp.GetByQuery != tc.query || tc.rp.PostByQuery != tc.postQuery {
 				t.Fatalf("got %+v", tc.rp)
 			}
 		})
@@ -290,6 +290,18 @@ func TestUpdateGetsByQueryForCloudRun(t *testing.T) {
 	}
 	g := (*calls)[0]
 	if g.method != "GET" || g.query != "options.requestedPolicyVersion=3" || g.body != "" {
+		t.Fatalf("get %+v", g)
+	}
+}
+
+func TestUpdatePostsAnEmptyBodyForServiceAccounts(t *testing.T) {
+	client, url, calls := fake(t, func(n int, c call) (int, string) { return 200, `{"etag":"e"}` })
+	rp := ResourcePolicy{Get: url + "/r:getIamPolicy?options.requestedPolicyVersion=3", Set: url + "/r:setIamPolicy", PostByQuery: true}
+	if _, err := Update(context.Background(), client, rp, addX); err != nil {
+		t.Fatal(err)
+	}
+	g := (*calls)[0]
+	if g.method != "POST" || g.query != "options.requestedPolicyVersion=3" || g.body != "" {
 		t.Fatalf("get %+v", g)
 	}
 }

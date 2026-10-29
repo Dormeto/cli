@@ -396,6 +396,9 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 		switch {
 		case verb == "" && r.Method == http.MethodGet:
 			Reply(w, s.accountBody(item, a))
+		case verb == "getIamPolicy" && r.Method == http.MethodPost && len(strings.TrimSpace(string(body))) > 0:
+			// IAM's service accounts take the version in the query: "The request body must be empty."
+			Fail(w, 400, "INVALID_ARGUMENT", `Invalid JSON payload received. Unknown name "options": Cannot find field.`)
 		case (verb == "getIamPolicy" || verb == "setIamPolicy") && r.Method == http.MethodPost:
 			s.resourcePolicy(w, "projects/"+s.ProjectID+"/serviceAccounts/"+item, verb, body)
 		default:

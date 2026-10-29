@@ -276,10 +276,13 @@ func Diff(before, after *Policy) (added, removed []Grant) {
 
 // ResourcePolicy is where the IAM policy of one resource is read and written.
 // GetByQuery reads with a GET whose URL carries the requested version (Cloud
-// Run v2); otherwise Get is a POST with the version in the body.
+// Run v2); PostByQuery with a POST whose URL carries it and whose body is
+// empty (IAM's service accounts); otherwise Get is a POST with the version in
+// the body.
 type ResourcePolicy struct {
-	Get, Set   string
-	GetByQuery bool
+	Get, Set    string
+	GetByQuery  bool
+	PostByQuery bool
 }
 
 func newResourcePolicy(base string, byQuery bool) ResourcePolicy {
@@ -295,9 +298,13 @@ func ProjectPolicy(project string) ResourcePolicy {
 	return newResourcePolicy("https://cloudresourcemanager.googleapis.com/v3/projects/"+url.PathEscape(project), false)
 }
 
-// ServiceAccountPolicy is the policy of a service account.
+// ServiceAccountPolicy is the policy of a service account: IAM v1 takes the
+// requested version as a query parameter, the body empty.
 func ServiceAccountPolicy(project, email string) ResourcePolicy {
-	return newResourcePolicy("https://iam.googleapis.com/v1/projects/"+url.PathEscape(project)+"/serviceAccounts/"+url.PathEscape(email), false)
+	rp := newResourcePolicy("https://iam.googleapis.com/v1/projects/"+url.PathEscape(project)+"/serviceAccounts/"+url.PathEscape(email), false)
+	rp.Get += "?options.requestedPolicyVersion=3"
+	rp.PostByQuery = true
+	return rp
 }
 
 // QueuePolicy is the policy of a Cloud Tasks queue.
@@ -335,9 +342,12 @@ func isAborted(err error) bool {
 func read(ctx context.Context, c *gcp.Client, rp ResourcePolicy) (*Policy, error) {
 	var p Policy
 	var err error
-	if rp.GetByQuery {
+	switch {
+	case rp.GetByQuery:
 		err = c.Do(ctx, http.MethodGet, rp.Get, nil, &p)
-	} else {
+	case rp.PostByQuery:
+		err = c.Do(ctx, http.MethodPost, rp.Get, nil, &p)
+	default:
 		in := map[string]any{"options": map[string]int{"requestedPolicyVersion": 3}}
 		err = c.Do(ctx, http.MethodPost, rp.Get, in, &p)
 	}

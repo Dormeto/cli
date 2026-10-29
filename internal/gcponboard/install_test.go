@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -701,5 +702,32 @@ func TestInstallInterruptedDuringAStepSaysWhatWasDone(t *testing.T) {
 	contains(t, out, "  ✗ tag: ", "Done: apis, roles, serviceAccount. Not done: tag, ")
 	if _, err := os.Stat(g.cacheFile()); err != nil {
 		t.Fatalf("the done part waits in the cache: %v", err)
+	}
+}
+
+func TestServiceAccountPolicyIsReadWithAnEmptyBody(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// Planning reads the existing account's policy: IAM wants the version in the query and an empty body.
+	if code, out := g.run(t, europe); code != 0 || !strings.Contains(out, "is up to date.") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	reads := g.s.CallsTo("/serviceAccounts/" + routerSA + ":getIamPolicy")
+	if len(reads) < 2 {
+		t.Fatalf("%d reads", len(reads))
+	}
+	for _, c := range reads {
+		if c.Method != "POST" || c.Body != "" || !strings.HasSuffix(c.URL, ":getIamPolicy?options.requestedPolicyVersion=3") {
+			t.Fatalf("%+v", c)
+		}
+	}
+	// The fake refuses a body there, as Google does.
+	in := map[string]any{"options": map[string]int{"requestedPolicyVersion": 3}}
+	err := g.d.Google.Do(context.Background(), "POST", "https://iam.googleapis.com/v1/projects/dormeto-dev/serviceAccounts/"+routerSA+":getIamPolicy", in, nil)
+	var e *gcp.Error
+	if !errors.As(err, &e) || e.Code != 400 || e.Status != "INVALID_ARGUMENT" {
+		t.Fatalf("%v", err)
 	}
 }
