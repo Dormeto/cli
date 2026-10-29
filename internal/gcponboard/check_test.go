@@ -55,6 +55,7 @@ func TestOwnerHoldsEveryCommand(t *testing.T) {
 		"  ✓ offboard: every permission held\n",
 		"  APIs on: compute.googleapis.com, run.googleapis.com,",
 		"  APIs off: none\n",
+		"  ✓ billing: enabled\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -248,7 +249,7 @@ func TestJSONShape(t *testing.T) {
 		len(got.APIs.Enabled) != 1 || len(got.APIs.Missing) != 9 {
 		t.Fatalf("%s", out)
 	}
-	for _, k := range []string{`"missing":[]`, `"warnings":[]`} {
+	for _, k := range []string{`"missing":[]`, `"warnings":[]`, `"billing":{"checked":true,"enabled":true}`} {
 		if !strings.Contains(out.String(), k) {
 			t.Errorf("no %s in %s", k, out)
 		}
@@ -353,5 +354,40 @@ func TestCheckNamesThePermissionsGoogleRejects(t *testing.T) {
 	if code := RunCheck(context.Background(), d, Request{Project: "dormeto-dev"}); code != 1 ||
 		!strings.Contains(out.String(), "testIamPermissions rejects cloudscheduler.jobs.create, run.services.create") {
 		t.Fatalf("exit %d: %s", code, out)
+	}
+}
+
+func TestCheckFailsWithoutBilling(t *testing.T) {
+	s := gcptest.New(t)
+	s.NoBilling = true
+	d, out := deps(s)
+	for configuration, flag := range map[string]string{"dormeto-dev": " --configuration dormeto-dev", "": ""} {
+		out.Reset()
+		r := Request{Project: "dormeto-dev", Configuration: configuration}
+		if code := RunCheck(context.Background(), d, r); code != 1 {
+			t.Fatalf("exit %d: %s", code, out)
+		}
+		want := "  ✗ billing: not enabled on project dormeto-dev: link a billing account (gcloud billing projects link dormeto-dev --billing-account <id>" +
+			flag + "), then run again\n"
+		if !strings.Contains(out.String(), want) || strings.Contains(out.String(), "✓ billing") {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if !slices.Equal(s.CallsTo("/billingInfo")[0:1], []gcptest.Call{{Method: "GET", Host: "cloudbilling.googleapis.com",
+		URL: "https://cloudbilling.googleapis.com/v1/projects/dormeto-dev/billingInfo", Path: "/v1/projects/dormeto-dev/billingInfo"}}) {
+		t.Fatalf("%+v", s.CallsTo("/billingInfo"))
+	}
+}
+
+func TestBillingNotReadableIsAWarning(t *testing.T) {
+	s := gcptest.New(t)
+	s.BillingDenied = true
+	d, out := deps(s)
+	if code := RunCheck(context.Background(), d, Request{Project: "dormeto-dev"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	if !strings.Contains(out.String(), "  ! billing not checked: google: 403 PERMISSION_DENIED: The caller does not have permission\n") ||
+		strings.Contains(out.String(), " billing: ") {
+		t.Fatal(out)
 	}
 }

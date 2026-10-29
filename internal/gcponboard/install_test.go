@@ -906,3 +906,30 @@ func TestInstallNamesAPermissionGoogleRejects(t *testing.T) {
 		t.Fatalf("mutating calls: %+v", m)
 	}
 }
+
+func TestInstallStopsWithoutBilling(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.NoBilling = true
+	r := europe
+	r.Configuration = "dormeto-dev"
+	code, out := g.run(t, r)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ billing: not enabled on project dormeto-dev: link a billing account (gcloud billing projects link dormeto-dev --billing-account <id> --configuration dormeto-dev), then run again\n"+
+		"Nothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallWarnsWhenBillingIsNotReadable(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.BillingDenied = true
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
+		"  ! billing not checked: google: 403 PERMISSION_DENIED: The caller does not have permission\n")
+}

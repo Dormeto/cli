@@ -210,6 +210,9 @@ func (x *run) checks() error {
 	if rep.APIsNote != "" {
 		return &stop{1, rep.APIsNote + "\nNothing was changed."}
 	}
+	if rep.NoBilling() {
+		return &stop{1, "  ✗ " + noBilling(x.n.project, x.r.Configuration) + "\nNothing was changed."}
+	}
 	x.number = rep.Project.Number
 	x.turningOn = rep.APIs.Missing
 	x.say("Checked: %s holds every permission dormeto gcp install needs in project %s.", rep.Account, x.n.project)

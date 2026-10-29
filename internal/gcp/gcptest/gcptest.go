@@ -2,7 +2,7 @@
 // request for a *.googleapis.com host to it, so production code keeps its real URLs. It routes by host and path, holds
 // state the tests set and inspect, and records the calls made. Tasks that need more resources add routes with Route.
 //
-// Besides the project (its IAM policy, its permissions, its services), it holds what `dormeto gcp install` creates:
+// Besides the project (its IAM policy, its permissions, its services, its billing), it holds what `dormeto gcp install` creates:
 // custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues, the
 // policies of service accounts and queues, and long-running operations, done after OperationPolls polls. A resource of
 // an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's side effects are played: enabling
@@ -70,6 +70,9 @@ type Server struct {
 	// Policy is the project's IAM policy; PolicyDenied makes reading it a 403.
 	Policy       map[string]any
 	PolicyDenied bool
+
+	// NoBilling makes the project one without an open billing account; BillingDenied makes reading its billing a 403.
+	NoBilling, BillingDenied bool
 
 	// Enabled are the enabled services (names such as compute.googleapis.com). ServicePageSize splits the list in pages.
 	Enabled         []string
@@ -229,6 +232,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serviceUsage(w, r, strings.TrimPrefix(path, "/v1/projects/"), body)
 	case r.Host == "serviceusage.googleapis.com" && strings.HasPrefix(path, "/v1/operations/"):
 		s.poll(w, strings.TrimPrefix(path, "/v1/"))
+	case r.Host == "cloudbilling.googleapis.com" && path == "/v1/projects/"+s.ProjectID+"/billingInfo" && r.Method == http.MethodGet:
+		s.billing(w)
 	case r.Host == "iam.googleapis.com":
 		s.iam(w, r, body)
 	case r.Host == "firestore.googleapis.com":
@@ -334,6 +339,19 @@ func (s *Server) serviceUsage(w http.ResponseWriter, r *http.Request, rest strin
 		out["nextPageToken"] = strconv.Itoa(end)
 	}
 	Reply(w, out)
+}
+
+// billing answers the project's billing info: an open billing account linked, unless NoBilling.
+func (s *Server) billing(w http.ResponseWriter) {
+	if s.NoRole || s.BillingDenied {
+		Fail(w, 403, "PERMISSION_DENIED", "The caller does not have permission")
+		return
+	}
+	info := map[string]any{"name": "projects/" + s.ProjectID + "/billingInfo", "projectId": s.ProjectID, "billingEnabled": !s.NoBilling}
+	if !s.NoBilling {
+		info["billingAccountName"] = "billingAccounts/012345-6789AB-CDEF01"
+	}
+	Reply(w, info)
 }
 
 // Tokens is a gcp.TokenSource that needs no gcloud.

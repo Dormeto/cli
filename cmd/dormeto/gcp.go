@@ -84,7 +84,8 @@ func newGcpCheck(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
 	cmd := gcpCommand("check", "Check which permissions you lack for each dormeto gcp command (read-only)",
 		"Check, read-only, the permissions you hold in a Google Cloud project against what each dormeto gcp command\n"+
-			"needs, and which of Dormeto's APIs are on. Nothing is changed. Exit 1 when a command lacks a permission.",
+			"needs, which of Dormeto's APIs are on, and that a billing account is linked. Nothing is changed. Exit 1 when\n"+
+			"a command lacks a permission or the project has no billing.",
 		&f, []string{"project"}, version, run)
 	cmd.Flags().StringVar(&f.region, "region", "", "the router's region")
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the report as JSON")

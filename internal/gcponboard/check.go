@@ -69,33 +69,56 @@ type APIReport struct {
 	Missing []string `json:"missing"`
 }
 
+// BillingReport tells whether the project is linked to an open billing account (Checked false: it could not be read,
+// a warning says why). Without billing, Google refuses to turn the APIs on.
+type BillingReport struct {
+	Checked bool `json:"checked"`
+	Enabled bool `json:"enabled"`
+}
+
 // Report is the result of Check.
 type Report struct {
 	Project  ProjectInfo     `json:"project"`
 	Account  string          `json:"account"`
 	Commands []CommandReport `json:"commands"`
 	APIs     APIReport       `json:"apis"`
+	Billing  BillingReport   `json:"billing"`
 	Warnings []string        `json:"warnings"`
 
 	// Visible is false when the caller has no role in the project; the APIs were then not checked.
 	Visible bool `json:"-"`
 	// APIsNote is why the APIs were not checked, when the services listing was refused.
 	APIsNote string `json:"-"`
+	// configuration is the request's, named in the commands the report tells to run.
+	configuration string
 }
 
 const apisRefused = "APIs: not checked (serviceusage.services.list refused)"
 
-// OK tells that every command is allowed.
+// OK tells that every command is allowed and that the project is not known to lack billing.
 func (r Report) OK() bool {
 	for _, c := range r.Commands {
 		if !c.OK() {
 			return false
 		}
 	}
-	return true
+	return !r.NoBilling()
+}
+
+// NoBilling tells that the project has no open billing account.
+func (r Report) NoBilling() bool { return r.Billing.Checked && !r.Billing.Enabled }
+
+// noBilling is the ✗ line of a project without billing, with the command that links an account.
+func noBilling(project, configuration string) string {
+	link := "gcloud billing projects link " + project + " --billing-account <id>"
+	if configuration != "" {
+		link += " --configuration " + configuration
+	}
+	return fmt.Sprintf("billing: not enabled on project %s: link a billing account (%s), then run again", project, link)
 }
 
 const (
+	cloudBilling  = "https://cloudbilling.googleapis.com/v1/projects/"
 	crm           = "https://cloudresourcemanager.googleapis.com/v3/projects/"
 	serviceUsage  = "https://serviceusage.googleapis.com/v1/projects/"
 	permissionMax = 100
@@ -179,7 +202,8 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 	if err != nil {
 		return Report{}, err
 	}
-	rep := Report{Project: ProjectInfo{ID: r.Project}, Account: account, Warnings: []string{}, APIs: APIReport{Enabled: []string{}, Missing: []string{}}}
+	rep := Report{Project: ProjectInfo{ID: r.Project}, Account: account, Warnings: []string{}, APIs: APIReport{Enabled: []string{}, Missing: []string{}},
+		configuration: r.Configuration}
 
 	var p projectBody
 	err = d.Google.Do(ctx, http.MethodGet, crm+url.PathEscape(r.Project), nil, &p)
@@ -239,6 +263,19 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 				rep.APIs.Missing = append(rep.APIs.Missing, api)
 			}
 		}
+	}
+
+	var billing struct {
+		BillingEnabled bool `json:"billingEnabled"`
+	}
+	// projects.getBillingInfo needs resourcemanager.projects.get, which the read step holds.
+	switch err := d.Google.Do(ctx, http.MethodGet, cloudBilling+url.PathEscape(r.Project)+"/billingInfo", nil, &billing); {
+	case err == nil:
+		rep.Billing = BillingReport{Checked: true, Enabled: billing.BillingEnabled}
+	case gcp.IsDenied(err):
+		rep.Warnings = append(rep.Warnings, "billing not checked: "+err.Error())
+	default:
+		return Report{}, err
 	}
 
 	rep.Warnings = append(rep.Warnings, defaultServiceAccountWarning(ctx, d.Google, rep.Project)...)
@@ -324,6 +361,12 @@ func PrintText(w io.Writer, r Report) error {
 	default:
 		fmt.Fprintf(&b, "  APIs on: %s\n", listOrNone(r.APIs.Enabled))
 		fmt.Fprintf(&b, "  APIs off: %s\n", listOrNone(r.APIs.Missing))
+	}
+	switch {
+	case r.NoBilling():
+		fmt.Fprintf(&b, "  ✗ %s\n", noBilling(r.Project.ID, r.configuration))
+	case r.Billing.Checked:
+		b.WriteString("  ✓ billing: enabled\n")
 	}
 	for _, warning := range r.Warnings {
 		if warning == r.APIsNote {
