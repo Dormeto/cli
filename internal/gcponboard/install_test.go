@@ -47,7 +47,7 @@ func newInstallRig(t *testing.T) *installRig {
 	var slept []time.Duration
 	cache := t.TempDir()
 	d := Deps{
-		Google:   &gcp.Client{HTTP: s.HTTP, Tokens: gcptest.Tokens{AccountName: "me@example.com"}},
+		Google:   &gcp.Client{HTTP: s.HTTP, Tokens: gcptest.Tokens{AccountName: "me@example.com"}, Sleep: noWait},
 		Prompter: install.NewPrompter(strings.NewReader(""), &out, false),
 		Out:      &out, Err: &out,
 		Now:     func() time.Time { return installNow },

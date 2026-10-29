@@ -232,11 +232,44 @@ func parseError(code int, body []byte) *Error {
 type Client struct {
 	HTTP   *http.Client
 	Tokens TokenSource
+	// Sleep waits between the tries of a read that met a transient error (nil: a timer).
+	Sleep func(ctx context.Context, d time.Duration) error
+}
+
+// readRetries is how many times a read is tried again after a transient error, waiting 1 s, 2 s, then 4 s.
+const readRetries = 3
+
+// transient tells that Google may answer the same request differently a moment later: throttled or unavailable.
+func transient(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// reads tells that a request changes nothing, so sending it again is harmless: a GET (an operation's poll among them),
+// or one of the POSTs that only read (getIamPolicy, testIamPermissions).
+func reads(method, u string) bool {
+	if method == http.MethodGet {
+		return true
+	}
+	path, _, _ := strings.Cut(u, "?")
+	return method == http.MethodPost && (strings.HasSuffix(path, ":getIamPolicy") || strings.HasSuffix(path, ":testIamPermissions"))
+}
+
+func (c *Client) sleep(ctx context.Context, d time.Duration) error {
+	if c.Sleep != nil {
+		return c.Sleep(ctx, d)
+	}
+	return sleep(ctx, d)
 }
 
 // Do sends in as JSON (when non-nil) and decodes the answer into out (when non-nil). A non-2xx answer is an *Error. A
 // 401 (the token expired before gcloud's cache knew it) drops the cached token and sends the request once more with a
-// new one from gcloud.
+// new one from gcloud. A read answered 429, 500, 502, 503 or 504 is tried again up to 3 times, after 1 s, 2 s and 4 s;
+// a request that may change something is sent once.
 func (c *Client) Do(ctx context.Context, method, url string, in, out any) error {
 	var payload []byte
 	if in != nil {
@@ -246,7 +279,7 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 		}
 		payload = b
 	}
-	refreshed := false
+	refreshed, retries := false, 0
 	for {
 		code, data, err := c.send(ctx, method, url, payload)
 		if err != nil {
@@ -257,6 +290,13 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 			if d, ok := c.Tokens.(dropper); ok {
 				d.dropAccessToken()
 			}
+			continue
+		}
+		if transient(code) && retries < readRetries && reads(method, url) {
+			if err := c.sleep(ctx, time.Second<<retries); err != nil {
+				return err
+			}
+			retries++
 			continue
 		}
 		if code < 200 || code > 299 {

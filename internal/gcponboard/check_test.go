@@ -9,15 +9,19 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
 )
 
+// noWait is a gcp.Client's Sleep that does not wait.
+func noWait(context.Context, time.Duration) error { return nil }
+
 func deps(s *gcptest.Server) (Deps, *bytes.Buffer) {
 	var out bytes.Buffer
-	return Deps{Google: &gcp.Client{HTTP: s.HTTP, Tokens: gcptest.Tokens{AccountName: "me@example.com"}}, Out: &out, Err: &out}, &out
+	return Deps{Google: &gcp.Client{HTTP: s.HTTP, Tokens: gcptest.Tokens{AccountName: "me@example.com"}, Sleep: noWait}, Out: &out, Err: &out}, &out
 }
 
 func command(t *testing.T, r Report, name string) CommandReport {

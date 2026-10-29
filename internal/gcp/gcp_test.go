@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -66,6 +67,7 @@ func TestDoWithoutBodyHasNoContentType(t *testing.T) {
 }
 
 func TestErrors(t *testing.T) {
+	fakeClock(t) // the 502 is retried
 	denied := `{"error":{"code":403,"message":"nope","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"IAM_PERMISSION_DENIED","metadata":{"permission":"compute.urlMaps.get"}}]}}`
 	cases := []struct {
 		name       string
@@ -385,5 +387,107 @@ func TestGcloudFailingToGiveATokenSaysToLogIn(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: identity: %v", configuration, err)
 		}
+	}
+}
+
+// flaky answers code to the first fails requests, then {"name":"x"}; it counts the requests.
+func flaky(code, fails int, requests *int) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*requests++
+		if *requests <= fails {
+			w.WriteHeader(code)
+			fmt.Fprintf(w, `{"error":{"code":%d,"message":"try again","status":"UNAVAILABLE"}}`, code)
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"x","done":true}`))
+	}))
+}
+
+// sleeper is a Client.Sleep that records the waits.
+func sleeper(slept *[]time.Duration) func(context.Context, time.Duration) error {
+	return func(_ context.Context, d time.Duration) error { *slept = append(*slept, d); return nil }
+}
+
+func TestDoRetriesAReadOnATransientError(t *testing.T) {
+	for _, code := range []int{429, 500, 502, 503, 504} {
+		requests := 0
+		srv := flaky(code, 2, &requests)
+		var slept []time.Duration
+		c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+		var out struct{ Name string }
+		err := c.Do(context.Background(), "GET", srv.URL, nil, &out)
+		srv.Close()
+		if err != nil || out.Name != "x" || requests != 3 || !slices.Equal(slept, []time.Duration{time.Second, 2 * time.Second}) {
+			t.Errorf("%d: %v, %d requests, slept %v", code, err, requests, slept)
+		}
+	}
+}
+
+func TestDoGivesUpOnATransientErrorAfterThreeRetries(t *testing.T) {
+	requests := 0
+	srv := flaky(503, 100, &requests)
+	defer srv.Close()
+	var slept []time.Duration
+	c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+	err := c.Do(context.Background(), "GET", srv.URL, nil, nil)
+	var ge *Error
+	if !errors.As(err, &ge) || ge.Code != 503 || requests != 4 ||
+		!slices.Equal(slept, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}) {
+		t.Fatalf("%v, %d requests, slept %v", err, requests, slept)
+	}
+}
+
+func TestDoRetriesTheReadOnlyPosts(t *testing.T) {
+	for _, verb := range []string{":getIamPolicy", ":testIamPermissions"} {
+		requests := 0
+		srv := flaky(503, 1, &requests)
+		var slept []time.Duration
+		c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+		err := c.Do(context.Background(), "POST", srv.URL+"/v3/projects/p"+verb, map[string]any{}, nil)
+		srv.Close()
+		if err != nil || requests != 2 {
+			t.Errorf("%s: %v, %d requests", verb, err, requests)
+		}
+	}
+}
+
+func TestDoDoesNotRetryAMutation(t *testing.T) {
+	for _, method := range []string{"POST", "PATCH", "PUT", "DELETE"} {
+		requests := 0
+		srv := flaky(503, 1, &requests)
+		var slept []time.Duration
+		c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+		err := c.Do(context.Background(), method, srv.URL+"/v3/projects/p:setIamPolicy", map[string]any{}, nil)
+		srv.Close()
+		var ge *Error
+		if !errors.As(err, &ge) || ge.Code != 503 || requests != 1 || len(slept) != 0 {
+			t.Errorf("%s: %v, %d requests", method, err, requests)
+		}
+	}
+}
+
+func TestDoDoesNotRetryOtherErrors(t *testing.T) {
+	for _, code := range []int{400, 403, 404, 409, 501} {
+		requests := 0
+		srv := flaky(code, 1, &requests)
+		var slept []time.Duration
+		c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+		err := c.Do(context.Background(), "GET", srv.URL, nil, nil)
+		srv.Close()
+		if err == nil || requests != 1 || len(slept) != 0 {
+			t.Errorf("%d: %v, %d requests", code, err, requests)
+		}
+	}
+}
+
+func TestWaitOperationRetriesAPollOnATransientError(t *testing.T) {
+	fakeClock(t)
+	requests := 0
+	srv := flaky(502, 1, &requests)
+	defer srv.Close()
+	var slept []time.Duration
+	c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+	if err := WaitOperation(context.Background(), c, srv.URL, time.Second, time.Minute); err != nil || requests != 2 {
+		t.Fatalf("%v, %d requests", err, requests)
 	}
 }
