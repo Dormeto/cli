@@ -1,0 +1,750 @@
+package gcponboard
+
+// The Kubernetes RBAC of a GKE workload (spec §8) and `dormeto gcp workloads access show|grant|revoke`: a Role and a
+// RoleBinding dormeto-<workload> in the workload's namespace, for the router's service account, nothing cluster-wide. The
+// router's IAM grants nothing inside a cluster, so the operator writes them, as themselves: HTTPS with the public CAs to the
+// cluster's DNS endpoint, their access token as bearer. An object of that name without the label managed-by is someone
+// else's: never changed, never removed. The install record lists each workload's access before it is applied and until it
+// is removed. Exit codes: 0; 1 when Google or Kubernetes refuses, an object is someone else's, or the cluster has no
+// DNS endpoint; 2 for a bad flag or a missing answer; 130 when interrupted.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"reflect"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/install"
+)
+
+const (
+	containerV1    = "https://container.googleapis.com/v1/"
+	rbacAPIGroup   = "rbac.authorization.k8s.io"
+	rbacAPIVersion = rbacAPIGroup + "/v1"
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedBy      = "dormeto"
+)
+
+var (
+	clusterLocationPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	clusterNamePattern     = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
+	namespacePattern       = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+)
+
+// Rbac is the Kubernetes access of one workload: its cluster as <location>/<name>, its namespace, its ID, and the router's
+// service account (an email) that gets the access.
+type Rbac struct {
+	Cluster        string `json:"cluster"`
+	Namespace      string `json:"namespace"`
+	Workload       string `json:"workload"`
+	ServiceAccount string `json:"serviceAccount"`
+}
+
+func (rb Rbac) entry() RecordRbac {
+	return RecordRbac{Cluster: rb.Cluster, Namespace: rb.Namespace, Workload: rb.Workload}
+}
+
+type rbacRule struct {
+	APIGroups     []string `json:"apiGroups"`
+	Resources     []string `json:"resources"`
+	ResourceNames []string `json:"resourceNames,omitempty"` // none of ours: read so that one added by hand differs
+	Verbs         []string `json:"verbs"`
+}
+
+type rbacSubject struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	APIGroup string `json:"apiGroup"`
+}
+
+type rbacRoleRef struct {
+	APIGroup string `json:"apiGroup"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+}
+
+type kubeMetadata struct {
+	Name            string            `json:"name"`
+	Namespace       string            `json:"namespace"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Annotations     map[string]string `json:"annotations,omitempty"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
+}
+
+// kubeObject is a Role or a RoleBinding.
+type kubeObject struct {
+	APIVersion string        `json:"apiVersion"`
+	Kind       string        `json:"kind"`
+	Metadata   kubeMetadata  `json:"metadata"`
+	Rules      []rbacRule    `json:"rules,omitempty"`
+	Subjects   []rbacSubject `json:"subjects,omitempty"`
+	RoleRef    *rbacRoleRef  `json:"roleRef,omitempty"`
+}
+
+func (o kubeObject) String() string { return o.Kind + " " + o.Metadata.Name }
+
+// ours tells that the object is Dormeto's: the label and the name.
+func (o kubeObject) ours(name string) bool {
+	return o.Metadata.Name == name && o.Metadata.Labels[managedByLabel] == managedBy
+}
+
+// sameContent tells that the object says what the wanted one says: its metadata is its own.
+func (o kubeObject) sameContent(wanted kubeObject) bool {
+	return reflect.DeepEqual(o.Rules, wanted.Rules) && reflect.DeepEqual(o.Subjects, wanted.Subjects) && reflect.DeepEqual(o.RoleRef, wanted.RoleRef)
+}
+
+func (rb Rbac) name() string { return "dormeto-" + rb.Workload }
+
+func (rb Rbac) metadata() kubeMetadata {
+	return kubeMetadata{Name: rb.name(), Namespace: rb.Namespace, Labels: map[string]string{managedByLabel: managedBy}}
+}
+
+// role is the Role of spec §8: what the router's nap, wake and checks read and scale in the namespace.
+func (rb Rbac) role() kubeObject {
+	return kubeObject{APIVersion: rbacAPIVersion, Kind: "Role", Metadata: rb.metadata(), Rules: []rbacRule{
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "replicasets"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments/scale", "statefulsets/scale"}, Verbs: []string{"get", "patch"}},
+		{APIGroups: []string{""}, Resources: []string{"pods", "services", "events"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"keda.sh"}, Resources: []string{"scaledobjects"}, Verbs: []string{"get", "list", "watch", "patch"}},
+	}}
+}
+
+func (rb Rbac) roleBinding() kubeObject {
+	return kubeObject{APIVersion: rbacAPIVersion, Kind: "RoleBinding", Metadata: rb.metadata(),
+		Subjects: []rbacSubject{{Kind: "User", Name: rb.ServiceAccount, APIGroup: rbacAPIGroup}},
+		RoleRef:  &rbacRoleRef{APIGroup: rbacAPIGroup, Kind: "Role", Name: rb.name()}}
+}
+
+const (
+	rbacCreate  = "create"
+	rbacUpdate  = "update"
+	rbacNone    = "none"
+	rbacRefused = "refused"
+)
+
+// rbacChange is what a grant would do to one object: create, update, none, or refused (the object is someone else's).
+type rbacChange struct {
+	Action  string      `json:"action"`
+	Current *kubeObject `json:"current"`
+	Wanted  kubeObject  `json:"wanted"`
+}
+
+// RbacPlan is what is in the cluster and what a grant would write.
+type RbacPlan struct {
+	Rbac
+	Endpoint    string     `json:"endpoint"`
+	Role        rbacChange `json:"role"`
+	RoleBinding rbacChange `json:"roleBinding"`
+}
+
+// Changes tells that a grant would write something.
+func (p RbacPlan) Changes() bool {
+	return p.Role.Action != rbacNone || p.RoleBinding.Action != rbacNone
+}
+
+// Refused is the refusal of an object of that name that is someone else's: nil when there is none.
+func (p RbacPlan) Refused() error {
+	for _, c := range []rbacChange{p.Role, p.RoleBinding} {
+		if c.Action == rbacRefused {
+			return &stop{1, fmt.Sprintf("%s exists in namespace %s and is not Dormeto's (it lacks the label %s: %s): rename it, or name the workload otherwise.\nNothing was changed.",
+				c.Wanted, p.Namespace, managedByLabel, managedBy)}
+		}
+	}
+	return nil
+}
+
+// clusterGone is a cluster Google does not know.
+type clusterGone struct{ cluster, project string }
+
+func (e *clusterGone) Error() string {
+	return fmt.Sprintf("Cluster %s is not found in project %s.\nNothing was changed.", e.cluster, e.project)
+}
+
+// clusterEndpoint reads the cluster's DNS endpoint. The router reaches a cluster by it alone (no IP endpoint, no VPC
+// connector), so one that is off or closed to the outside is refused with what to turn on.
+func (x *run) clusterEndpoint(cluster string) (string, error) {
+	location, name, _ := strings.Cut(cluster, "/")
+	var got struct {
+		ControlPlaneEndpointsConfig struct {
+			DNSEndpointConfig struct {
+				Endpoint             string `json:"endpoint"`
+				AllowExternalTraffic bool   `json:"allowExternalTraffic"`
+			} `json:"dnsEndpointConfig"`
+		} `json:"controlPlaneEndpointsConfig"`
+	}
+	u := containerV1 + "projects/" + esc(x.n.project) + "/locations/" + esc(location) + "/clusters/" + esc(name)
+	err := x.d.Google.Do(x.ctx, http.MethodGet, u, nil, &got)
+	switch {
+	case gcp.IsNotFound(err):
+		return "", &clusterGone{cluster, x.n.project}
+	case gcp.IsDenied(err) && !serviceDisabled(err):
+		return "", &stop{1, fmt.Sprintf("Cluster %s is not read: you need container.clusters.get on project %s (%s).\nNothing was changed.", cluster, x.n.project, refusal(err))}
+	case refused(err):
+		return "", &stop{1, fmt.Sprintf("Cluster %s is not read: %s\nNothing was changed.", cluster, refusal(err))}
+	case err != nil:
+		return "", err
+	}
+	dns := got.ControlPlaneEndpointsConfig.DNSEndpointConfig
+	if dns.Endpoint == "" || !dns.AllowExternalTraffic {
+		hint := fmt.Sprintf("gcloud container clusters update %s --location %s --project %s --enable-dns-access", name, location, x.n.project)
+		if x.r.Configuration != "" {
+			hint += " --configuration " + x.r.Configuration
+		}
+		return "", &stop{1, fmt.Sprintf("Cluster %s has no DNS endpoint open to traffic from outside its network, and that is how Dormeto reaches a cluster. Turn it on:\n  %s\nNothing was changed.", cluster, hint)}
+	}
+	return dns.Endpoint, nil
+}
+
+func kubeCollectionURL(endpoint string, o kubeObject) string {
+	return "https://" + endpoint + "/apis/" + rbacAPIVersion + "/namespaces/" + esc(o.Metadata.Namespace) + "/" + strings.ToLower(o.Kind) + "s"
+}
+
+func kubeObjectURL(endpoint string, o kubeObject) string {
+	return kubeCollectionURL(endpoint, o) + "/" + esc(o.Metadata.Name)
+}
+
+// kubeFailure says why Kubernetes answered no to a verb (get, create, update or delete) on an object: a 403 names what the
+// operator lacks. Any other refusal is said in Kubernetes's words. No answer (or a 5xx) stays the error it is, since it
+// says nothing of what was done: only a *stop means that Kubernetes refused.
+func kubeFailure(cluster, verb string, o kubeObject, err error) error {
+	what := fmt.Sprintf("%s in namespace %s", o, o.Metadata.Namespace)
+	var e *gcp.Error
+	switch {
+	case !refused(err) || !errors.As(err, &e):
+		return fmt.Errorf("%s %s: %w", verb, what, err)
+	case e.Code != http.StatusForbidden:
+		return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: %s", verb, what, e.Message)}
+	case e.Reason != "Forbidden":
+		// Not a Kubernetes Status: the endpoint's own IAM check, before the cluster's API.
+		return &stop{1, fmt.Sprintf("The DNS endpoint of cluster %s refuses you: you need container.clusters.connect on its project.\n%s", cluster, e.Message)}
+	case escalation(e.Message):
+		return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: it lets no one grant rights they do not hold. You need container.roles.escalate and container.roles.bind, or those rights themselves.\n%s", verb, what, e.Message)}
+	}
+	return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: you need %s, by IAM or by Kubernetes RBAC.\n%s", verb, what, kubePermission(verb, o), e.Message)}
+}
+
+// escalation tells that Kubernetes's 403 is its escalation rule, and no missing right on the object itself.
+func escalation(message string) bool {
+	m := strings.ToLower(message)
+	return strings.Contains(m, "not currently held") || strings.Contains(m, "escalat") || strings.Contains(m, "extra privileges")
+}
+
+// kubePermission is the IAM permission of a verb on a Role or a RoleBinding.
+func kubePermission(verb string, o kubeObject) string {
+	if o.Kind == "RoleBinding" {
+		return "container.roleBindings." + verb
+	}
+	return "container.roles." + verb
+}
+
+const nothingChanged = "Nothing was changed."
+
+// withNothingChanged adds that nothing changed to a refusal that does not say it yet.
+func withNothingChanged(err error) error {
+	var s *stop
+	if errors.As(err, &s) && !strings.HasSuffix(s.msg, nothingChanged) {
+		return &stop{s.code, s.msg + "\n" + nothingChanged}
+	}
+	return err
+}
+
+// recordFailure says what was not done with the install record. A refusal is said whole: the error's text would be Google's alone.
+func recordFailure(what string, err error) error {
+	if refused(err) {
+		return &stop{1, what + ": " + refusal(err)}
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
+// readChange reads an object and compares it with the wanted one.
+func (x *run) readChange(rb Rbac, endpoint string, wanted kubeObject) (rbacChange, error) {
+	var current kubeObject
+	err := x.d.Google.Do(x.ctx, http.MethodGet, kubeObjectURL(endpoint, wanted), nil, &current)
+	switch {
+	case gcp.IsNotFound(err):
+		return rbacChange{Action: rbacCreate, Wanted: wanted}, nil
+	case err != nil:
+		return rbacChange{}, withNothingChanged(kubeFailure(rb.Cluster, "get", wanted, err))
+	}
+	c := rbacChange{Action: rbacUpdate, Current: &current, Wanted: wanted}
+	switch {
+	case !current.ours(rb.name()):
+		c.Action = rbacRefused
+	case current.sameContent(wanted):
+		c.Action = rbacNone
+	}
+	return c, nil
+}
+
+// PlanRbac reads the cluster's DNS endpoint and the workload's objects, and compares them with what they should be. It
+// changes nothing. A cluster with no DNS endpoint is an error; an object that is someone else's is the plan's Refused.
+func (x *run) PlanRbac(rb Rbac) (RbacPlan, error) {
+	plan := RbacPlan{Rbac: rb}
+	var err error
+	if plan.Endpoint, err = x.clusterEndpoint(rb.Cluster); err != nil {
+		return plan, err
+	}
+	if plan.Role, err = x.readChange(rb, plan.Endpoint, rb.role()); err != nil {
+		return plan, err
+	}
+	plan.RoleBinding, err = x.readChange(rb, plan.Endpoint, rb.roleBinding())
+	return plan, err
+}
+
+// ApplyRbac writes what the plan says differs, the Role first as the binding names it, and returns what it did, also when
+// it fails on the way. An error that is a *stop is Kubernetes's refusal of the write after those. A plan refused writes
+// nothing.
+func (x *run) ApplyRbac(plan RbacPlan) ([]string, error) {
+	if err := plan.Refused(); err != nil {
+		return nil, err
+	}
+	done := []string{}
+	for _, c := range []rbacChange{plan.Role, plan.RoleBinding} {
+		switch c.Action {
+		case rbacCreate:
+			if err := x.d.Google.Do(x.ctx, http.MethodPost, kubeCollectionURL(plan.Endpoint, c.Wanted), c.Wanted, nil); err != nil {
+				return done, kubeFailure(plan.Cluster, "create", c.Wanted, err)
+			}
+			done = append(done, "created "+c.Wanted.String())
+		case rbacUpdate:
+			// Its metadata stays, with the version read: someone's write since is a conflict, not lost.
+			o := c.Wanted
+			o.Metadata = c.Current.Metadata
+			if err := x.d.Google.Do(x.ctx, http.MethodPut, kubeObjectURL(plan.Endpoint, o), o, nil); err != nil {
+				return done, kubeFailure(plan.Cluster, "update", o, err)
+			}
+			done = append(done, "updated "+c.Wanted.String())
+		}
+	}
+	return done, nil
+}
+
+// RbacRemoval is what a removal did: the objects removed and those left, someone else's.
+type RbacRemoval struct {
+	Removed []string `json:"removed"`
+	Left    []string `json:"left"`
+}
+
+// removal sorts the objects there: those a removal takes, the binding first as the router then loses its rights before the
+// Role goes, and those it leaves.
+func (p RbacPlan) removal() (ours []kubeObject, left []string) {
+	left = []string{}
+	for _, c := range []rbacChange{p.RoleBinding, p.Role} {
+		switch {
+		case c.Current == nil:
+		case c.Action == rbacRefused:
+			left = append(left, c.Wanted.String())
+		default:
+			ours = append(ours, c.Wanted)
+		}
+	}
+	return ours, left
+}
+
+// RemoveRbac reads the workload's objects again and removes those that are Dormeto's. An object not there is no error, and
+// another of that name is left, and said. It returns what it did, also when it fails on the way. An error that is a *stop
+// is Kubernetes's refusal.
+func (x *run) RemoveRbac(rb Rbac) (RbacRemoval, error) {
+	out := RbacRemoval{Removed: []string{}, Left: []string{}}
+	plan, err := x.PlanRbac(rb)
+	if err != nil {
+		return out, err
+	}
+	var ours []kubeObject
+	ours, out.Left = plan.removal()
+	for _, o := range ours {
+		if err := x.d.Google.Do(x.ctx, http.MethodDelete, kubeObjectURL(plan.Endpoint, o), nil, nil); err != nil && !gcp.IsNotFound(err) {
+			return out, kubeFailure(rb.Cluster, "delete", o, err)
+		}
+		out.Removed = append(out.Removed, o.String())
+	}
+	return out, nil
+}
+
+// addRbac adds a workload's access the record lacks, and tells whether it did.
+func (r *Record) addRbac(e RecordRbac) bool {
+	if slices.Contains(r.Rbac, e) {
+		return false
+	}
+	r.Rbac = append(r.Rbac, e)
+	return true
+}
+
+// removeRbac removes a workload's access from the record, and tells whether it was listed.
+func (r *Record) removeRbac(e RecordRbac) bool {
+	i := slices.Index(r.Rbac, e)
+	if i < 0 {
+		return false
+	}
+	r.Rbac = slices.Delete(r.Rbac, i, i+1)
+	return true
+}
+
+// rbacRecord reads the install record where it is kept, and tells whether there is one. What was removed needs none: a
+// revoke follows an uninstall. An API that is off holds no record.
+func (x *run) rbacRecord() (bool, error) {
+	x.policy, x.turningOn = &Policy{}, []string{firestoreAPI}
+	if err := x.loadRecord(); err != nil {
+		return false, withNothingChanged(recordFailure("The install record is not read", err))
+	}
+	return x.recorded || x.resumed, nil
+}
+
+// writeRbacRecord writes the record where it is kept, by the account that changes it.
+func (x *run) writeRbacRecord() error {
+	account, err := x.d.Google.Tokens.Account(x.ctx)
+	if err != nil {
+		return err
+	}
+	x.account = account
+	return x.writeKept()
+}
+
+// recordRbac lists a workload's access in the record, before it is applied, and tells whether it did. The record follows
+// rbacRecord.
+func (x *run) recordRbac(rb Rbac) (bool, error) {
+	if !x.rec.addRbac(rb.entry()) {
+		return false, nil
+	}
+	if err := x.writeRbacRecord(); err != nil {
+		x.rec.removeRbac(rb.entry())
+		return false, withNothingChanged(recordFailure("The install record is not written before the access is applied", err))
+	}
+	return true, nil
+}
+
+// unrecordRbac takes a workload's access out of the record, after its removal. The record follows rbacRecord.
+func (x *run) unrecordRbac(rb Rbac) error {
+	if !x.rec.removeRbac(rb.entry()) {
+		return nil
+	}
+	return x.writeRbacRecord()
+}
+
+// revokeCommand is the command that removes a workload's access.
+func (x *run) revokeCommand(e RecordRbac) string {
+	c := fmt.Sprintf("dormeto gcp workloads access revoke --project %s --region %s --gke-cluster %s --namespace %s --workload %s",
+		x.n.project, x.n.region, e.Cluster, e.Namespace, e.Workload)
+	if x.r.Configuration != "" {
+		c += " --gcloud-configuration " + x.r.Configuration
+	}
+	return c
+}
+
+// rbacLeft are the lines of the access the record lists: the uninstall does not reach clusters, as the operator's access to
+// a cluster may differ from their access to the project.
+func (x *run) rbacLeft() []string {
+	var lines []string
+	for _, e := range x.rec.Rbac {
+		lines = append(lines, fmt.Sprintf("Role and RoleBinding dormeto-%s, namespace %s, cluster %s: left in the cluster; remove them with: %s", e.Workload, e.Namespace, e.Cluster, x.revokeCommand(e)))
+	}
+	return lines
+}
+
+// WorkloadsAccessShow is `dormeto gcp workloads access show`: what is in the cluster and what grant would write.
+func WorkloadsAccessShow(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.workloadsEnd(x.accessShow())
+}
+
+// WorkloadsAccessGrant is `dormeto gcp workloads access grant`.
+func WorkloadsAccessGrant(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.workloadsEnd(x.accessGrant())
+}
+
+// WorkloadsAccessRevoke is `dormeto gcp workloads access revoke`.
+func WorkloadsAccessRevoke(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.workloadsEnd(x.accessRevoke())
+}
+
+// rbacRequest validates the flags, before any call. A write with --json is not asked: the answer is for a program.
+func (x *run) rbacRequest(writes bool) (Rbac, error) {
+	if err := x.validate(); err != nil {
+		return Rbac{}, err
+	}
+	location, name, found := strings.Cut(x.r.GKECluster, "/")
+	switch {
+	case !found || !clusterLocationPattern.MatchString(location) || !clusterNamePattern.MatchString(name):
+		return Rbac{}, &stop{2, fmt.Sprintf("--gke-cluster: %q is not <location>/<name>, such as europe-west1-b/my-cluster", x.r.GKECluster)}
+	case !namespacePattern.MatchString(x.r.Namespace):
+		return Rbac{}, &stop{2, fmt.Sprintf("--namespace: %q is not a Kubernetes namespace", x.r.Namespace)}
+	case !workloadIDPattern.MatchString(x.r.ID):
+		return Rbac{}, &stop{2, fmt.Sprintf("--workload: %q is not a valid workload ID: %s", x.r.ID, workloadIDRule)}
+	case writes && x.r.JSON && !x.r.Yes:
+		return Rbac{}, &stop{2, "--yes: needed with --json"}
+	}
+	return Rbac{Cluster: x.r.GKECluster, Namespace: x.r.Namespace, Workload: x.r.ID, ServiceAccount: x.n.email}, nil
+}
+
+// objectLines describes an object's content.
+func objectLines(o kubeObject) []string {
+	var lines []string
+	for _, r := range o.Rules {
+		groups := slices.Clone(r.APIGroups)
+		for i, g := range groups {
+			if g == "" {
+				groups[i] = `""`
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s: %s", strings.Join(groups, ", "), strings.Join(r.Resources, ", "), strings.Join(r.Verbs, ", ")))
+	}
+	for _, s := range o.Subjects {
+		lines = append(lines, "subject: "+s.Kind+" "+s.Name)
+	}
+	if o.RoleRef != nil {
+		lines = append(lines, "role: "+o.RoleRef.Kind+" "+o.RoleRef.Name)
+	}
+	var labels []string
+	for k, v := range o.Metadata.Labels {
+		labels = append(labels, "label "+k+": "+v)
+	}
+	sort.Strings(labels)
+	return append(lines, labels...)
+}
+
+// tell is a line of text, that --json does not print.
+func (x *run) tell(format string, a ...any) {
+	if !x.r.JSON {
+		x.say(format, a...)
+	}
+}
+
+func (x *run) rbacHeader(p RbacPlan) {
+	x.tell("Kubernetes access of workload %s, namespace %s, cluster %s (%s):", p.Workload, p.Namespace, p.Cluster, p.Endpoint)
+}
+
+// printWrites prints what a grant would write, each object in full.
+func (x *run) printWrites(p RbacPlan) {
+	for _, c := range []rbacChange{p.Role, p.RoleBinding} {
+		switch c.Action {
+		case rbacNone:
+			x.say("  = %s, as it should be", c.Wanted)
+			continue
+		case rbacRefused:
+			x.say("  ! %s is not Dormeto's: grant refuses it, and would write:", c.Wanted)
+		case rbacUpdate:
+			x.say("  ~ %s", c.Wanted)
+		default:
+			x.say("  + %s", c.Wanted)
+		}
+		for _, l := range objectLines(c.Wanted) {
+			x.say("      %s", l)
+		}
+	}
+}
+
+func (x *run) printJSON(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(x.d.Out, "%s\n", b)
+	return nil
+}
+
+func (x *run) accessShow() error {
+	rb, err := x.rbacRequest(false)
+	if err != nil {
+		return err
+	}
+	plan, err := x.PlanRbac(rb)
+	if err != nil {
+		return err
+	}
+	if x.r.JSON {
+		return x.printJSON(plan)
+	}
+	x.rbacHeader(plan)
+	x.say("In the cluster:")
+	for _, c := range []rbacChange{plan.Role, plan.RoleBinding} {
+		switch {
+		case c.Current == nil:
+			x.say("  %s: none", c.Wanted)
+			continue
+		case c.Action == rbacRefused:
+			x.say("  %s: not Dormeto's", c.Wanted)
+		default:
+			x.say("  %s: Dormeto's", c.Wanted)
+		}
+		for _, l := range objectLines(*c.Current) {
+			x.say("      %s", l)
+		}
+	}
+	x.say("What grant would write, for the router's service account:")
+	x.printWrites(plan)
+	return nil
+}
+
+// confirm goes on with --yes or a yes on a terminal.
+func (x *run) confirm(question string) error {
+	if x.r.Yes {
+		return nil
+	}
+	if !x.d.Terminal {
+		return &stop{2, "--yes: needed"}
+	}
+	ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return &stop{0, nothingChanged}
+	}
+	return nil
+}
+
+func (x *run) accessGrant() error {
+	rb, err := x.rbacRequest(true)
+	if err != nil {
+		return err
+	}
+	found, err := x.rbacRecord()
+	if err != nil {
+		return err
+	}
+	if !found {
+		return &stop{1, fmt.Sprintf("No router %s is installed in project %s: there is no install record. Run dormeto gcp install first.\nNothing was changed.", x.n.router, x.n.project)}
+	}
+	plan, err := x.PlanRbac(rb)
+	if err != nil {
+		return err
+	}
+	x.rbacHeader(plan)
+	if !x.r.JSON {
+		x.printWrites(plan)
+	}
+	if err := plan.Refused(); err != nil {
+		return err
+	}
+	done := []string{}
+	if !plan.Changes() {
+		// A record that lost it is whole again.
+		if _, err := x.recordRbac(rb); err != nil {
+			return err
+		}
+	} else {
+		if err := x.confirm(fmt.Sprintf("Apply these to namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
+			return err
+		}
+		added, err := x.recordRbac(rb)
+		if err != nil {
+			return err
+		}
+		if done, err = x.applyGrant(rb, plan, added); err != nil {
+			return err
+		}
+	}
+	if x.r.JSON {
+		return x.printJSON(struct {
+			RbacPlan
+			Changed []string `json:"changed"`
+		}{plan, done})
+	}
+	if len(done) == 0 {
+		x.say("The Role and RoleBinding %s of namespace %s are up to date.", rb.name(), rb.Namespace)
+	}
+	return nil
+}
+
+// applyGrant applies the plan and says what it did. A first write refused made nothing: the record's entry this run added
+// goes. Otherwise the entry stays, as the access is there or may be.
+func (x *run) applyGrant(rb Rbac, plan RbacPlan, added bool) ([]string, error) {
+	done, err := x.ApplyRbac(plan)
+	for _, d := range done {
+		x.tell("  ✓ %s", d)
+	}
+	if err == nil {
+		return done, nil
+	}
+	var s *stop
+	answered := errors.As(err, &s)
+	if answered && len(done) == 0 {
+		if added {
+			if err := x.unrecordRbac(rb); err != nil {
+				fmt.Fprintf(x.d.Err, "  ! the install record still lists this access: %s\n", refusal(err))
+			}
+		}
+		return done, withNothingChanged(err)
+	}
+	code, msg := 1, refusal(err)
+	switch {
+	case answered:
+		code, msg = s.code, s.msg
+	case x.ctx.Err() != nil:
+		code, msg = exitInterrupted, "Interrupted."
+	}
+	return done, &stop{code, fmt.Sprintf("%s\nThe install record lists this access. Run the same command again to finish, or remove it with: %s", msg, x.revokeCommand(rb.entry()))}
+}
+
+func (x *run) accessRevoke() error {
+	rb, err := x.rbacRequest(true)
+	if err != nil {
+		return err
+	}
+	if _, err := x.rbacRecord(); err != nil {
+		return err
+	}
+	plan, err := x.PlanRbac(rb)
+	var gone *clusterGone
+	switch {
+	case errors.As(err, &gone):
+		x.tell("Cluster %s is not found in project %s: no access is left in it.", gone.cluster, gone.project)
+		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: []string{}})
+	case err != nil:
+		return err
+	}
+	x.rbacHeader(plan)
+	ours, left := plan.removal()
+	for _, o := range ours {
+		x.tell("  - %s", o)
+	}
+	for _, l := range left {
+		x.tell("  = %s is not Dormeto's: left as it is", l)
+	}
+	if len(ours) == 0 {
+		x.tell("  nothing of Dormeto's to remove")
+		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: left})
+	}
+	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
+		return err
+	}
+	out, err := x.RemoveRbac(rb)
+	for _, r := range out.Removed {
+		x.tell("  ✓ removed %s", r)
+	}
+	var s *stop
+	switch {
+	case err == nil:
+		return x.endRevoke(rb, out)
+	case !errors.As(err, &s):
+		return err
+	case len(out.Removed) == 0:
+		return withNothingChanged(err)
+	}
+	return &stop{s.code, s.msg + "\nThe install record still lists this access. Run the same command again to finish."}
+}
+
+// endRevoke takes the access out of the record, once nothing of it is left in the cluster, and says so.
+func (x *run) endRevoke(rb Rbac, out RbacRemoval) error {
+	if err := x.unrecordRbac(rb); err != nil {
+		return recordFailure("The access is removed, but the install record still lists it (run the same command again to finish)", err)
+	}
+	if !x.r.JSON {
+		return nil
+	}
+	return x.printJSON(struct {
+		Cluster   string `json:"cluster"`
+		Namespace string `json:"namespace"`
+		Workload  string `json:"workload"`
+		RbacRemoval
+	}{rb.Cluster, rb.Namespace, rb.Workload, out})
+}

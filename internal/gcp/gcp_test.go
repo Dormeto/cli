@@ -622,3 +622,20 @@ func TestIsAlreadyExistsTellsItFromAnAbortedConflict(t *testing.T) {
 		}
 	}
 }
+
+// A cluster's API answers a Kubernetes Status: its words, not its JSON.
+func TestErrorReadsAKubernetesStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"roles.rbac.authorization.k8s.io \"x\" is forbidden","reason":"Forbidden","details":{"name":"x"},"code":403}`)
+	}))
+	defer srv.Close()
+	err := newClient(srv).Do(context.Background(), http.MethodGet, srv.URL, nil, nil)
+	var e *Error
+	if !errors.As(err, &e) || e.Code != 403 || e.Reason != "Forbidden" || e.Message != `roles.rbac.authorization.k8s.io "x" is forbidden` {
+		t.Fatalf("%#v", err)
+	}
+	if !IsDenied(err) {
+		t.Fatal("not denied")
+	}
+}

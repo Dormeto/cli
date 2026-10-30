@@ -52,6 +52,16 @@ type Record struct {
 	// IPLists are the router's IP lists, as DMT_IP_LISTS holds them on both services; a run without --ip-list nor
 	// --no-ip-lists keeps them.
 	IPLists []RecordIPList `json:"ipLists,omitempty"`
+	// Rbac is the Kubernetes access written in clusters for the workloads, listed before it is applied and until it is
+	// removed. The uninstall says what is left of it: it does not reach clusters.
+	Rbac []RecordRbac `json:"rbac,omitempty"`
+}
+
+// RecordRbac is the Role and RoleBinding dormeto-<workload> of a namespace, in a cluster named <location>/<name>.
+type RecordRbac struct {
+	Cluster   string `json:"cluster"`
+	Namespace string `json:"namespace"`
+	Workload  string `json:"workload"`
 }
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role

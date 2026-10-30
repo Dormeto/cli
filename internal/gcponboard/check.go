@@ -55,6 +55,9 @@ type Request struct {
 	File, Reason, Until string
 	KeepAsleep          bool
 
+	// The access command: the cluster as <location>/<name> (--gke-cluster) and the workload's namespace; ID is --workload.
+	GKECluster, Namespace string
+
 	// With are the optional features (--with): cloud-sql, gke.
 	With []string
 

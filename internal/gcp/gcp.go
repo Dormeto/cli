@@ -217,6 +217,11 @@ func parseError(code int, body []byte) *Error {
 	if json.Unmarshal(body, &c) == nil && c.Error != "" {
 		return &Error{Code: code, Reason: c.Reason, Message: c.Error}
 	}
+	// A cluster's Kubernetes API answers a Status.
+	var st struct{ Kind, Reason, Message string }
+	if json.Unmarshal(body, &st) == nil && st.Kind == "Status" && st.Message != "" {
+		return &Error{Code: code, Reason: st.Reason, Message: st.Message}
+	}
 	var p struct {
 		Error struct {
 			Code    int    `json:"code"`

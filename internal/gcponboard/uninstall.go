@@ -5,7 +5,8 @@ package gcponboard
 // refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
 // removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
 // (the recorded grants that the project's bindings before the first install did not hold), tag, serviceAccount, roles —
-// and lists the APIs and the bindings Google added as left in place, every IAM change printed, then reads the project's
+// and lists the APIs and the bindings Google added as left in place, and the Kubernetes access of workloads as left in the
+// cluster, with the command to remove it (it reaches no cluster), every IAM change printed, then reads the project's
 // policy and warns of what differs from its bindings before the install and Google's. The custom roles and the tag are the
 // project's: they stay while another router's record lists them. The record goes with the database: the step before it
 // keeps it in the cache, from which a run after a stopped one continues, and which the end removes, unless a tag Google
@@ -161,6 +162,9 @@ func (x *run) planUninstall() error {
 		if s != nil {
 			x.steps = append(x.steps, *s)
 		}
+	}
+	for _, l := range x.rbacLeft() {
+		x.kept = append(x.kept, "= "+l)
 	}
 	return nil
 }
@@ -617,8 +621,8 @@ func (x *run) checkPolicy() {
 	}
 }
 
-// leftInPlace lists what the uninstall does not touch: the APIs the install turned on (other things may use them) and
-// the bindings Google added (its own service agents').
+// leftInPlace lists what the uninstall does not touch: the APIs the install turned on (other things may use them), the
+// bindings Google added (its own service agents') and the Kubernetes access of workloads.
 func (x *run) leftInPlace() {
 	var lines []string
 	for _, r := range x.rec.Resources {
@@ -630,6 +634,7 @@ func (x *run) leftInPlace() {
 		lines = append(lines, x.describe(Grant{Role: g.Role, Member: g.Member}, "project")+" (added by Google)")
 	}
 	lines = append(lines, x.stranded...)
+	lines = append(lines, x.rbacLeft()...)
 	if len(lines) == 0 {
 		return
 	}

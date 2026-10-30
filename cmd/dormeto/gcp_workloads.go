@@ -1,6 +1,6 @@
 package main
 
-// `dormeto gcp workloads list|show|onboard|offboard|nap|wake|schedule|pause|resume`: the flags read into a gcponboard.Request, as the other gcp
+// `dormeto gcp workloads list|show|onboard|offboard|nap|wake|schedule|pause|resume|access`: the flags read into a gcponboard.Request, as the other gcp
 // commands. The workload's ID of show, offboard, nap and wake is their argument.
 
 import (
@@ -15,18 +15,19 @@ import (
 
 // gcpWorkloadRuns are the runs of the gcp workloads commands.
 type gcpWorkloadRuns struct {
-	list, show, onboard, offboard, nap, wake, scheduleShow, scheduleSet, scheduleClear, pause, resume gcpRun
+	list, show, onboard, offboard, nap, wake, scheduleShow, scheduleSet, scheduleClear, pause, resume, accessShow, accessGrant, accessRevoke gcpRun
 }
 
 var theGcpWorkloadRuns = gcpWorkloadRuns{list: gcponboard.WorkloadsList, show: gcponboard.WorkloadsShow, onboard: gcponboard.WorkloadsOnboard,
 	offboard: gcponboard.WorkloadsOffboard, nap: gcponboard.WorkloadsNap, wake: gcponboard.WorkloadsWake,
 	scheduleShow: gcponboard.WorkloadsScheduleShow, scheduleSet: gcponboard.WorkloadsScheduleSet, scheduleClear: gcponboard.WorkloadsScheduleClear,
-	pause: gcponboard.WorkloadsPause, resume: gcponboard.WorkloadsResume}
+	pause: gcponboard.WorkloadsPause, resume: gcponboard.WorkloadsResume,
+	accessShow: gcponboard.WorkloadsAccessShow, accessGrant: gcponboard.WorkloadsAccessGrant, accessRevoke: gcponboard.WorkloadsAccessRevoke}
 
 func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "workloads", Short: "Workloads of a Dormeto router in Google Cloud", Args: noArgs, SilenceErrors: true,
 		Long: "List, show, onboard, offboard, nap, wake, schedule, pause and resume the workloads of the router dmtr-<region>, through its controller\n" +
-			"with your identity token (the Cloud Run invoker role on it)."}
+			"with your identity token (the Cloud Run invoker role on it). 'access' writes a GKE workload's Kubernetes RBAC, in the cluster."}
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
 		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version, false),
@@ -40,7 +41,8 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false),
 		newGcpWorkloadsSchedule(runs, version),
 		newGcpWorkloadsPause(runs.pause, version),
-		newGcpWorkloadsOne("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false))
+		newGcpWorkloadsOne("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false),
+		newGcpWorkloadsAccess(runs, version))
 	return cmd
 }
 
@@ -190,6 +192,47 @@ func newGcpWorkloadsPause(run gcpRun, version string) *cobra.Command {
 			return exitCode(2)
 		}
 		return nil
+	}
+	return cmd
+}
+
+func newGcpWorkloadsAccess(runs gcpWorkloadRuns, version string) *cobra.Command {
+	cmd := &cobra.Command{Use: "access", Short: "Show, grant or revoke the Kubernetes access of a GKE workload", Args: noArgs, SilenceErrors: true,
+		Long: "Show, grant or revoke what the router dmtr-<region> may do in a namespace of a GKE cluster: a Role and a RoleBinding\n" +
+			"dormeto-<workload>, for the router's service account, labelled app.kubernetes.io/managed-by: dormeto. Nothing cluster-wide.\n" +
+			"They are written as you, on the cluster's DNS endpoint, which must be open to traffic from outside its network."}
+	cmd.AddCommand(
+		newGcpWorkloadsAccessVerb("show", "Show what is in the cluster and what grant would write (read-only)",
+			"Show, read-only, the Role and RoleBinding dormeto-<workload> in the namespace, and what grant would write.", runs.accessShow, version, false),
+		newGcpWorkloadsAccessVerb("grant", "Write a workload's Role and RoleBinding",
+			"Print the Role and RoleBinding dormeto-<workload>, ask (--yes without a terminal), list them in the install record, then write what\n"+
+				"differs: run again, it writes nothing. A Role or RoleBinding of that name without the label is refused, nothing changed.\n"+
+				"Kubernetes lets no one grant rights they do not hold: without them you need container.roles.escalate and container.roles.bind.",
+			runs.accessGrant, version, true),
+		newGcpWorkloadsAccessVerb("revoke", "Remove a workload's Role and RoleBinding",
+			"Print what it removes, ask (--yes without a terminal), remove the RoleBinding and the Role dormeto-<workload> that are Dormeto's,\n"+
+				"and take them out of the install record. One of that name without the label is left and said. It works after dormeto gcp\n"+
+				"uninstall, which lists what it leaves in a cluster.",
+			runs.accessRevoke, version, true))
+	return cmd
+}
+
+// newGcpWorkloadsAccessVerb is show, grant or revoke; write commands take --yes.
+func newGcpWorkloadsAccessVerb(verb, short, long string, run gcpRun, version string, writes bool) *cobra.Command {
+	var f gcpFlags
+	var cluster, namespace, workload string
+	cmd := gcpCommand(verb, short, long, &f, []string{"project", "region", "gke-cluster", "namespace", "workload"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+		r.GKECluster, r.Namespace, r.ID = cluster, namespace, workload
+		return run(ctx, d, r)
+	})
+	fl := cmd.Flags()
+	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
+	fl.StringVar(&cluster, "gke-cluster", "", "the cluster, as <location>/<name> (required)")
+	fl.StringVar(&namespace, "namespace", "", "the workload's namespace (required)")
+	fl.StringVar(&workload, "workload", "", "the workload's ID, which names the objects (required)")
+	fl.BoolVar(&f.json, "json", false, "print the result as JSON")
+	if writes {
+		fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal, and with --json)")
 	}
 	return cmd
 }

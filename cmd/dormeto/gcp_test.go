@@ -33,7 +33,8 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 	runs.workloads = gcpWorkloadRuns{list: ran("workloads list"), show: ran("workloads show"), onboard: ran("workloads onboard"),
 		offboard: ran("workloads offboard"), nap: ran("workloads nap"), wake: ran("workloads wake"),
 		scheduleShow: ran("workloads schedule show"), scheduleSet: ran("workloads schedule set"), scheduleClear: ran("workloads schedule clear"),
-		pause: ran("workloads pause"), resume: ran("workloads resume")}
+		pause: ran("workloads pause"), resume: ran("workloads resume"),
+		accessShow: ran("workloads access show"), accessGrant: ran("workloads access grant"), accessRevoke: ran("workloads access revoke")}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
 	root.AddCommand(newGcp(runs, "1.2.3"))
 	var out, errs bytes.Buffer

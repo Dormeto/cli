@@ -175,3 +175,64 @@ func TestGcpWorkloadsPauseHelpSaysWhatEachKindDoes(t *testing.T) {
 		}
 	}
 }
+
+func TestGcpWorkloadsAccessReadsTheFlags(t *testing.T) {
+	for _, verb := range []string{"show", "grant", "revoke"} {
+		args := []string{"gcp", "workloads", "access", verb, "--project", "p", "--region", "europe-west1", "--gke-cluster", "europe-west1-b/c",
+			"--namespace", "shop", "--workload", "web", "--json", "--gcloud-configuration", "conf"}
+		want := gcponboard.Request{Project: "p", Region: "europe-west1", GKECluster: "europe-west1-b/c", Namespace: "shop", ID: "web", JSON: true, Configuration: "conf"}
+		if verb != "show" {
+			args = append(args, "--yes")
+			want.Yes = true
+		}
+		calls, errs, exit := gcpRan(t, 0, args...)
+		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads access "+verb {
+			t.Fatalf("%s: %d %q %v", verb, exit, errs, calls)
+		}
+		if !reflect.DeepEqual(calls[0].r, want) {
+			t.Fatalf("%s: %+v", verb, calls[0].r)
+		}
+	}
+}
+
+func TestGcpWorkloadsAccessExitCodes(t *testing.T) {
+	if _, _, exit := gcpRan(t, 1, "gcp", "workloads", "access", "grant", "--project", "p", "--region", "r", "--gke-cluster", "l/c", "--namespace", "n", "--workload", "w"); exit != 1 {
+		t.Fatalf("exit %d", exit)
+	}
+	full := []string{"--project", "p", "--region", "r", "--gke-cluster", "l/c", "--namespace", "n", "--workload", "w"}
+	for _, verb := range []string{"show", "grant", "revoke"} {
+		for i := 0; i < len(full); i += 2 {
+			args := append([]string{"gcp", "workloads", "access", verb}, append(append([]string{}, full[:i]...), full[i+2:]...)...)
+			calls, errs, exit := gcpRan(t, 0, args...)
+			if exit != 2 || len(calls) != 0 || !strings.Contains(errs, full[i]) {
+				t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
+			}
+		}
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "access", verb, "extra"}, full...)...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%s with an argument: exit %d calls %v stderr %q", verb, exit, calls, errs)
+		}
+	}
+	if calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "access", "show", "--yes"}, full...)...); exit != 2 || len(calls) != 0 {
+		t.Errorf("show changes nothing, so it takes no --yes: exit %d calls %v stderr %q", exit, calls, errs)
+	}
+}
+
+func TestGcpWorkloadsAccessIsWiredInTheRoot(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "workloads", "--help")
+	if code != 0 || !strings.Contains(out, "access") {
+		t.Errorf("%d %s lacks access", code, out)
+	}
+	out, _, code = executed(t, build{}, "gcp", "workloads", "access", "--help")
+	for _, verb := range []string{"show", "grant", "revoke"} {
+		if code != 0 || !strings.Contains(out, verb) {
+			t.Errorf("%d %s lacks %s", code, out, verb)
+		}
+	}
+	out, _, code = executed(t, build{}, "gcp", "workloads", "access", "grant", "--help")
+	for _, want := range []string{"--gke-cluster", "--namespace", "--workload", "--yes", "--json", "--project", "--region", "--gcloud-configuration", "dormeto-<workload>", "container.roles.escalate"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%d %s lacks %s", code, out, want)
+		}
+	}
+}
