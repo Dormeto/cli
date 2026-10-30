@@ -3,6 +3,7 @@ package gcponboard
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -350,4 +351,93 @@ func TestUninstallStoppedAfterTheDatabaseContinuesFromTheCache(t *testing.T) {
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
 		t.Errorf("cache file: %v", err)
 	}
+}
+
+const controllerHost = "dmtr-europe-west1-controller-1034397096264.europe-west1.run.app"
+
+func TestUninstallAsksTheInvokePermissionToListWorkloadsWithoutForce(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	if code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true}); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	asked := ""
+	for _, c := range g.s.Calls()[mark:] {
+		if strings.HasSuffix(c.Path, ":testIamPermissions") {
+			asked += c.Body
+		}
+	}
+	if !strings.Contains(asked, "run.routes.invoke") {
+		t.Fatalf("asked: %s", asked)
+	}
+}
+
+func TestUninstallWithAControllerThatDoesNotAnswer(t *testing.T) {
+	for _, code := range []int{404, 500} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			g := routerInstalled(t)
+			g.s.Refuse(gcptest.Refusal{Method: "GET", Host: controllerHost, Path: "/v1/workloads", Code: code, Status: "UNAVAILABLE", Message: "down"})
+			mark := len(g.s.Calls())
+			exit, out := g.uninstall(t, uninstallEurope)
+			if exit != 1 {
+				t.Fatalf("exit %d:\n%s", exit, out)
+			}
+			contains(t, out, "workloads cannot be listed", "--force", "Nothing was changed.")
+			if m := g.changes(mark); len(m) != 0 {
+				t.Fatalf("changes: %v", m)
+			}
+			exit, out = g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+			if exit != 0 {
+				t.Fatalf("--force: exit %d:\n%s", exit, out)
+			}
+			contains(t, out, "  ! the workloads are unknown")
+			g.nothingLeft(t, "europe-west1")
+		})
+	}
+}
+
+func TestUninstallStopsOnAControllerThatRefusesTheOperator(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		g := routerInstalled(t)
+		g.s.Refuse(gcptest.Refusal{Method: "GET", Host: controllerHost, Path: "/v1/workloads", Code: 403, Status: "PERMISSION_DENIED", Message: "no invoker"})
+		mark := len(g.s.Calls())
+		exit, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: force})
+		if exit != 1 || !strings.Contains(out, "Nothing was changed.") {
+			t.Fatalf("force %v: exit %d:\n%s", force, exit, out)
+		}
+		if m := g.changes(mark); len(m) != 0 {
+			t.Fatalf("changes: %v", m)
+		}
+	}
+}
+
+func TestUninstallLeavesATagValueGoogleRefusesToDeleteAndGoesOn(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	for _, v := range g.s.TagValues {
+		v.Bound = true
+	}
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Left in place:\n", "  tag dormeto/managed: The tag value tagValues/", " is still bound to resources\n", "  tag dormeto: The tag key tagKeys/", " still has values\n",
+		"  ✓ serviceAccount:", "  ✓ roles:", "Uninstalled router dmtr-europe-west1")
+	g.nothingLeft(t, "europe-west1")
+	g.s.Lock()
+	defer g.s.Unlock()
+	if len(g.s.TagValues) != 1 || len(g.s.TagKeys) != 1 {
+		t.Errorf("tags: %v %v", g.s.TagKeys, g.s.TagValues)
+	}
+}
+
+func TestUninstallStopsOnAnotherRefusalOfTheTag(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: "cloudresourcemanager.googleapis.com", Path: "/v3/tagValues", Code: 403, Status: "PERMISSION_DENIED", Message: "denied"})
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ tag:", "Not done: tag, serviceAccount, roles.")
 }

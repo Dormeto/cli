@@ -28,6 +28,8 @@ type ServiceAccount struct {
 // Tag is a tag key or a tag value.
 type Tag struct {
 	Name, Parent, ShortName, Description, NamespacedName string
+	// Bound makes the tag a value bound to a resource: deleting it is refused (FAILED_PRECONDITION).
+	Bound bool
 }
 
 // Database is a Firestore database.
@@ -471,6 +473,10 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 		t, ok := store[name]
 		if !ok {
 			Fail(w, 403, "PERMISSION_DENIED", "Permission denied on resource '"+name+"' (or it may not exist).")
+			return
+		}
+		if t.Bound {
+			Fail(w, 400, "FAILED_PRECONDITION", "The tag value "+name+" is still bound to resources.")
 			return
 		}
 		if !values {

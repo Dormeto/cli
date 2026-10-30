@@ -111,9 +111,15 @@ func (x *run) planUninstall() error {
 	if !x.recorded && !x.resumed {
 		return &stop{1, fmt.Sprintf("no router %s is installed in project %s: there is no install record\nNothing was changed.", x.n.router, x.n.project)}
 	}
-	workloads, err := x.workloads()
+	workloads, unknown, err := x.workloads()
 	if err != nil {
 		return err
+	}
+	if unknown != "" {
+		if !x.r.Force {
+			return &stop{1, fmt.Sprintf("The controller %s does not answer (%s): the workloads cannot be listed.\nRun the same command with --force to go on without offboarding them.\nNothing was changed.", x.n.controller, unknown)}
+		}
+		x.say("  ! the workloads are unknown, the controller %s does not answer (%s): none is offboarded", x.n.controller, unknown)
 	}
 	if len(workloads) > 0 && !x.r.Force {
 		var names []string
@@ -165,20 +171,25 @@ func (x *run) listed(kind, name string) bool {
 	return false
 }
 
-// workloads are the controller's onboarded workloads; none when the record lists no controller or it is gone.
-func (x *run) workloads() ([]workloadRef, error) {
+// workloads are the controller's onboarded workloads; none when the record lists no controller or it is gone. unknown
+// says why they cannot be listed when the controller answers 404 or 5xx; any other refusal (a 403) is an error.
+func (x *run) workloads() (list []workloadRef, unknown string, err error) {
 	if !x.listed("service", x.serviceName(x.n.controller)) {
-		return nil, nil
+		return nil, "", nil
 	}
 	found, err := x.get(runAPI, x.servicesURL()+"/"+esc(x.n.controller), nil)
 	if err != nil || !found {
-		return nil, err
+		return nil, "", err
 	}
-	var out []workloadRef
-	if err := x.d.Google.Invoke(x.ctx, http.MethodGet, x.controllerURL()+"/v1/workloads", x.controllerURL(), nil, &out); err != nil {
-		return nil, fmt.Errorf("the controller's workloads are not read (listing them needs run.routes.invoke on %s): %w", x.n.controller, err)
+	err = x.d.Google.Invoke(x.ctx, http.MethodGet, x.controllerURL()+"/v1/workloads", x.controllerURL(), nil, &list)
+	var e *gcp.Error
+	switch {
+	case err == nil:
+		return list, "", nil
+	case errors.As(err, &e) && (e.Code == http.StatusNotFound || e.Code >= 500):
+		return nil, err.Error(), nil
 	}
-	return out, nil
+	return nil, "", fmt.Errorf("the controller's workloads are not read: %w", err)
 }
 
 func (x *run) planOffboard(workloads []workloadRef) step {
@@ -408,9 +419,16 @@ func (x *run) planTagRemoval() (*step, error) {
 			}
 			continue
 		}
-		steps = append(steps, &step{name: "tag", lines: []string{"- tag " + strings.TrimPrefix(t.namespaced, x.n.project+"/")}, apply: func() (string, error) {
+		label := "tag " + strings.TrimPrefix(t.namespaced, x.n.project+"/")
+		steps = append(steps, &step{name: "tag", lines: []string{"- " + label}, apply: func() (string, error) {
 			var op longOperation
-			if err := x.call(http.MethodDelete, crmV3+name, nil, &op); err != nil && !gcp.IsNotFound(err) {
+			err := x.call(http.MethodDelete, crmV3+name, nil, &op)
+			if gcp.IsPrecondition(err) {
+				// Still bound (or holding values): removing the bindings is the offboarding's; the rest goes on.
+				x.stranded = append(x.stranded, fmt.Sprintf("%s: %s", label, strings.TrimSuffix(precondition(err), ".")))
+				return "left " + label + " (Google refuses to delete it)", nil
+			}
+			if err != nil && !gcp.IsNotFound(err) {
 				return "", err
 			} else if err == nil {
 				if err := x.wait(crmV3, op, tagTimeout); err != nil {
@@ -500,6 +518,7 @@ func (x *run) leftInPlace() {
 	for _, g := range x.rec.Google {
 		lines = append(lines, x.describe(Grant{Role: g.Role, Member: g.Member}, "project")+" (added by Google)")
 	}
+	lines = append(lines, x.stranded...)
 	if len(lines) == 0 {
 		return
 	}
@@ -507,4 +526,13 @@ func (x *run) leftInPlace() {
 	for _, l := range lines {
 		x.say("  %s", l)
 	}
+}
+
+// precondition is Google's message of a failed precondition.
+func precondition(err error) string {
+	var e *gcp.Error
+	if errors.As(err, &e) && e.Message != "" {
+		return e.Message
+	}
+	return err.Error()
 }
