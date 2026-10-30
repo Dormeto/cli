@@ -199,8 +199,8 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 	}
 	return step{name: "offboard", lines: lines, apply: func() (string, error) {
 		for _, w := range workloads {
-			err := x.d.Google.Invoke(x.ctx, http.MethodDelete, x.controllerURL()+"/v1/workloads/"+esc(w.ID), x.controllerURL(), nil, nil)
-			if err != nil && !gcp.IsNotFound(err) {
+			// The controller's workload, then its tag bindings: Google refuses to delete a tag value still bound.
+			if _, err := x.offboardWorkload(w.ID); err != nil && !gcp.IsNotFound(err) {
 				return "", fmt.Errorf("workload %s: %w", w.ID, err)
 			}
 		}

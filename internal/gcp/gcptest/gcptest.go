@@ -99,8 +99,18 @@ type Server struct {
 	RunServices map[string]*RunService
 	NEGs        map[string]*NEG
 	Jobs        map[string]*Job
-	// Workloads are the workloads the controller lists, by ID, with their state (DELETE /v1/workloads/<id> offboards one).
-	Workloads map[string]string
+	// Workloads are the workloads the controller lists, by ID, with their state (DELETE /v1/workloads/<id> offboards one);
+	// WorkloadDocs the other fields of a workload as GET /v1/workloads/<id> answers it (urlMap, backends…).
+	Workloads    map[string]string
+	WorkloadDocs map[string]map[string]any
+	// DryRun is what the controller's onboarding dry run answers: the reasons it refuses (none: eligible), the VMs and
+	// the groups it would tag. The onboarding itself is refused (400) while one of them carries no tag binding.
+	DryRun DryRun
+	// Instances are the IDs of VMs and managed groups, by "zones/<zone>/instances/<name>",
+	// "zones/<zone>/instanceGroupManagers/<name>" or "regions/<region>/instanceGroupManagers/<name>".
+	Instances map[string]string
+	// TagBindings are the tag values bound to resources.
+	TagBindings []TagBinding
 	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>.
 	Images map[string]bool
 	// HealthVersion is the version the controller's health answers instead of its service's DMT_VERSION.
@@ -145,6 +155,7 @@ func New(t testing.TB) *Server {
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
 		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Workloads: map[string]string{},
+		WorkloadDocs: map[string]map[string]any{}, Instances: map[string]string{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -254,7 +265,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.resourceManager(w, r, strings.TrimPrefix(path, "/v3/projects/"), body)
 	case r.Host == "cloudresourcemanager.googleapis.com" && (strings.HasPrefix(path, "/v3/tagKeys") || strings.HasPrefix(path, "/v3/tagValues")):
 		s.tags(w, r, body)
-	case r.Host == "cloudresourcemanager.googleapis.com" && strings.HasPrefix(path, "/v3/operations/"):
+	case strings.HasSuffix(r.Host, "-cloudresourcemanager.googleapis.com") && strings.HasPrefix(path, "/v3/tagBindings"):
+		s.tagBindings(w, r, body)
+	case strings.HasSuffix(r.Host, "cloudresourcemanager.googleapis.com") && strings.HasPrefix(path, "/v3/operations/"):
 		s.poll(w, strings.TrimPrefix(path, "/v3/"))
 	case r.Host == "serviceusage.googleapis.com" && strings.HasPrefix(path, "/v1/projects/"):
 		s.serviceUsage(w, r, strings.TrimPrefix(path, "/v1/projects/"), body)
@@ -270,6 +283,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.cloudTasks(w, r, body)
 	case r.Host == "run.googleapis.com":
 		s.cloudRun(w, r, body)
+	case r.Host == "compute.googleapis.com" && strings.HasPrefix(path, "/compute/v1/projects/"+s.ProjectID+"/zones/"),
+		r.Host == "compute.googleapis.com" && strings.Contains(path, "/instanceGroupManagers/"):
+		s.instances(w, r)
 	case r.Host == "compute.googleapis.com" || r.Host == "www.googleapis.com":
 		s.compute(w, r, body)
 	case r.Host == "cloudscheduler.googleapis.com":
@@ -392,11 +408,18 @@ func (s *Server) billing(w http.ResponseWriter) {
 	Reply(w, info)
 }
 
-// Tokens is a gcp.TokenSource that needs no gcloud.
-type Tokens struct{ AccountName string }
+// Tokens is a gcp.TokenSource that needs no gcloud. Audiences, when set, collects the audience of each identity token
+// asked for.
+type Tokens struct {
+	AccountName string
+	Audiences   *[]string
+}
 
 func (Tokens) AccessToken(context.Context) (string, error) { return "test-token", nil }
-func (Tokens) IdentityToken(context.Context, string) (string, error) {
+func (t Tokens) IdentityToken(_ context.Context, audience string) (string, error) {
+	if t.Audiences != nil {
+		*t.Audiences = append(*t.Audiences, audience)
+	}
 	return "test-identity", nil
 }
 func (t Tokens) Account(context.Context) (string, error) {

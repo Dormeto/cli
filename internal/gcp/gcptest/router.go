@@ -2,7 +2,7 @@ package gcptest
 
 // The resources of `dormeto gcp install --image`: Cloud Run services and their policies and operations, the serverless
 // network endpoint group and its Compute Engine operations, the Cloud Scheduler job, the manifests of Artifact Registry
-// (on *-docker.pkg.dev) and the controller's GET /v1/health, GET /v1/workloads and DELETE /v1/workloads/<id> (on *.run.app). Every handler here runs under the server's
+// (on *-docker.pkg.dev) and the controller's GET /v1/health and /v1/workloads… (on *.run.app). Every handler here runs under the server's
 // lock.
 
 import (
@@ -373,26 +373,8 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 			Fail(w, 401, "UNAUTHENTICATED", "The request was not authenticated.")
 			return
 		}
-		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/workloads/"); ok && r.Method == http.MethodDelete {
-			if _, found := s.Workloads[id]; !found {
-				Fail(w, 404, "NOT_FOUND", "no workload "+id)
-				return
-			}
-			delete(s.Workloads, id)
-			Reply(w, map[string]any{})
-			return
-		}
-		if r.URL.Path == "/v1/workloads" && r.Method == http.MethodGet {
-			ids := make([]string, 0, len(s.Workloads))
-			for id := range s.Workloads {
-				ids = append(ids, id)
-			}
-			slices.Sort(ids)
-			workloads := []map[string]any{}
-			for _, id := range ids {
-				workloads = append(workloads, map[string]any{"id": id, "state": s.Workloads[id]})
-			}
-			Reply(w, workloads)
+		if strings.HasPrefix(r.URL.Path, "/v1/workloads") {
+			s.workloads(w, r)
 			return
 		}
 		if r.URL.Path != "/v1/health" || r.Method != http.MethodGet {

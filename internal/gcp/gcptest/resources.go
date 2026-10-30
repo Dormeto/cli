@@ -475,7 +475,7 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 			Fail(w, 403, "PERMISSION_DENIED", "Permission denied on resource '"+name+"' (or it may not exist).")
 			return
 		}
-		if t.Bound {
+		if t.Bound || (values && s.bound(name)) {
 			Fail(w, 400, "FAILED_PRECONDITION", "The tag value "+name+" is still bound to resources.")
 			return
 		}

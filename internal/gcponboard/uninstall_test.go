@@ -441,3 +441,42 @@ func TestUninstallStopsOnAnotherRefusalOfTheTag(t *testing.T) {
 	}
 	contains(t, out, "  ✗ tag:", "Not done: tag, serviceAccount, roles.")
 }
+
+func TestUninstallForceRemovesTheTagBindingsOfTheWorkloadsBeforeTheTag(t *testing.T) {
+	g := newWorkloadsRig(t)
+	value := g.tagValue(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: groupParent, TagValue: value}}
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "still bound") {
+		t.Fatalf("the tag is left:\n%s", out)
+	}
+	g.nothingLeft(t, "europe-west1")
+	g.s.Lock()
+	defer g.s.Unlock()
+	if len(g.s.TagBindings) != 0 || len(g.s.TagValues)+len(g.s.TagKeys) != 0 || len(g.s.Workloads) != 0 {
+		t.Errorf("left: %v %v %v %v", g.s.TagBindings, g.s.TagValues, g.s.TagKeys, g.s.Workloads)
+	}
+}
+
+func TestUninstallTagValueStillBoundIsRefusedByGoogle(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	var value string
+	for name := range g.s.TagValues {
+		value = name
+	}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: "//compute.googleapis.com/projects/1034397096264/zones/z/instances/1", TagValue: value}}
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Left in place:\n", " is still bound to resources")
+}

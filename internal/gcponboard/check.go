@@ -44,6 +44,12 @@ type Request struct {
 	Project, Region, Image   string
 	Configuration            string
 	Yes, DryRun, JSON, Force bool
+
+	// The workloads commands: the workload's ID (an argument, or --id of onboard), the URL map and backend service to
+	// onboard, and the settings given (nil: not given).
+	ID, URLMap, BackendService string
+	IdleMinutes, WaitSeconds   *int
+	Hibernate                  *bool
 }
 
 // ProjectInfo is the project as the report names it; Number is empty when the caller cannot see it.
