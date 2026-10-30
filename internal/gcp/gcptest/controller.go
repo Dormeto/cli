@@ -1,8 +1,7 @@
 package gcptest
 
 // The controller's workloads (GET, POST, DELETE /v1/workloads…, POST /v1/workloads/<id>/nap and /wake), the tag bindings
-// of Resource Manager (on <location>-cloudresourcemanager.googleapis.com) and the IDs of VMs and managed groups that
-// Compute Engine answers. Every handler here runs under the server's lock.
+// of Resource Manager (on <location>-cloudresourcemanager.googleapis.com). Every handler here runs under the server's lock.
 
 import (
 	"encoding/json"
@@ -167,14 +166,14 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 			controllerFail(w, 400, "not-tagged", "VM "+v.Name+" carries no dormeto tag")
 			return
 		}
-		backends = append(backends, map[string]any{"kind": "vm", "location": v.Location, "name": v.Name})
+		backends = append(backends, map[string]any{"kind": "vm", "location": v.Location, "name": v.Name, "id": v.ID})
 	}
 	for _, g := range s.DryRun.Groups {
 		if !s.tagged(s.parentOf(g, false)) {
 			controllerFail(w, 400, "not-tagged", "group "+g.Name+" carries no dormeto tag")
 			return
 		}
-		backends = append(backends, map[string]any{"kind": "mig", "location": g.Location, "name": g.Name})
+		backends = append(backends, map[string]any{"kind": "mig", "location": g.Location, "name": g.Name, "id": g.ID})
 	}
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,
@@ -253,15 +252,4 @@ func (s *Server) tagBindings(w http.ResponseWriter, r *http.Request, body []byte
 
 func bindingBody(b TagBinding) map[string]any {
 	return map[string]any{"name": "tagBindings/" + url.PathEscape(b.Parent) + "/" + b.TagValue, "parent": b.Parent, "tagValue": b.TagValue}
-}
-
-// instances answers GET of a VM or a managed group with its ID, from Instances.
-func (s *Server) instances(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/compute/v1/projects/"+s.ProjectID+"/")
-	id, ok := s.Instances[path]
-	if r.Method != http.MethodGet || !ok {
-		Fail(w, 404, "NOT_FOUND", "The resource '"+path+"' was not found")
-		return
-	}
-	Reply(w, map[string]any{"id": id, "name": path[strings.LastIndex(path, "/")+1:]})
 }

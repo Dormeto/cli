@@ -106,9 +106,6 @@ type Server struct {
 	// DryRun is what the controller's onboarding dry run answers: the reasons it refuses (none: eligible), the VMs and
 	// the groups it would tag. The onboarding itself is refused (400) while one of them carries no tag binding.
 	DryRun DryRun
-	// Instances are the IDs of VMs and managed groups, by "zones/<zone>/instances/<name>",
-	// "zones/<zone>/instanceGroupManagers/<name>" or "regions/<region>/instanceGroupManagers/<name>".
-	Instances map[string]string
 	// TagBindings are the tag values bound to resources.
 	TagBindings []TagBinding
 	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>.
@@ -155,8 +152,8 @@ func New(t testing.TB) *Server {
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
 		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Workloads: map[string]string{},
-		WorkloadDocs: map[string]map[string]any{}, Instances: map[string]string{},
-		ops: map[string]*operation{}, lag: map[string]int{},
+		WorkloadDocs: map[string]map[string]any{},
+		ops:          map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -283,9 +280,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.cloudTasks(w, r, body)
 	case r.Host == "run.googleapis.com":
 		s.cloudRun(w, r, body)
-	case r.Host == "compute.googleapis.com" && strings.HasPrefix(path, "/compute/v1/projects/"+s.ProjectID+"/zones/"),
-		r.Host == "compute.googleapis.com" && strings.Contains(path, "/instanceGroupManagers/"):
-		s.instances(w, r)
 	case r.Host == "compute.googleapis.com" || r.Host == "www.googleapis.com":
 		s.compute(w, r, body)
 	case r.Host == "cloudscheduler.googleapis.com":

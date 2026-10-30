@@ -3,6 +3,8 @@ package gcponboard
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -39,8 +41,6 @@ func newWorkloadsRig(t *testing.T) *workloadsRig {
 		VMs:    []gcptest.Resource{{Location: "europe-west1-b", Name: "web-1", ID: "111"}},
 		Groups: []gcptest.Resource{{Kind: "regional", Location: "europe-west1", Name: "web-mig", ID: "222"}},
 	}
-	g.s.Instances["zones/europe-west1-b/instances/web-1"] = "111"
-	g.s.Instances["regions/europe-west1/instanceGroupManagers/web-mig"] = "222"
 	return &workloadsRig{g, aud}
 }
 
@@ -139,7 +139,7 @@ func TestWorkloadsShowPrintsTheWorkload(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.WorkloadDocs["shop"] = map[string]any{"urlMap": "shop-map", "backendService": "shop-be", "wakerBackendService": "dmtr-europe-west1-shop",
-		"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1"}}}
+		"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
 	mark := len(g.s.Calls())
 	r := workloadsEurope
 	r.ID = "shop"
@@ -454,8 +454,8 @@ func TestWorkloadsOffboardDeletesThenRemovesTheTagBindings(t *testing.T) {
 	value := g.tagValue(t)
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
-		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1"},
-		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig"}}}
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig", "id": "222"}}}
 	other := gcptest.TagBinding{Parent: "//compute.googleapis.com/projects/1034397096264/zones/europe-west1-b/instances/999", TagValue: value}
 	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: groupParent, TagValue: value}, other}
 	mark := len(g.s.Calls())
@@ -499,7 +499,7 @@ func TestWorkloadsOffboardJSONSaysWhatItUntagged(t *testing.T) {
 	g := newWorkloadsRig(t)
 	value := g.tagValue(t)
 	g.s.Workloads["shop"] = "ASLEEP"
-	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1"}}}
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
 	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}}
 	r := workloadsEurope
 	r.ID, r.JSON = "shop", true
@@ -511,5 +511,101 @@ func TestWorkloadsOffboardJSONSaysWhatItUntagged(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || got.ID != "shop" || !got.Offboarded || len(got.Untagged) != 1 {
 		t.Fatalf("%d %v:\n%s", code, err, out)
+	}
+}
+
+func (g *workloadsRig) offboardFile() string {
+	return filepath.Join(g.cache, "dormeto", "gcp", "dormeto-dev-europe-west1-offboard-shop.json")
+}
+
+// stuckOffboarding offboards shop, the first unbind refused: the controller's workload is gone, its bindings are not.
+func (g *workloadsRig) stuckOffboarding(t *testing.T) {
+	t.Helper()
+	value := g.tagValue(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig", "id": "222"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: groupParent, TagValue: value}}
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: zoneHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "boom")
+	if len(g.s.Workloads) != 0 || len(g.bindings()) == 0 {
+		t.Fatalf("workloads %v bindings %v", g.s.Workloads, g.bindings())
+	}
+	if _, err := os.Stat(g.offboardFile()); err != nil {
+		t.Fatalf("the backends are not kept for a rerun: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardRerunFinishesTheUnbindsAfterAFailure(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.stuckOffboarding(t)
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Offboarded workload shop", "web-1", "web-mig")
+	if len(g.bindings()) != 0 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Fatalf("the file stays: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardKeepsTheTagUntilTheControllerDeleted(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: g.tagValue(t)}}
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
+	r := workloadsEurope
+	r.ID = "shop"
+	if code, out := g.call(t, WorkloadsOffboard, r); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 1 || len(g.s.Workloads) != 1 {
+		t.Fatalf("bindings %v workloads %v", g.bindings(), g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardRefusedAfterTheTagsRemovesTheOnesItMade(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE" // the controller refuses: 409
+	value := g.tagValue(t)
+	before := gcptest.TagBinding{Parent: vmParent, TagValue: value} // there first: kept
+	g.s.TagBindings = []gcptest.TagBinding{before}
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "removed", "web-mig", "fix the refusal", "run the same command again")
+	if strings.Contains(out, "or offboard") {
+		t.Fatalf("there is no workload to offboard:\n%s", out)
+	}
+	if got := g.bindings(); !slices.Equal(got, []gcptest.TagBinding{before}) {
+		t.Fatalf("bindings %v", got)
+	}
+}
+
+func TestWorkloadsOnboardRefusedSaysWhichBindingItCouldNotRemove(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: regionHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "not removed", "group web-mig (europe-west1)", "boom")
+	if len(g.bindings()) != 1 {
+		t.Fatalf("bindings %v", g.bindings())
 	}
 }

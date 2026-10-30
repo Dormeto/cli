@@ -1360,7 +1360,7 @@ VM and stop it), then onboards. `--id` is the workload's ID (lowercase letters, 
 characters); it defaults to the backend service's name when that is a valid ID, else it is asked on a terminal and
 exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440), `--wait-seconds` (5 to 120) and `--hibernate
 true|false` (suspend the VMs that can be suspended instead of stopping them); a value out of its range exits 2 before
-any call. The permissions of `onboard` and `offboard` (the tag bindings of VMs and groups) are listed by `gcp check`.
+any call. A binding of the `dormeto=managed` tag that was on a VM or group before the onboarding is treated as Dormeto's and removed at the offboarding. The permissions of `onboard` and `offboard` (the tag bindings of VMs and groups) are listed by `gcp check`.
 
 ## Building from source
 

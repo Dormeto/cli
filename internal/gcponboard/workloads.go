@@ -15,7 +15,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,6 +44,7 @@ type backend struct {
 	Kind     string `json:"kind"` // vm or mig
 	Location string `json:"location"`
 	Name     string `json:"name"`
+	ID       string `json:"id"` // numeric: a tag binding's parent names it
 }
 
 func (b backend) String() string {
@@ -102,14 +106,14 @@ func (t target) base() string {
 func (d dryRun) targets() []target {
 	var out []target
 	for _, v := range d.VMs {
-		out = append(out, target{backend{"vm", v.Zone, v.Name}.String(), v.Zone, "zones/" + v.Zone + "/instances/" + v.ID})
+		out = append(out, target{backend{Kind: "vm", Location: v.Zone, Name: v.Name}.String(), v.Zone, "zones/" + v.Zone + "/instances/" + v.ID})
 	}
 	for _, g := range d.Groups {
 		place := "zones/"
 		if g.Kind == "regional" {
 			place = "regions/"
 		}
-		out = append(out, target{backend{"mig", g.Location, g.Name}.String(), g.Location, place + g.Location + "/instanceGroupManagers/" + g.ID})
+		out = append(out, target{backend{Kind: "mig", Location: g.Location, Name: g.Name}.String(), g.Location, place + g.Location + "/instanceGroupManagers/" + g.ID})
 	}
 	return out
 }
@@ -443,13 +447,18 @@ func (x *run) onboard() error {
 	if !found {
 		return &stop{1, fmt.Sprintf("The tag dormeto/managed does not exist in project %s: run dormeto gcp install first.\nNothing was changed.", x.n.project)}
 	}
+	var created []target
 	for _, t := range targets {
-		if err := x.tagBind(t, value); err != nil {
-			return fmt.Errorf("the tag is not bound to %s: %s\n(the bindings made stay: run the same command again, or offboard)", t.label, refusal(err))
+		made, err := x.tagBind(t, value)
+		if made {
+			created = append(created, t)
+		}
+		if err != nil {
+			return fmt.Errorf("the tag is not bound to %s: %s\n%s", t.label, refusal(err), x.undoBindings(created, value))
 		}
 	}
 	if err := x.controller(http.MethodPost, "/v1/workloads", in, &raw); err != nil {
-		return fmt.Errorf("the controller refuses the onboarding: %s\n(the tag bindings made stay: run the same command again, or offboard)", refusal(err))
+		return fmt.Errorf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoBindings(created, value))
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Onboarded workload %s: %s", w.ID, w.State)
@@ -460,18 +469,34 @@ func (x *run) onboard() error {
 	})
 }
 
-// tagBind binds the tag value to a VM or a group, as the operator, in the resource's location; a binding there already is
-// fine.
-func (x *run) tagBind(t target, value string) error {
+// tagBind binds the tag value to a VM or a group, as the operator, in the resource's location. A binding there already
+// (409) is not this run's: made says whether this call created it.
+func (x *run) tagBind(t target, value string) (made bool, err error) {
 	var op longOperation
-	err := x.call(http.MethodPost, t.base()+"tagBindings", map[string]string{"parent": t.parent(x.number), "tagValue": value}, &op)
+	err = x.call(http.MethodPost, t.base()+"tagBindings", map[string]string{"parent": t.parent(x.number), "tagValue": value}, &op)
 	if gcp.IsConflict(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
-	return x.wait(t.base(), op, tagTimeout)
+	return true, x.wait(t.base(), op, tagTimeout)
+}
+
+// undoBindings removes the bindings a refused onboarding made, and says what it did and what to do.
+func (x *run) undoBindings(created []target, value string) string {
+	var msg, removed []string
+	for _, t := range created {
+		if _, err := x.unbind(t, value); err != nil {
+			msg = append(msg, fmt.Sprintf("The tag binding of %s is not removed: %s", t.label, refusal(err)))
+		} else {
+			removed = append(removed, t.label)
+		}
+	}
+	if len(removed) > 0 {
+		msg = append(msg, "The tag bindings this run made are removed: "+strings.Join(removed, ", ")+".")
+	}
+	return strings.Join(append(msg, "To go on, fix the refusal, then run the same command again."), "\n")
 }
 
 func (x *run) offboard() error {
@@ -497,34 +522,93 @@ func (x *run) offboard() error {
 	return nil
 }
 
+// pendingPath is where the backends of a workload being offboarded wait until their tag bindings are removed ("" without
+// a cache directory).
+func (x *run) pendingPath(id string) string {
+	if x.d.Cache == "" {
+		return ""
+	}
+	return filepath.Join(x.d.Cache, "dormeto", "gcp", x.n.project+"-"+x.n.region+"-offboard-"+id+".json")
+}
+
+// pending reads the backends kept for a workload: false when there are none.
+func (x *run) pending(id string) ([]backend, bool) {
+	path := x.pendingPath(id)
+	if path == "" {
+		return nil, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var backends []backend
+	if json.Unmarshal(data, &backends) != nil {
+		return nil, false
+	}
+	return backends, true
+}
+
+// keepPending writes the backends before the controller's workload goes: the tag must stay until then (a wake needs
+// it), and once the workload is gone nothing else names the bindings to remove.
+func (x *run) keepPending(id string, backends []backend) error {
+	path := x.pendingPath(id)
+	if path == "" {
+		return nil
+	}
+	data, err := json.Marshal(backends)
+	if err == nil {
+		if err = os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+			err = os.WriteFile(path, data, 0o600)
+		}
+	}
+	return err
+}
+
 // offboardWorkload offboards a workload at the controller (which wakes it and restores every reference), then removes
-// the tag bindings of its VMs and groups, and says which. A workload the controller does not know is an error that
-// gcp.IsNotFound tells.
+// the tag bindings of its VMs and groups, and says which. Its backends are kept in the cache before the controller
+// deletes the workload: a rerun that finds the workload gone finishes the unbinds from them. A workload the controller
+// does not know, with nothing kept, is an error that gcp.IsNotFound tells.
 func (x *run) offboardWorkload(id string) ([]string, error) {
 	path := "/v1/workloads/" + esc(id)
 	var w workload
-	if err := x.controller(http.MethodGet, path, nil, &w); err != nil {
+	switch err := x.controller(http.MethodGet, path, nil, &w); {
+	case gcp.IsNotFound(err):
+		backends, ok := x.pending(id)
+		if !ok {
+			return nil, err
+		}
+		w.Backends = backends
+	case err != nil:
 		return nil, err
+	default:
+		if err := x.keepPending(id, w.Backends); err != nil {
+			return nil, fmt.Errorf("the backends of workload %s are not kept for a rerun: %w", id, err)
+		}
+		if err := x.controller(http.MethodDelete, path, nil, nil); err != nil && !gcp.IsNotFound(err) {
+			return nil, err
+		}
 	}
-	if err := x.controller(http.MethodDelete, path, nil, nil); err != nil && !gcp.IsNotFound(err) {
-		return nil, err
+	untagged, err := x.untag(id, w.Backends)
+	if err != nil {
+		return untagged, err
 	}
+	if p := x.pendingPath(id); p != "" {
+		os.Remove(p)
+	}
+	return untagged, nil
+}
+
+// untag removes the tag bindings of the backends of a workload that is offboarded.
+func (x *run) untag(id string, backends []backend) ([]string, error) {
 	value, found, err := x.tag("tagValues", x.n.project+"/dormeto/managed")
 	if err != nil || !found {
 		return nil, err
 	}
 	var untagged []string
-	for _, b := range w.Backends {
-		t, ok, err := x.backendTarget(b)
+	for _, b := range backends {
+		removed, err := x.unbind(b.target(), value)
 		if err != nil {
-			return untagged, fmt.Errorf("workload %s is offboarded, but the tag of %s is not removed: %s", id, b, refusal(err))
-		}
-		if !ok {
-			continue
-		}
-		removed, err := x.unbind(t, value)
-		if err != nil {
-			return untagged, fmt.Errorf("workload %s is offboarded, but the tag of %s is not removed: %s", id, b, refusal(err))
+			return untagged, fmt.Errorf("workload %s is offboarded, but the tag of %s is not removed: %s\n(run the same command again to finish)", id, b, refusal(err))
 		}
 		if removed {
 			untagged = append(untagged, b.String())
@@ -533,29 +617,57 @@ func (x *run) offboardWorkload(id string) ([]string, error) {
 	return untagged, nil
 }
 
-// backendTarget reads the ID of a VM or a managed group of a workload (a tag binding's parent names it); false when it
-// is gone, and its bindings with it.
-func (x *run) backendTarget(b backend) (target, bool, error) {
-	var path string
+// target is the backend as a tag binding names it.
+func (b backend) target() target {
+	path := "zones/" + b.Location + "/instances/"
 	switch {
 	case b.Kind == "vm":
-		path = "zones/" + b.Location + "/instances/"
 	case regionPattern.MatchString(b.Location):
 		path = "regions/" + b.Location + "/instanceGroupManagers/"
 	default:
 		path = "zones/" + b.Location + "/instanceGroupManagers/"
 	}
-	var got struct {
-		ID string `json:"id"`
+	return target{label: b.String(), location: b.Location, path: path + b.ID}
+}
+
+// pendingOffboards lists the workloads of this router whose offboarding stopped after the controller deleted them (their
+// backends wait in the cache).
+func (x *run) pendingOffboards() []string {
+	if x.d.Cache == "" {
+		return nil
 	}
-	err := x.call(http.MethodGet, "https://compute.googleapis.com/compute/v1/projects/"+esc(x.n.project)+"/"+path+esc(b.Name), nil, &got)
-	switch {
-	case gcp.IsNotFound(err):
-		return target{}, false, nil
-	case err != nil:
-		return target{}, false, err
+	prefix := x.n.project + "-" + x.n.region + "-offboard-"
+	files, _ := filepath.Glob(filepath.Join(x.d.Cache, "dormeto", "gcp", prefix+"*.json"))
+	var ids []string
+	for _, f := range files {
+		ids = append(ids, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), prefix), ".json"))
 	}
-	return target{label: b.String(), location: b.Location, path: path + got.ID}, true, nil
+	return ids
+}
+
+// planPendingOffboards finishes them, but the ones the controller still lists (the offboard step does those).
+func (x *run) planPendingOffboards(listed []workloadRef) *step {
+	var lines []string
+	for _, id := range x.pendingOffboards() {
+		if !slices.ContainsFunc(listed, func(w workloadRef) bool { return w.ID == id }) {
+			lines = append(lines, "- remove the tag bindings of workload "+id+" (its offboarding stopped)")
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return &step{name: "offboard", lines: lines, apply: func() (string, error) {
+		n := 0
+		for _, id := range x.pendingOffboards() {
+			backends, _ := x.pending(id)
+			if _, err := x.untag(id, backends); err != nil {
+				return "", err
+			}
+			os.Remove(x.pendingPath(id))
+			n++
+		}
+		return fmt.Sprintf("finished the offboarding of %d workloads", n), nil
+	}}
 }
 
 // unbind removes the binding of the tag value from a VM or a group; false when there was none.

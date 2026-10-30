@@ -447,8 +447,8 @@ func TestUninstallForceRemovesTheTagBindingsOfTheWorkloadsBeforeTheTag(t *testin
 	value := g.tagValue(t)
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
-		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1"},
-		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig"}}}
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig", "id": "222"}}}
 	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: groupParent, TagValue: value}}
 	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
 	if code != 0 {
@@ -479,4 +479,68 @@ func TestUninstallTagValueStillBoundIsRefusedByGoogle(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "Left in place:\n", " is still bound to resources")
+}
+
+func TestUninstallForceFinishesAnOffboardingThatStopped(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.stuckOffboarding(t)
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "still bound") {
+		t.Fatalf("the tag is left:\n%s", out)
+	}
+	g.nothingLeft(t, "europe-west1")
+	g.s.Lock()
+	defer g.s.Unlock()
+	if len(g.s.TagBindings) != 0 || len(g.s.TagValues)+len(g.s.TagKeys) != 0 {
+		t.Errorf("left: %v %v %v", g.s.TagBindings, g.s.TagValues, g.s.TagKeys)
+	}
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Errorf("the file stays: %v", err)
+	}
+}
+
+func TestUninstallForceAsksOffboardsTagPermissions(t *testing.T) {
+	for _, missing := range []string{"resourcemanager.tagValueBindings.delete", "compute.instances.deleteTagBinding", "compute.instances.listTagBindings",
+		"compute.instanceGroupManagers.deleteTagBinding", "compute.instanceGroupManagers.listTagBindings"} {
+		g := routerInstalled(t)
+		g.s.Workloads["shop"] = "AWAKE"
+		g.s.HoldsAll = false
+		g.s.Held = map[string]bool{}
+		for _, c := range []string{"uninstall", "offboard"} {
+			for _, p := range access.Needs(c) {
+				g.s.Held[p] = p != missing
+			}
+		}
+		mark := len(g.s.Calls())
+		code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+		if code != 1 || !strings.Contains(out, "missing "+missing) {
+			t.Errorf("%s: exit %d:\n%s", missing, code, out)
+		}
+		if m := g.changes(mark); len(m) != 0 {
+			t.Errorf("%s: changes %v", missing, m)
+		}
+	}
+}
+
+func TestUninstallForceGoesOnWhenABindingIsGoneAlready(t *testing.T) {
+	g := newWorkloadsRig(t)
+	value := g.tagValue(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig", "id": "222"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: groupParent, TagValue: value}} // the VM's was removed by hand
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.nothingLeft(t, "europe-west1")
+	g.s.Lock()
+	defer g.s.Unlock()
+	if len(g.s.TagBindings) != 0 || len(g.s.TagValues) != 0 {
+		t.Errorf("left: %v %v", g.s.TagBindings, g.s.TagValues)
+	}
 }

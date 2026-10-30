@@ -132,6 +132,11 @@ func (x *run) planUninstall() error {
 	if len(workloads) > 0 {
 		x.steps = append(x.steps, x.planOffboard(workloads))
 	}
+	if x.r.Force {
+		if s := x.planPendingOffboards(workloads); s != nil {
+			x.steps = append(x.steps, *s)
+		}
+	}
 	planners := []func() (*step, error){x.planJobRemoval, x.planNEGRemoval, x.planCloudRunRemoval, x.planQueueRemoval,
 		x.planDatabaseRemoval, x.planUnbind, x.planTagRemoval, x.planAccountRemoval, x.planRolesRemoval}
 	for _, plan := range planners {
