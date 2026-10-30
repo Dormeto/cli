@@ -99,6 +99,8 @@ type Server struct {
 	RunServices map[string]*RunService
 	NEGs        map[string]*NEG
 	Jobs        map[string]*Job
+	// Workloads are the workloads the controller lists, by ID, with their state (DELETE /v1/workloads/<id> offboards one).
+	Workloads map[string]string
 	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>.
 	Images map[string]bool
 	// HealthVersion is the version the controller's health answers instead of its service's DMT_VERSION.
@@ -142,7 +144,7 @@ func New(t testing.TB) *Server {
 		Roles:  map[string]*Role{}, ServiceAccounts: map[string]*ServiceAccount{}, TagKeys: map[string]*Tag{},
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
-		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{},
+		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Workloads: map[string]string{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))

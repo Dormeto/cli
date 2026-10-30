@@ -1,0 +1,510 @@
+package gcponboard
+
+// `dormeto gcp uninstall`: removes exactly what `dormeto gcp install` added (spec §5), from the install record. It checks
+// the caller's permissions (with --force the offboard command's too: a ✗ stops it before any change), reads the record,
+// refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
+// removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
+// (the recorded grants that the project's bindings before the first install did not hold), tag, serviceAccount, roles —
+// and lists the APIs and the bindings Google added as left in place. The custom roles and the tag are the project's: they
+// stay while another router's record lists them. The record goes with the database: the step before it keeps it in the
+// cache, from which a run after a stopped one continues, and which the end removes.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"os"
+	"strings"
+
+	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/install"
+)
+
+// Uninstall is `dormeto gcp uninstall`: 0 when uninstalled (or the plan only, with DryRun, or declined), 1 when a check
+// fails, workloads are onboarded without Force, there is no router or Google refuses, 2 for a bad region or no --yes
+// without a terminal, 130 when interrupted.
+func Uninstall(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.end(x.uninstall())
+}
+
+// workloadRef is a workload as the controller lists it.
+type workloadRef struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+}
+
+func (x *run) uninstall() error {
+	if err := x.validate(); err != nil {
+		return err
+	}
+	if err := x.uninstallChecks(); err != nil {
+		return err
+	}
+	if err := x.planUninstall(); err != nil {
+		return err
+	}
+	x.printUninstallPlan()
+	if x.r.DryRun {
+		return nil
+	}
+	if !x.r.Yes {
+		if !x.d.Terminal {
+			return &stop{2, "--yes: needed"}
+		}
+		question := "Remove router " + x.n.router + " from project " + x.n.project + "?"
+		ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return &stop{0, "Nothing was changed."}
+		}
+	}
+	return x.applyUninstall()
+}
+
+// uninstallChecks asks the permissions of uninstall, and of offboard with Force; the missing ones are named and nothing
+// is done.
+func (x *run) uninstallChecks() error {
+	commands := []string{"uninstall"}
+	if x.r.Force {
+		commands = append(commands, "offboard")
+	}
+	rep, err := check(x.ctx, x.d, x.r, commands)
+	if err != nil {
+		return err
+	}
+	x.account = rep.Account
+	var refused []string
+	for _, c := range rep.Commands {
+		if !c.OK() {
+			refused = append(refused, fmt.Sprintf("  ✗ %s: missing %s", c.Command, strings.Join(c.Missing, ", ")))
+		}
+	}
+	if len(refused) > 0 {
+		msg := ""
+		if !rep.Visible {
+			msg = fmt.Sprintf("Project %s is not visible to %s: no role in it\n", x.n.project, rep.Account)
+		}
+		return &stop{1, msg + strings.Join(refused, "\n") + "\nNothing was changed."}
+	}
+	// An API that is off has no resource to remove: reading one is a miss, not a wait for Google to propagate it.
+	x.number, x.turningOn = rep.Project.Number, rep.APIs.Missing
+	x.say("Checked: %s holds every permission dormeto gcp uninstall needs in project %s.", rep.Account, x.n.project)
+	return nil
+}
+
+// planUninstall reads the policy and the record, then plans each step's removals.
+func (x *run) planUninstall() error {
+	p, err := x.readPolicy(ProjectPolicy(x.n.project))
+	if err != nil {
+		return err
+	}
+	x.policy = p
+	if err := x.loadRecord(); err != nil {
+		return err
+	}
+	if !x.recorded && !x.resumed {
+		return &stop{1, fmt.Sprintf("no router %s is installed in project %s: there is no install record\nNothing was changed.", x.n.router, x.n.project)}
+	}
+	workloads, err := x.workloads()
+	if err != nil {
+		return err
+	}
+	if len(workloads) > 0 && !x.r.Force {
+		var names []string
+		for _, w := range workloads {
+			names = append(names, w.ID+" ("+w.State+")")
+		}
+		return &stop{1, fmt.Sprintf("Workloads are onboarded in router %s: %s.\nOffboard them, or run the same command with --force to offboard each first.\nNothing was changed.",
+			x.n.router, strings.Join(names, ", "))}
+	}
+	if len(workloads) > 0 {
+		x.steps = append(x.steps, x.planOffboard(workloads))
+	}
+	planners := []func() (*step, error){x.planJobRemoval, x.planNEGRemoval, x.planCloudRunRemoval, x.planQueueRemoval,
+		x.planDatabaseRemoval, x.planUnbind, x.planTagRemoval, x.planAccountRemoval, x.planRolesRemoval}
+	for _, plan := range planners {
+		s, err := plan()
+		if err != nil {
+			return err
+		}
+		if s != nil {
+			x.steps = append(x.steps, *s)
+		}
+	}
+	return nil
+}
+
+func (x *run) printUninstallPlan() {
+	x.say("Plan for project %s, uninstalling router %s:", x.n.project, x.n.router)
+	for _, s := range x.steps {
+		for _, l := range s.lines {
+			x.say("  %s", l)
+		}
+	}
+	for _, l := range x.kept {
+		x.say("  %s", l)
+	}
+	if len(x.steps) == 0 {
+		x.say("  nothing is left of router %s to remove", x.n.router)
+	}
+}
+
+// listed tells whether the record lists a resource.
+func (x *run) listed(kind, name string) bool {
+	for _, r := range x.rec.Resources {
+		if r.Kind == kind && r.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// workloads are the controller's onboarded workloads; none when the record lists no controller or it is gone.
+func (x *run) workloads() ([]workloadRef, error) {
+	if !x.listed("service", x.serviceName(x.n.controller)) {
+		return nil, nil
+	}
+	found, err := x.get(runAPI, x.servicesURL()+"/"+esc(x.n.controller), nil)
+	if err != nil || !found {
+		return nil, err
+	}
+	var out []workloadRef
+	if err := x.d.Google.Invoke(x.ctx, http.MethodGet, x.controllerURL()+"/v1/workloads", x.controllerURL(), nil, &out); err != nil {
+		return nil, fmt.Errorf("the controller's workloads are not read (listing them needs run.routes.invoke on %s): %w", x.n.controller, err)
+	}
+	return out, nil
+}
+
+func (x *run) planOffboard(workloads []workloadRef) step {
+	var lines []string
+	for _, w := range workloads {
+		lines = append(lines, "- offboard workload "+w.ID+" ("+w.State+")")
+	}
+	return step{name: "offboard", lines: lines, apply: func() (string, error) {
+		for _, w := range workloads {
+			err := x.d.Google.Invoke(x.ctx, http.MethodDelete, x.controllerURL()+"/v1/workloads/"+esc(w.ID), x.controllerURL(), nil, nil)
+			if err != nil && !gcp.IsNotFound(err) {
+				return "", fmt.Errorf("workload %s: %w", w.ID, err)
+			}
+		}
+		return fmt.Sprintf("offboarded %d workloads", len(workloads)), nil
+	}}
+}
+
+// removal plans a step that removes one resource the record lists: nil when it is not there any more. del removes it,
+// a resource gone meanwhile is not an error.
+func (x *run) removal(name, kind, resource, api, getURL, what string, del func() error) (*step, error) {
+	if !x.listed(kind, resource) {
+		return nil, nil
+	}
+	found, err := x.get(api, getURL, nil)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &step{name: name, lines: []string{"- " + what}, apply: func() (string, error) {
+		if err := del(); err != nil && !gcp.IsNotFound(err) {
+			return "", err
+		}
+		return "removed " + what, nil
+	}}, nil
+}
+
+func (x *run) planJobRemoval() (*step, error) {
+	return x.removal("job", "job", x.jobName(), schedulerAPI, x.jobsURL()+"/"+esc(x.n.job), "job "+x.n.job, func() error {
+		return x.call(http.MethodDelete, x.jobsURL()+"/"+esc(x.n.job), nil, nil)
+	})
+}
+
+func (x *run) planNEGRemoval() (*step, error) {
+	return x.removal("neg", "neg", x.negName(), computeAPI, x.negsURL()+"/"+esc(x.n.neg), "network endpoint group "+x.n.neg, func() error {
+		var op struct {
+			SelfLink string `json:"selfLink"`
+		}
+		if err := x.call(http.MethodDelete, x.negsURL()+"/"+esc(x.n.neg), nil, &op); err != nil {
+			return err
+		}
+		return gcp.WaitCompute(x.ctx, x.d.Google, op.SelfLink, negTimeout)
+	})
+}
+
+// planCloudRunRemoval removes the waker, then the controller (its invoker binding goes with it).
+func (x *run) planCloudRunRemoval() (*step, error) {
+	var steps []*step
+	for _, name := range []string{x.n.waker, x.n.controller} {
+		s, err := x.removal("cloudRun", "service", x.serviceName(name), runAPI, x.servicesURL()+"/"+esc(name), "service "+name, func() error {
+			var op longOperation
+			if err := x.call(http.MethodDelete, x.servicesURL()+"/"+esc(name), nil, &op); err != nil {
+				return err
+			}
+			return x.wait(runV2, op, serviceTimeout)
+		})
+		if err != nil {
+			return nil, err
+		}
+		if s != nil {
+			steps = append(steps, s)
+		}
+	}
+	return combine("cloudRun", steps), nil
+}
+
+// combine is one step that does the steps in order; nil for none.
+func combine(name string, steps []*step) *step {
+	if len(steps) == 0 {
+		return nil
+	}
+	out := &step{name: name}
+	for _, s := range steps {
+		out.lines = append(out.lines, s.lines...)
+	}
+	out.apply = func() (string, error) {
+		var done []string
+		for _, s := range steps {
+			d, err := s.apply()
+			if err != nil {
+				return "", err
+			}
+			done = append(done, d)
+		}
+		return strings.Join(done, ", "), nil
+	}
+	return out
+}
+
+func (x *run) planQueueRemoval() (*step, error) {
+	return x.removal("queue", "queue", x.queueName(), tasksAPI, x.queuesURL()+"/"+esc(x.n.queue), "queue "+x.n.queue, func() error {
+		return x.call(http.MethodDelete, x.queuesURL()+"/"+esc(x.n.queue), nil, nil)
+	})
+}
+
+// planDatabaseRemoval removes the database and with it the install record, which the cache keeps meanwhile.
+func (x *run) planDatabaseRemoval() (*step, error) {
+	if !x.listed("database", x.databaseName()) || !x.database {
+		return nil, nil
+	}
+	return &step{name: "database", lines: []string{"- database " + x.n.database + " (and the install record)"}, apply: func() (string, error) {
+		if err := x.writeCache(); err != nil {
+			return "", fmt.Errorf("the record is not kept in the cache before the database goes: %w", err)
+		}
+		var op longOperation
+		if err := x.call(http.MethodDelete, x.databaseURL(), nil, &op); err != nil && !gcp.IsNotFound(err) {
+			return "", err
+		} else if err == nil {
+			if err := x.wait(firestoreV1, op, databaseTimeout); err != nil {
+				return "", err
+			}
+		}
+		return "removed database " + x.n.database, nil
+	}}, nil
+}
+
+// planUnbind removes the recorded project grants that the project's bindings before the first install did not hold,
+// from the project's policy as read: a service account deleted by hand left them as deleted:serviceAccount:…?uid=…
+// members, which Remove matches by the email.
+func (x *run) planUnbind() (*step, error) {
+	before := &Policy{}
+	for _, b := range x.rec.Before {
+		before.Bindings = append(before.Bindings, Binding{Role: b.Role, Members: b.Members, Condition: b.Condition})
+	}
+	var grants []Grant
+	for _, g := range x.rec.Grants {
+		if grant := (Grant{Role: g.Role, Member: g.Member, Condition: g.Condition}); g.On == "project" && !holds(before, grant) {
+			grants = append(grants, grant)
+		}
+	}
+	preview := &Policy{Bindings: append([]Binding(nil), x.policy.Bindings...)}
+	removed := Remove(preview, grants...)
+	if len(removed) == 0 {
+		return nil, nil
+	}
+	var lines []string
+	for _, g := range removed {
+		lines = append(lines, "- grant "+x.describe(g, "project"))
+	}
+	return &step{name: "projectBindings", lines: lines, apply: func() (string, error) {
+		var res Result
+		err := x.settle(func() error {
+			var err error
+			res, err = Update(x.ctx, x.d.Google, ProjectPolicy(x.n.project), func(p *Policy) error { Remove(p, grants...); return nil })
+			return err
+		})
+		if err != nil {
+			return "", err
+		}
+		_, gone := Diff(res.Before, res.After)
+		return fmt.Sprintf("removed %d grants from the project", len(gone)), nil
+	}}, nil
+}
+
+// usedBy is the router of another record in the project that lists a resource ("" for none): the roles and the tag are
+// the project's, not this router's alone.
+func (x *run) usedBy(kind, name string) (string, error) {
+	if x.others == nil {
+		regions, err := routerRegions(x.ctx, x.d, x.n.project)
+		if err != nil {
+			return "", err
+		}
+		x.others = map[string]Record{}
+		for _, region := range regions {
+			if region == x.n.region {
+				continue
+			}
+			var doc recordDocument
+			u := firestoreV1 + "projects/" + esc(x.n.project) + "/databases/dmtr-" + esc(region) + "/documents/" + recordPath
+			if err := x.d.Google.Do(x.ctx, http.MethodGet, u, nil, &doc); err != nil {
+				if gcp.IsNotFound(err) {
+					continue
+				}
+				return "", err
+			}
+			var rec Record
+			if err := json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec); err != nil {
+				return "", fmt.Errorf("%s in database dmtr-%s: %w", recordPath, region, err)
+			}
+			x.others[region] = rec
+		}
+	}
+	for region, rec := range x.others {
+		for _, r := range rec.Resources {
+			if r.Kind == kind && r.Name == name {
+				return "dmtr-" + region, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// keep tells whether another router uses a resource, and says so in the plan.
+func (x *run) keep(kind, name, what string) (bool, error) {
+	router, err := x.usedBy(kind, name)
+	if err != nil || router == "" {
+		return false, err
+	}
+	x.kept = append(x.kept, "= "+what+" kept: used by router "+router)
+	return true, nil
+}
+
+// planTagRemoval removes the value dormeto/managed, then the key, unless another router lists them.
+func (x *run) planTagRemoval() (*step, error) {
+	var steps []*step
+	for _, t := range []struct{ kind, resource, namespaced string }{
+		{"tagValues", "tagValue", x.n.project + "/dormeto/managed"}, {"tagKeys", "tagKey", x.n.project + "/dormeto"}} {
+		name, found, err := x.tag(t.kind, t.namespaced)
+		if err != nil {
+			return nil, err
+		}
+		if !found || !x.listed(t.resource, name) {
+			continue
+		}
+		if kept, err := x.keep(t.resource, name, "tag "+strings.TrimPrefix(t.namespaced, x.n.project+"/")); err != nil || kept {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		steps = append(steps, &step{name: "tag", lines: []string{"- tag " + strings.TrimPrefix(t.namespaced, x.n.project+"/")}, apply: func() (string, error) {
+			var op longOperation
+			if err := x.call(http.MethodDelete, crmV3+name, nil, &op); err != nil && !gcp.IsNotFound(err) {
+				return "", err
+			} else if err == nil {
+				if err := x.wait(crmV3, op, tagTimeout); err != nil {
+					return "", err
+				}
+			}
+			return "removed " + name, nil
+		}})
+	}
+	return combine("tag", steps), nil
+}
+
+func (x *run) planAccountRemoval() (*step, error) {
+	return x.removal("serviceAccount", "serviceAccount", x.accountName(), iamAPI, x.accountURL(), "service account "+x.n.email, func() error {
+		return x.call(http.MethodDelete, x.accountURL(), nil, nil)
+	})
+}
+
+// planRolesRemoval deletes the custom roles (IAM keeps a deleted role for 37 days, undeletable), unless another router
+// lists them.
+func (x *run) planRolesRemoval() (*step, error) {
+	var steps []*step
+	for _, id := range roleIDs() {
+		name := x.roleName(id)
+		if !x.listed("role", name) {
+			continue
+		}
+		var got googleRole
+		found, err := x.get(iamAPI, x.rolesURL()+"/"+id, &got)
+		if err != nil {
+			return nil, err
+		}
+		if !found || got.Deleted {
+			continue
+		}
+		if kept, err := x.keep("role", name, "role "+id); err != nil || kept {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		s, err := x.removal("roles", "role", name, iamAPI, x.rolesURL()+"/"+id, "role "+id, func() error {
+			return x.call(http.MethodDelete, x.rolesURL()+"/"+id, nil, nil)
+		})
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, s)
+	}
+	return combine("roles", steps), nil
+}
+
+// applyUninstall runs the steps in order. A refused step stops the run: what was done and what was not are said; the
+// next run continues from the record (the database's, or the cache's once the database is gone).
+func (x *run) applyUninstall() error {
+	for i, s := range x.steps {
+		done, err := s.apply()
+		if err != nil {
+			code := 1
+			if x.ctx.Err() != nil {
+				code = exitInterrupted
+			}
+			x.say("  ✗ %s: %s", s.name, err)
+			return &stop{code, fmt.Sprintf("Done: %s. Not done: %s. Run the same command again to continue.", stepNames(x.steps[:i]), stepNames(x.steps[i:]))}
+		}
+		x.say("  ✓ %s: %s", s.name, done)
+	}
+	if path := x.cachePath(); path != "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			x.say("  ! %s is not removed: %s", path, err)
+		}
+	}
+	x.leftInPlace()
+	x.say("Uninstalled router %s from project %s.", x.n.router, x.n.project)
+	return nil
+}
+
+// leftInPlace lists what the uninstall does not touch: the APIs the install turned on (other things may use them) and
+// the bindings Google added during the install (its own service agents').
+func (x *run) leftInPlace() {
+	var lines []string
+	for _, r := range x.rec.Resources {
+		if r.Kind == "api" {
+			lines = append(lines, "API "+r.Name)
+		}
+	}
+	for _, g := range x.rec.Google {
+		lines = append(lines, x.describe(Grant{Role: g.Role, Member: g.Member}, "project")+" (added by Google)")
+	}
+	if len(lines) == 0 {
+		return
+	}
+	x.say("Left in place:")
+	for _, l := range lines {
+		x.say("  %s", l)
+	}
+}

@@ -105,8 +105,10 @@ type run struct {
 	tagKey        string   // the tag key dormeto's name, tagKeys/<n>, once known
 
 	steps        []step
-	iam          []string // the IAM lines of the running step
-	editorWarned bool     // the default service account's Editor, appeared during this run, was warned of
+	kept         []string          // the uninstall's plan lines of what it keeps
+	others       map[string]Record // the uninstall's other routers' records of the project, by region
+	iam          []string          // the IAM lines of the running step
+	editorWarned bool              // the default service account's Editor, appeared during this run, was warned of
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {

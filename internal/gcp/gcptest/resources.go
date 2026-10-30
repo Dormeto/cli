@@ -356,6 +356,9 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		switch {
 		case verb == "" && r.Method == http.MethodGet:
+		case verb == "" && r.Method == http.MethodDelete:
+			// A role is deleted softly: it is answered with deleted set, and can be undeleted.
+			role.Deleted = true
 		case verb == "undelete" && r.Method == http.MethodPost:
 			if !role.Deleted {
 				Fail(w, 400, "FAILED_PRECONDITION", "The role is not deleted.")
@@ -421,6 +424,10 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 		switch {
 		case verb == "" && r.Method == http.MethodGet:
 			Reply(w, s.accountBody(item, a))
+		case verb == "" && r.Method == http.MethodDelete:
+			delete(s.ServiceAccounts, item)
+			delete(s.Policies, "projects/"+s.ProjectID+"/serviceAccounts/"+item)
+			Reply(w, map[string]any{})
 		case verb == "getIamPolicy" && r.Method == http.MethodPost && len(strings.TrimSpace(string(body))) > 0:
 			// IAM's service accounts take the version in the query: "The request body must be empty."
 			Fail(w, 400, "INVALID_ARGUMENT", `Invalid JSON payload received. Unknown name "options": Cannot find field.`)
@@ -459,6 +466,22 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 			}
 		}
 		Fail(w, 403, "PERMISSION_DENIED", "Permission denied on resource '"+name+"' (or it may not exist).")
+	case r.Method == http.MethodDelete:
+		name := strings.TrimPrefix(r.URL.Path, "/v3/")
+		t, ok := store[name]
+		if !ok {
+			Fail(w, 403, "PERMISSION_DENIED", "Permission denied on resource '"+name+"' (or it may not exist).")
+			return
+		}
+		if !values {
+			for _, v := range s.TagValues {
+				if v.Parent == name {
+					Fail(w, 400, "FAILED_PRECONDITION", "The tag key "+name+" still has values.")
+					return
+				}
+			}
+		}
+		s.operate(w, "operations/rctag."+s.next(), tagBody(t), func() { delete(store, name) })
 	case (r.URL.Path == "/v3/tagKeys" || r.URL.Path == "/v3/tagValues") && r.Method == http.MethodPost:
 		var in struct {
 			Parent, ShortName, Description string
@@ -557,6 +580,15 @@ func (s *Server) firestore(w http.ResponseWriter, r *http.Request, body []byte) 
 	switch {
 	case tail == "" && r.Method == http.MethodGet:
 		Reply(w, s.databaseBody(id, d))
+	case tail == "" && r.Method == http.MethodDelete:
+		s.operate(w, "projects/"+s.ProjectID+"/databases/"+id+"/operations/"+s.next(), nil, func() {
+			delete(s.Databases, id)
+			for key := range s.Documents {
+				if strings.HasPrefix(key, id+"/") {
+					delete(s.Documents, key)
+				}
+			}
+		})
 	case isDocument && r.Method == http.MethodGet:
 		fields, ok := s.Documents[id+"/"+path]
 		if !ok {
@@ -645,6 +677,11 @@ func (s *Server) cloudTasks(w http.ResponseWriter, r *http.Request, body []byte)
 		}
 		switch {
 		case verb == "" && r.Method == http.MethodGet:
+		case verb == "" && r.Method == http.MethodDelete:
+			delete(s.Queues, region+"/"+id)
+			delete(s.Policies, "projects/"+s.ProjectID+"/locations/"+region+"/queues/"+id)
+			Reply(w, map[string]any{})
+			return
 		case verb == "" && r.Method == http.MethodPatch:
 			var in queueIn
 			json.Unmarshal(body, &in)

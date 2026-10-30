@@ -1,6 +1,6 @@
 package main
 
-// `dormeto gcp check`, `install` and `status`: the flags read into a gcponboard.Request and the run called with the
+// `dormeto gcp check`, `install`, `status` and `uninstall`: the flags read into a gcponboard.Request and the run called with the
 // real dependencies — the tokens of gcloud (its active configuration, or --gcloud-configuration), HTTPS with a 30 s
 // timeout, the terminal's prompts when stdin is one, the user's cache directory ($XDG_CACHE_HOME, else ~/.cache) and
 // the CLI's version. Exit codes: 0; 1 when a command lacks a permission or Google refuses; 2 for a bad flag or a missing
@@ -25,21 +25,21 @@ import (
 type gcpRun func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int
 
 // gcpRuns are the runs of the gcp commands: internal/gcponboard's, or a test's.
-type gcpRuns struct{ check, install, status gcpRun }
+type gcpRuns struct{ check, install, status, uninstall gcpRun }
 
 // theGcpRuns are internal/gcponboard's.
-var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus}
+var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall}
 
 func newGcp(runs gcpRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version))
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version))
 	return cmd
 }
 
 // gcpFlags are the flags of the gcp commands.
 type gcpFlags struct {
 	project, region, image, configuration string
-	json, yes, dryRun                     bool
+	json, yes, dryRun, force              bool
 }
 
 // gcpCommand is a gcp command calling run with the flags' request; a bad flag, an argument or a missing required flag
@@ -51,7 +51,7 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
 			code := run(ctx, gcpDeps(c, f.configuration, version), gcponboard.Request{
-				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun})
+				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force})
 			if s := signalled(); s != nil {
 				code = signalCode(s)
 			}
@@ -125,6 +125,26 @@ func newGcpStatus(run gcpRun, version string) *cobra.Command {
 		&f, []string{"project"}, version, run)
 	cmd.Flags().StringVar(&f.region, "region", "", "the router's region (default: every router of the project)")
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the report as JSON")
+	return cmd
+}
+
+func newGcpUninstall(run gcpRun, version string) *cobra.Command {
+	var f gcpFlags
+	cmd := gcpCommand("uninstall", "Remove what dormeto gcp install added for a router in a Google Cloud project and region",
+		"Remove exactly what dormeto gcp install added for the router dmtr-<region>, from its install record: the check job,\n"+
+			"the waker's network endpoint group, the Cloud Run services, the queue, the database with the record, the grants it\n"+
+			"added to the project (never a binding that existed before it, nor someone else's member of a role), the secure tag,\n"+
+			"the service account and the custom roles dormetoRouter and dormetoRouterBackends. The roles and the tag stay while\n"+
+			"another router's record in the project lists them. It checks your permissions first, refuses while workloads are\n"+
+			"onboarded (--force offboards each one first, and checks the offboard permissions too), prints the plan, asks before\n"+
+			"applying (--yes without a terminal) and removes in reverse order. It turns no API off and lists the APIs and the\n"+
+			"bindings Google added as left in place. Run again after a stop, it continues.",
+		&f, []string{"project", "region"}, version, run)
+	fl := cmd.Flags()
+	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
+	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
+	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
+	fl.BoolVar(&f.force, "force", false, "offboard the onboarded workloads first")
 	return cmd
 }
 

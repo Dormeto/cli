@@ -2,7 +2,7 @@ package gcptest
 
 // The resources of `dormeto gcp install --image`: Cloud Run services and their policies and operations, the serverless
 // network endpoint group and its Compute Engine operations, the Cloud Scheduler job, the manifests of Artifact Registry
-// (on *-docker.pkg.dev) and the controller's GET /v1/health (on *.run.app). Every handler here runs under the server's
+// (on *-docker.pkg.dev) and the controller's GET /v1/health, GET /v1/workloads and DELETE /v1/workloads/<id> (on *.run.app). Every handler here runs under the server's
 // lock.
 
 import (
@@ -161,6 +161,11 @@ func (s *Server) cloudRun(w http.ResponseWriter, r *http.Request, body []byte) {
 		switch {
 		case verb == "" && r.Method == http.MethodGet:
 			Reply(w, svc)
+		case verb == "" && r.Method == http.MethodDelete:
+			s.operate(w, operation+s.next(), nil, func() {
+				delete(s.RunServices, key)
+				delete(s.Policies, name)
+			})
 		case verb == "" && r.Method == http.MethodPatch:
 			var in RunService
 			if json.Unmarshal(body, &in) != nil {
@@ -252,6 +257,15 @@ func (s *Server) compute(w http.ResponseWriter, r *http.Request, body []byte) {
 		op := "operation-" + s.next()
 		Reply(w, map[string]any{"name": op, "status": "RUNNING",
 			"selfLink": "https://www.googleapis.com/compute/v1/projects/" + s.ProjectID + "/regions/" + region + "/operations/" + op})
+	case isNEG && r.Method == http.MethodDelete:
+		if _, ok := s.NEGs[region+"/"+id]; !ok {
+			Fail(w, 404, "NOT_FOUND", "The resource '"+id+"' was not found")
+			return
+		}
+		delete(s.NEGs, region+"/"+id)
+		op := "operation-" + s.next()
+		Reply(w, map[string]any{"name": op, "status": "RUNNING",
+			"selfLink": "https://www.googleapis.com/compute/v1/projects/" + s.ProjectID + "/regions/" + region + "/operations/" + op})
 	case isNEG && r.Method == http.MethodGet:
 		neg, ok := s.NEGs[region+"/"+id]
 		if !ok {
@@ -305,6 +319,10 @@ func (s *Server) cloudScheduler(w http.ResponseWriter, r *http.Request, body []b
 		}
 		switch r.Method {
 		case http.MethodGet:
+		case http.MethodDelete:
+			delete(s.Jobs, region+"/"+id)
+			Reply(w, map[string]any{})
+			return
 		case http.MethodPatch:
 			var in Job
 			json.Unmarshal(body, &in)
@@ -353,6 +371,28 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.Header.Get("Authorization") != "Bearer test-identity" {
 			Fail(w, 401, "UNAUTHENTICATED", "The request was not authenticated.")
+			return
+		}
+		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/workloads/"); ok && r.Method == http.MethodDelete {
+			if _, found := s.Workloads[id]; !found {
+				Fail(w, 404, "NOT_FOUND", "no workload "+id)
+				return
+			}
+			delete(s.Workloads, id)
+			Reply(w, map[string]any{})
+			return
+		}
+		if r.URL.Path == "/v1/workloads" && r.Method == http.MethodGet {
+			ids := make([]string, 0, len(s.Workloads))
+			for id := range s.Workloads {
+				ids = append(ids, id)
+			}
+			slices.Sort(ids)
+			workloads := []map[string]any{}
+			for _, id := range ids {
+				workloads = append(workloads, map[string]any{"id": id, "state": s.Workloads[id]})
+			}
+			Reply(w, workloads)
 			return
 		}
 		if r.URL.Path != "/v1/health" || r.Method != http.MethodGet {

@@ -28,6 +28,7 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 		}
 	}
 	runs := gcpRuns{check: ran("check"), install: ran("install"), status: ran("status")}
+	runs.uninstall = ran("uninstall")
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
 	root.AddCommand(newGcp(runs, "1.2.3"))
 	var out, errs bytes.Buffer
@@ -172,6 +173,42 @@ func TestGcpStatusExitCodes(t *testing.T) {
 func TestGcpStatusIsWiredInTheRoot(t *testing.T) {
 	out, _, code := executed(t, build{}, "gcp", "status", "--help")
 	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--json"} {
+		if code != 0 || !strings.Contains(out, flag) {
+			t.Errorf("%d %s lacks %s", code, out, flag)
+		}
+	}
+}
+
+func TestGcpUninstallFlagsReadIntoTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--force", "--dry-run", "--gcloud-configuration", "c")
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "uninstall" {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	want := gcponboard.Request{Project: "p", Region: "europe-west1", Configuration: "c", Yes: true, Force: true, DryRun: true}
+	if calls[0].r != want {
+		t.Fatalf("%+v", calls[0].r)
+	}
+}
+
+func TestGcpUninstallExitCodes(t *testing.T) {
+	if _, _, exit := gcpRan(t, 1, "gcp", "uninstall", "--project", "p", "--region", "europe-west1"); exit != 1 {
+		t.Fatalf("exit %d", exit)
+	}
+	for _, args := range [][]string{
+		{"gcp", "uninstall", "--region", "europe-west1"},
+		{"gcp", "uninstall", "--project", "p"},
+		{"gcp", "uninstall", "--project", "p", "--region", "europe-west1", "--nope"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, args...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
+		}
+	}
+}
+
+func TestGcpUninstallIsWiredInTheRoot(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "uninstall", "--help")
+	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--yes", "--dry-run", "--force"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
 		}
