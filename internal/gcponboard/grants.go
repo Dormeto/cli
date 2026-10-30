@@ -1,7 +1,7 @@
 package gcponboard
 
-// The router's grants of the access (the manifest's router grants on the project, the queue and the service account;
-// the controller's is the router part's), the projectBindings step, and the IAM differences every binding step prints:
+// The router's grants (the manifest's router grants on the project, the queue and the service account, and on the
+// controller, which the cloudRun step gives), the projectBindings step, and the IAM differences every binding step prints:
 // each grant added or removed, Dormeto's when it is one of the router's grants, else Google's, recorded with the step
 // after which it appeared. Bindings are only ever added, with the policy's etag (Update); none is changed or removed.
 
@@ -12,7 +12,8 @@ import (
 	"github.com/Dormeto/cli/internal/gcp/access"
 )
 
-// accessGrant is one of the router's grants, its placeholders filled, and where it is: project, queue or serviceAccount.
+// accessGrant is one of the router's grants, its placeholders filled, and where it is: project, queue, serviceAccount or
+// controller.
 type accessGrant struct {
 	Grant
 	On string
@@ -24,13 +25,10 @@ func (x *run) fill(s string) string {
 		"{database}", x.n.database).Replace(s)
 }
 
-// accessGrants are the router's grants that the access part installs, in the manifest's order.
+// accessGrants are the router's grants, in the manifest's order.
 func (x *run) accessGrants() []accessGrant {
 	var out []accessGrant
 	for _, g := range access.Load().Router {
-		if g.On != "project" && g.On != "queue" && g.On != "serviceAccount" {
-			continue
-		}
 		ag := accessGrant{Grant: Grant{Role: x.fill(g.Role), Member: x.n.member}, On: g.On}
 		if g.Condition != nil {
 			ag.Condition = &Condition{Title: x.fill(g.Condition.Title), Expression: x.fill(g.Condition.Expression)}
@@ -50,7 +48,7 @@ func (x *run) grantsOn(on string) []accessGrant {
 	return out
 }
 
-// grantOn is the one grant on a queue or a service account.
+// grantOn is the one grant on a queue, a service account or the controller.
 func (x *run) grantOn(on string) accessGrant { return x.grantsOn(on)[0] }
 
 // ours tells whether a grant is one of the router's.
@@ -70,6 +68,8 @@ func (x *run) where(on string) string {
 		return "queue " + x.n.queue
 	case "serviceAccount":
 		return "service account " + x.n.email
+	case "controller":
+		return "controller " + x.n.controller
 	}
 	return "the project"
 }
@@ -154,8 +154,11 @@ func (x *run) bind(rp ResourcePolicy, g accessGrant) error {
 }
 
 func (x *run) stepOf(on string) string {
-	if on == "serviceAccount" {
+	switch on {
+	case "serviceAccount":
 		return "serviceAccountBinding"
+	case "controller":
+		return "cloudRun"
 	}
 	return on
 }

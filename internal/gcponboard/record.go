@@ -50,13 +50,15 @@ type Record struct {
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role
 // (projects/<id>/roles/<role>), serviceAccount (projects/<id>/serviceAccounts/<email>), tagKey (tagKeys/<n>), tagValue
-// (tagValues/<n>), database (projects/<id>/databases/<db>), queue (projects/<id>/locations/<region>/queues/<queue>).
+// (tagValues/<n>), database (projects/<id>/databases/<db>), queue (projects/<id>/locations/<region>/queues/<queue>), and
+// of the router part: service (projects/<id>/locations/<region>/services/<service>), neg
+// (projects/<id>/regions/<region>/networkEndpointGroups/<neg>), job (projects/<id>/locations/<region>/jobs/<job>).
 type Resource struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 }
 
-// RecordGrant is one of the router's grants; On is project, queue or serviceAccount (the router's own ones).
+// RecordGrant is one of the router's grants; On is project, queue, serviceAccount (the router's own ones) or controller.
 type RecordGrant struct {
 	Role      string     `json:"role"`
 	Member    string     `json:"member"`

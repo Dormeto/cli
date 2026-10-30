@@ -1,11 +1,12 @@
 package gcponboard
 
-// `dormeto gcp install` without --image: the access of a Dormeto router in a project and a region (spec §5). It checks
-// the caller's permissions (a ✗ stops it before any change), reads what is there, prints the plan, asks (or takes
-// --yes), applies the steps in order — apis, roles, serviceAccount, tag, database (and the record), projectBindings,
-// queue (and its binding), serviceAccountBinding, record — printing every IAM change after the steps that make one,
-// Dormeto's and Google's, then verifies. Each step's file reads what it changes and plans exactly what its apply does.
-// Run again, it plans only the differences; none: "up to date".
+// `dormeto gcp install`: the access of a Dormeto router in a project and a region and, with --image, the router itself
+// (spec §5). It checks the caller's permissions (a ✗ stops it before any change), with --image the image too, reads what
+// is there, prints the plan, asks (or takes --yes), applies the steps in order — apis, roles, serviceAccount, tag, database
+// (and the record), projectBindings, queue (and its binding), serviceAccountBinding, with --image cloudRun, neg and job,
+// then record — printing every IAM change after the steps that make one, Dormeto's and Google's, then verifies. Each
+// step's file reads what it changes and plans exactly what its apply does. Run again, it plans only the differences;
+// none: "up to date".
 
 import (
 	"context"
@@ -46,13 +47,14 @@ var regionPattern = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
 // names are the router's names in its project and region.
 type names struct {
 	project, region, router, email, member, database, queue string
+	controller, waker, neg, job                             string
 }
 
 func newNames(project, region string) names {
 	router := "dmtr-" + region
 	email := router + "@" + project + ".iam.gserviceaccount.com"
 	return names{project: project, region: region, router: router, email: email, member: "serviceAccount:" + email,
-		database: router, queue: router}
+		database: router, queue: router, controller: router + "-controller", waker: router + "-waker", neg: router + "-waker", job: router + "-check"}
 }
 
 // step is one step of the install: its name, its lines in the plan, and its apply, which says what it did.
@@ -79,6 +81,7 @@ type run struct {
 	number  string // the project's number
 	parent  string // the project's organization or folder, "" for none
 	account string // the caller, from gcloud
+	version string // the router's version: the tag of --image
 
 	turningOn []string        // the APIs off at the start: the apis step turns them on
 	turnedOn  bool            // the apis step ran: its APIs are on, though they may answer SERVICE_DISABLED for a while
@@ -122,7 +125,8 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 			}
 		}
 	}
-	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), granted: map[string]bool{}, google: map[string]bool{},
+	_, version, _ := splitImage(r.Image)
+	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), version: version, granted: map[string]bool{}, google: map[string]bool{},
 		waitedFor: map[string]bool{}}
 }
 
@@ -130,9 +134,8 @@ func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a
 
 func (x *run) now() string { return x.d.Now().UTC().Format(time.RFC3339) }
 
-// Install is `dormeto gcp install` without --image: 0 when installed or up to date (or the plan only, with DryRun, or
-// declined), 1 when a check fails or Google refuses, 2 for a bad region or no --yes without a terminal, 130 when
-// interrupted.
+// Install is `dormeto gcp install`: 0 when installed or up to date (or the plan only, with DryRun, or declined), 1 when a
+// check fails or Google refuses, 2 for a bad region or image, or no --yes without a terminal, 130 when interrupted.
 func Install(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.end(x.install())
@@ -149,8 +152,7 @@ func (x *run) install() error {
 		return err
 	}
 	if len(x.steps) == 0 {
-		x.say("The access of router %s in project %s is up to date.", x.n.router, x.n.project)
-		return nil
+		return x.upToDate()
 	}
 	x.printPlan()
 	if x.r.DryRun {
@@ -170,6 +172,19 @@ func (x *run) install() error {
 		}
 	}
 	return x.apply()
+}
+
+// upToDate says that nothing differs, after asking the router: a health no step can change is not "up to date".
+func (x *run) upToDate() error {
+	if x.r.Image == "" {
+		x.say("The access of router %s in project %s is up to date.", x.n.router, x.n.project)
+		return nil
+	}
+	if problems := x.verifyRouter(); len(problems) > 0 {
+		return &stop{1, "  ✗ verification: " + strings.Join(problems, "; ")}
+	}
+	x.say("Router %s in project %s is up to date: version %s.", x.n.router, x.n.project, x.version)
+	return nil
 }
 
 // end is the exit code of the run's result, said: a stop's own; 130 when interrupted; else 1 with the error.
@@ -200,27 +215,36 @@ func (x *run) validate() error {
 		return &stop{2, fmt.Sprintf("--region: %q is not a Google Cloud region such as europe-west1", x.r.Region)}
 	case len(x.n.router) > 30:
 		return &stop{2, fmt.Sprintf("--region: %s is longer than a service account ID's 30 characters", x.n.router)}
+	case x.r.Image != "" && x.version == "":
+		return &stop{2, fmt.Sprintf("--image: %s has no tag: its tag is the router's version", x.r.Image)}
 	}
 	return nil
 }
 
-// checks are `dormeto gcp check`'s verdict for install, its permissions alone asked: every permission held, or the
-// missing ones named and nothing done.
+// checks are `dormeto gcp check`'s verdict for install (with --image, install-router too), their permissions alone
+// asked: every permission held, or the missing ones named and nothing done.
 func (x *run) checks() error {
-	rep, err := check(x.ctx, x.d, x.r, []string{"install"})
+	commands := []string{"install"}
+	if x.r.Image != "" {
+		commands = append(commands, "install-router")
+	}
+	rep, err := check(x.ctx, x.d, x.r, commands)
 	if err != nil {
 		return err
 	}
 	x.account = rep.Account
+	var refused []string
 	for _, c := range rep.Commands {
-		if c.Command != "install" || c.OK() {
-			continue
+		if !c.OK() {
+			refused = append(refused, fmt.Sprintf("  ✗ %s: missing %s", c.Command, strings.Join(c.Missing, ", ")))
 		}
+	}
+	if len(refused) > 0 {
 		msg := ""
 		if !rep.Visible {
 			msg = fmt.Sprintf("Project %s is not visible to %s: no role in it\n", x.n.project, rep.Account)
 		}
-		return &stop{1, msg + fmt.Sprintf("  ✗ install: missing %s\nNothing was changed.", strings.Join(c.Missing, ", "))}
+		return &stop{1, msg + strings.Join(refused, "\n") + "\nNothing was changed."}
 	}
 	if rep.APIsNote != "" {
 		return &stop{1, rep.APIsNote + "\nNothing was changed."}
@@ -237,8 +261,14 @@ func (x *run) checks() error {
 	return nil
 }
 
-// plan reads the project's policy (the before snapshot of a first install), the record, then each step's resources.
+// plan checks the image, reads the project's policy (the before snapshot of a first install), the record, then each
+// step's resources.
 func (x *run) plan() error {
+	if x.r.Image != "" {
+		if err := x.checkImage(); err != nil {
+			return err
+		}
+	}
 	p, err := x.readPolicy(ProjectPolicy(x.n.project))
 	if err != nil {
 		return err
@@ -250,6 +280,9 @@ func (x *run) plan() error {
 	x.resume()
 	planners := []func() (*step, error){x.planAPIs, x.planRoles, x.planServiceAccount, x.planTag, x.planDatabase,
 		x.planProjectBindings, x.planQueue, x.planAccountBinding}
+	if x.r.Image != "" {
+		planners = append(planners, x.planCloudRun, x.planNEG, x.planJob)
+	}
 	for _, plan := range planners {
 		s, err := plan()
 		if err != nil {
@@ -282,9 +315,11 @@ func (x *run) printPlan() {
 }
 
 // headsUp says, after the plan, that turning APIs on and creating the database can make Google add bindings of its own,
-// and names those Google is known to add, unless the policy holds them already: Editor to the Compute Engine default
-// service account when Compute Engine is turned on in a project without an organization (in one, its policy decides),
-// Cloud Run's service agent when Cloud Run is, Firestore's when the database is created.
+// and names those Google added in the live run (2026-10-29) unless the policy holds them already, in the order it added
+// them: Editor to the Compute Engine default service account when Compute Engine is turned on in a project without an
+// organization (in one, its policy decides); the service agents of Cloud Scheduler, Cloud Tasks and, with Cloud Run, of
+// Container Registry, Pub/Sub and Cloud Run when those APIs are; Firestore's and Firebase Rules' when the database is
+// created (the latter's late: seen after projectBindings).
 func (x *run) headsUp() {
 	apis, database := false, false
 	for _, s := range x.steps {
@@ -311,11 +346,21 @@ func (x *run) headsUp() {
 		expect("roles/editor", x.number+"-compute@developer.gserviceaccount.com", "apis",
 			"Compute Engine's default service account, in a project without an organization")
 	}
+	agent := func(domain string) string { return "service-" + x.number + "@" + domain + ".iam.gserviceaccount.com" }
+	if apis && slices.Contains(x.turningOn, "cloudscheduler.googleapis.com") {
+		expect("roles/cloudscheduler.serviceAgent", agent("gcp-sa-cloudscheduler"), "apis", "Cloud Scheduler's service agent")
+	}
+	if apis && slices.Contains(x.turningOn, "cloudtasks.googleapis.com") {
+		expect("roles/cloudtasks.serviceAgent", agent("gcp-sa-cloudtasks"), "apis", "Cloud Tasks' service agent")
+	}
 	if apis && slices.Contains(x.turningOn, "run.googleapis.com") {
-		expect("roles/run.serviceAgent", "service-"+x.number+"@serverless-robot-prod.iam.gserviceaccount.com", "apis", "Cloud Run's service agent")
+		expect("roles/containerregistry.ServiceAgent", agent("containerregistry"), "apis", "Container Registry's service agent")
+		expect("roles/pubsub.serviceAgent", agent("gcp-sa-pubsub"), "apis", "Pub/Sub's service agent")
+		expect("roles/run.serviceAgent", agent("serverless-robot-prod"), "apis", "Cloud Run's service agent")
 	}
 	if database {
-		expect("roles/firestore.serviceAgent", "service-"+x.number+"@gcp-sa-firestore.iam.gserviceaccount.com", "database", "Firestore's service agent")
+		expect("roles/firestore.serviceAgent", agent("gcp-sa-firestore"), "database", "Firestore's service agent")
+		expect("roles/firebaserules.system", agent("firebase-rules"), "projectBindings", "late from the database: Firebase Rules' system account")
 	}
 	if len(expected) > 0 {
 		line += " Expected:"
@@ -375,7 +420,8 @@ func (x *run) apply() error {
 		x.say("  ✓ %s: %s", s.name, done)
 		x.printIAM()
 		x.warnEditor()
-		if s.name != "apis" && s.name != "projectBindings" && s.name != "record" {
+		// The others read the project's policy again themselves.
+		if !slices.Contains([]string{"apis", "projectBindings", "cloudRun", "neg", "job", "record"}, s.name) {
 			x.stale = true
 		}
 		x.lastStep = s.name
@@ -387,7 +433,14 @@ func (x *run) apply() error {
 		return &stop{1, "Run the same command again to change what differs."}
 	}
 	x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue")
+	if x.r.Image != "" {
+		x.say("  ✓ verified: both Cloud Run services ready, the controller's URL among its URLs, the network endpoint group, the job, /v1/health answering version %s", x.version)
+	}
 	x.warn(warnings)
+	if x.r.Image != "" {
+		x.say("Installed router %s in project %s, version %s.", x.n.router, x.n.project, x.version)
+		return nil
+	}
 	x.say("Installed the access of router %s in project %s.", x.n.router, x.n.project)
 	return nil
 }

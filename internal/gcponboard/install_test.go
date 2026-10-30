@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,6 +26,11 @@ const (
 	runAgent       = "serviceAccount:service-1034397096264@serverless-robot-prod.iam.gserviceaccount.com"
 	firestoreAgent = "serviceAccount:service-1034397096264@gcp-sa-firestore.iam.gserviceaccount.com"
 	computeDefault = "serviceAccount:1034397096264-compute@developer.gserviceaccount.com"
+	schedulerAgent = "serviceAccount:service-1034397096264@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+	tasksAgent     = "serviceAccount:service-1034397096264@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+	registryAgent  = "serviceAccount:service-1034397096264@containerregistry.iam.gserviceaccount.com"
+	pubsubAgent    = "serviceAccount:service-1034397096264@gcp-sa-pubsub.iam.gserviceaccount.com"
+	rulesSystem    = "serviceAccount:service-1034397096264@firebase-rules.iam.gserviceaccount.com"
 	recordDB       = "dmtr-europe-west1"
 )
 
@@ -163,8 +169,13 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + record install/record in database dmtr-europe-west1
 Turning APIs on and creating the database can make Google add bindings of its own: they are shown after those steps. Expected:
   roles/editor to serviceAccount:1034397096264-compute@developer.gserviceaccount.com on the project, after apis (Compute Engine's default service account, in a project without an organization)
+  roles/cloudscheduler.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-cloudscheduler.iam.gserviceaccount.com on the project, after apis (Cloud Scheduler's service agent)
+  roles/cloudtasks.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-cloudtasks.iam.gserviceaccount.com on the project, after apis (Cloud Tasks' service agent)
+  roles/containerregistry.ServiceAgent to serviceAccount:service-1034397096264@containerregistry.iam.gserviceaccount.com on the project, after apis (Container Registry's service agent)
+  roles/pubsub.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-pubsub.iam.gserviceaccount.com on the project, after apis (Pub/Sub's service agent)
   roles/run.serviceAgent to serviceAccount:service-1034397096264@serverless-robot-prod.iam.gserviceaccount.com on the project, after apis (Cloud Run's service agent)
   roles/firestore.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-firestore.iam.gserviceaccount.com on the project, after database (Firestore's service agent)
+  roles/firebaserules.system to serviceAccount:service-1034397096264@firebase-rules.iam.gserviceaccount.com on the project, after projectBindings (late from the database: Firebase Rules' system account)
 `
 
 func TestInstallDryRunPrintsThePlanOfAFreshProject(t *testing.T) {
@@ -1136,7 +1147,7 @@ func TestInstallResumesTheUnfinishedRecordOfTheDatabase(t *testing.T) {
 
 func TestInstallPlanSaysWhichBindingsGoogleIsExpectedToAdd(t *testing.T) {
 	dry := Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true}
-	// In an organization (its policy decides the default service account's Editor): only Cloud Run's and Firestore's.
+	// In an organization (its policy decides the default service account's Editor): every other one.
 	g := newInstallRig(t)
 	g.s.Parent = "organizations/42"
 	code, out := g.run(t, dry)
@@ -1145,8 +1156,13 @@ func TestInstallPlanSaysWhichBindingsGoogleIsExpectedToAdd(t *testing.T) {
 	}
 	contains(t, out, "  + record install/record in database dmtr-europe-west1\n"+
 		"Turning APIs on and creating the database can make Google add bindings of its own: they are shown after those steps. Expected:\n"+
+		"  roles/cloudscheduler.serviceAgent to "+schedulerAgent+" on the project, after apis (Cloud Scheduler's service agent)\n"+
+		"  roles/cloudtasks.serviceAgent to "+tasksAgent+" on the project, after apis (Cloud Tasks' service agent)\n"+
+		"  roles/containerregistry.ServiceAgent to "+registryAgent+" on the project, after apis (Container Registry's service agent)\n"+
+		"  roles/pubsub.serviceAgent to "+pubsubAgent+" on the project, after apis (Pub/Sub's service agent)\n"+
 		"  roles/run.serviceAgent to "+runAgent+" on the project, after apis (Cloud Run's service agent)\n"+
-		"  roles/firestore.serviceAgent to "+firestoreAgent+" on the project, after database (Firestore's service agent)\n")
+		"  roles/firestore.serviceAgent to "+firestoreAgent+" on the project, after database (Firestore's service agent)\n"+
+		"  roles/firebaserules.system to "+rulesSystem+" on the project, after projectBindings (late from the database: Firebase Rules' system account)\n")
 	if strings.Contains(out, "roles/editor") {
 		t.Fatal(out)
 	}
@@ -1157,12 +1173,14 @@ func TestInstallPlanSaysWhichBindingsGoogleIsExpectedToAdd(t *testing.T) {
 	code, out = g.run(t, dry)
 	if code != 0 || !strings.HasSuffix(out, "  + record install/record in database dmtr-europe-west1\n"+
 		"Creating the database can make Google add bindings of its own: they are shown after that step. Expected:\n"+
-		"  roles/firestore.serviceAgent to "+firestoreAgent+" on the project, after database (Firestore's service agent)\n") {
+		"  roles/firestore.serviceAgent to "+firestoreAgent+" on the project, after database (Firestore's service agent)\n"+
+		"  roles/firebaserules.system to "+rulesSystem+" on the project, after projectBindings (late from the database: Firebase Rules' system account)\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 
-	// Firestore's service agent holding its role already (another database): nothing expected.
+	// Firestore's service agent and Firebase Rules' account holding their roles already (another database): nothing expected.
 	grantInFake(t, g.s, "roles/firestore.serviceAgent", firestoreAgent)
+	grantInFake(t, g.s, "roles/firebaserules.system", rulesSystem)
 	code, out = g.run(t, dry)
 	if code != 0 || !strings.HasSuffix(out, "  + record install/record in database dmtr-europe-west1\n"+
 		"Creating the database can make Google add bindings of its own: they are shown after that step.\n") {
@@ -1191,5 +1209,562 @@ func TestInstallWarnsOfTheDefaultServiceAccountsEditorAfterTheAPIs(t *testing.T)
 	code, out = g.run(t, europe)
 	if code != 0 || strings.Count(out, warning) != 1 || !strings.Contains(out, "dormeto-dev.\n"+warning+"Plan for") {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+const (
+	routerImage    = "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:0.34.0"
+	nextImage      = "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:0.35.0"
+	controllerName = "dmtr-europe-west1-controller"
+	wakerName      = "dmtr-europe-west1-waker"
+	jobName        = "dmtr-europe-west1-check"
+	controllerURL  = "https://dmtr-europe-west1-controller-1034397096264.europe-west1.run.app"
+	servicesPath   = "/v2/projects/dormeto-dev/locations/europe-west1/services/"
+)
+
+var withImage = Request{Project: "dormeto-dev", Region: "europe-west1", Image: routerImage, Yes: true}
+
+const routerPlan = "  + service " + controllerName + " (image " + routerImage + ", ingress all, invoker check on, 0 to 3 instances, 10 concurrent requests, timeout 900 s, 512 MiB, as " + routerSA + ")\n" +
+	"  + grant roles/run.invoker to " + routerMember + " on controller " + controllerName + "\n" +
+	"  + service " + wakerName + " (image " + routerImage + ", ingress internal and Cloud Load Balancing, invoker check off, 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB, as " + routerSA + ")\n" +
+	"  + network endpoint group " + wakerName + " (serverless, Cloud Run service " + wakerName + ")\n" +
+	"  + job " + jobName + " (*/5 * * * * Etc/UTC, attempt deadline 300 s, POST " + controllerURL + "/v1/check, OIDC of " + routerSA + ", audience " + controllerURL + ")\n" +
+	"  + record install/record in database dmtr-europe-west1\n"
+
+// newRouterRig is a rig whose Artifact Registry holds the router's images.
+func newRouterRig(t *testing.T) *installRig {
+	t.Helper()
+	g := newInstallRig(t)
+	g.s.Images[routerImage] = true
+	g.s.Images[nextImage] = true
+	return g
+}
+
+// routerInstalled is a rig with the router installed from routerImage.
+func routerInstalled(t *testing.T) *installRig {
+	t.Helper()
+	g := newRouterRig(t)
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	return g
+}
+
+// changes are the mutating calls since mark, as "<method> <path after the project's and the region's prefix>[?query]".
+func (g *installRig) changes(mark int) []string {
+	var got []string
+	for _, c := range g.s.Calls()[mark:] {
+		if c.Mutating() {
+			got = append(got, c.Method+" "+strings.TrimPrefix(c.URL, "https://"))
+		}
+	}
+	return got
+}
+
+func TestInstallImageDryRunPlansTheRouterAfterTheAccess(t *testing.T) {
+	g := newRouterRig(t)
+	r := withImage
+	r.Yes, r.DryRun = false, true
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + grant roles/iam.serviceAccountUser to "+routerMember+" on service account "+routerSA+"\n"+routerPlan)
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallWithoutImageDoesNotPlanTheRouter(t *testing.T) {
+	g := newRouterRig(t)
+	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	if code != 0 || strings.Contains(out, "service dmtr") || strings.Contains(out, "network endpoint group") || strings.Contains(out, "+ job") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallImageCreatesTheRouter(t *testing.T) {
+	g := newRouterRig(t)
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Checked: image "+routerImage+" is in Artifact Registry.\n",
+		"  ✓ cloudRun: created "+controllerName+", granted roles/run.invoker on it, created "+wakerName+" (invoker check off)\n"+
+			"      IAM + roles/run.invoker to "+routerMember+" on controller "+controllerName+" (Dormeto)\n"+
+			"  ✓ neg: created "+wakerName+"\n"+
+			"  ✓ job: created "+jobName+"\n"+
+			"  ✓ record: wrote install/record in database dmtr-europe-west1\n"+
+			"  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue\n"+
+			"  ✓ verified: both Cloud Run services ready, the controller's URL among its URLs, the network endpoint group, the job, /v1/health answering version 0.34.0\n"+
+			"Installed router dmtr-europe-west1 in project dormeto-dev, version 0.34.0.\n")
+
+	c, w := g.s.RunServices["europe-west1/"+controllerName], g.s.RunServices["europe-west1/"+wakerName]
+	if c == nil || w == nil {
+		t.Fatalf("services: %v", g.s.RunServices)
+	}
+	if c.Ingress != "INGRESS_TRAFFIC_ALL" || c.InvokerIamDisabled {
+		t.Errorf("controller %+v", c)
+	}
+	if w.Ingress != "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" || !w.InvokerIamDisabled {
+		t.Errorf("waker %+v", w)
+	}
+	for _, want := range []struct {
+		svc              *gcptest.RunService
+		maxInst, concurr int
+		timeout, memory  string
+		role             string
+	}{{c, 3, 10, "900s", "512Mi", "controller"}, {w, 10, 80, "120s", "256Mi", "waker"}} {
+		tmpl := want.svc.Template
+		ct := tmpl.Containers[0]
+		if tmpl.ServiceAccount != routerSA || tmpl.Scaling.MinInstanceCount != 0 || tmpl.Scaling.MaxInstanceCount != want.maxInst ||
+			tmpl.MaxInstanceRequestConcurrency != want.concurr || tmpl.Timeout != want.timeout || ct.Image != routerImage ||
+			ct.Resources.Limits["memory"] != want.memory || ct.Ports[0].ContainerPort != 8080 {
+			t.Errorf("%s template %+v", want.role, tmpl)
+		}
+		env := map[string]string{}
+		for _, e := range ct.Env {
+			env[e.Name] = e.Value
+		}
+		wantEnv := map[string]string{"DMT_ROLE": want.role, "DMT_PROJECT": "dormeto-dev", "DMT_PROJECT_NUMBER": "1034397096264",
+			"DMT_REGION": "europe-west1", "DMT_DATABASE": "dmtr-europe-west1", "DMT_QUEUE": "dmtr-europe-west1", "DMT_CONTROLLER_URL": controllerURL,
+			"DMT_SERVICE_ACCOUNT": routerSA, "DMT_WAKER_NEG": wakerName, "DMT_VERSION": "0.34.0"}
+		if len(env) != len(wantEnv) {
+			t.Errorf("%s env %v", want.role, env)
+		}
+		for k, v := range wantEnv {
+			if env[k] != v {
+				t.Errorf("%s env %s = %q, want %q", want.role, k, env[k], v)
+			}
+		}
+	}
+	if p := g.policyOf(t, "projects/dormeto-dev/locations/europe-west1/services/"+controllerName); !has(p, Grant{Role: "roles/run.invoker", Member: routerMember}) {
+		t.Errorf("controller's policy %+v", p)
+	}
+	if p := g.policyOf(t, "projects/dormeto-dev/locations/europe-west1/services/"+wakerName); len(p.Bindings) != 0 {
+		t.Errorf("waker's policy %+v", p)
+	}
+	neg := g.s.NEGs["europe-west1/"+wakerName]
+	if neg == nil || neg.NetworkEndpointType != "SERVERLESS" || neg.CloudRun.Service != wakerName {
+		t.Errorf("NEG %+v", neg)
+	}
+	job := g.s.Jobs["europe-west1/"+jobName]
+	if job == nil || job.Name != "projects/dormeto-dev/locations/europe-west1/jobs/"+jobName || job.Schedule != "*/5 * * * *" || job.TimeZone != "Etc/UTC" ||
+		job.AttemptDeadline != "300s" || job.HTTPTarget.URI != controllerURL+"/v1/check" || job.HTTPTarget.HTTPMethod != "POST" ||
+		job.HTTPTarget.OIDCToken.ServiceAccountEmail != routerSA || job.HTTPTarget.OIDCToken.Audience != controllerURL {
+		t.Errorf("job %+v", job)
+	}
+
+	rec := g.record(t)
+	if rec.Image != routerImage || rec.RouterVersion != "0.34.0" || rec.Running != "" {
+		t.Errorf("record %+v", rec)
+	}
+	for _, want := range []Resource{
+		{Kind: "service", Name: "projects/dormeto-dev/locations/europe-west1/services/" + controllerName},
+		{Kind: "service", Name: "projects/dormeto-dev/locations/europe-west1/services/" + wakerName},
+		{Kind: "neg", Name: "projects/dormeto-dev/regions/europe-west1/networkEndpointGroups/" + wakerName},
+		{Kind: "job", Name: "projects/dormeto-dev/locations/europe-west1/jobs/" + jobName},
+	} {
+		if !slices.Contains(rec.Resources, want) {
+			t.Errorf("record lacks %+v", want)
+		}
+	}
+	if !slices.Contains(rec.Grants, RecordGrant{Role: "roles/run.invoker", Member: routerMember, On: "controller"}) || len(rec.Grants) != 6 {
+		t.Errorf("grants %+v", rec.Grants)
+	}
+}
+
+func TestInstallImageCreatesInOrderControllerBindingWakerNEGJob(t *testing.T) {
+	g := routerInstalled(t)
+	var got []string
+	for _, c := range g.s.Mutations() {
+		if c.Host == "run.googleapis.com" || c.Host == "compute.googleapis.com" || c.Host == "cloudscheduler.googleapis.com" {
+			got = append(got, c.Method+" "+strings.TrimPrefix(c.URL, "https://"))
+		}
+	}
+	want := []string{
+		"POST run.googleapis.com/v2/projects/dormeto-dev/locations/europe-west1/services?serviceId=" + controllerName,
+		"POST run.googleapis.com" + servicesPath + controllerName + ":setIamPolicy",
+		"POST run.googleapis.com/v2/projects/dormeto-dev/locations/europe-west1/services?serviceId=" + wakerName,
+		"POST compute.googleapis.com/compute/v1/projects/dormeto-dev/regions/europe-west1/networkEndpointGroups",
+		"POST cloudscheduler.googleapis.com/v1/projects/dormeto-dev/locations/europe-west1/jobs",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestInstallImageAgainIsUpToDate(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withImage)
+	if code != 0 || !strings.HasSuffix(out, "Router dmtr-europe-west1 in project dormeto-dev is up to date: version 0.34.0.\n") || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m := g.changes(mark); len(m) != 0 {
+		t.Fatalf("changes: %v", m)
+	}
+}
+
+func TestInstallAnotherTagUpdatesOnlyTheTwoServices(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	r := withImage
+	r.Image = nextImage
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  ~ service "+controllerName+": image "+nextImage+", environment DMT_VERSION\n"+
+		"  ~ service "+wakerName+": image "+nextImage+", environment DMT_VERSION\n"+
+		"  ~ record install/record in database dmtr-europe-west1\n",
+		"  ✓ cloudRun: updated "+controllerName+", updated "+wakerName+"\n",
+		"/v1/health answering version 0.35.0\n", "Installed router dmtr-europe-west1 in project dormeto-dev, version 0.35.0.\n")
+	mask := "?updateMask=ingress,invokerIamDisabled,template"
+	want := []string{
+		"PATCH run.googleapis.com" + servicesPath + controllerName + mask,
+		"PATCH run.googleapis.com" + servicesPath + wakerName + mask,
+		"PATCH firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record",
+	}
+	if got := g.changes(mark); !slices.Equal(got, want) {
+		t.Fatalf("%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc.Template.Containers[0].Image != nextImage || svc.Env("DMT_VERSION") != "0.35.0" {
+			t.Errorf("%s %+v", name, svc.Template)
+		}
+	}
+	if rec := g.record(t); rec.Image != nextImage || rec.RouterVersion != "0.35.0" {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+func TestInstallWithoutImageLeavesAnInstalledRouterAlone(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, europe)
+	if code != 0 || !strings.Contains(out, "The access of router dmtr-europe-west1 in project dormeto-dev is up to date.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m := g.changes(mark); len(m) != 0 {
+		t.Fatalf("changes: %v", m)
+	}
+	if rec := g.record(t); rec.Image != routerImage {
+		t.Fatalf("record %+v", rec)
+	}
+}
+
+func TestInstallMissingImageStopsBeforeAnyChange(t *testing.T) {
+	g := newInstallRig(t)
+	code, out := g.run(t, withImage)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ image: "+routerImage+" is not in Artifact Registry\nNothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+	heads := callsOf(g.s.CallsTo("/manifests/0.34.0"), "HEAD")
+	if len(heads) != 1 || heads[0].URL != "https://europe-west1-docker.pkg.dev/v2/dormeto-dev/dormeto/router/manifests/0.34.0" {
+		t.Fatalf("%+v", heads)
+	}
+}
+
+func TestInstallImageNameBeyondArtifactRegistryIsAWarning(t *testing.T) {
+	g := newInstallRig(t)
+	r := withImage
+	r.Image = "docker.io/dormeto/router:0.34.0"
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! image docker.io/dormeto/router:0.34.0 is not on *-docker.pkg.dev: not checked\n",
+		"Installed router dmtr-europe-west1 in project dormeto-dev, version 0.34.0.\n")
+}
+
+func TestInstallImageManifestNotReadableIsAWarning(t *testing.T) {
+	for _, status := range []int{403, 401} {
+		g := newRouterRig(t)
+		g.s.Refuse(gcptest.Refusal{Method: "HEAD", Host: "europe-west1-docker.pkg.dev", Path: "/v2/", Code: status})
+		r := withImage
+		r.DryRun = true
+		code, out := g.run(t, r)
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, fmt.Sprintf("  ! image %s not checked: google: %d\n", routerImage, status), "Plan for")
+	}
+}
+
+func TestInstallImageFlagIsChecked(t *testing.T) {
+	g := newRouterRig(t)
+	for _, image := range []string{"europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router", "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router@sha256:abc", "localhost:5000/router"} {
+		r := withImage
+		r.Image = image
+		code, out := g.run(t, r)
+		if code != 2 || !strings.Contains(out, "--image: "+image+" has no tag: its tag is the router's version\n") {
+			t.Errorf("%q: exit %d:\n%s", image, code, out)
+		}
+	}
+	if c := g.s.Calls(); len(c) != 0 {
+		t.Fatalf("calls: %+v", c)
+	}
+}
+
+func TestInstallImageWithADigestChecksTheDigest(t *testing.T) {
+	g := newInstallRig(t)
+	image := "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:0.34.0@sha256:abc"
+	g.s.Images["europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:sha256:abc"] = true
+	r := withImage
+	r.Image = image
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if svc := g.s.RunServices["europe-west1/"+wakerName]; svc.Template.Containers[0].Image != image || svc.Env("DMT_VERSION") != "0.34.0" {
+		t.Fatalf("%+v", svc.Template)
+	}
+}
+
+func TestInstallImageTestsTheRoutersPermissionsToo(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range append(access.Needs("install"), access.Needs("install-router")...) {
+		g.s.Held[p] = p != "run.services.create" && p != "cloudscheduler.jobs.create"
+	}
+	code, out := g.run(t, withImage)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ install-router: missing cloudscheduler.jobs.create, run.services.create\nNothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallHealthVersionThatDiffersFailsTheVerification(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.HealthVersion = "0.33.0"
+	code, out := g.run(t, withImage)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ verification: "+controllerURL+"/v1/health answers version 0.33.0, not the image's 0.34.0\n")
+	if strings.Contains(out, "Installed router") {
+		t.Fatal(out)
+	}
+	// Run again, nothing differs to change: not "up to date" for all that.
+	code, out = g.run(t, withImage)
+	if code != 1 || strings.Contains(out, "up to date") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ verification: "+controllerURL+"/v1/health answers version 0.33.0, not the image's 0.34.0\n")
+}
+
+func TestVerificationNamesWhatIsWrongWithTheRouter(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	c := g.s.RunServices["europe-west1/"+controllerName]
+	c.URLs = []string{c.URI, "https://other-1034397096264.europe-west1.run.app"}
+	delete(g.s.Policies, "projects/dormeto-dev/locations/europe-west1/services/"+controllerName)
+	g.s.NEGs["europe-west1/"+wakerName].CloudRun.Service = "other"
+	g.s.Jobs["europe-west1/"+jobName].Schedule = "0 * * * *"
+	g.s.RunServices["europe-west1/"+wakerName].TerminalCondition = gcptest.RunCondition{Type: "Ready", State: "CONDITION_FAILED", Message: "the revision crashed"}
+	g.s.Unlock()
+	x := newRun(context.Background(), g.d, withImage)
+	x.number = "1034397096264"
+	rec := g.record(t)
+	p := g.projectPolicy(t)
+	x.rec, x.start = &rec, &p
+	_, err := x.verify()
+	if err == nil {
+		t.Fatal("verified")
+	}
+	contains(t, err.Error(), "service "+wakerName+" is not ready (the revision crashed)",
+		"the URL "+controllerURL+" is not among the controller's",
+		"controller "+controllerName+" lacks the grant of roles/run.invoker to "+routerMember,
+		"network endpoint group "+wakerName+" serves other, not "+wakerName,
+		"job "+jobName+" has other settings than */5 * * * * Etc/UTC")
+}
+
+func TestInstallUpdatesAServiceThatIsNotReady(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	g.s.RunServices["europe-west1/"+wakerName].TerminalCondition = gcptest.RunCondition{Type: "Ready", State: "CONDITION_FAILED", Message: "the revision crashed"}
+	g.s.Unlock()
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ service "+wakerName+": not ready (the revision crashed)\n", "  ✓ cloudRun: updated "+wakerName+"\n")
+}
+
+func TestInstallPutsBackTheServicesSettings(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	w := g.s.RunServices["europe-west1/"+wakerName]
+	w.Ingress, w.InvokerIamDisabled = "INGRESS_TRAFFIC_ALL", false
+	w.Template.Scaling.MaxInstanceCount = 100
+	w.Template.MaxInstanceRequestConcurrency = 1
+	w.Template.Timeout = "60s"
+	w.Template.ServiceAccount = "other@example.com"
+	w.Template.Containers[0].Resources.Limits["memory"] = "1Gi"
+	g.s.Unlock()
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ service "+wakerName+": ingress internal and Cloud Load Balancing, invoker check off, service account "+routerSA+", 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB\n")
+	if w.Ingress != "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" || !w.InvokerIamDisabled || w.Template.Scaling.MaxInstanceCount != 10 {
+		t.Fatalf("%+v", w)
+	}
+}
+
+func TestInstallPutsBackTheJobsSettingsAndTheInvokerBinding(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	g.s.Jobs["europe-west1/"+jobName].HTTPTarget.OIDCToken.Audience = "https://other"
+	delete(g.s.Policies, "projects/dormeto-dev/locations/europe-west1/services/"+controllerName)
+	g.s.Unlock()
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + grant roles/run.invoker to "+routerMember+" on controller "+controllerName+"\n",
+		"  ~ job "+jobName+": */5 * * * * Etc/UTC, attempt deadline 300 s, POST "+controllerURL+"/v1/check, OIDC of "+routerSA+", audience "+controllerURL+"\n",
+		"  ✓ cloudRun: granted roles/run.invoker on "+controllerName+"\n",
+		"  ✓ job: updated "+jobName+"\n")
+	got := g.changes(mark)
+	if !slices.Contains(got, "PATCH cloudscheduler.googleapis.com/v1/projects/dormeto-dev/locations/europe-west1/jobs/"+jobName+"?updateMask=schedule,timeZone,attemptDeadline,httpTarget") || len(got) != 3 {
+		t.Fatalf("%v", got)
+	}
+	if g.s.Jobs["europe-west1/"+jobName].HTTPTarget.OIDCToken.Audience != controllerURL {
+		t.Fatal("not updated")
+	}
+}
+
+func TestInstallStopsOnANetworkEndpointGroupOfAnotherService(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.Enabled = access.Load().APIs
+	neg := &gcptest.NEG{Name: wakerName, NetworkEndpointType: "SERVERLESS"}
+	neg.CloudRun.Service = "other"
+	g.s.NEGs["europe-west1/"+wakerName] = neg
+	code, out := g.run(t, withImage)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "The network endpoint group "+wakerName+" exists and serves other, not "+wakerName+": delete it, or choose another region, then run the same command again.\nNothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallShowsGooglesBindingsAfterTheRoutersSteps(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.GrantOnCreate = map[string][2]string{"service": {"roles/a.serviceAgent", "serviceAccount:service-1034397096264@gcp-sa-a.iam.gserviceaccount.com"},
+		"neg": {"roles/b.serviceAgent", "serviceAccount:service-1034397096264@gcp-sa-b.iam.gserviceaccount.com"},
+		"job": {"roles/c.serviceAgent", "serviceAccount:service-1034397096264@gcp-sa-c.iam.gserviceaccount.com"}}
+	code, out := g.run(t, withImage)
+	if code != 0 || strings.Contains(out, "IAM change not made") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out,
+		"      IAM + roles/a.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-a.iam.gserviceaccount.com on the project (Google, after cloudRun)\n",
+		"  ✓ neg: created "+wakerName+"\n      IAM + roles/b.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-b.iam.gserviceaccount.com on the project (Google, after neg)\n",
+		"  ✓ job: created "+jobName+"\n      IAM + roles/c.serviceAgent to serviceAccount:service-1034397096264@gcp-sa-c.iam.gserviceaccount.com on the project (Google, after job)\n")
+	rec := g.record(t)
+	for _, want := range []GoogleGrant{{Role: "roles/a.serviceAgent", Member: "serviceAccount:service-1034397096264@gcp-sa-a.iam.gserviceaccount.com", Step: "cloudRun"},
+		{Role: "roles/c.serviceAgent", Member: "serviceAccount:service-1034397096264@gcp-sa-c.iam.gserviceaccount.com", Step: "job"}} {
+		if !slices.Contains(rec.Google, want) {
+			t.Errorf("record lacks %+v: %+v", want, rec.Google)
+		}
+	}
+}
+
+func TestInstallNamesTheOrganizationPolicyThatRefusesTheWaker(t *testing.T) {
+	refusal := gcptest.Refusal{Host: "run.googleapis.com", Code: 400, Status: "FAILED_PRECONDITION",
+		Message: "Disabling the invoker IAM check violates the organization policy constraints/run.managed.requireInvokerIam."}
+	exception := "the organization policy run.managed.requireInvokerIam refuses the waker's invoker check off: ask your organization's policy administrator for an exception on project dormeto-dev (constraints/run.managed.requireInvokerIam not enforced there), the waker's ingress still admits only the load balancer"
+	cases := map[string]func(g *installRig) (Request, gcptest.Refusal){
+		"update": func(*installRig) (Request, gcptest.Refusal) {
+			r, f := withImage, refusal
+			r.Image = nextImage
+			f.Method, f.Path = "PATCH", servicesPath+wakerName
+			return r, f
+		},
+		"create": func(g *installRig) (Request, gcptest.Refusal) {
+			delete(g.s.RunServices, "europe-west1/"+wakerName)
+			f := refusal
+			f.Method, f.Path = "POST", "/v2/projects/dormeto-dev/locations/europe-west1/services"
+			return withImage, f
+		},
+	}
+	for name, prepare := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := routerInstalled(t)
+			r, f := prepare(g)
+			f.Times = 1
+			g.s.Refuse(f)
+			code, out := g.run(t, r)
+			if code != 1 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, "  ✗ cloudRun: "+exception+" (google: 400 FAILED_PRECONDITION: ", "Done: none. Not done: cloudRun, record. Run the same command again to continue.\n")
+			// The exception given, the same command continues.
+			code, out = g.run(t, r)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if rec := g.record(t); rec.Image != r.Image || rec.Running != "" {
+				t.Fatalf("%+v", rec)
+			}
+		})
+	}
+}
+
+func TestInstallKeepsThePreviousImageRecordedUntilBothServicesHaveTheNewOne(t *testing.T) {
+	g := routerInstalled(t)
+	r := withImage
+	r.Image = nextImage
+	g.s.Refuse(gcptest.Refusal{Method: "PATCH", Host: "run.googleapis.com", Path: servicesPath + wakerName, Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.run(t, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); rec.Image != routerImage || rec.Running != "cloudRun" {
+		t.Fatalf("%+v", rec)
+	}
+	mark := len(g.s.Calls())
+	code, out = g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.changes(mark); len(got) != 2 || !strings.HasPrefix(got[0], "PATCH run.googleapis.com"+servicesPath+wakerName) {
+		t.Fatalf("%v", got)
+	}
+	if rec := g.record(t); rec.Image != nextImage || rec.RouterVersion != "0.35.0" {
+		t.Fatalf("%+v", rec)
+	}
+}
+
+func TestInstallRecordsAnImageAlreadyDeployedByARunStoppedBeforeItsRecord(t *testing.T) {
+	g := routerInstalled(t)
+	rec := g.record(t)
+	rec.Image, rec.RouterVersion = "", ""
+	b, _ := json.Marshal(rec)
+	g.s.Lock()
+	g.s.Documents[recordDB+"/install/record"] = map[string]any{"data": map[string]any{"stringValue": string(b)}}
+	g.s.Unlock()
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ record install/record in database dmtr-europe-west1\n")
+	if rec := g.record(t); rec.Image != routerImage || rec.RouterVersion != "0.34.0" {
+		t.Fatalf("%+v", rec)
 	}
 }

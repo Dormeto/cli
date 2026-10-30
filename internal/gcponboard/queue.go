@@ -25,6 +25,7 @@ const (
 
 type googleQueue struct {
 	Name        string `json:"name"`
+	State       string `json:"state"`
 	RetryConfig struct {
 		MaxAttempts int    `json:"maxAttempts"`
 		MinBackoff  string `json:"minBackoff"`
