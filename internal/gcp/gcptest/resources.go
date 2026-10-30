@@ -530,6 +530,19 @@ func (s *Server) firestore(w http.ResponseWriter, r *http.Request, body []byte) 
 		})
 		return
 	}
+	if rest == "" && r.Method == http.MethodGet {
+		ids := make([]string, 0, len(s.Databases))
+		for id := range s.Databases {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		databases := []map[string]any{}
+		for _, id := range ids {
+			databases = append(databases, s.databaseBody(id, s.Databases[id]))
+		}
+		Reply(w, map[string]any{"databases": databases})
+		return
+	}
 	id, tail, _ := strings.Cut(strings.TrimPrefix(rest, "/"), "/")
 	if strings.HasPrefix(tail, "operations/") && r.Method == http.MethodGet {
 		s.poll(w, "projects/"+s.ProjectID+"/databases/"+id+"/"+tail)

@@ -1,16 +1,18 @@
 // Package gcptest is a fake Google Cloud for tests: an httptest.Server and an http.Client whose transport sends every
-// request for a *.googleapis.com host to it, so production code keeps its real URLs. It routes by host and path, holds
-// state the tests set and inspect, and records the calls made. Tasks that need more resources add routes with Route.
+// request for a *.googleapis.com, *.pkg.dev or *.run.app host to it, so production code keeps its real URLs. It routes by
+// host and path, holds state the tests set and inspect, and records the calls made. Tasks that need more resources add
+// routes with Route.
 //
-// Besides the project (its IAM policy, its permissions, its services, its billing), it holds what `dormeto gcp install` creates:
-// custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues, the
-// policies of service accounts and queues, and long-running operations, done after OperationPolls polls. A resource of
-// an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's side effects are played: enabling
-// run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the project, creating a Firestore
-// database grants roles/firestore.serviceAgent to Firestore's, DefaultEditor grants Editor to the Compute Engine default
-// service account when compute.googleapis.com is enabled, and AccountLag refuses
-// the first bindings naming a service account just created ("does not exist", IAM's eventual consistency). Refuse makes
-// any call fail before the handlers.
+// Besides the project (its IAM policy, its permissions, its services, its billing), it holds what `dormeto gcp install`
+// creates: custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues,
+// Cloud Run services, serverless network endpoint groups, Cloud Scheduler jobs, the policies of service accounts, queues
+// and services, and long-running operations, done after OperationPolls polls; and the images of Artifact Registry and the
+// controller's health. A resource of an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's
+// side effects are played: enabling run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the
+// project, creating a Firestore database grants roles/firestore.serviceAgent to Firestore's, DefaultEditor grants Editor
+// to the Compute Engine default service account when compute.googleapis.com is enabled, GrantOnCreate grants what a test
+// says when a router's resource is created, and AccountLag refuses the first bindings naming a service account just
+// created ("does not exist", IAM's eventual consistency). Refuse makes any call fail before the handlers.
 package gcptest
 
 import (
@@ -37,10 +39,10 @@ type Call struct {
 	Body   string
 }
 
-// Mutating tells whether the call may change something: anything but a GET, except the read-only POSTs
+// Mutating tells whether the call may change something: anything but a GET or a HEAD, except the read-only POSTs
 // (testIamPermissions, getIamPolicy).
 func (c Call) Mutating() bool {
-	if c.Method == http.MethodGet {
+	if c.Method == http.MethodGet || c.Method == http.MethodHead {
 		return false
 	}
 	return !strings.HasSuffix(c.Path, ":testIamPermissions") && !strings.HasSuffix(c.Path, ":getIamPolicy")
@@ -92,8 +94,21 @@ type Server struct {
 	Documents map[string]map[string]any
 	// Queues are the Cloud Tasks queues, by <region>/<queue>.
 	Queues map[string]*Queue
-	// Policies are the IAM policies of service accounts and queues, by resource name (projects/<id>/serviceAccounts/
-	// <email>, projects/<id>/locations/<region>/queues/<queue>).
+	// RunServices are the Cloud Run services, by <region>/<service>; NEGs the network endpoint groups, by <region>/<name>;
+	// Jobs the Cloud Scheduler jobs, by <region>/<job>.
+	RunServices map[string]*RunService
+	NEGs        map[string]*NEG
+	Jobs        map[string]*Job
+	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>.
+	Images map[string]bool
+	// HealthVersion is the version the controller's health answers instead of its service's DMT_VERSION.
+	HealthVersion string
+	// GrantOnCreate plays a binding Google adds to the project (role, member) when a resource of a kind (service, neg, job)
+	// is created.
+	GrantOnCreate map[string][2]string
+	// Policies are the IAM policies of service accounts, queues and Cloud Run services, by resource name
+	// (projects/<id>/serviceAccounts/<email>, projects/<id>/locations/<region>/queues/<queue>,
+	// projects/<id>/locations/<region>/services/<service>).
 	Policies map[string]map[string]any
 	// OperationPolls is the number of polls after which an operation is done (0: done when created). New sets 1.
 	OperationPolls int
@@ -127,6 +142,7 @@ func New(t testing.TB) *Server {
 		Roles:  map[string]*Role{}, ServiceAccounts: map[string]*ServiceAccount{}, TagKeys: map[string]*Tag{},
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
+		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -140,8 +156,8 @@ type redirect struct{ target *url.URL }
 
 func (r redirect) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := req.URL.Hostname()
-	if !strings.HasSuffix(host, ".googleapis.com") {
-		return nil, fmt.Errorf("gcptest: %s is not a googleapis.com host", host)
+	if !strings.HasSuffix(host, ".googleapis.com") && !strings.HasSuffix(host, ".pkg.dev") && !strings.HasSuffix(host, ".run.app") {
+		return nil, fmt.Errorf("gcptest: %s is not a googleapis.com, pkg.dev or run.app host", host)
 	}
 	out := req.Clone(req.Context())
 	out.URL.Scheme, out.URL.Host = r.target.Scheme, r.target.Host
@@ -250,6 +266,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.firestore(w, r, body)
 	case r.Host == "cloudtasks.googleapis.com":
 		s.cloudTasks(w, r, body)
+	case r.Host == "run.googleapis.com":
+		s.cloudRun(w, r, body)
+	case r.Host == "compute.googleapis.com" || r.Host == "www.googleapis.com":
+		s.compute(w, r, body)
+	case r.Host == "cloudscheduler.googleapis.com":
+		s.cloudScheduler(w, r, body)
+	case strings.HasSuffix(r.Host, "-docker.pkg.dev"):
+		s.manifest(w, r)
+	case strings.HasSuffix(r.Host, ".run.app"):
+		s.controller(w, r)
 	default:
 		Fail(w, 404, "NOT_FOUND", "gcptest: no route for "+r.Method+" "+full)
 	}
