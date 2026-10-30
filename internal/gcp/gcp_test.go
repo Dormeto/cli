@@ -503,3 +503,77 @@ func TestErrorNamesTheDisabledService(t *testing.T) {
 		t.Fatalf("%#v", err)
 	}
 }
+
+// audienceTokens says, in the identity token, the audience it was asked for.
+type audienceTokens struct{ fakeTokens }
+
+func (audienceTokens) IdentityToken(_ context.Context, audience string) (string, error) {
+	return "id-for-" + audience, nil
+}
+
+func TestInvokeSendsTheIdentityTokenOfTheAudience(t *testing.T) {
+	var gotAuth, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"version":"1.2.3"}`))
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), Tokens: audienceTokens{}}
+	var out struct{ Version string }
+	if err := c.Invoke(context.Background(), "POST", srv.URL, "https://svc", map[string]int{"a": 1}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer id-for-https://svc" || gotBody != `{"a":1}` || out.Version != "1.2.3" {
+		t.Fatalf("auth=%q body=%q out=%+v", gotAuth, gotBody, out)
+	}
+}
+
+func TestInvokeRetriesAReadAndSaysTheRefusal(t *testing.T) {
+	fakeClock(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<html>Forbidden</html>`))
+	}))
+	defer srv.Close()
+	err := newClient(srv).Invoke(context.Background(), "GET", srv.URL, "a", nil, nil)
+	if !IsDenied(err) || !strings.Contains(err.Error(), "Forbidden") || calls.Load() != 2 {
+		t.Fatalf("%v after %d calls", err, calls.Load())
+	}
+}
+
+func TestHeadAsksForTheMediaTypesWithTheAccessToken(t *testing.T) {
+	var gotMethod, gotAuth, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotAuth, gotAccept = r.Method, r.Header.Get("Authorization"), r.Header.Get("Accept")
+	}))
+	defer srv.Close()
+	if err := newClient(srv).Head(context.Background(), srv.URL, "a/b", "c/d"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "HEAD" || gotAuth != "Bearer tok" || gotAccept != "a/b, c/d" {
+		t.Fatalf("%q %q %q", gotMethod, gotAuth, gotAccept)
+	}
+}
+
+func TestHeadOfAMissingResourceIsNotFoundAndATransientAnswerIsRetried(t *testing.T) {
+	fakeClock(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	if err := newClient(srv).Head(context.Background(), srv.URL); !IsNotFound(err) || calls.Load() != 2 {
+		t.Fatalf("%v after %d calls", err, calls.Load())
+	}
+}

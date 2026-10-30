@@ -251,10 +251,10 @@ func transient(code int) bool {
 	return false
 }
 
-// reads tells that a request changes nothing, so sending it again is harmless: a GET (an operation's poll among them),
-// or one of the POSTs that only read (getIamPolicy, testIamPermissions).
+// reads tells that a request changes nothing, so sending it again is harmless: a GET (an operation's poll among them), a
+// HEAD, or one of the POSTs that only read (getIamPolicy, testIamPermissions).
 func reads(method, u string) bool {
-	if method == http.MethodGet {
+	if method == http.MethodGet || method == http.MethodHead {
 		return true
 	}
 	path, _, _ := strings.Cut(u, "?")
@@ -273,6 +273,22 @@ func (c *Client) sleep(ctx context.Context, d time.Duration) error {
 // new one from gcloud. A read answered 429, 500, 502, 503 or 504 is tried again up to 3 times, after 1 s, 2 s and 4 s;
 // a request that may change something is sent once.
 func (c *Client) Do(ctx context.Context, method, url string, in, out any) error {
+	return c.exchange(ctx, method, url, c.Tokens.AccessToken, "", in, out)
+}
+
+// Invoke is Do with an identity token for audience instead of the access token: a call of a Cloud Run service whose
+// invoker IAM check is on.
+func (c *Client) Invoke(ctx context.Context, method, url, audience string, in, out any) error {
+	token := func(ctx context.Context) (string, error) { return c.Tokens.IdentityToken(ctx, audience) }
+	return c.exchange(ctx, method, url, token, "", in, out)
+}
+
+// Head is Do's HEAD, asking for the media types of accept: nil when the resource is there.
+func (c *Client) Head(ctx context.Context, url string, accept ...string) error {
+	return c.exchange(ctx, http.MethodHead, url, c.Tokens.AccessToken, strings.Join(accept, ", "), nil, nil)
+}
+
+func (c *Client) exchange(ctx context.Context, method, url string, token func(context.Context) (string, error), accept string, in, out any) error {
 	var payload []byte
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -283,7 +299,7 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 	}
 	refreshed, retries := false, 0
 	for {
-		code, data, err := c.send(ctx, method, url, payload)
+		code, data, err := c.send(ctx, method, url, token, accept, payload)
 		if err != nil {
 			return err
 		}
@@ -311,9 +327,10 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 	}
 }
 
-// send sends one request (payload: its JSON body, nil for none) and returns the answer's code and body.
-func (c *Client) send(ctx context.Context, method, url string, payload []byte) (int, []byte, error) {
-	token, err := c.Tokens.AccessToken(ctx)
+// send sends one request (payload: its JSON body, nil for none; accept: its Accept header, "" for none) and returns the
+// answer's code and body.
+func (c *Client) send(ctx context.Context, method, url string, token func(context.Context) (string, error), accept string, payload []byte) (int, []byte, error) {
+	bearer, err := token(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -325,9 +342,12 @@ func (c *Client) send(ctx context.Context, method, url string, payload []byte) (
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+bearer)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
 	}
 	h := c.HTTP
 	if h == nil {
