@@ -29,6 +29,8 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 	}
 	runs := gcpRuns{check: ran("check"), install: ran("install"), status: ran("status")}
 	runs.uninstall = ran("uninstall")
+	runs.workloads = gcpWorkloadRuns{list: ran("workloads list"), show: ran("workloads show"), onboard: ran("workloads onboard"),
+		offboard: ran("workloads offboard"), nap: ran("workloads nap"), wake: ran("workloads wake")}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
 	root.AddCommand(newGcp(runs, "1.2.3"))
 	var out, errs bytes.Buffer

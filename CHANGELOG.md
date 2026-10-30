@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+- Google Cloud (router 0.34.0, the manager is unchanged): `dormeto gcp check`, `install`, `status` and `uninstall` for a
+  router `dmtr-<region>` in a project, and `dormeto gcp workloads list|show|onboard|offboard|nap|wake` through its
+  controller with your identity token. `check` is read-only and says, per command, which permissions you lack. `install`
+  checks them, prints every IAM binding it adds, applies, prints the policy difference after each step and records it;
+  with `--image` it installs the router too. `uninstall` removes exactly what `install` added, from the install record.
+  Every command takes `--gcloud-configuration`; exit codes as `dormeto install`.
+- `gcp workloads onboard --url-map <map> --backend-service <name>` asks the controller for a dry run, binds the tag
+  `dormeto=managed` to each VM and managed group it names as you (the router holds no permission to tag), then onboards
+  the workload awake. `--id` defaults to the backend service's name when it is a valid workload ID, else it is asked on a
+  terminal (exit 2 without one); `--idle-minutes` (5 to 1440), `--wait-seconds` (5 to 120) and `--hibernate true|false`
+  are the router's ranges, refused with exit 2 before any call. `offboard` removes the tag bindings after the controller
+  has restored the references, and `uninstall --force` does the same for each workload before it removes the tag.
+  The README has a Google Cloud section.
+
 ## 0.7.0
 
 - The hibernation of workloads' EC2 instances, set at its three levels (manager 0.19.0, routers 0.32.0): `dormeto

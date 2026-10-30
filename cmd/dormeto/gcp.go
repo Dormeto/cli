@@ -1,6 +1,6 @@
 package main
 
-// `dormeto gcp check`, `install`, `status` and `uninstall`: the flags read into a gcponboard.Request and the run called with the
+// `dormeto gcp check`, `install`, `status`, `uninstall` and `workloads` (gcp_workloads.go): the flags read into a gcponboard.Request and the run called with the
 // real dependencies — the tokens of gcloud (its active configuration, or --gcloud-configuration), HTTPS with a 30 s
 // timeout, the terminal's prompts when stdin is one, the user's cache directory ($XDG_CACHE_HOME, else ~/.cache) and
 // the CLI's version. Exit codes: 0; 1 when a command lacks a permission or Google refuses; 2 for a bad flag or a missing
@@ -25,14 +25,17 @@ import (
 type gcpRun func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int
 
 // gcpRuns are the runs of the gcp commands: internal/gcponboard's, or a test's.
-type gcpRuns struct{ check, install, status, uninstall gcpRun }
+type gcpRuns struct {
+	check, install, status, uninstall gcpRun
+	workloads                         gcpWorkloadRuns
+}
 
 // theGcpRuns are internal/gcponboard's.
-var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall}
+var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, workloads: theGcpWorkloadRuns}
 
 func newGcp(runs gcpRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version))
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version))
 	return cmd
 }
 

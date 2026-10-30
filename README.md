@@ -1306,6 +1306,62 @@ dormeto api PUT /discovery/config --data @discovery.json
   in all. Any status but 2xx prints `HTTP <status>` on stderr (the body still on stdout) and exits 1.
 - `--json` changes nothing: the body is the API's answer. It is accepted as every command accepts it.
 
+## Google Cloud
+
+From CLI 0.8.0, `dormeto gcp` installs and runs a Dormeto router in a Google Cloud project, with the account of your
+`gcloud` (its active configuration, or `--gcloud-configuration <name>`); nothing else is needed on your machine. The
+router naps Compute Engine VMs and managed instance groups behind a global external Application Load Balancer, and a
+visitor's first request wakes them. Every command takes `--project` (required) and, but `check` and `status`, `--region`
+(required: the router is `dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google
+refuses; 2 for a bad flag or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
+
+```sh
+dormeto gcp check --project my-project --region europe-west1
+dormeto gcp install --project my-project --region europe-west1 --image <registry>/router:0.34.0
+dormeto gcp workloads onboard --project my-project --region europe-west1 \
+  --url-map shop-map --backend-service shop --idle-minutes 30
+dormeto gcp workloads list --project my-project --region europe-west1
+dormeto gcp uninstall --project my-project --region europe-west1
+```
+
+- **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
+  otherwise, then the project's parent, the APIs already on and the warnings (the Compute Engine default service
+  account's Editor grant). `--json` prints the report.
+- **`gcp install`** checks your permissions first (a ✗ stops it with nothing changed), prints the plan (the APIs to turn
+  on, every IAM binding to add with its role, member, resource and condition, every resource to create), asks for
+  confirmation (`--yes` without a terminal, `--dry-run` prints the plan only), applies it, prints the IAM policy
+  difference after each step and verifies. It adds the APIs, the custom roles `dormetoRouter` and
+  `dormetoRouterBackends`, the service account `dmtr-<region>`, its grants, the secure tag `dormeto=managed` (the router
+  stops only VMs that carry it), the Firestore database and the Cloud Tasks queue `dmtr-<region>`, and records all of it,
+  and the bindings Google adds by itself, in the document `install/record` of the database. With `--image` it also
+  installs the router: the Cloud Run services `dmtr-<region>-controller` and `dmtr-<region>-waker`, the waker's network
+  endpoint group and the check job `dmtr-<region>-check` (every 5 minutes). Run again, it plans only the differences.
+  It never changes or removes a binding it did not add.
+- **`gcp status`** (read-only, `--json`) shows the router's record and live state: version, services, controller
+  health, queue, job, database and grants.
+- **`gcp uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while workloads are
+  onboarded (`--force` offboards each first, tag bindings included), keeps the roles and the tag while another router of
+  the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place.
+- **`gcp workloads`** call the router's controller with your identity token, so you need the Cloud Run invoker role on it
+  (`run.routes.invoke`; install gives it to its caller).
+
+| Command | What it does |
+|---|---|
+| `workloads list` | the router's workloads and their states |
+| `workloads show <id>` | one workload: state, URL map, backend service, waker backend service, settings, backends |
+| `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs and groups, onboard the workload awake |
+| `workloads offboard <id>` | the controller wakes it if needed and restores every reference, then the tag bindings are removed |
+| `workloads nap <id>`, `workloads wake <id>` | nap or wake it now |
+
+`--json` prints the controller's answer as it is. `onboard` first asks the controller for a dry run: a workload that is
+not eligible is refused with the reasons and nothing is changed (`--dry-run` stops there). Then it binds the tag
+`dormeto=managed` to each VM and managed group as you (the router itself holds no permission to tag, or it could tag any
+VM and stop it), then onboards. `--id` is the workload's ID (lowercase letters, digits and dashes, at most 40
+characters); it defaults to the backend service's name when that is a valid ID, else it is asked on a terminal and
+exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440), `--wait-seconds` (5 to 120) and `--hibernate
+true|false` (suspend the VMs that can be suspended instead of stopping them); a value out of its range exits 2 before
+any call. The permissions of `onboard` and `offboard` (the tag bindings of VMs and groups) are listed by `gcp check`.
+
 ## Building from source
 
 Go 1.26 or later; Node.js for the release scripts' tests; GoReleaser 2 for `make snapshot`. `make` lists the targets:
