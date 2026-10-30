@@ -74,15 +74,17 @@ func (s *stop) Error() string { return s.msg }
 
 // run is one install.
 type run struct {
-	ctx      context.Context
-	d        Deps
-	r        Request
-	n        names
-	number   string   // the project's number
-	parent   string   // the project's organization or folder, "" for none
-	account  string   // the caller, from gcloud
-	version  string   // the router's version: the tag of --image
-	features []string // the optional features of this run: --with's and the record's, sorted
+	ctx              context.Context
+	d                Deps
+	r                Request
+	n                names
+	number           string   // the project's number
+	parent           string   // the project's organization or folder, "" for none
+	account          string   // the caller, from gcloud
+	version          string   // the router's version: the tag of --image
+	recordedFeatures []string // the record's features at the start of the run
+	joining          []string // the features whose APIs the apis step turns on: in the record once it has
+	features         []string // the optional features of this run: --with's and the record's, sorted
 
 	turningOn []string        // the APIs off at the start: the apis step turns them on
 	turnedOn  bool            // the apis step ran: its APIs are on, though they may answer SERVICE_DISABLED for a while

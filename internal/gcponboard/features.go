@@ -6,10 +6,12 @@ package gcponboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
 
+	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 )
 
@@ -23,34 +25,48 @@ func featureSet(names ...[]string) []string {
 	return slices.Compact(out)
 }
 
-// useFeatures sets the run's features: the request's and the record's. It follows loadRecord. A feature the record lacks
-// makes the record differ; the APIs of the record's features that --with does not name are asked of Service Usage, as
-// the checks asked only for the request's.
+// useFeatures sets the run's features: the request's and the record's. It follows loadRecord. The APIs on are read when
+// the record holds a feature --with does not name, or APIs an earlier run asked for and was stopped before seeing them on
+// (they are recorded as this install's, whatever feature asked), and those of the record's features that are off are
+// turned on again. A feature joins the record only once its APIs are on (the apis step, or none to turn on): one Google
+// refuses must not block the runs after it.
 func (x *run) useFeatures() error {
 	x.features = featureSet(x.rec.Features, x.r.With)
-	if !slices.Equal(x.features, x.rec.Features) {
-		x.rec.Features = slices.Clone(x.features)
-		x.recChanged = true
-	}
+	x.recordedFeatures = slices.Clone(x.rec.Features)
 	var recorded []string
 	for _, name := range x.rec.Features {
 		if !slices.Contains(x.r.With, name) {
 			recorded = append(recorded, name)
 		}
 	}
-	if len(recorded) == 0 || x.number == "" {
-		return nil
-	}
-	on, err := enabledServices(x.ctx, x.d.Google, x.number)
-	if err != nil {
-		return err
-	}
-	for _, name := range recorded {
-		for _, api := range access.Load().Features[name].APIs {
-			if !slices.Contains(on, api) && !slices.Contains(x.turningOn, api) {
-				x.turningOn = append(x.turningOn, api)
+	if (len(recorded) > 0 || len(x.rec.Enabling) > 0) && x.number != "" {
+		on, err := enabledServices(x.ctx, x.d.Google, x.number)
+		if err != nil {
+			return err
+		}
+		for _, api := range everyAPI() {
+			if slices.Contains(on, api) && !slices.Contains(x.enabled, api) {
+				x.enabled = append(x.enabled, api)
 			}
 		}
+		for _, name := range recorded {
+			for _, api := range access.Load().Features[name].APIs {
+				if !slices.Contains(on, api) && !slices.Contains(x.turningOn, api) {
+					x.turningOn = append(x.turningOn, api)
+				}
+			}
+		}
+	}
+	for _, name := range featureSet(x.r.With) {
+		if slices.Contains(x.rec.Features, name) {
+			continue
+		}
+		if slices.ContainsFunc(access.Load().Features[name].APIs, func(api string) bool { return slices.Contains(x.turningOn, api) }) {
+			x.joining = append(x.joining, name)
+			continue
+		}
+		x.rec.Features = featureSet(x.rec.Features, []string{name})
+		x.recChanged = true
 	}
 	return nil
 }
@@ -107,17 +123,22 @@ func allRoleIDs() []string { return roleIDsWith(access.FeatureNames()) }
 // roleIDs are the custom roles of this run: the base ones and those of its features.
 func (x *run) roleIDs() []string { return roleIDsWith(x.features) }
 
-// recordedFeatures are the features of the router's install record in the database, none when the region is not given or
-// there is no record: what check tests besides --with.
-func recordedFeatures(x *run) []string {
+// recordedFeatures are the features of the router's install record in the database: none when the region has no record
+// (no database, or its API off); any other failure to read it is an error, as a feature not tested must not pass for
+// tested.
+func recordedFeatures(x *run) ([]string, error) {
 	var doc recordDocument
 	// Not through get: an API that is off is no reason to wait for it, a report only tests.
-	if err := x.d.Google.Do(x.ctx, http.MethodGet, x.recordURL(), nil, &doc); err != nil {
-		return nil
+	switch err := x.d.Google.Do(x.ctx, http.MethodGet, x.recordURL(), nil, &doc); {
+	case err == nil:
+	case gcp.IsNotFound(err), serviceDisabled(err):
+		return nil, nil
+	default:
+		return nil, err
 	}
 	var rec Record
-	if json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec) != nil {
-		return nil
+	if err := json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec); err != nil {
+		return nil, fmt.Errorf("%s in database %s: %w", recordPath, x.n.database, err)
 	}
-	return rec.Features
+	return rec.Features, nil
 }

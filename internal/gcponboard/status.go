@@ -280,6 +280,9 @@ func PrintStatus(w io.Writer, rep StatusReport) error {
 		}
 		if r.Record != nil {
 			fmt.Fprintf(&b, "  installed %s, updated %s by %s with the CLI %s\n", r.Record.InstalledAt, r.Record.UpdatedAt, r.Record.By, r.Record.CLI)
+			if len(r.Record.Features) > 0 {
+				fmt.Fprintf(&b, "  features %s\n", strings.Join(r.Record.Features, ", "))
+			}
 		}
 		for _, res := range r.Resources {
 			kind := res.Kind

@@ -43,6 +43,7 @@ func (x *run) turnOnAPIs() (string, error) {
 		}
 		x.recordAPIs(batch)
 	}
+	x.rec.Features = featureSet(x.rec.Features, x.joining)
 	if err := x.policyChanged("apis"); err != nil {
 		return "", err
 	}

@@ -206,11 +206,19 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 		return Report{}, fmt.Errorf("--with: %w", err)
 	}
 	// The features of the router's install record are tested too, when the region says which router.
+	warning := ""
 	if r.Region != "" {
-		x := newRun(ctx, d, r)
-		r.With = featureSet(r.With, recordedFeatures(x))
+		recorded, err := recordedFeatures(newRun(ctx, d, r))
+		if err != nil {
+			warning = "the install record is not read, so its features are not tested: " + err.Error()
+		}
+		r.With = featureSet(r.With, recorded)
 	}
-	return check(ctx, d, r, access.Commands())
+	rep, err := check(ctx, d, r, access.Commands())
+	if err == nil && warning != "" {
+		rep.Warnings = append(rep.Warnings, warning)
+	}
+	return rep, err
 }
 
 // check is Check for some commands only: their permissions alone are asked (install asks exactly what its steps need).

@@ -1,6 +1,9 @@
 package gcponboard
 
 import (
+	"encoding/json"
+	"github.com/Dormeto/cli/internal/gcp/gcptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -270,4 +273,221 @@ func TestInstallPutsBackTheControllersOldSettings(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "0 to 10 instances") || !strings.Contains(out, "timeout 1800 s") || !strings.Contains(out, "  ~ service "+controllerName) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
+}
+
+// ---- fix round 1
+
+func TestInstallStoppedFeatureRunLosesNoAPI(t *testing.T) {
+	g := newInstallRig(t)
+	g.run(t, europe)
+	ctx := stopDuringTheAPIsWait(t, g, false)
+	g.out.Reset()
+	if code := Install(ctx, g.d, withFeatures("cloud-sql")); code != 130 {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	g.s.FinishOperations()
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec := g.record(t)
+	if !listsResource(rec, "api", withSQL) || len(rec.Enabling) != 0 || len(rec.Features) != 0 {
+		t.Fatalf("record %+v", rec)
+	}
+	code, out = g.uninstall(t, uninstallEurope)
+	if code != 0 || !strings.Contains(out, "  API "+withSQL+"\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// holdingOnlyTheBase makes the caller hold what every command needs, but no feature's permission.
+func holdingOnlyTheBase(g *installRig) {
+	g.s.Lock()
+	defer g.s.Unlock()
+	g.s.HoldsAll, g.s.Held = false, map[string]bool{}
+	for _, c := range access.Commands() {
+		for _, p := range access.Needs(c) {
+			g.s.Held[p] = true
+		}
+	}
+}
+
+func TestUninstallForceChecksTheOffboardPermissionsOfTheRecordsFeatures(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, withFeatures("cloud-sql", "gke")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	holdingOnlyTheBase(g)
+	r := uninstallEurope
+	r.Force, r.DryRun = true, true
+	code, out := g.uninstall(t, r)
+	if code != 1 || !strings.Contains(out, "  ✗ offboard: missing") || !strings.Contains(out, "cloudsql.instances.deleteTagBinding") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	r.Force = false
+	if code, out := g.uninstall(t, r); code != 0 {
+		t.Fatalf("without --force: exit %d:\n%s", code, out)
+	}
+}
+
+func refuseTheRecord(g *installRig) {
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "firestore.googleapis.com",
+		Path: "/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record", Code: 500, Status: "INTERNAL", Message: "boom"})
+}
+
+func TestCheckWarnsWhenTheRecordCannotBeRead(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, withFeatures("gke")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	refuseTheRecord(g)
+	rep, err := Check(t.Context(), g.d, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(rep.Warnings, func(w string) bool { return strings.Contains(w, "install record") && strings.Contains(w, "boom") }) {
+		t.Fatalf("warnings %v", rep.Warnings)
+	}
+}
+
+func TestCheckWithoutARecordIsNotAWarning(t *testing.T) {
+	g := newInstallRig(t)
+	rep, err := Check(t.Context(), g.d, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	if err != nil || slices.ContainsFunc(rep.Warnings, func(w string) bool { return strings.Contains(w, "install record") }) {
+		t.Fatalf("%v %v", err, rep.Warnings)
+	}
+}
+
+func TestUninstallForceStopsWhenTheRecordCannotBeRead(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, withFeatures("gke")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	refuseTheRecord(g)
+	r := uninstallEurope
+	r.Force = true
+	mark := len(g.s.Mutations())
+	code, out := g.uninstall(t, r)
+	if code != 1 || !strings.Contains(out, "install record") || len(g.s.Mutations()) != mark {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallARefusedFeatureAPIDoesNotBlockLaterRuns(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: "serviceusage.googleapis.com", Path: "/v1/projects/1034397096264/services:batchEnable",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
+	code, out := g.run(t, withFeatures("cloud-sql"))
+	if code != 1 || !strings.Contains(out, "✗ apis") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); len(rec.Features) != 0 {
+		t.Fatalf("features %v", rec.Features)
+	}
+	code, out = g.run(t, europe)
+	if code != 0 || strings.Contains(out, "sqladmin") || strings.Contains(out, "dormetoRouterDatabases") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// With it again, once Google accepts, the feature is installed and recorded.
+	if code, out := g.run(t, withFeatures("cloud-sql")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); !slices.Equal(rec.Features, []string{"cloud-sql"}) {
+		t.Fatalf("features %v", rec.Features)
+	}
+}
+
+func TestInstallLeavesABindingOfAFeatureRoleThatWasThereBeforeToTheUninstall(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	read := Grant{Role: "projects/dormeto-dev/roles/" + sqlReadID, Member: routerMember}
+	grantInFake(t, g.s, read.Role, read.Member)
+	if code, out := g.run(t, withFeatures("cloud-sql")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec := g.record(t)
+	if !slices.ContainsFunc(rec.Before, func(b RecordBinding) bool { return b.Role == read.Role && slices.Contains(b.Members, read.Member) }) {
+		t.Fatalf("before %+v", rec.Before)
+	}
+	if slices.ContainsFunc(rec.Grants, func(x RecordGrant) bool { return x.Role == read.Role }) {
+		t.Fatalf("grants %+v", rec.Grants)
+	}
+	if code, out := g.uninstall(t, uninstallEurope); code != 0 || strings.Contains(out, "IAM difference") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if p := g.projectPolicy(t); !has(p, read) {
+		t.Fatal("the uninstall removed a binding it did not add")
+	}
+}
+
+func TestInstallKeepsAFeatureBindingOfItsOwnStoppedRun(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, withFeatures("cloud-sql")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// A run stopped after the binding, before it was recorded: the feature is in the record, the grant is not.
+	rec := g.record(t)
+	read := "projects/dormeto-dev/roles/" + sqlReadID
+	rec.Grants = slices.DeleteFunc(rec.Grants, func(x RecordGrant) bool { return x.Role == read })
+	b, _ := json.Marshal(rec)
+	in := map[string]any{"fields": map[string]any{"data": map[string]any{"stringValue": string(b)}}}
+	if err := g.d.Google.Do(t.Context(), "PATCH", firestoreV1+"projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record", in, nil); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := g.run(t, withFeatures("cloud-sql")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec = g.record(t)
+	if !slices.ContainsFunc(rec.Grants, func(x RecordGrant) bool { return x.Role == read }) ||
+		slices.ContainsFunc(rec.Before, func(x RecordBinding) bool { return x.Role == read }) {
+		t.Fatalf("record %+v", rec)
+	}
+}
+
+func TestInstallAddingAFeatureLeavesTheRecordsBeforeAlone(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	before := g.record(t).Before
+	if code, out := g.run(t, withFeatures("cloud-sql", "gke")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.record(t).Before; !reflect.DeepEqual(got, before) {
+		t.Fatalf("before %+v, was %+v", got, before)
+	}
+}
+
+func TestUninstallKeepsAFeatureRoleWhileAnotherRoutersRecordUsesIt(t *testing.T) {
+	g := newInstallRig(t)
+	other := withFeatures("cloud-sql")
+	other.Region = "europe-west4"
+	if code, out := g.run(t, withFeatures("cloud-sql")); code != 0 {
+		t.Fatalf("install: %s", out)
+	}
+	if code, out := g.run(t, other); code != 0 {
+		t.Fatalf("install 2: %s", out)
+	}
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "= role dormetoRouterDatabases kept: used by router dmtr-europe-west4\n")
+	if r := g.s.Roles["dormetoRouterDatabases"]; r == nil || r.Deleted {
+		t.Fatalf("role %+v", r)
+	}
+}
+
+func TestStatusShowsTheRecordsFeatures(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, withFeatures("gke", "cloud-sql")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	_, out := g.status(t, europeStatus)
+	contains(t, out, "  features cloud-sql, gke\n")
 }

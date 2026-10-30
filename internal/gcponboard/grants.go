@@ -17,7 +17,8 @@ import (
 // controller.
 type accessGrant struct {
 	Grant
-	On string
+	On      string
+	feature string // the feature that brings it, "" for a base grant
 }
 
 // fill replaces the manifest's placeholders.
@@ -29,12 +30,21 @@ func (x *run) fill(s string) string {
 // accessGrants are the router's grants, in the manifest's order.
 func (x *run) accessGrants() []accessGrant {
 	var out []accessGrant
-	grants := slices.Clone(access.Load().Router)
+	type featured struct {
+		access.Grant
+		feature string
+	}
+	var grants []featured
+	for _, g := range access.Load().Router {
+		grants = append(grants, featured{g, ""})
+	}
 	for _, name := range x.features {
-		grants = append(grants, access.Load().Features[name].Router...)
+		for _, g := range access.Load().Features[name].Router {
+			grants = append(grants, featured{g, name})
+		}
 	}
 	for _, g := range grants {
-		ag := accessGrant{Grant: Grant{Role: x.fill(g.Role), Member: x.n.member}, On: g.On}
+		ag := accessGrant{Grant: Grant{Role: x.fill(g.Role), Member: x.n.member}, On: g.On, feature: g.feature}
 		if g.Condition != nil {
 			ag.Condition = &Condition{Title: x.fill(g.Condition.Title), Expression: x.fill(g.Condition.Expression)}
 		}
@@ -103,7 +113,7 @@ func (x *run) planProjectBindings() (*step, error) {
 	var lines []string
 	for _, g := range x.grantsOn("project") {
 		if holds(x.policy, g.Grant) {
-			x.foundGrant(g)
+			x.foundProjectGrant(g)
 			continue
 		}
 		missing = append(missing, g)
@@ -222,6 +232,25 @@ func (x *run) found(kind, name string) {
 // foundGrant notes, while planning, a grant that is already there.
 func (x *run) foundGrant(g accessGrant) {
 	if x.rec.addGrant(recordGrant(g)) {
+		x.recChanged = true
+	}
+}
+
+// foundProjectGrant notes a grant of the project that is there already. One of a feature joining the record now, which the
+// record does not list, was not added by Dormeto: it is recorded as one of the project's bindings before (the uninstall
+// leaves it). A binding of a feature the record had is a stopped run's own (as the base grants are): it is the router's.
+func (x *run) foundProjectGrant(g accessGrant) {
+	listed := slices.ContainsFunc(x.rec.Grants, func(r RecordGrant) bool {
+		return r.On == g.On && grantKey(Grant{Role: r.Role, Member: r.Member, Condition: r.Condition}) == grantKey(g.Grant)
+	})
+	if g.feature == "" || listed || slices.Contains(x.recordedFeatures, g.feature) {
+		x.foundGrant(g)
+		return
+	}
+	before := x.rec.beforePolicy()
+	if !holds(before, g.Grant) {
+		Add(before, g.Grant)
+		x.rec.Before = bindingsOf(before)
 		x.recChanged = true
 	}
 }

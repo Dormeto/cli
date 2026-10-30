@@ -117,7 +117,11 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"With --image it also installs the router from that image, whose tag is its version: the Cloud Run services\n"+
 			"dmtr-<region>-controller and dmtr-<region>-waker, the controller's invoker binding, the waker's network endpoint\n"+
 			"group and the check job dmtr-<region>-check; then it checks that both services are ready and that the controller\n"+
-			"answers that version. A new image changes the two services only.",
+			"answers that version. A new image changes the two services only.\n\n"+
+			"With --with cloud-sql,gke it also installs the optional access of those features: their APIs, their custom\n"+
+			"roles (dormetoRouterDatabasesRead and dormetoRouterDatabases; dormetoRouterKubernetes) and the router's grants,\n"+
+			"kept in the install record. Without it, neither API is turned on (Google then adds service agents of its own). A\n"+
+			"later run with more features adds them; a run without --with keeps the record's; only uninstall removes them.",
 		&f, []string{"project", "region"}, version, run)
 	fl := cmd.Flags()
 	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
@@ -158,7 +162,7 @@ func newGcpUninstall(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
 	fl.BoolVar(&f.force, "force", false, "offboard the onboarded workloads first")
-	withFlag(cmd, &f, "also test the offboard permissions of these features with --force (the uninstall removes every feature the install record lists)")
+	withFlag(cmd, &f, "only validated and, with --force, tests these features' offboard permissions too: the uninstall always removes every feature the install record lists and tests theirs")
 	return cmd
 }
 

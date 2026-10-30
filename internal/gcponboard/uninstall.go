@@ -76,7 +76,16 @@ func (x *run) uninstallChecks() error {
 	if x.r.Force {
 		commands = append(commands, "offboard")
 	}
-	rep, err := check(x.ctx, x.d, x.r, commands)
+	r := x.r
+	if x.r.Force {
+		// The record is read after the checks; its features' offboard permissions are asked too.
+		recorded, err := recordedFeatures(x)
+		if err != nil {
+			return fmt.Errorf("the install record is not read, so its features' offboard permissions are not tested: %w", err)
+		}
+		r.With = featureSet(x.r.With, recorded)
+	}
+	rep, err := check(x.ctx, x.d, r, commands)
 	if err != nil {
 		return err
 	}
