@@ -206,3 +206,21 @@ func TestReadmePermissionsCoverTheAdaptersOperations(t *testing.T) {
 		}
 	}
 }
+
+func TestReadmeGoogleCloudSaysWhoHoldsTheInvokerRoleAndHowLongGoogleHoldsDeletedNames(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	if strings.Contains(text, "install gives it to its caller") {
+		t.Error("install grants the invoker role only to the router's service account")
+	}
+	for _, want := range []string{
+		"the controller's invoker binding (`roles/run.invoker`, to the router's service account only)",
+		"the waker's invoker check off",
+		"`roles/run.invoker` on the controller",
+		"a deleted queue's name blocked for up to 3 days",
+		"a deleted database's ID for about 5 minutes",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+}

@@ -1334,16 +1334,23 @@ dormeto gcp uninstall --project my-project --region europe-west1
   `dormetoRouterBackends`, the service account `dmtr-<region>`, its grants, the secure tag `dormeto=managed` (the router
   stops only VMs that carry it), the Firestore database and the Cloud Tasks queue `dmtr-<region>`, and records all of it,
   and the bindings Google adds by itself, in the document `install/record` of the database. With `--image` it also
-  installs the router: the Cloud Run services `dmtr-<region>-controller` and `dmtr-<region>-waker`, the waker's network
-  endpoint group and the check job `dmtr-<region>-check` (every 5 minutes). Run again, it plans only the differences.
-  It never changes or removes a binding it did not add.
+  installs the router: the Cloud Run services `dmtr-<region>-controller`, with the controller's invoker binding
+  (`roles/run.invoker`, to the router's service account only), and `dmtr-<region>-waker`, with the waker's invoker check off
+  (its ingress admits only the load balancer), the waker's network endpoint group and the check job `dmtr-<region>-check`
+  (every 5 minutes). Run again, it plans only the differences, and shows the project's bindings its record does not
+  explain, recording those of Google's service agents. It never changes or removes a binding it did not add.
 - **`gcp status`** (read-only, `--json`) shows the router's record and live state: version, services, controller
   health, queue, job, database and grants.
 - **`gcp uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while workloads are
   onboarded (`--force` offboards each first, tag bindings included), keeps the roles and the tag while another router of
-  the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place.
-- **`gcp workloads`** call the router's controller with your identity token, so you need the Cloud Run invoker role on it
-  (`run.routes.invoke`; install gives it to its caller).
+  the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place. It prints every IAM
+  change and warns of what the project's policy holds at the end beyond its bindings from before the install and Google's.
+  A tag Google refuses to delete, still bound, is left and the record kept: run the same command again to finish. To
+  reinstall in the same region, wait: Google may keep a deleted queue's name blocked for up to 3 days (a create can appear
+  to succeed in that window, and `gcp install` then says so), and a deleted database's ID for about 5 minutes.
+- **`gcp workloads`** call the router's controller with your identity token, so you need `run.routes.invoke` on it
+  (`gcp check` says whether you hold it). `gcp install` does not give it to you: it grants the role to the router's
+  service account only, so ask for `roles/run.invoker` on the controller if you lack it.
 
 | Command | What it does |
 |---|---|
