@@ -856,3 +856,19 @@ func TestUninstallDoesNotNameThatWayOutWhenTheControllerAnswers(t *testing.T) {
 		t.Fatalf("%s", out)
 	}
 }
+
+func TestUninstallForceGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig", "id": "222"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: groupParent, TagValue: g.tagValue(t)}}
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: zoneHost, Path: "/v3/tagBindings", Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! the tag bindings of vm web-1 (europe-west1-b) are not read")
+	g.nothingLeft(t, "europe-west1")
+}

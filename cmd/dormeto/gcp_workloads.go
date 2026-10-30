@@ -29,7 +29,8 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 		newGcpWorkloadsOne("offboard", "Offboard a workload and remove its tag bindings",
 			"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
 				"unbound from its VMs and groups, as you. A workload that cannot wake is refused; --force offboards it anyway and\n"+
-				"leaves its VMs and groups down (they are listed).", runs.offboard, version, true),
+				"leaves its VMs and groups down (they are listed). --force passes only a failed wake: a workload still NAPPING or\n"+
+				"WAKING is refused as busy, with or without it, until that ends or the router's check fails it.", runs.offboard, version, true),
 		newGcpWorkloadsOne("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
 		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false))
 	return cmd

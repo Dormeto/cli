@@ -611,3 +611,14 @@ func TestAControllersLongRefusalIsShownWhole(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestIsAlreadyExistsTellsItFromAnAbortedConflict(t *testing.T) {
+	if !IsAlreadyExists(&Error{Code: 409, Status: "ALREADY_EXISTS"}) {
+		t.Error("ALREADY_EXISTS")
+	}
+	for _, err := range []error{&Error{Code: 409, Status: "ABORTED"}, &Error{Code: 409}, &Error{Code: 400, Status: "ALREADY_EXISTS"}, errors.New("x"), nil} {
+		if IsAlreadyExists(err) {
+			t.Errorf("%v", err)
+		}
+	}
+}

@@ -272,7 +272,7 @@ func (x *run) show() error {
 	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodGet, path, nil, &raw); err != nil {
-		return err
+		return errors.New(refusal(err))
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Workload %s: %s", w.ID, w.State)
@@ -322,21 +322,31 @@ func (x *run) moves(verb string) error {
 	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodPost, path+"/"+verb, nil, &raw); err != nil {
-		return err
+		return errors.New(refusal(err))
 	}
 	return x.print(raw, func(w workload) {
+		// The controller acts only from another state, and answers at once: a workload there already was asked nothing.
+		if there := map[string]string{"nap": "ASLEEP", "wake": "AWAKE"}[verb]; w.State == there {
+			x.say("Workload %s is already %s: nothing was asked.", w.ID, strings.ToLower(there))
+			return
+		}
 		switch {
 		case verb == "wake" && w.State == "NAPPING":
 			x.say("Wake of workload %s asked while it is napping: the wake is kept and runs once the nap ends; current state: %s.", w.ID, w.State)
 		default:
 			x.say("%s of workload %s asked: the controller runs it through Cloud Tasks; current state: %s.", strings.ToUpper(verb[:1])+verb[1:], w.ID, w.State)
 		}
-		follow := fmt.Sprintf("dormeto gcp workloads show %s --project %s --region %s", w.ID, x.n.project, x.n.region)
-		if x.r.Configuration != "" {
-			follow += " --gcloud-configuration " + x.r.Configuration
-		}
-		x.say("Follow it with: %s", follow)
+		x.say("Follow it with: %s", x.showCommand(w.ID))
 	})
+}
+
+// showCommand is the command that shows a workload.
+func (x *run) showCommand(id string) string {
+	show := fmt.Sprintf("dormeto gcp workloads show %s --project %s --region %s", id, x.n.project, x.n.region)
+	if x.r.Configuration != "" {
+		show += " --gcloud-configuration " + x.r.Configuration
+	}
+	return show
 }
 
 // onboardingIn is what the controller takes to onboard a workload, and to dry run it.
@@ -450,7 +460,15 @@ func (x *run) onboard() error {
 		}
 	}
 	if err := x.controller(http.MethodPost, "/v1/workloads", in, &raw); err != nil {
-		return fmt.Errorf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoBindings(created, value))
+		if refused(err) {
+			return fmt.Errorf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoBindings(created, value))
+		}
+		// A lost answer says nothing of what the controller did: untagged, an onboarded workload could not be woken.
+		code := 1
+		if x.ctx.Err() != nil {
+			code = exitInterrupted
+		}
+		return &stop{code, fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. The tag bindings stay.\nCheck with: %s\nNot there, run the same command again: a tag bound already is not an error.", refusal(err), x.showCommand(in.ID))}
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Onboarded workload %s: %s", w.ID, w.State)
@@ -461,12 +479,19 @@ func (x *run) onboard() error {
 	})
 }
 
+// refused tells that the controller's call was answered with a refusal (4xx): nothing was done. A 5xx or no answer at all
+// says nothing of what was.
+func refused(err error) bool {
+	var e *gcp.Error
+	return errors.As(err, &e) && e.Code >= 400 && e.Code < 500
+}
+
 // tagBind binds the tag value to a VM or a group, as the operator, in the resource's location. A binding there already
-// (409) is not this run's: made says whether this call created it.
+// (409 ALREADY_EXISTS) is not this run's: made says whether this call created it. Another 409 (ABORTED) bound nothing.
 func (x *run) tagBind(t target, value string) (made bool, err error) {
 	var op longOperation
 	err = x.call(http.MethodPost, t.base()+"tagBindings", map[string]string{"parent": t.parent(x.number), "tagValue": value}, &op)
-	if gcp.IsConflict(err) {
+	if gcp.IsAlreadyExists(err) {
 		return false, nil
 	}
 	if err != nil {
@@ -696,13 +721,19 @@ func (x *run) planPendingOffboards(listed []workloadRef) *step {
 	}}
 }
 
-// unbind removes the binding of the tag value from a VM or a group; false when there was none.
+// unbind removes the binding of the tag value from a VM or a group; false when there was none. Resource Manager answers
+// 403 for a resource that does not exist (the permission being held, as the checks proved; see tag): a VM deleted by hand
+// is warned of, on the error stream (the answer may be JSON), and the run goes on.
 func (x *run) unbind(t target, value string) (bool, error) {
 	var list struct {
 		TagBindings []struct{ Name, TagValue string } `json:"tagBindings"`
 	}
 	if err := x.call(http.MethodGet, t.base()+"tagBindings?parent="+url.QueryEscape(t.parent(x.number)), nil, &list); err != nil {
 		if gcp.IsNotFound(err) {
+			return false, nil
+		}
+		if gcp.IsDenied(err) && !serviceDisabled(err) {
+			fmt.Fprintf(x.d.Err, "  ! the tag bindings of %s are not read (%s): it may be gone, going on\n", t.label, refusal(err))
 			return false, nil
 		}
 		return false, err

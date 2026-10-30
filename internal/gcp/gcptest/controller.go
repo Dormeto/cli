@@ -56,6 +56,13 @@ func (s *Server) bound(value string) bool {
 	return slices.ContainsFunc(s.TagBindings, func(b TagBinding) bool { return b.TagValue == value })
 }
 
+// Cut closes the connection without an answer: the client's call fails, whatever the server did.
+func Cut(w http.ResponseWriter) {
+	if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+		conn.Close()
+	}
+}
+
 func controllerFail(w http.ResponseWriter, code int, reason, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -198,6 +205,10 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,
 		"wakerBackendService": "dmtr-fake-" + id, "settings": in.Settings}
+	if s.AnswerOnboarding != nil {
+		s.AnswerOnboarding(w)
+		return
+	}
 	Reply(w, s.workloadBody(id))
 }
 

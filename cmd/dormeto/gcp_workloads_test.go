@@ -100,3 +100,12 @@ func TestGcpWorkloadsOffboardForceReadsIntoTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
 }
+
+func TestGcpWorkloadsOffboardHelpSaysForceDoesNotPassABusyWorkload(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "workloads", "offboard", "--help")
+	for _, want := range []string{"NAPPING", "WAKING", "busy", "the router's check"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%d %s lacks %s", code, out, want)
+		}
+	}
+}

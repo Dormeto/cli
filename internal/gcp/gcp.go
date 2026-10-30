@@ -193,6 +193,12 @@ func IsNotFound(err error) bool { e := asError(err); return e != nil && e.Code =
 // IsConflict is a 409.
 func IsConflict(err error) bool { e := asError(err); return e != nil && e.Code == 409 }
 
+// IsAlreadyExists is a 409 whose status is ALREADY_EXISTS (a 409 may also be ABORTED: the call lost a race).
+func IsAlreadyExists(err error) bool {
+	e := asError(err)
+	return e != nil && e.Code == 409 && e.Status == "ALREADY_EXISTS"
+}
+
 // IsDenied is a 403.
 func IsDenied(err error) bool { e := asError(err); return e != nil && e.Code == 403 }
 

@@ -1,8 +1,10 @@
 package gcponboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -695,5 +697,160 @@ func TestWorkloadsOffboardForceTriesThePlainDeleteFirst(t *testing.T) {
 	}
 	if got := g.controllerCalls(mark); slices.Contains(got, "DELETE /v1/workloads/shop?force=true") {
 		t.Fatalf("%v", got)
+	}
+}
+
+func TestWorkloadsNapAndWakeSayAlreadyWhenNothingWasAsked(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.ID = "shop"
+	for _, c := range []struct {
+		state string
+		run   func(context.Context, Deps, Request) int
+		want  string
+	}{{"ASLEEP", WorkloadsNap, "Workload shop is already asleep: nothing was asked.\n"}, {"AWAKE", WorkloadsWake, "Workload shop is already awake: nothing was asked.\n"}} {
+		g.s.Workloads["shop"] = c.state
+		code, out := g.call(t, c.run, r)
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, c.want)
+		if strings.Contains(out, "Cloud Tasks") || strings.Contains(out, "Follow it") {
+			t.Fatalf("%s", out)
+		}
+	}
+}
+
+func TestWorkloadsWakeDuringAWakeSaysTheControllersRefusalAlone(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "WAKING"
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsWake, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is WAKING\n")
+	if strings.Contains(out, "google: 409") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestWorkloadsShowSaysTheControllersRefusalAlone(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.ID = "ghost"
+	code, out := g.call(t, WorkloadsShow, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "no workload ghost\n")
+	if strings.Contains(out, "google: 404") {
+		t.Fatalf("%s", out)
+	}
+}
+
+// A lost race on the binding (409 ABORTED) leaves the VM or group untagged: it is not "bound already".
+func TestWorkloadsOnboardStopsOnABindingAbortedRatherThanTakeItAsBound(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: regionHost, Path: "/v3/tagBindings", Times: 1, Code: 409, Status: "ABORTED", Message: "try again"})
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "the tag is not bound to group web-mig (europe-west1)", "try again", "vm web-1 (europe-west1-b)")
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("bindings %v workloads %v", g.bindings(), g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardKeepsTheBindingsWhenTheControllersAnswerIsLost(t *testing.T) {
+	for name, answer := range map[string]func(w http.ResponseWriter){
+		"connection": gcptest.Cut,
+		"gateway":    func(w http.ResponseWriter) { gcptest.Fail(w, 502, "", "bad gateway") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newWorkloadsRig(t)
+			g.s.AnswerOnboarding = answer
+			r := shopOnboarding
+			r.Configuration = "c"
+			code, out := g.call(t, WorkloadsOnboard, r)
+			if code != 1 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, "the workload may be onboarded", "The tag bindings stay", "dormeto gcp workloads show shop --project dormeto-dev --region europe-west1 --gcloud-configuration c")
+			if strings.Contains(out, "are removed") {
+				t.Fatalf("%s", out)
+			}
+			if len(g.bindings()) != 2 || g.s.Workloads["shop"] != "AWAKE" {
+				t.Fatalf("bindings %v workloads %v", g.bindings(), g.s.Workloads)
+			}
+		})
+	}
+}
+
+func TestWorkloadsOnboardInterruptedInTheControllersCallKeepsTheBindingsAndSaysSo(t *testing.T) {
+	g := newWorkloadsRig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g.s.AnswerOnboarding = func(w http.ResponseWriter) { cancel(); gcptest.Cut(w) }
+	g.out.Reset()
+	code := WorkloadsOnboard(ctx, g.d, shopOnboarding)
+	out := g.out.String()
+	if code != 130 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "the workload may be onboarded", "The tag bindings stay")
+	if len(g.bindings()) != 2 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+}
+
+const forbidden = "Permission denied on the resource (or it may not exist)."
+
+func TestWorkloadsOffboardGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.failingToWake(t)
+	g.s.WakeFails["shop"] = false
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: groupParent, TagValue: g.tagValue(t)}}
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: zoneHost, Path: "/v3/tagBindings", Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
+	r := workloadsEurope
+	r.ID, r.JSON = "shop", true
+	var errs bytes.Buffer
+	g.d.Err = &errs
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s\n%s", code, out, errs.String())
+	}
+	// The warning is the error stream's: the answer stays JSON.
+	var got struct{ Untagged []string }
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !slices.Equal(got.Untagged, []string{"group web-mig (europe-west1)"}) {
+		t.Fatalf("%v: %s", err, out)
+	}
+	contains(t, errs.String(), "  ! the tag bindings of vm web-1 (europe-west1-b) are not read", "it may be gone", forbidden)
+	if len(g.bindings()) != 0 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Fatalf("the file stays: %v", err)
+	}
+}
+
+// SERVICE_DISABLED is a 403 too: it says nothing of the VM.
+func TestWorkloadsOffboardStopsOnAnAPIOffRatherThanTakeTheVMAsGone(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: g.tagValue(t)}}
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: zoneHost, Path: "/v3/tagBindings", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "off", Reason: "SERVICE_DISABLED"})
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "run the same command again to finish")
+	if len(g.bindings()) != 1 {
+		t.Fatalf("bindings %v", g.bindings())
 	}
 }
