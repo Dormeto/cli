@@ -219,7 +219,7 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 			// --force is what asked for this step: a workload that cannot wake is offboarded with its backends left down.
 			_, left, err := x.offboardWorkload(w.ID, true)
 			if err != nil && !gcp.IsNotFound(err) {
-				return "", fmt.Errorf("workload %s: %w", w.ID, err)
+				return "", fmt.Errorf("workload %s: %s", w.ID, refusal(err))
 			}
 			if len(left) > 0 {
 				x.say("  ! workload %s is offboarded with its backends left down: %s", w.ID, strings.Join(leftDown(left), ", "))

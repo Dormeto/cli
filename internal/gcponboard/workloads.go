@@ -153,8 +153,9 @@ func WorkloadsOffboard(ctx context.Context, d Deps, r Request) int {
 	return x.workloadsEnd(x.offboard())
 }
 
-// workloadsEnd is the exit code of a workloads run: its stop's, 130 when interrupted, else 1 with the error. Unlike the
-// install's, it never says nothing was changed: an onboarding that failed after the tags says what it did.
+// workloadsEnd is the exit code of a workloads run: its stop's, 130 when interrupted, else 1 with the error, a refusal
+// reading the same in every command. Unlike the install's, it never says nothing was changed: an onboarding that failed
+// after the tags says what it did.
 func (x *run) workloadsEnd(err error) int {
 	var s *stop
 	switch {
@@ -169,7 +170,7 @@ func (x *run) workloadsEnd(err error) int {
 		fmt.Fprintln(x.d.Err, "Interrupted.")
 		return exitInterrupted
 	}
-	fmt.Fprintln(x.d.Err, err)
+	fmt.Fprintln(x.d.Err, refusal(err))
 	return 1
 }
 
@@ -272,7 +273,7 @@ func (x *run) show() error {
 	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodGet, path, nil, &raw); err != nil {
-		return errors.New(refusal(err))
+		return err
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Workload %s: %s", w.ID, w.State)
@@ -322,7 +323,7 @@ func (x *run) moves(verb string) error {
 	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodPost, path+"/"+verb, nil, &raw); err != nil {
-		return errors.New(refusal(err))
+		return err
 	}
 	return x.print(raw, func(w workload) {
 		// The controller acts only from another state, and answers at once: a workload there already was asked nothing.

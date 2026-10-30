@@ -854,3 +854,47 @@ func TestWorkloadsOffboardStopsOnAnAPIOffRatherThanTakeTheVMAsGone(t *testing.T)
 		t.Fatalf("bindings %v", g.bindings())
 	}
 }
+
+func TestWorkloadsListOffboardAndOnboardSayTheControllersRefusalAlone(t *testing.T) {
+	refused := func(method, path string) gcptest.Refusal {
+		return gcptest.Refusal{Method: method, Host: controllerHost, Path: path, Code: 409, Status: "ABORTED", Message: "the controller says no", Reason: "busy"}
+	}
+	cases := map[string]struct {
+		run     func(context.Context, Deps, Request) int
+		r       Request
+		refusal gcptest.Refusal
+	}{
+		"list":          {WorkloadsList, workloadsEurope, refused("GET", "/v1/workloads")},
+		"offboard read": {WorkloadsOffboard, Request{Project: "dormeto-dev", Region: "europe-west1", ID: "shop"}, refused("GET", "/v1/workloads/shop")},
+		"offboard":      {WorkloadsOffboard, Request{Project: "dormeto-dev", Region: "europe-west1", ID: "shop"}, refused("DELETE", "/v1/workloads/shop")},
+		"onboard":       {WorkloadsOnboard, shopOnboarding, refused("POST", "/v1/workloads")},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newWorkloadsRig(t)
+			if name != "onboard" {
+				g.s.Workloads["shop"] = "AWAKE"
+			}
+			g.s.Refuse(c.refusal)
+			code, out := g.call(t, c.run, c.r)
+			if code != 1 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, "the controller says no\n")
+			if strings.Contains(out, "google: ") {
+				t.Fatalf("%s", out)
+			}
+		})
+	}
+}
+
+func TestWorkloadsOffboardOfAnUnknownWorkloadSaysTheControllersRefusalAlone(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.ID = "ghost"
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 || strings.Contains(out, "google: ") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "no workload ghost\n")
+}

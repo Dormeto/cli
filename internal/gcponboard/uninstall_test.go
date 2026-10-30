@@ -1008,3 +1008,14 @@ func TestUninstallRemovesWhatACreationWhoseAnswerWasLostLeft(t *testing.T) {
 		})
 	}
 }
+
+func TestUninstallForceSaysTheControllersRefusalOfAnOffboardingAlone(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "NAPPING"
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Code: 409, Status: "ABORTED", Message: "cannot offboard shop: it is NAPPING", Reason: "busy"})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ offboard: workload shop: cannot offboard shop: it is NAPPING\n")
+}
