@@ -218,6 +218,7 @@ func (x *run) end(err error) int {
 }
 
 func (x *run) validate() error {
+	listsErr := CheckIPLists(x.r.IPLists, x.r.NoIPLists)
 	switch {
 	case x.r.Project == "":
 		return &stop{2, "--project: needed"}
@@ -227,8 +228,8 @@ func (x *run) validate() error {
 		return &stop{2, fmt.Sprintf("--region: %s is longer than a service account ID's 30 characters", x.n.router)}
 	case access.CheckFeatures(x.r.With) != nil:
 		return &stop{2, "--with: " + access.CheckFeatures(x.r.With).Error()}
-	case CheckIPLists(x.r.IPLists, x.r.NoIPLists) != nil:
-		return &stop{2, CheckIPLists(x.r.IPLists, x.r.NoIPLists).Error()}
+	case listsErr != nil:
+		return &stop{2, listsErr.Error()}
 	case x.r.Image != "" && x.version == "":
 		return &stop{2, fmt.Sprintf("--image: %s has no tag: its tag is the router's version", x.r.Image)}
 	}

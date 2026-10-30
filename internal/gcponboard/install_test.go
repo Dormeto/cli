@@ -2103,22 +2103,34 @@ func TestInstallWithoutEitherFlagChangesNothingOfTheLists(t *testing.T) {
 	}
 }
 
+func TestInstallNoIPListsOnARouterWithNoneChangesNothing(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	r := europe
+	r.NoIPLists = true
+	code, out := g.run(t, r)
+	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
 func TestInstallRefusesBadIPLists(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lists []IPList
 		no    bool
 		want  string
 	}{
-		"s3":          {lists: []IPList{{Name: "a", URL: "s3://x/y", RefreshHours: 24}}, want: "http"},
-		"no host":     {lists: []IPList{{Name: "a", URL: "https://", RefreshHours: 24}}, want: "URL"},
-		"credentials": {lists: []IPList{{Name: "a", URL: "https://user:pass@example.com/l", RefreshHours: 24}}, want: "credentials"},
-		"slash":       {lists: []IPList{{Name: "a/b", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
-		"percent":     {lists: []IPList{{Name: "a%2f", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
-		"upper":       {lists: []IPList{{Name: "A", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
-		"too long":    {lists: []IPList{{Name: strings.Repeat("a", 41), URL: "https://example.com", RefreshHours: 24}}, want: "name"},
-		"refresh":     {lists: []IPList{{Name: "a", URL: "https://example.com", RefreshHours: 0}}, want: "refresh"},
-		"duplicate":   {lists: []IPList{blockList, blockList}, want: "twice"},
-		"both":        {lists: []IPList{blockList}, no: true, want: "--no-ip-lists"},
+		"s3":           {lists: []IPList{{Name: "a", URL: "s3://x/y", RefreshHours: 24}}, want: "http"},
+		"upper scheme": {lists: []IPList{{Name: "a", URL: "HTTPS://example.com/l", RefreshHours: 24}}, want: "http"},
+		"no host":      {lists: []IPList{{Name: "a", URL: "https://", RefreshHours: 24}}, want: "URL"},
+		"credentials":  {lists: []IPList{{Name: "a", URL: "https://user:pass@example.com/l", RefreshHours: 24}}, want: "credentials"},
+		"slash":        {lists: []IPList{{Name: "a/b", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"percent":      {lists: []IPList{{Name: "a%2f", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"upper":        {lists: []IPList{{Name: "A", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"too long":     {lists: []IPList{{Name: strings.Repeat("a", 41), URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"refresh":      {lists: []IPList{{Name: "a", URL: "https://example.com", RefreshHours: 0}}, want: "refresh"},
+		"duplicate":    {lists: []IPList{blockList, blockList}, want: "twice"},
+		"both":         {lists: []IPList{blockList}, no: true, want: "--no-ip-lists"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := routerInstalled(t)
@@ -2142,6 +2154,7 @@ func TestParseIPList(t *testing.T) {
 		t.Fatalf("%+v %v", l, err)
 	}
 	for in, want := range map[string]string{
+		"name=a,url=HTTP://example.com":               "http",
 		"name=a,url=https://example.com,action=defer": "only ignore",
 		"name=a":                  "url",
 		"url=https://example.com": "name",

@@ -91,7 +91,7 @@ func checkIPList(l IPList) error {
 	switch {
 	case err != nil:
 		return fmt.Errorf("--ip-list %s: the URL %q is not one: %v", l.Name, l.URL, err)
-	case u.Scheme != "http" && u.Scheme != "https":
+	case !strings.HasPrefix(l.URL, "http://") && !strings.HasPrefix(l.URL, "https://"):
 		return fmt.Errorf("--ip-list %s: the URL %q is not http or https: the router downloads lists over HTTP(S) only on Google Cloud", l.Name, l.URL)
 	case u.Host == "":
 		return fmt.Errorf("--ip-list %s: the URL %q has no host", l.Name, l.URL)
