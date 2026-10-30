@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -131,6 +132,15 @@ func (r *Record) addGoogle(g GoogleGrant) bool {
 	return true
 }
 
+// beforePolicy is the project's policy before the first install, as far as its grants go.
+func (r *Record) beforePolicy() *Policy {
+	p := &Policy{}
+	for _, b := range r.Before {
+		p.Bindings = append(p.Bindings, Binding{Role: b.Role, Members: slices.Clone(b.Members), Condition: b.Condition})
+	}
+	return p
+}
+
 func bindingsOf(p *Policy) []RecordBinding {
 	out := []RecordBinding{}
 	for _, b := range p.Bindings {
@@ -214,10 +224,7 @@ func (x *run) resume() {
 // created by hand). They are shown in the plan; those of Google's service agents are recorded as Google's, after the step
 // that install was at "(seen later)", or after "install" when it had finished; the others are only shown, so at every run.
 func (x *run) sinceRecord() {
-	explained := &Policy{}
-	for _, b := range x.rec.Before {
-		explained.Bindings = append(explained.Bindings, Binding{Role: b.Role, Members: b.Members, Condition: b.Condition})
-	}
+	explained := x.rec.beforePolicy()
 	for _, g := range x.rec.Grants {
 		if g.On == "project" {
 			Add(explained, Grant{Role: g.Role, Member: g.Member, Condition: g.Condition})

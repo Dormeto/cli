@@ -28,8 +28,9 @@ type ServiceAccount struct {
 // Tag is a tag key or a tag value.
 type Tag struct {
 	Name, Parent, ShortName, Description, NamespacedName string
-	// Bound makes the tag a value bound to a resource: deleting it is refused (FAILED_PRECONDITION).
-	Bound bool
+	// Bound makes the tag a value bound to a resource: deleting it is refused (FAILED_PRECONDITION). BoundLate has the
+	// deletion accepted and its operation fail for the same reason.
+	Bound, BoundLate bool
 }
 
 // Database is a Firestore database.
@@ -493,6 +494,10 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 			Fail(w, 400, "FAILED_PRECONDITION", "The tag value "+name+" is still bound to resources.")
 			return
 		}
+		if t.BoundLate {
+			s.operateFailing(w, "operations/rctag."+s.next(), 9, "The tag value "+name+" is still bound to resources.", nil)
+			return
+		}
 		if !values {
 			for _, v := range s.TagValues {
 				if v.Parent == name {
@@ -601,14 +606,21 @@ func (s *Server) firestore(w http.ResponseWriter, r *http.Request, body []byte) 
 	case tail == "" && r.Method == http.MethodGet:
 		Reply(w, s.databaseBody(id, d))
 	case tail == "" && r.Method == http.MethodDelete:
-		s.operate(w, "projects/"+s.ProjectID+"/databases/"+id+"/operations/"+s.next(), nil, func() {
+		name := "projects/" + s.ProjectID + "/databases/" + id + "/operations/" + s.next()
+		gone := func() {
 			delete(s.Databases, id)
 			for key := range s.Documents {
 				if strings.HasPrefix(key, id+"/") {
 					delete(s.Documents, key)
 				}
 			}
-		})
+		}
+		if s.DatabaseOperationGone {
+			gone()
+			Reply(w, map[string]any{"name": name, "done": false}) // never registered: its poll is a 404
+			return
+		}
+		s.operate(w, name, nil, gone)
 	case isDocument && r.Method == http.MethodGet:
 		fields, ok := s.Documents[id+"/"+path]
 		if !ok {
@@ -683,6 +695,10 @@ func (s *Server) cloudTasks(w http.ResponseWriter, r *http.Request, body []byte)
 		}
 		if _, ok := s.Queues[region+"/"+qid]; ok {
 			Fail(w, 409, "ALREADY_EXISTS", "Queue already exists")
+			return
+		}
+		if s.BlockedQueues[region+"/"+qid] {
+			Reply(w, map[string]any{"name": in.Name, "state": "RUNNING"})
 			return
 		}
 		q := &Queue{MaxAttempts: in.RetryConfig.MaxAttempts, MinBackoff: in.RetryConfig.MinBackoff, MaxBackoff: in.RetryConfig.MaxBackoff,

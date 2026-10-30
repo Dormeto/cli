@@ -1,12 +1,15 @@
 package gcponboard
 
 // The queue step: the router's Cloud Tasks queue dmtr-<region> (3 attempts, backoff 5 to 60 s, 50 dispatches a second,
-// 100 at once), created when missing, its retry and rate settings updated when they differ; then
-// roles/cloudtasks.enqueuer on the queue to the router.
+// 100 at once), created when missing and read back (Google may keep a deleted queue's name up to 3 days), its retry and
+// rate settings updated when they differ; then roles/cloudtasks.enqueuer on the queue to the router.
 
 import (
+	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/Dormeto/cli/internal/gcp"
 )
 
 const (
@@ -109,6 +112,12 @@ func (x *run) planQueue() (*step, error) {
 		switch action {
 		case "create":
 			if err := x.call(http.MethodPost, x.queuesURL(), x.wantQueue(), nil); err != nil {
+				return "", err
+			}
+			// A name deleted lately: the create can appear to succeed, and no queue exists.
+			if err := x.call(http.MethodGet, x.queuesURL()+"/"+esc(x.n.queue), nil, nil); gcp.IsNotFound(err) {
+				return "", fmt.Errorf("queue %s does not exist after its creation: Google may keep a deleted queue's name blocked for up to 3 days, and a create can appear to succeed in that window", x.n.queue)
+			} else if err != nil {
 				return "", err
 			}
 			done = "created " + x.n.queue + " (" + queueSettings + ")"

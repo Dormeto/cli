@@ -110,6 +110,8 @@ type run struct {
 	others       map[string]Record // the uninstall's other routers' records of the project, by region
 	iam          []string          // the IAM lines of the running step
 	editorWarned bool              // the default service account's Editor, appeared during this run, was warned of
+
+	workloadsUnknown bool // the uninstall goes on, with --force, without its controller's list of workloads
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {

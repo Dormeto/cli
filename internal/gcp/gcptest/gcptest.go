@@ -92,8 +92,13 @@ type Server struct {
 	// Databases are the Firestore databases, by ID; Documents their documents' fields, by <database>/<document path>.
 	Databases map[string]*Database
 	Documents map[string]map[string]any
-	// Queues are the Cloud Tasks queues, by <region>/<queue>.
-	Queues map[string]*Queue
+	// DatabaseOperationGone makes a database's deletion answer an operation that is 404 once polled: it lives under the
+	// database's own path, which is gone.
+	DatabaseOperationGone bool
+	// Queues are the Cloud Tasks queues, by <region>/<queue>. BlockedQueues are the names Google still holds after a
+	// deletion, by <region>/<queue>: a create answers as if it succeeded, and no queue exists.
+	Queues        map[string]*Queue
+	BlockedQueues map[string]bool
 	// RunServices are the Cloud Run services, by <region>/<service>; NEGs the network endpoint groups, by <region>/<name>;
 	// Jobs the Cloud Scheduler jobs, by <region>/<job>.
 	RunServices map[string]*RunService

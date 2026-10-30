@@ -5,9 +5,11 @@ package gcponboard
 // refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
 // removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
 // (the recorded grants that the project's bindings before the first install did not hold), tag, serviceAccount, roles —
-// and lists the APIs and the bindings Google added as left in place. The custom roles and the tag are the project's: they
-// stay while another router's record lists them. The record goes with the database: the step before it keeps it in the
-// cache, from which a run after a stopped one continues, and which the end removes.
+// and lists the APIs and the bindings Google added as left in place, every IAM change printed, then reads the project's
+// policy and warns of what differs from its bindings before the install and Google's. The custom roles and the tag are the
+// project's: they stay while another router's record lists them. The record goes with the database: the step before it
+// keeps it in the cache, from which a run after a stopped one continues, and which the end removes, unless a tag Google
+// refused to delete is left for a rerun.
 
 import (
 	"context"
@@ -120,6 +122,7 @@ func (x *run) planUninstall() error {
 		if !x.r.Force {
 			return &stop{1, fmt.Sprintf("The controller %s does not answer (%s): the workloads cannot be listed.\nRun the same command with --force to go on without offboarding them.\nNothing was changed.", x.n.controller, unknown)}
 		}
+		x.workloadsUnknown = true
 		x.say("  ! the workloads are unknown, the controller %s does not answer (%s): none is offboarded", x.n.controller, unknown)
 	}
 	if len(workloads) > 0 && !x.r.Force {
@@ -166,6 +169,12 @@ func (x *run) printUninstallPlan() {
 		x.say("  nothing is left of router %s to remove", x.n.router)
 	}
 	x.printSinceLast()
+	for _, s := range x.steps {
+		if s.name == "queue" || s.name == "database" {
+			x.say("Reinstalling in this region after this: Google may keep a deleted queue's name blocked for up to 3 days (a create can appear to succeed in that window), and a deleted database's ID for about 5 minutes.")
+			break
+		}
+	}
 }
 
 // listed tells whether the record lists a resource.
@@ -220,6 +229,30 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 	}}
 }
 
+// withGrants adds to a removal the recorded grants on its resource, which go with it: named in the plan, and said once gone.
+func (x *run) withGrants(s *step, on string) *step {
+	if s == nil {
+		return nil
+	}
+	var iam []string
+	for _, g := range x.rec.Grants {
+		if g.On == on {
+			what := x.describe(Grant{Role: g.Role, Member: g.Member, Condition: g.Condition}, on)
+			s.lines = append(s.lines, "- grant "+what+" (goes with it)")
+			iam = append(iam, "IAM - "+what+" (Dormeto)")
+		}
+	}
+	remove := s.apply
+	s.apply = func() (string, error) {
+		done, err := remove()
+		if err == nil {
+			x.iam = append(x.iam, iam...)
+		}
+		return done, err
+	}
+	return s
+}
+
 // removal plans a step that removes one resource the record lists: nil when it is not there any more. del removes it,
 // a resource gone meanwhile is not an error.
 func (x *run) removal(name, kind, resource, api, getURL, what string, del func() error) (*step, error) {
@@ -249,14 +282,22 @@ func (x *run) planNEGRemoval() (*step, error) {
 		var op struct {
 			SelfLink string `json:"selfLink"`
 		}
-		if err := x.call(http.MethodDelete, x.negsURL()+"/"+esc(x.n.neg), nil, &op); err != nil {
-			return err
+		err := x.call(http.MethodDelete, x.negsURL()+"/"+esc(x.n.neg), nil, &op)
+		if err == nil {
+			err = gcp.WaitCompute(x.ctx, x.d.Google, op.SelfLink, negTimeout)
 		}
-		return gcp.WaitCompute(x.ctx, x.d.Google, op.SelfLink, negTimeout)
+		if err != nil && !gcp.IsNotFound(err) && x.workloadsUnknown {
+			flags := "--project " + x.n.project + " --region " + x.n.region
+			if x.r.Configuration != "" {
+				flags += " --gcloud-configuration " + x.r.Configuration
+			}
+			return fmt.Errorf("%w\nA workload still onboarded keeps this group in use, and its controller does not answer. The way out: install a good image (dormeto gcp install %s --image <a good image>), offboard the workloads (dormeto gcp workloads offboard <workload> %s), then run this command again.", err, flags, flags)
+		}
+		return err
 	})
 }
 
-// planCloudRunRemoval removes the waker, then the controller (its invoker binding goes with it).
+// planCloudRunRemoval removes the waker, then the controller, and with it its invoker binding.
 func (x *run) planCloudRunRemoval() (*step, error) {
 	var steps []*step
 	for _, name := range []string{x.n.waker, x.n.controller} {
@@ -269,6 +310,9 @@ func (x *run) planCloudRunRemoval() (*step, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if name == x.n.controller {
+			s = x.withGrants(s, "controller")
 		}
 		if s != nil {
 			steps = append(steps, s)
@@ -301,9 +345,10 @@ func combine(name string, steps []*step) *step {
 }
 
 func (x *run) planQueueRemoval() (*step, error) {
-	return x.removal("queue", "queue", x.queueName(), tasksAPI, x.queuesURL()+"/"+esc(x.n.queue), "queue "+x.n.queue, func() error {
+	s, err := x.removal("queue", "queue", x.queueName(), tasksAPI, x.queuesURL()+"/"+esc(x.n.queue), "queue "+x.n.queue, func() error {
 		return x.call(http.MethodDelete, x.queuesURL()+"/"+esc(x.n.queue), nil, nil)
 	})
+	return x.withGrants(s, "queue"), err
 }
 
 // planDatabaseRemoval removes the database and with it the install record, which the cache keeps meanwhile.
@@ -319,7 +364,8 @@ func (x *run) planDatabaseRemoval() (*step, error) {
 		if err := x.call(http.MethodDelete, x.databaseURL(), nil, &op); err != nil && !gcp.IsNotFound(err) {
 			return "", err
 		} else if err == nil {
-			if err := x.wait(firestoreV1, op, databaseTimeout); err != nil {
+			// Its operation lives under the database's path: a 404 says the database is gone.
+			if err := x.wait(firestoreV1, op, databaseTimeout); err != nil && !gcp.IsNotFound(err) {
 				return "", err
 			}
 		}
@@ -331,10 +377,7 @@ func (x *run) planDatabaseRemoval() (*step, error) {
 // from the project's policy as read: a service account deleted by hand left them as deleted:serviceAccount:…?uid=…
 // members, which Remove matches by the email.
 func (x *run) planUnbind() (*step, error) {
-	before := &Policy{}
-	for _, b := range x.rec.Before {
-		before.Bindings = append(before.Bindings, Binding{Role: b.Role, Members: b.Members, Condition: b.Condition})
-	}
+	before := x.rec.beforePolicy()
 	var grants []Grant
 	for _, g := range x.rec.Grants {
 		if grant := (Grant{Role: g.Role, Member: g.Member, Condition: g.Condition}); g.On == "project" && !holds(before, grant) {
@@ -361,6 +404,9 @@ func (x *run) planUnbind() (*step, error) {
 			return "", err
 		}
 		_, gone := Diff(res.Before, res.After)
+		for _, g := range gone {
+			x.iam = append(x.iam, "IAM - "+x.describe(g, "project")+" (Dormeto)")
+		}
 		return fmt.Sprintf("removed %d grants from the project", len(gone)), nil
 	}}, nil
 }
@@ -435,17 +481,20 @@ func (x *run) planTagRemoval() (*step, error) {
 		steps = append(steps, &step{name: "tag", lines: []string{"- " + label}, apply: func() (string, error) {
 			var op longOperation
 			err := x.call(http.MethodDelete, crmV3+name, nil, &op)
+			if gcp.IsNotFound(err) {
+				return "removed " + name, nil
+			}
+			if err == nil {
+				err = x.wait(crmV3, op, tagTimeout)
+			}
 			if gcp.IsPrecondition(err) {
-				// Still bound (or holding values): removing the bindings is the offboarding's; the rest goes on.
+				// Still bound (or holding values), said by the answer or by its operation: removing the bindings is the
+				// offboarding's; the rest goes on.
 				x.stranded = append(x.stranded, fmt.Sprintf("%s: %s", label, strings.TrimSuffix(precondition(err), ".")))
 				return "left " + label + " (Google refuses to delete it)", nil
 			}
-			if err != nil && !gcp.IsNotFound(err) {
+			if err != nil {
 				return "", err
-			} else if err == nil {
-				if err := x.wait(crmV3, op, tagTimeout); err != nil {
-					return "", err
-				}
 			}
 			return "removed " + name, nil
 		}})
@@ -454,9 +503,10 @@ func (x *run) planTagRemoval() (*step, error) {
 }
 
 func (x *run) planAccountRemoval() (*step, error) {
-	return x.removal("serviceAccount", "serviceAccount", x.accountName(), iamAPI, x.accountURL(), "service account "+x.n.email, func() error {
+	s, err := x.removal("serviceAccount", "serviceAccount", x.accountName(), iamAPI, x.accountURL(), "service account "+x.n.email, func() error {
 		return x.call(http.MethodDelete, x.accountURL(), nil, nil)
 	})
+	return x.withGrants(s, "serviceAccount"), err
 }
 
 // planRolesRemoval deletes the custom roles (IAM keeps a deleted role for 37 days, undeletable), unless another router
@@ -507,15 +557,54 @@ func (x *run) applyUninstall() error {
 			return &stop{code, fmt.Sprintf("Done: %s. Not done: %s. Run the same command again to continue.", stepNames(x.steps[:i]), stepNames(x.steps[i:]))}
 		}
 		x.say("  ✓ %s: %s", s.name, done)
+		x.printIAM()
 	}
-	if path := x.cachePath(); path != "" {
+	x.checkPolicy()
+	if len(x.stranded) > 0 {
+		if err := x.writeCache(); err != nil {
+			x.say("  ! the record is not kept for a rerun: %s", err)
+		}
+	} else if path := x.cachePath(); path != "" {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			x.say("  ! %s is not removed: %s", path, err)
 		}
 	}
 	x.leftInPlace()
+	if len(x.stranded) > 0 {
+		x.say("Run the same command again to remove the tag once Google allows it: the record waits in the cache.")
+	}
 	x.say("Uninstalled router %s from project %s.", x.n.router, x.n.project)
 	return nil
+}
+
+// checkPolicy reads the project's policy where the uninstall ended, and warns of what differs from its bindings before the
+// install and Google's, but another router's: a warning, as the install's verification: someone else's change does not
+// fail the uninstall.
+func (x *run) checkPolicy() {
+	p, err := read(x.ctx, x.d.Google, ProjectPolicy(x.n.project))
+	if err != nil {
+		x.say("  ! the project's IAM policy is not read again: %s", err)
+		return
+	}
+	expected := x.rec.beforePolicy()
+	for _, g := range x.rec.Google {
+		Add(expected, Grant{Role: g.Role, Member: g.Member})
+	}
+	added, removed := Diff(expected, p)
+	clean := true
+	warn := func(sign string, grants []Grant) {
+		for _, g := range grants {
+			if !x.otherRouter(g.Member) {
+				clean = false
+				x.say("  ! IAM difference from before the install, not this uninstall's: %s %s", sign, x.describe(g, "project"))
+			}
+		}
+	}
+	warn("+", added)
+	warn("-", removed)
+	if clean {
+		x.say("  ✓ verified: the project's IAM policy holds its bindings from before the install, and Google's")
+	}
 }
 
 // leftInPlace lists what the uninstall does not touch: the APIs the install turned on (other things may use them) and

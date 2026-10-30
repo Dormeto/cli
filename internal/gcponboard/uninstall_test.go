@@ -294,7 +294,7 @@ func TestUninstallDryRunPrintsThePlanAndChangesNothing(t *testing.T) {
 		"  - tag dormeto/managed\n", "  - service account "+routerSA+"\n", "  - role dormetoRouter\n", "  - role dormetoRouterBackends\n")
 	// In the order of the spec: job, NEG, services, queue, database, bindings, tag, service account, roles.
 	order := []string{"- job ", "- network endpoint group", "- service dmtr-europe-west1-waker", "- service dmtr-europe-west1-controller", "- queue", "- database",
-		"- grant ", "- tag ", "- service account", "- role "}
+		"- grant projects/dormeto-dev/roles/dormetoRouter ", "- tag ", "- service account", "- role "}
 	at := -1
 	for _, w := range order {
 		i := strings.Index(out, w)
@@ -590,5 +590,269 @@ func TestUninstallShowsAndLeavesABindingGoogleAddedAfterTheInstall(t *testing.T)
 	p := g.projectPolicy(t)
 	if !has(p, Grant{Role: registryAgentRole, Member: artifactAgent}) {
 		t.Fatal("Google's binding is gone")
+	}
+}
+
+func TestUninstallPlanNamesTheGrantsThatGoWithTheirResources(t *testing.T) {
+	g := routerInstalled(t)
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  - service "+controllerName+"\n  - grant roles/run.invoker to "+routerMember+" on controller "+controllerName+" (goes with it)\n",
+		"  - queue dmtr-europe-west1\n  - grant roles/cloudtasks.enqueuer to "+routerMember+" on queue dmtr-europe-west1 (goes with it)\n",
+		"  - service account "+routerSA+"\n  - grant roles/iam.serviceAccountUser to "+routerMember+" on service account "+routerSA+" (goes with it)\n")
+}
+
+func TestUninstallPrintsEveryIAMChange(t *testing.T) {
+	g := routerInstalled(t)
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✓ cloudRun: removed service "+wakerName+", removed service "+controllerName+"\n"+
+		"      IAM - roles/run.invoker to "+routerMember+" on controller "+controllerName+" (Dormeto)\n",
+		"  ✓ queue: removed queue dmtr-europe-west1\n"+
+			"      IAM - roles/cloudtasks.enqueuer to "+routerMember+" on queue dmtr-europe-west1 (Dormeto)\n",
+		"  ✓ projectBindings: removed 3 grants from the project\n",
+		"      IAM - projects/dormeto-dev/roles/dormetoRouter to "+routerMember+" on the project (Dormeto)\n",
+		"      IAM - projects/dormeto-dev/roles/dormetoRouterBackends to "+routerMember+" on the project, if \"Dormeto-managed resources\": ",
+		"      IAM - roles/datastore.user to "+routerMember+" on the project, if \"The router's database\": ",
+		"  ✓ serviceAccount: removed service account "+routerSA+"\n"+
+			"      IAM - roles/iam.serviceAccountUser to "+routerMember+" on service account "+routerSA+" (Dormeto)\n")
+}
+
+const uninstallVerified = "  ✓ verified: the project's IAM policy holds its bindings from before the install, and Google's\n"
+
+func TestUninstallChecksThePolicyWhereItEnded(t *testing.T) {
+	g := routerInstalled(t)
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, uninstallVerified+"Left in place:\n")
+	if strings.Contains(out, "  ! ") {
+		t.Fatalf("a warning:\n%s", out)
+	}
+}
+
+func TestUninstallWarnsOfAPolicyThatEndsElsewhereAndStillSucceeds(t *testing.T) {
+	g := routerInstalled(t)
+	grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
+	g.s.Lock()
+	var kept []any
+	for _, b := range g.s.Policy["bindings"].([]any) {
+		if b.(map[string]any)["role"] != "roles/owner" {
+			kept = append(kept, b)
+		}
+	}
+	g.s.Policy["bindings"] = kept
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! IAM difference from before the install, not this uninstall's: + roles/viewer to user:someone@example.com on the project\n",
+		"  ! IAM difference from before the install, not this uninstall's: - roles/owner to user:owner@example.com on the project\n",
+		"Uninstalled router dmtr-europe-west1")
+	if strings.Contains(out, uninstallVerified) {
+		t.Fatalf("verified:\n%s", out)
+	}
+	g.nothingLeft(t, "europe-west1")
+}
+
+func TestUninstallDoesNotWarnOfAnotherRoutersGrants(t *testing.T) {
+	g := newRouterRig(t)
+	other := withImage
+	other.Region = "europe-west4"
+	for _, r := range []Request{withImage, other} {
+		if code, out := g.run(t, r); code != 0 {
+			t.Fatalf("install: %s", out)
+		}
+	}
+	// The second router's before holds the first's grants: those it does not find any more are not a difference either.
+	for _, region := range []string{"europe-west1", "europe-west4"} {
+		code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: region, Yes: true})
+		if code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", region, code, out)
+		}
+		contains(t, out, uninstallVerified)
+	}
+}
+
+func TestUninstallSaysWhenThePolicyIsNotReadAtTheEnd(t *testing.T) {
+	g := routerInstalled(t)
+	set := "/v3/projects/dormeto-dev:setIamPolicy"
+	installed := len(g.s.CallsTo(set))
+	// The uninstall's read after its own write of the project's policy is the end's.
+	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
+		if len(g.s.CallsTo(set)) > installed {
+			gcptest.Fail(w, 403, "PERMISSION_DENIED", "denied at the end")
+			return
+		}
+		g.s.Lock()
+		p := g.s.Policy
+		g.s.Unlock()
+		gcptest.Reply(w, p)
+	})
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! the project's IAM policy is not read again: ", "denied at the end", "Uninstalled router dmtr-europe-west1")
+	if strings.Contains(out, uninstallVerified) {
+		t.Fatalf("verified:\n%s", out)
+	}
+}
+
+func TestUninstallSaysHowLongGoogleHoldsTheNamesOfADeletedQueueAndDatabase(t *testing.T) {
+	g := routerInstalled(t)
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "up to 3 days", "about 5 minutes")
+}
+
+func TestUninstallSaysNothingOfTheNamesWhenNeitherTheQueueNorTheDatabaseGoes(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: "cloudresourcemanager.googleapis.com", Path: "/v3/projects/dormeto-dev:setIamPolicy", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "denied"})
+	if code, out := g.uninstall(t, uninstallEurope); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	if code != 0 || strings.Contains(out, "3 days") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallAfterAnUninstallNamesTheWindowOfAQueuesName(t *testing.T) {
+	g := routerInstalled(t)
+	if code, out := g.uninstall(t, uninstallEurope); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	g.s.BlockedQueues = map[string]bool{"europe-west1/dmtr-europe-west1": true}
+	g.s.Unlock()
+	code, out := g.run(t, withImage)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ queue: ", "up to 3 days", "Run the same command again to continue.")
+	if strings.Contains(out, "google: 404") {
+		t.Fatalf("a bare 404:\n%s", out)
+	}
+	if rec := g.record(t); listsResource(rec, "queue", "projects/dormeto-dev/locations/europe-west1/queues/dmtr-europe-west1") {
+		t.Fatalf("a queue that does not exist is recorded: %+v", rec.Resources)
+	}
+	// The window over, the same command continues.
+	g.s.Lock()
+	g.s.BlockedQueues = nil
+	g.s.Unlock()
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestUninstallTakesADeletedDatabasesOperationAnsweringNotFoundAsDone(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	g.s.DatabaseOperationGone = true
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✓ database: removed database dmtr-europe-west1\n")
+	g.nothingLeft(t, "europe-west1")
+}
+
+func TestUninstallLeavesATagWhoseDeletionOperationFailsOnAPrecondition(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	for _, v := range g.s.TagValues {
+		v.BoundLate = true
+	}
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Left in place:\n", "  tag dormeto/managed: The tag value tagValues/", " is still bound to resources\n",
+		"  ✓ serviceAccount:", "  ✓ roles:", "Uninstalled router dmtr-europe-west1")
+	g.nothingLeft(t, "europe-west1")
+}
+
+func TestUninstallKeepsTheRecordWhileATagIsStrandedSoARerunFinishesIt(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Lock()
+	for _, v := range g.s.TagValues {
+		v.Bound = true
+	}
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Left in place:\n", "Run the same command again to remove the tag once Google allows it")
+	if _, err := os.Stat(g.cacheFile()); err != nil {
+		t.Fatalf("the record is not kept: %v", err)
+	}
+	// Still bound: it stays, and so does the record.
+	code, out = g.uninstall(t, uninstallEurope)
+	if code != 0 || strings.Contains(out, "no router") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(g.cacheFile()); err != nil {
+		t.Fatalf("the record is not kept: %v", err)
+	}
+	g.s.Lock()
+	for _, v := range g.s.TagValues {
+		v.Bound = false
+	}
+	g.s.Unlock()
+	code, out = g.uninstall(t, uninstallEurope)
+	if code != 0 || strings.Contains(out, "no router") || strings.Contains(out, "Run the same command again") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	tags := len(g.s.TagValues) + len(g.s.TagKeys)
+	g.s.Unlock()
+	if tags != 0 {
+		t.Fatalf("%d tags left", tags)
+	}
+	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
+		t.Fatalf("cache file: %v", err)
+	}
+}
+
+const negPath = "/compute/v1/projects/dormeto-dev/regions/europe-west1/networkEndpointGroups/" + wakerName
+
+func TestUninstallForceWithABrokenControllerNamesTheWayOutOfANetworkEndpointGroupInUse(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: controllerHost, Path: "/v1/workloads", Code: 500, Status: "UNAVAILABLE", Message: "down"})
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: "compute.googleapis.com", Path: negPath, Code: 400, Message: "The network_endpoint_group resource is already being used"})
+	force := Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true, Configuration: "c"}
+	for i := 0; i < 2; i++ { // at every rerun
+		code, out := g.uninstall(t, force)
+		if code != 1 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "  ✗ neg: ", "already being used",
+			"dormeto gcp install --project dormeto-dev --region europe-west1 --gcloud-configuration c --image <a good image>",
+			"dormeto gcp workloads offboard <workload> --project dormeto-dev --region europe-west1 --gcloud-configuration c")
+	}
+}
+
+func TestUninstallDoesNotNameThatWayOutWhenTheControllerAnswers(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: "compute.googleapis.com", Path: negPath, Code: 400, Message: "refused"})
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ neg: ")
+	if strings.Contains(out, "workloads offboard") {
+		t.Fatalf("%s", out)
 	}
 }
