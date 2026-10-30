@@ -41,7 +41,8 @@ type RunContainer struct {
 		ContainerPort int    `json:"containerPort"`
 	} `json:"ports"`
 	Resources struct {
-		Limits map[string]string `json:"limits"`
+		Limits  map[string]string `json:"limits"`
+		CPUIdle bool              `json:"cpuIdle"`
 	} `json:"resources"`
 }
 
@@ -212,6 +213,10 @@ func (s *Server) validRunTemplate(w http.ResponseWriter, t RunTemplate) bool {
 				Fail(w, 400, "INVALID_ARGUMENT", "The following reserved env names were provided: PORT. These values are automatically set by the system.")
 				return false
 			}
+		}
+		if !c.Resources.CPUIdle && c.Resources.Limits["memory"] == "256Mi" {
+			Fail(w, 400, "INVALID_ARGUMENT", "template.containers.resources.limits.memory: Invalid value specified for memory. Total memory < 512 Mi is not supported with cpu always allocated (unthrottled).")
+			return false
 		}
 	}
 	return true

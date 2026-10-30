@@ -1228,9 +1228,9 @@ const (
 
 var withImage = Request{Project: "dormeto-dev", Region: "europe-west1", Image: routerImage, Yes: true}
 
-const routerPlan = "  + service " + controllerName + " (image " + routerImage + ", ingress all, invoker check on, 0 to 3 instances, 10 concurrent requests, timeout 900 s, 512 MiB, as " + routerSA + ")\n" +
+const routerPlan = "  + service " + controllerName + " (image " + routerImage + ", ingress all, invoker check on, 0 to 3 instances, 10 concurrent requests, timeout 900 s, 512 MiB, CPU during requests only, as " + routerSA + ")\n" +
 	"  + grant roles/run.invoker to " + routerMember + " on controller " + controllerName + "\n" +
-	"  + service " + wakerName + " (image " + routerImage + ", ingress internal and Cloud Load Balancing, invoker check off, 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB, as " + routerSA + ")\n" +
+	"  + service " + wakerName + " (image " + routerImage + ", ingress internal and Cloud Load Balancing, invoker check off, 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB, CPU during requests only, as " + routerSA + ")\n" +
 	"  + network endpoint group " + wakerName + " (serverless, Cloud Run service " + wakerName + ")\n" +
 	"  + job " + jobName + " (*/5 * * * * Etc/UTC, attempt deadline 300 s, POST " + controllerURL + "/v1/check, OIDC of " + routerSA + ", audience " + controllerURL + ")\n" +
 	"  + record install/record in database dmtr-europe-west1\n"
@@ -1323,7 +1323,7 @@ func TestInstallImageCreatesTheRouter(t *testing.T) {
 		ct := tmpl.Containers[0]
 		if tmpl.ServiceAccount != routerSA || tmpl.Scaling.MinInstanceCount != 0 || tmpl.Scaling.MaxInstanceCount != want.maxInst ||
 			tmpl.MaxInstanceRequestConcurrency != want.concurr || tmpl.Timeout != want.timeout || ct.Image != routerImage ||
-			ct.Resources.Limits["memory"] != want.memory || ct.Ports[0].ContainerPort != 8080 {
+			ct.Resources.Limits["memory"] != want.memory || !ct.Resources.CPUIdle || ct.Ports[0].ContainerPort != 8080 {
 			t.Errorf("%s template %+v", want.role, tmpl)
 		}
 		env := map[string]string{}
@@ -1618,13 +1618,14 @@ func TestInstallPutsBackTheServicesSettings(t *testing.T) {
 	w.Template.Timeout = "60s"
 	w.Template.ServiceAccount = "other@example.com"
 	w.Template.Containers[0].Resources.Limits["memory"] = "1Gi"
+	w.Template.Containers[0].Resources.CPUIdle = false
 	g.s.Unlock()
 	code, out := g.run(t, withImage)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ~ service "+wakerName+": ingress internal and Cloud Load Balancing, invoker check off, service account "+routerSA+", 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB\n")
-	if w.Ingress != "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" || !w.InvokerIamDisabled || w.Template.Scaling.MaxInstanceCount != 10 {
+	contains(t, out, "  ~ service "+wakerName+": ingress internal and Cloud Load Balancing, invoker check off, service account "+routerSA+", 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB, CPU during requests only\n")
+	if w.Ingress != "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" || !w.InvokerIamDisabled || w.Template.Scaling.MaxInstanceCount != 10 || !w.Template.Containers[0].Resources.CPUIdle {
 		t.Fatalf("%+v", w)
 	}
 }

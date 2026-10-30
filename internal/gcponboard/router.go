@@ -114,7 +114,8 @@ type runContainer struct {
 	Env       []runEnv  `json:"env"`
 	Ports     []runPort `json:"ports"`
 	Resources struct {
-		Limits map[string]string `json:"limits"`
+		Limits  map[string]string `json:"limits"`
+		CPUIdle bool              `json:"cpuIdle"`
 	} `json:"resources"`
 }
 
@@ -193,6 +194,10 @@ func (s serviceSettings) requestWords() string {
 func (s serviceSettings) timeoutWords() string { return fmt.Sprintf("timeout %d s", s.timeoutSeconds) }
 func (s serviceSettings) memoryWords() string  { return strings.TrimSuffix(s.memory, "Mi") + " MiB" }
 
+// cpuWords: left out of a write, Cloud Run v2 allocates the CPU all the time, billed even without a request, and refuses
+// less than 512 MiB (the acceptance).
+const cpuWords = "CPU during requests only"
+
 // controllerURL is Cloud Run's deterministic URL of the controller; the verification checks it among the service's URLs.
 func (x *run) controllerURL() string {
 	return "https://" + x.n.controller + "-" + x.number + "." + x.n.region + ".run.app"
@@ -226,6 +231,7 @@ func (x *run) environment(role string) []runEnv {
 func (x *run) wantService(s serviceSettings) runService {
 	c := runContainer{Image: x.r.Image, Env: x.environment(s.role), Ports: []runPort{{containerPort}}}
 	c.Resources.Limits = map[string]string{"memory": s.memory}
+	c.Resources.CPUIdle = true
 	return runService{Ingress: s.ingress, InvokerIamDisabled: s.invokerOff, Template: runTemplate{
 		ServiceAccount: x.n.email, Containers: []runContainer{c}, Scaling: runScaling{MaxInstanceCount: s.maxInstances},
 		MaxInstanceRequestConcurrency: s.requests, Timeout: strconv.Itoa(s.timeoutSeconds) + "s"}}
@@ -263,6 +269,9 @@ func (x *run) serviceDifferences(s serviceSettings, got runService) []string {
 	if len(t.Containers) == 0 || t.Containers[0].Resources.Limits["memory"] != s.memory {
 		out = append(out, s.memoryWords())
 	}
+	if len(t.Containers) == 0 || !t.Containers[0].Resources.CPUIdle {
+		out = append(out, cpuWords)
+	}
 	return out
 }
 
@@ -298,8 +307,8 @@ func (x *run) planService(s serviceSettings) (lines []string, write func() (stri
 		return nil, nil, false, err
 	}
 	if !found {
-		line := fmt.Sprintf("+ service %s (image %s, %s, %s, %s, %s, %s, %s, as %s)", s.name, x.r.Image, s.ingressWords, s.invokerWords(),
-			s.instanceWords(), s.requestWords(), s.timeoutWords(), s.memoryWords(), x.n.email)
+		line := fmt.Sprintf("+ service %s (image %s, %s, %s, %s, %s, %s, %s, %s, as %s)", s.name, x.r.Image, s.ingressWords, s.invokerWords(),
+			s.instanceWords(), s.requestWords(), s.timeoutWords(), s.memoryWords(), cpuWords, x.n.email)
 		return []string{line}, func() (string, error) { return x.writeService(s, true) }, false, nil
 	}
 	differences := x.serviceDifferences(s, got)
