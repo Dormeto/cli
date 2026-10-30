@@ -185,6 +185,13 @@ func (s *Server) FinishOperations() {
 	}
 }
 
+// Poll answers a poll of an operation as Google does, for a test's Route that handles only some of them.
+func (s *Server) Poll(w http.ResponseWriter, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.poll(w, name)
+}
+
 func (s *Server) poll(w http.ResponseWriter, name string) {
 	op, ok := s.ops[name]
 	if !ok {

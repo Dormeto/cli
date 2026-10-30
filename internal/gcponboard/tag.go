@@ -70,13 +70,13 @@ func (x *run) planTag() (*step, error) {
 		}}, nil
 	}
 	x.tagKey = key
-	x.found("tagKey", key)
+	x.foundTag("tagKey", x.n.project+"/dormeto", key)
 	value, found, err := x.tag("tagValues", x.n.project+"/dormeto/managed")
 	if err != nil {
 		return nil, err
 	}
 	if found {
-		x.found("tagValue", value)
+		x.foundTag("tagValue", x.n.project+"/dormeto/managed", value)
 		return nil, nil
 	}
 	return &step{name: "tag", lines: []string{"+ tag value dormeto/managed"}, apply: func() (string, error) {
@@ -87,9 +87,25 @@ func (x *run) planTag() (*step, error) {
 	}}, nil
 }
 
+// foundTag notes, while planning, a tag that is already there: its ID replaces the namespaced name a stopped run recorded.
+func (x *run) foundTag(kind, namespaced, name string) {
+	if x.rec.nameResource(kind, namespaced, name) {
+		x.recChanged = true
+	}
+	x.found(kind, name)
+}
+
 // createTag creates a tag key (under the project) or value (under the key), waits for it and records its ID, taken
-// from the operation's response (a read by namespaced name right after the creation could miss it).
+// from the operation's response (a read by namespaced name right after the creation could miss it). Google gives the ID
+// only then: until then the record lists the tag by its namespaced name, for an uninstall after a stop.
 func (x *run) createTag(kind, parent, short, description string) error {
+	resource, namespaced := "tagKey", x.n.project+"/"+short
+	if kind == "tagValues" {
+		resource, namespaced = "tagValue", x.n.project+"/dormeto/"+short
+	}
+	if err := x.recordFirst(resource, namespaced); err != nil {
+		return err
+	}
 	var op longOperation
 	in := map[string]any{"parent": parent, "shortName": short, "description": description}
 	if err := x.call(http.MethodPost, crmV3+kind, in, &op); err != nil {
@@ -113,12 +129,9 @@ func (x *run) createTag(kind, parent, short, description string) error {
 	if t.Name == "" {
 		return fmt.Errorf("the creation of %s answered no name (operation %s)", short, op.Name)
 	}
-	name := t.Name
 	if kind == "tagKeys" {
-		x.tagKey = name
-		x.rec.addResource("tagKey", name)
-	} else {
-		x.rec.addResource("tagValue", name)
+		x.tagKey = t.Name
 	}
+	x.rec.nameResource(resource, namespaced, t.Name)
 	return nil
 }

@@ -50,8 +50,8 @@ type Record struct {
 }
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role
-// (projects/<id>/roles/<role>), serviceAccount (projects/<id>/serviceAccounts/<email>), tagKey (tagKeys/<n>), tagValue
-// (tagValues/<n>), database (projects/<id>/databases/<db>), queue (projects/<id>/locations/<region>/queues/<queue>), and
+// (projects/<id>/roles/<role>), serviceAccount (projects/<id>/serviceAccounts/<email>), tagKey (tagKeys/<n>, or
+// <id>/dormeto until its creation has named it), tagValue (tagValues/<n>, or <id>/dormeto/managed), database (projects/<id>/databases/<db>), queue (projects/<id>/locations/<region>/queues/<queue>), and
 // of the router part: service (projects/<id>/locations/<region>/services/<service>), neg
 // (projects/<id>/regions/<region>/networkEndpointGroups/<neg>), job (projects/<id>/locations/<region>/jobs/<job>).
 type Resource struct {
@@ -98,8 +98,23 @@ func (r *Record) addResource(kind, name string) bool {
 	return true
 }
 
-// recordFirst lists a resource before the call that creates it, and writes the record: whatever happens to that call (a
-// revision that does not start, a timeout, the run killed), the uninstall knows the resource, and tolerates its absence.
+// nameResource replaces the provisional name of a resource by its own, if it is listed under it, and tells whether it was.
+func (r *Record) nameResource(kind, provisional, name string) bool {
+	i := slices.Index(r.Resources, Resource{Kind: kind, Name: provisional})
+	if i < 0 {
+		return false
+	}
+	if slices.Contains(r.Resources, Resource{Kind: kind, Name: name}) {
+		r.Resources = slices.Delete(r.Resources, i, i+1)
+	} else {
+		r.Resources[i].Name = name
+	}
+	return true
+}
+
+// recordFirst lists a resource before the call that creates it, and writes the record where it is kept (the cache, until
+// the database holds it): whatever happens to that call (a revision that does not start, a timeout, the run killed), the
+// uninstall knows the resource, and tolerates its absence.
 func (x *run) recordFirst(kind, name string) error {
 	if !x.rec.addResource(kind, name) {
 		return nil

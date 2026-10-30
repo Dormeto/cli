@@ -362,7 +362,7 @@ func TestInstallChangesInTheStepsOrder(t *testing.T) {
 		"POST databases",
 		record, // the database's first write
 		record, "POST projects/dormeto-dev:setIamPolicy",
-		record, "POST queues", "POST queues/dmtr-europe-west1:setIamPolicy",
+		record, record, "POST queues", "POST queues/dmtr-europe-west1:setIamPolicy", // the step's start, the queue listed first
 		record, "POST serviceAccounts/" + routerSA + ":setIamPolicy",
 		record, record, // the record step's start, and its end: finished
 	}
@@ -783,7 +783,7 @@ func TestVerifyWarnsOfAnIAMChangeNotMadeByThisInstall(t *testing.T) {
 	injected := false
 	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
 		// Someone grants a role after the install's last read, before its verification.
-		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 6 {
+		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 7 {
 			injected = true
 			grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
 		}

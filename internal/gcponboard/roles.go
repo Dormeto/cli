@@ -129,6 +129,9 @@ func (x *run) changeRoles(changes []roleChange) (string, error) {
 	var done []string
 	for _, c := range changes {
 		u := x.rolesURL() + "/" + c.id
+		if err := x.recordFirst("role", x.roleName(c.id)); err != nil {
+			return "", err
+		}
 		switch c.action {
 		case "create":
 			in := map[string]any{"roleId": c.id, "role": map[string]any{"title": c.want.Title, "description": c.want.Description,
@@ -151,7 +154,6 @@ func (x *run) changeRoles(changes []roleChange) (string, error) {
 			}
 			done = append(done, "updated "+c.id)
 		}
-		x.rec.addResource("role", x.roleName(c.id))
 	}
 	return strings.Join(done, ", "), nil
 }

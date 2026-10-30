@@ -30,6 +30,10 @@ func (x *run) planDatabase() (*step, error) {
 	}
 	what := x.n.database + " (Firestore Native, " + x.n.region + ")"
 	return &step{name: "database", lines: []string{"+ database " + what}, apply: func() (string, error) {
+		// The cache's, as the database does not hold the record yet.
+		if err := x.recordFirst("database", x.databaseName()); err != nil {
+			return "", err
+		}
 		var op longOperation
 		in := map[string]any{"type": "FIRESTORE_NATIVE", "locationId": x.n.region,
 			"deleteProtectionState": "DELETE_PROTECTION_DISABLED", "pointInTimeRecoveryEnablement": "POINT_IN_TIME_RECOVERY_DISABLED"}
@@ -41,7 +45,6 @@ func (x *run) planDatabase() (*step, error) {
 			return "", err
 		}
 		x.database = true
-		x.rec.addResource("database", x.databaseName())
 		if err := x.writeRecord(); err != nil {
 			return "", err
 		}

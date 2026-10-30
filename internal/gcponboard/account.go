@@ -46,11 +46,13 @@ func (x *run) createAccount() (string, error) {
 		"displayName": "Dormeto router " + x.n.region,
 		"description": "Dormeto router " + x.n.router + ", created by dormeto gcp install",
 	}}
+	if err := x.recordFirst("serviceAccount", x.accountName()); err != nil {
+		return "", err
+	}
 	if err := x.call(http.MethodPost, "https://iam.googleapis.com/v1/projects/"+esc(x.n.project)+"/serviceAccounts", in, nil); err != nil {
 		return "", err
 	}
 	x.accountExists = true
-	x.rec.addResource("serviceAccount", x.accountName())
 	return "created " + x.n.email, nil
 }
 

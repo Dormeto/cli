@@ -468,7 +468,7 @@ func (x *run) planTagRemoval() (*step, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !found || !x.listed(t.resource, name) {
+		if !found || (!x.listed(t.resource, name) && !x.listed(t.resource, t.namespaced)) {
 			continue
 		}
 		if kept, err := x.keep(t.resource, name, "tag "+strings.TrimPrefix(t.namespaced, x.n.project+"/")); err != nil || kept {

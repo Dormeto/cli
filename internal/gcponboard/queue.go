@@ -109,6 +109,11 @@ func (x *run) planQueue() (*step, error) {
 	}
 	return &step{name: "queue", lines: lines, apply: func() (string, error) {
 		var done string
+		if action != "" {
+			if err := x.recordFirst("queue", x.queueName()); err != nil {
+				return "", err
+			}
+		}
 		switch action {
 		case "create":
 			if err := x.call(http.MethodPost, x.queuesURL(), x.wantQueue(), nil); err != nil {
@@ -127,9 +132,6 @@ func (x *run) planQueue() (*step, error) {
 				return "", err
 			}
 			done = "updated " + x.n.queue + " (" + queueAllSettings + ")"
-		}
-		if action != "" {
-			x.rec.addResource("queue", x.queueName())
 		}
 		if !grant {
 			return done, nil

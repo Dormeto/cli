@@ -540,10 +540,12 @@ func (x *run) planJob() (*step, error) {
 		if err := x.catchUp(); err != nil {
 			return "", err
 		}
+		if err := x.recordFirst("job", x.jobName()); err != nil {
+			return "", err
+		}
 		if err := x.call(method, u, x.wantJob(), nil); err != nil {
 			return "", err
 		}
-		x.rec.addResource("job", x.jobName())
 		if err := x.policyChanged("job"); err != nil {
 			return "", err
 		}

@@ -742,9 +742,6 @@ func TestInstallAfterAnUninstallNamesTheWindowOfAQueuesName(t *testing.T) {
 	if strings.Contains(out, "google: 404") {
 		t.Fatalf("a bare 404:\n%s", out)
 	}
-	if rec := g.record(t); listsResource(rec, "queue", "projects/dormeto-dev/locations/europe-west1/queues/dmtr-europe-west1") {
-		t.Fatalf("a queue that does not exist is recorded: %+v", rec.Resources)
-	}
 	// The window over, the same command continues.
 	g.s.Lock()
 	g.s.BlockedQueues = nil
@@ -871,4 +868,143 @@ func TestUninstallForceGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *testi
 	}
 	contains(t, out, "  ! the tag bindings of vm web-1 (europe-west1-b) are not read")
 	g.nothingLeft(t, "europe-west1")
+}
+
+// stopAtPoll stops the run (Ctrl-C) at the at-th poll of the operations under prefix on host, the other polls answered as
+// Google does. seen is the record the cache holds at that moment: what a run killed there leaves.
+func stopAtPoll(t *testing.T, g *installRig, host, prefix, version string, at int) (ctx context.Context, seen *Record) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	seen = &Record{}
+	polls := 0
+	g.s.Route(host, prefix, func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, version)
+		if polls++; polls != at {
+			g.s.Poll(w, name)
+			return
+		}
+		if b, err := os.ReadFile(g.cacheFile()); err == nil {
+			json.Unmarshal(b, seen)
+		}
+		cancel()
+		gcptest.Reply(w, map[string]any{"name": name, "done": false})
+	})
+	return ctx, seen
+}
+
+func TestUninstallRemovesWhatARunStoppedDuringItsOperationLeft(t *testing.T) {
+	const crm, firestore = "cloudresourcemanager.googleapis.com", "firestore.googleapis.com"
+	const database = "/v1/projects/dormeto-dev/databases/dmtr-europe-west1/operations/"
+	cases := map[string]struct {
+		host, prefix, version string
+		at                    int
+		kind, name, plan      string
+	}{
+		"the tag's key":   {crm, "/v3/operations/", "/v3/", 1, "tagKey", "dormeto-dev/dormeto", "  - tag dormeto\n"},
+		"the tag's value": {crm, "/v3/operations/", "/v3/", 3, "tagValue", "dormeto-dev/dormeto/managed", "  - tag dormeto/managed\n"},
+		"the database":    {firestore, database, "/v1/", 1, "database", "projects/dormeto-dev/databases/dmtr-europe-west1", "  - database dmtr-europe-west1 (and the install record)\n"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newInstallRig(t)
+			ctx, seen := stopAtPoll(t, g, c.host, c.prefix, c.version, c.at)
+			g.out.Reset()
+			if code := Install(ctx, g.d, europe); code != 130 {
+				t.Fatalf("exit %d:\n%s", code, g.out)
+			}
+			if !listsResource(*seen, c.kind, c.name) {
+				t.Errorf("the cache does not list it during the operation: %+v", seen.Resources)
+			}
+			// Google finishes the operation after the run stopped.
+			g.s.FinishOperations()
+			code, out := g.uninstall(t, uninstallEurope)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, c.plan)
+			g.nothingLeft(t, "europe-west1")
+			g.s.Lock()
+			defer g.s.Unlock()
+			if len(g.s.TagKeys)+len(g.s.TagValues) != 0 {
+				t.Errorf("tags left: %v %v", g.s.TagKeys, g.s.TagValues)
+			}
+		})
+	}
+}
+
+// A created tag's name replaces the name it waited under, whichever run finds it.
+func TestInstallAfterAStopDuringTheTagsOperationRecordsItsIDAlone(t *testing.T) {
+	g := newInstallRig(t)
+	ctx, _ := stopAtPoll(t, g, "cloudresourcemanager.googleapis.com", "/v3/operations/", "/v3/", 1)
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	g.s.FinishOperations()
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec := g.record(t)
+	for _, name := range []string{"dormeto-dev/dormeto", "dormeto-dev/dormeto/managed"} {
+		if listsResource(rec, "tagKey", name) || listsResource(rec, "tagValue", name) {
+			t.Errorf("%s is still listed: %+v", name, rec.Resources)
+		}
+	}
+	g.s.Lock()
+	defer g.s.Unlock()
+	for name := range g.s.TagKeys {
+		if !listsResource(rec, "tagKey", name) {
+			t.Errorf("%s is not listed: %+v", name, rec.Resources)
+		}
+	}
+	for name := range g.s.TagValues {
+		if !listsResource(rec, "tagValue", name) {
+			t.Errorf("%s is not listed: %+v", name, rec.Resources)
+		}
+	}
+}
+
+// The answer to a creation lost: the resource is in Google, the run does not know it, the record does.
+func TestUninstallRemovesWhatACreationWhoseAnswerWasLostLeft(t *testing.T) {
+	cases := map[string]struct {
+		host, path string
+		plant      func(s *gcptest.Server)
+		gone       func(s *gcptest.Server) bool
+	}{
+		"role": {"iam.googleapis.com", "/v1/projects/dormeto-dev/roles",
+			func(s *gcptest.Server) { s.Roles["dormetoRouter"] = &gcptest.Role{Stage: "GA"} },
+			func(s *gcptest.Server) bool { return s.Roles["dormetoRouter"].Deleted }},
+		"service account": {"iam.googleapis.com", "/v1/projects/dormeto-dev/serviceAccounts",
+			func(s *gcptest.Server) { s.ServiceAccounts[routerSA] = &gcptest.ServiceAccount{} },
+			func(s *gcptest.Server) bool { return s.ServiceAccounts[routerSA] == nil }},
+		"queue": {"cloudtasks.googleapis.com", "/v2/projects/dormeto-dev/locations/europe-west1/queues",
+			func(s *gcptest.Server) { s.Queues["europe-west1/dmtr-europe-west1"] = &gcptest.Queue{} },
+			func(s *gcptest.Server) bool { return s.Queues["europe-west1/dmtr-europe-west1"] == nil }},
+		"job": {"cloudscheduler.googleapis.com", "/v1/projects/dormeto-dev/locations/europe-west1/jobs",
+			func(s *gcptest.Server) { s.Jobs["europe-west1/"+jobName] = &gcptest.Job{} },
+			func(s *gcptest.Server) bool { return s.Jobs["europe-west1/"+jobName] == nil }},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newRouterRig(t)
+			g.s.Refuse(gcptest.Refusal{Method: "POST", Host: c.host, Path: c.path, Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+			if code, out := g.run(t, withImage); code != 1 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			g.s.Lock()
+			c.plant(g.s)
+			g.s.Unlock()
+			code, out := g.uninstall(t, uninstallEurope)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			g.s.Lock()
+			defer g.s.Unlock()
+			if !c.gone(g.s) {
+				t.Errorf("still there:\n%s", out)
+			}
+		})
+	}
 }
