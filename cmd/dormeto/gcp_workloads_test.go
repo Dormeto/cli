@@ -110,3 +110,68 @@ func TestGcpWorkloadsOffboardHelpSaysForceDoesNotPassABusyWorkload(t *testing.T)
 		}
 	}
 }
+
+func TestGcpWorkloadsScheduleReadsTheRequest(t *testing.T) {
+	for _, verb := range []string{"show", "set", "clear"} {
+		args := []string{"gcp", "workloads", "schedule", verb, "shop", "--project", "p", "--region", "europe-west1", "--json"}
+		want := gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop", JSON: true}
+		if verb == "set" {
+			args = append(args, "--file", "s.json")
+			want.File = "s.json"
+		}
+		calls, errs, exit := gcpRan(t, 0, args...)
+		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads schedule "+verb || !reflect.DeepEqual(calls[0].r, want) {
+			t.Fatalf("%s: %d %q %+v", verb, exit, errs, calls)
+		}
+	}
+	for _, args := range [][]string{
+		{"gcp", "workloads", "schedule", "set", "shop", "--project", "p", "--region", "europe-west1"},
+		{"gcp", "workloads", "schedule", "show", "--project", "p", "--region", "europe-west1"},
+		{"gcp", "workloads", "schedule", "show", "a", "b", "--project", "p", "--region", "europe-west1"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, args...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
+		}
+	}
+}
+
+func TestGcpWorkloadsPauseReadsTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "pause", "shop", "--project", "p", "--region", "europe-west1", "--reason", "freeze",
+		"--keep-asleep", "--until", "2026-12-01T08:00:00Z")
+	want := gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop", Reason: "freeze", KeepAsleep: true, Until: "2026-12-01T08:00:00Z"}
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads pause" || !reflect.DeepEqual(calls[0].r, want) {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "resume", "shop", "--project", "p", "--region", "europe-west1")
+	if len(calls) != 1 || calls[0].run != "workloads resume" || calls[0].r.ID != "shop" {
+		t.Fatalf("%+v", calls)
+	}
+}
+
+func TestGcpWorkloadsPauseWithoutAReasonIsExitTwo(t *testing.T) {
+	for _, args := range [][]string{
+		{"gcp", "workloads", "pause", "shop", "--project", "p", "--region", "europe-west1"},
+		{"gcp", "workloads", "pause", "shop", "--project", "p", "--region", "europe-west1", "--reason", "  "},
+	} {
+		calls, errs, exit := gcpRan(t, 0, args...)
+		if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "--reason") {
+			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
+		}
+	}
+}
+
+func TestGcpWorkloadsPauseHelpSaysWhatEachKindDoes(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "workloads", "pause", "--help")
+	for _, want := range []string{"--reason", "--keep-asleep", "--until", "a visitor still wakes the workload", "scheduled wakes wait", "asleep is woken", "RFC 3339"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%d %s lacks %s", code, out, want)
+		}
+	}
+	out, _, code = executed(t, build{}, "gcp", "workloads", "--help")
+	for _, verb := range []string{"schedule", "pause", "resume"} {
+		if code != 0 || !strings.Contains(out, verb) {
+			t.Errorf("%d %s lacks %s", code, out, verb)
+		}
+	}
+}

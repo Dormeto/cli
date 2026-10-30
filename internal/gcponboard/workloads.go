@@ -69,6 +69,7 @@ type workload struct {
 		DurationMs int `json:"durationMs"`
 	} `json:"lastWake"`
 	Failure json.RawMessage `json:"failure"`
+	Paused  *pausedOf       `json:"paused"`
 }
 
 // dryRun is the controller's answer to an onboarding dry run.
@@ -258,7 +259,11 @@ func (x *run) list() error {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	for _, w := range all {
-		x.say("%-30s %-8s %s", w.ID, w.State, w.BackendService)
+		mark := ""
+		if w.Paused != nil {
+			mark = " [paused]"
+		}
+		x.say("%-30s %-8s %s%s", w.ID, w.State, w.BackendService, mark)
 	}
 	return nil
 }
@@ -286,6 +291,9 @@ func (x *run) show() error {
 		}
 		if len(w.Failure) > 0 && string(w.Failure) != "null" {
 			x.say("  failure: %s", w.Failure)
+		}
+		if w.Paused != nil {
+			x.say("  %s (since %s)", w.Paused, w.Paused.At)
 		}
 	})
 }

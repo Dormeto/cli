@@ -131,6 +131,15 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			Reply(w, map[string]any{})
+		case verb == "schedule":
+			s.schedule(w, r, id)
+		case verb == "pause" && r.Method == http.MethodPost:
+			s.pause(w, r, id)
+		case verb == "resume" && r.Method == http.MethodPost:
+			delete(s.WorkloadDocs[id], "paused")
+			Reply(w, s.workloadBody(id))
+		case verb == "nap" && r.Method == http.MethodPost && s.WorkloadDocs[id]["paused"] != nil:
+			controllerFail(w, 409, "paused", "workload "+id+" is paused")
 		case verb == "wake" && r.Method == http.MethodPost && state == "NAPPING":
 			// The wake is kept pending until the nap ends.
 			Reply(w, s.workloadBody(id))
@@ -283,4 +292,59 @@ func (s *Server) tagBindings(w http.ResponseWriter, r *http.Request, body []byte
 
 func bindingBody(b TagBinding) map[string]any {
 	return map[string]any{"name": "tagBindings/" + url.PathEscape(b.Parent) + "/" + b.TagValue, "parent": b.Parent, "tagValue": b.TagValue}
+}
+
+// schedule serves /v1/workloads/<id>/schedule: GET, PUT (the schedule as the body; ScheduleProblem, when set, refuses it
+// with a 400) and DELETE. The next events are the ones NextEvents holds while a schedule is set.
+func (s *Server) schedule(w http.ResponseWriter, r *http.Request, id string) {
+	shown := func() {
+		events := []any{}
+		if s.Schedules[id] != nil {
+			events = s.NextEvents
+		}
+		Reply(w, map[string]any{"schedule": s.Schedules[id], "nextEvents": events})
+	}
+	switch r.Method {
+	case http.MethodGet:
+		shown()
+	case http.MethodPut:
+		var in map[string]any
+		body, _ := io.ReadAll(r.Body)
+		if s.ScheduleProblem != "" || json.Unmarshal(body, &in) != nil {
+			controllerFail(w, 400, "bad-request", s.ScheduleProblem)
+			return
+		}
+		s.Schedules[id] = in
+		shown()
+	case http.MethodDelete:
+		delete(s.Schedules, id)
+		shown()
+	default:
+		noRoute(w, r)
+	}
+}
+
+// pause serves POST /v1/workloads/<id>/pause: a reason is needed and keepAsleep, when sent, is a boolean (null is refused).
+func (s *Server) pause(w http.ResponseWriter, r *http.Request, id string) {
+	var in map[string]any
+	body, _ := io.ReadAll(r.Body)
+	if json.Unmarshal(body, &in) != nil {
+		controllerFail(w, 400, "bad-request", "the body is not JSON")
+		return
+	}
+	if reason, _ := in["reason"].(string); strings.TrimSpace(reason) == "" {
+		controllerFail(w, 400, "bad-request", "reason required (1 to 256 characters)")
+		return
+	}
+	keep, given := in["keepAsleep"]
+	if _, isBool := keep.(bool); given && !isBool {
+		controllerFail(w, 400, "bad-request", "keepAsleep must be true or false")
+		return
+	}
+	record := map[string]any{"by": in["by"], "at": "2026-11-01T10:00:00.000Z", "reason": in["reason"], "until": in["until"], "keepAsleep": keep == true}
+	if s.WorkloadDocs[id] == nil {
+		s.WorkloadDocs[id] = map[string]any{}
+	}
+	s.WorkloadDocs[id]["paused"] = record
+	Reply(w, s.workloadBody(id))
 }

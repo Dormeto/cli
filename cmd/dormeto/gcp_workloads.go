@@ -1,11 +1,12 @@
 package main
 
-// `dormeto gcp workloads list|show|onboard|offboard|nap|wake`: the flags read into a gcponboard.Request, as the other gcp
+// `dormeto gcp workloads list|show|onboard|offboard|nap|wake|schedule|pause|resume`: the flags read into a gcponboard.Request, as the other gcp
 // commands. The workload's ID of show, offboard, nap and wake is their argument.
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,14 +14,18 @@ import (
 )
 
 // gcpWorkloadRuns are the runs of the gcp workloads commands.
-type gcpWorkloadRuns struct{ list, show, onboard, offboard, nap, wake gcpRun }
+type gcpWorkloadRuns struct {
+	list, show, onboard, offboard, nap, wake, scheduleShow, scheduleSet, scheduleClear, pause, resume gcpRun
+}
 
 var theGcpWorkloadRuns = gcpWorkloadRuns{list: gcponboard.WorkloadsList, show: gcponboard.WorkloadsShow, onboard: gcponboard.WorkloadsOnboard,
-	offboard: gcponboard.WorkloadsOffboard, nap: gcponboard.WorkloadsNap, wake: gcponboard.WorkloadsWake}
+	offboard: gcponboard.WorkloadsOffboard, nap: gcponboard.WorkloadsNap, wake: gcponboard.WorkloadsWake,
+	scheduleShow: gcponboard.WorkloadsScheduleShow, scheduleSet: gcponboard.WorkloadsScheduleSet, scheduleClear: gcponboard.WorkloadsScheduleClear,
+	pause: gcponboard.WorkloadsPause, resume: gcponboard.WorkloadsResume}
 
 func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "workloads", Short: "Workloads of a Dormeto router in Google Cloud", Args: noArgs, SilenceErrors: true,
-		Long: "List, show, onboard, offboard, nap and wake the workloads of the router dmtr-<region>, through its controller\n" +
+		Long: "List, show, onboard, offboard, nap, wake, schedule, pause and resume the workloads of the router dmtr-<region>, through its controller\n" +
 			"with your identity token (the Cloud Run invoker role on it)."}
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
@@ -32,7 +37,10 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 				"leaves its VMs and groups down (they are listed). --force passes only a failed wake: a workload still NAPPING or\n"+
 				"WAKING is refused as busy, with or without it, until that ends or the router's check fails it.", runs.offboard, version, true),
 		newGcpWorkloadsOne("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
-		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false))
+		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false),
+		newGcpWorkloadsSchedule(runs, version),
+		newGcpWorkloadsPause(runs.pause, version),
+		newGcpWorkloadsOne("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false))
 	return cmd
 }
 
@@ -53,8 +61,13 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 // With force, --force is a flag of the command.
 func newGcpWorkloadsOne(verb, short, long string, run gcpRun, version string, force bool) *cobra.Command {
 	var f gcpFlags
+	return newGcpWorkloadsOneWith(verb, short, long, run, version, &f, force)
+}
+
+// newGcpWorkloadsOneWith is newGcpWorkloadsOne with the flags f, the command's own flags read into the request by run's wrapper.
+func newGcpWorkloadsOneWith(verb, short, long string, run gcpRun, version string, f *gcpFlags, force bool) *cobra.Command {
 	var id string
-	cmd := gcpCommand(verb+" <workload>", short, long, &f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+	cmd := gcpCommand(verb+" <workload>", short, long, f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 		r.ID = id
 		return run(ctx, d, r)
 	})
@@ -66,7 +79,7 @@ func newGcpWorkloadsOne(verb, short, long string, run gcpRun, version string, fo
 		id = args[0]
 		return nil
 	}
-	gcpRouterFlags(cmd, &f)
+	gcpRouterFlags(cmd, f)
 	if force {
 		cmd.Flags().BoolVar(&f.force, "force", false, "offboard a workload that cannot wake anyway, leaving its VMs and groups down")
 	}
@@ -115,5 +128,68 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the router's, 15)")
 	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
+	return cmd
+}
+
+func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Command {
+	cmd := &cobra.Command{Use: "schedule", Short: "Show, set or clear a workload's schedule", Args: noArgs, SilenceErrors: true,
+		Long: "Show, set or clear the weekly nap and awake windows of a workload, in its time zone, through the router's controller."}
+	show := newGcpWorkloadsOne("show", "Show a workload's schedule and its next events",
+		"Show the schedule of a workload and its next events, each with its local time and zone.", runs.scheduleShow, version, false)
+	clear := newGcpWorkloadsOne("clear", "Clear a workload's schedule", "Clear the schedule of a workload: it naps and wakes by its idle window alone.", runs.scheduleClear, version, false)
+
+	var f gcpFlags
+	var file string
+	set := newGcpWorkloadsOneWith("set", "Set a workload's schedule from a JSON file",
+		"Set the schedule of a workload from a JSON file: {\"timeZone\", \"windows\": [{\"kind\": \"nap\"|\"awake\", \"days\", \"start\", \"end\", \"wake\"}],\n"+
+			"\"exceptions\", \"maxNapDays\"}. The controller checks it and says what is wrong, if anything. The file is the one\n"+
+			"'schedule show --json' prints under \"schedule\".",
+		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+			r.File = file
+			return runs.scheduleSet(ctx, d, r)
+		}, version, &f, false)
+	set.Flags().StringVar(&file, "file", "", "the schedule as a JSON file (required)")
+	prior := set.PreRunE
+	set.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := prior(c, args); err != nil {
+			return err
+		}
+		if file == "" {
+			fmt.Fprintln(c.ErrOrStderr(), "--file: needed, the schedule as a JSON file")
+			return exitCode(2)
+		}
+		return nil
+	}
+	cmd.AddCommand(show, set, clear)
+	return cmd
+}
+
+func newGcpWorkloadsPause(run gcpRun, version string) *cobra.Command {
+	var f gcpFlags
+	var reason, until string
+	var keepAsleep bool
+	cmd := newGcpWorkloadsOneWith("pause", "Pause a workload's naps",
+		"Pause a workload: it is not napped, by its idle window, its schedule or 'nap', until it is resumed or --until.\n"+
+			"A workload asleep is woken. With --keep-asleep it is not: it stays as it is, a visitor still wakes the workload,\n"+
+			"and scheduled wakes wait until the pause ends. --until takes a time in RFC 3339 (2026-12-01T08:00:00+01:00), at most 366 days away.",
+		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, until
+			return run(ctx, d, r)
+		}, version, &f, false)
+	fl := cmd.Flags()
+	fl.StringVar(&reason, "reason", "", "why the workload is paused, at most 256 characters (required)")
+	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake a workload asleep: a visitor still wakes it, scheduled wakes wait")
+	fl.StringVar(&until, "until", "", "end the pause at this time, in RFC 3339 (default: when resumed)")
+	prior := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := prior(c, args); err != nil {
+			return err
+		}
+		if strings.TrimSpace(reason) == "" {
+			fmt.Fprintln(c.ErrOrStderr(), "--reason: needed, why the workload is paused")
+			return exitCode(2)
+		}
+		return nil
+	}
 	return cmd
 }

@@ -111,6 +111,11 @@ type Server struct {
 	// WorkloadDocs the other fields of a workload as GET /v1/workloads/<id> answers it (urlMap, backends…).
 	Workloads    map[string]string
 	WorkloadDocs map[string]map[string]any
+	// Schedules are the workloads' schedules, by ID; NextEvents the events GET .../schedule answers while one is set;
+	// ScheduleProblem, when set, makes PUT .../schedule refuse with a 400 saying it.
+	Schedules       map[string]map[string]any
+	NextEvents      []any
+	ScheduleProblem string
 	// WakeFails are the workloads whose wake fails: DELETE /v1/workloads/<id> answers 409 wake-failed, and only
 	// ?force=true offboards them (answering the backends left down).
 	WakeFails map[string]bool
@@ -169,7 +174,7 @@ func New(t testing.TB) *Server {
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
 		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Workloads: map[string]string{},
-		WorkloadDocs: map[string]map[string]any{}, WakeFails: map[string]bool{},
+		WorkloadDocs: map[string]map[string]any{}, Schedules: map[string]map[string]any{}, WakeFails: map[string]bool{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))

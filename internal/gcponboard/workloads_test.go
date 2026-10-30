@@ -898,3 +898,207 @@ func TestWorkloadsOffboardOfAnUnknownWorkloadSaysTheControllersRefusalAlone(t *t
 	}
 	contains(t, out, "no workload ghost\n")
 }
+
+// A schedule as the CLI reads it from a file: a nap window at night and an awake window by day, in Paris.
+const parisSchedule = `{"timeZone":"Europe/Paris","windows":[{"kind":"nap","days":["mon","tue"],"start":"22:00","end":"06:00"}],"maxNapDays":14}`
+
+var parisEvents = []any{
+	map[string]any{"at": "2026-11-02T21:00:00.000Z", "kind": "nap-start", "window": 0},
+	map[string]any{"at": "2026-11-03T05:00:00.000Z", "kind": "nap-end", "window": 0},
+}
+
+func (g *workloadsRig) scheduleFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "schedule.json")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestWorkloadsScheduleSetShowClearCallTheControllerAsTheOperator(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.NextEvents = parisEvents
+	r := workloadsEurope
+	r.ID = "shop"
+	mark := len(g.s.Calls())
+	r.File = g.scheduleFile(t, parisSchedule)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	body := g.body(t, "PUT", controllerHost, "/v1/workloads/shop/schedule")
+	if body["timeZone"] != "Europe/Paris" || body["maxNapDays"] != float64(14) || body["by"] != "me@example.com" {
+		t.Fatalf("%v", body)
+	}
+	r.File = ""
+	code, out = g.call(t, WorkloadsScheduleShow, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// The events with their local time and zone, as the router's nextEvents gives them in UTC.
+	contains(t, out, "Europe/Paris", "nap", "mon", "22:00", "06:00", "maxNapDays", "2026-11-02 22:00", "CET", "nap starts", "2026-11-03 06:00", "nap ends")
+	r.JSON = true
+	_, out = g.call(t, WorkloadsScheduleShow, r)
+	var shown map[string]any
+	if err := json.Unmarshal([]byte(out), &shown); err != nil || len(shown["nextEvents"].([]any)) != 2 || shown["schedule"] == nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	r.JSON = false
+	code, out = g.call(t, WorkloadsScheduleClear, r)
+	if code != 0 || g.s.Schedules["shop"] != nil {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "cleared")
+	_, out = g.call(t, WorkloadsScheduleShow, r)
+	contains(t, out, "no schedule")
+	want := []string{"PUT /v1/workloads/shop/schedule", "GET /v1/workloads/shop/schedule", "GET /v1/workloads/shop/schedule",
+		"DELETE /v1/workloads/shop/schedule", "GET /v1/workloads/shop/schedule"}
+	if got := g.controllerCalls(mark); !slices.Equal(got, want) {
+		t.Fatalf("%v", got)
+	}
+	if !slices.Contains(*g.audiences, "https://"+controllerHost) {
+		t.Fatalf("audiences %v", *g.audiences)
+	}
+}
+
+func TestWorkloadsScheduleSetSaysTheControllersRefusalAndExitsOne(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.ScheduleProblem = "windows[0].start: not a time on a 5-minute step"
+	r := workloadsEurope
+	r.ID, r.File = "shop", g.scheduleFile(t, parisSchedule)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "windows[0].start: not a time on a 5-minute step")
+	if strings.Contains(out, "google: 400") || strings.Contains(out, `{"error"`) {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestWorkloadsScheduleSetRefusesAMissingOrUnreadableFileBeforeAnyCall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	mark := len(g.s.Calls())
+	for name, file := range map[string]string{"none": "", "absent": filepath.Join(t.TempDir(), "nope.json"), "not JSON": g.scheduleFile(t, "windows: []"),
+		"not an object": g.scheduleFile(t, "[1]")} {
+		r := workloadsEurope
+		r.ID, r.File = "shop", file
+		if code, out := g.call(t, WorkloadsScheduleSet, r); code != 2 || out == "" {
+			t.Errorf("%s: exit %d:\n%s", name, code, out)
+		}
+	}
+	if got := g.controllerCalls(mark); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestWorkloadsPauseAndResumePostToTheController(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "ASLEEP"
+	r := workloadsEurope
+	r.ID, r.Reason = "shop", "release freeze"
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	body := g.body(t, "POST", controllerHost, "/v1/workloads/shop/pause")
+	if body["reason"] != "release freeze" || body["by"] != "me@example.com" {
+		t.Fatalf("%v", body)
+	}
+	// Not asked, keepAsleep and until are not sent: the controller refuses a null.
+	if _, ok := body["keepAsleep"]; ok {
+		t.Fatalf("%v", body)
+	}
+	if _, ok := body["until"]; ok {
+		t.Fatalf("%v", body)
+	}
+	contains(t, out, "paused", "release freeze", "asleep", "woken")
+	code, out = g.call(t, WorkloadsResume, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "resumed")
+	if body := g.body(t, "POST", controllerHost, "/v1/workloads/shop/resume"); body["by"] != "me@example.com" {
+		t.Fatalf("%v", body)
+	}
+	want := []string{"POST /v1/workloads/shop/pause", "POST /v1/workloads/shop/resume"}
+	if got := g.controllerCalls(mark); !slices.Equal(got, want) {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestWorkloadsPauseKeepAsleepAndUntilSayWhatTheyDo(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "ASLEEP"
+	r := workloadsEurope
+	r.ID, r.Reason, r.KeepAsleep, r.Until = "shop", "audit", true, "2026-12-01T08:00:00+01:00"
+	code, out := g.call(t, WorkloadsPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	body := g.body(t, "POST", controllerHost, "/v1/workloads/shop/pause")
+	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
+		t.Fatalf("%v", body)
+	}
+	contains(t, out, "a visitor still wakes the workload", "scheduled wakes wait")
+	if strings.Contains(out, "woken") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestWorkloadsPauseRefusesAMissingReasonAndABadUntilBeforeAnyCall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	mark := len(g.s.Calls())
+	for _, r := range []Request{{ID: "shop"}, {ID: "shop", Reason: "  "}, {ID: "shop", Reason: strings.Repeat("x", 257)},
+		{ID: "shop", Reason: "x", Until: "tomorrow"}, {ID: "shop", Reason: "x", Until: "2026-12-01"}} {
+		r.Project, r.Region = workloadsEurope.Project, workloadsEurope.Region
+		if code, out := g.call(t, WorkloadsPause, r); code != 2 || out == "" {
+			t.Errorf("%+v: exit %d:\n%s", r, code, out)
+		}
+	}
+	if got := g.controllerCalls(mark); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestWorkloadsNapOfAPausedWorkloadSaysItIsPaused(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.ID, r.Reason = "shop", "freeze"
+	g.call(t, WorkloadsPause, r)
+	code, out := g.call(t, WorkloadsNap, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is paused\n")
+}
+
+func TestWorkloadsShowAndListShowAPause(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"], g.s.Workloads["blog"] = "ASLEEP", "AWAKE"
+	r := workloadsEurope
+	r.ID, r.Reason, r.KeepAsleep, r.Until = "shop", "audit", true, "2027-01-01T00:00:00Z"
+	g.call(t, WorkloadsPause, r)
+	_, out := g.call(t, WorkloadsShow, r)
+	contains(t, out, "paused by me@example.com", "audit", "2027-01-01T00:00:00Z", "keep asleep")
+	_, out = g.call(t, WorkloadsList, workloadsEurope)
+	var shop, blog string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "shop"):
+			shop = line
+		case strings.HasPrefix(line, "blog"):
+			blog = line
+		}
+	}
+	if !strings.Contains(shop, "paused") || strings.Contains(blog, "paused") || strings.Contains(shop, "audit") {
+		t.Fatalf("shop %q blog %q", shop, blog)
+	}
+}

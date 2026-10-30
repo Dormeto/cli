@@ -51,6 +51,10 @@ type Request struct {
 	IdleMinutes                *int
 	Hibernate                  *bool
 
+	// The schedule and pause commands: the schedule's file (set), the pause's reason, --keep-asleep and --until (RFC 3339).
+	File, Reason, Until string
+	KeepAsleep          bool
+
 	// With are the optional features (--with): cloud-sql, gke.
 	With []string
 
