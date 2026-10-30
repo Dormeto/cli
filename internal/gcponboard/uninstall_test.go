@@ -268,6 +268,10 @@ func TestUninstallRemovesTheDeletedMembersOfAServiceAccountDeletedByHand(t *test
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "deleted:"+routerMember+"?uid=123456789")
+	// The router's own grants, its account deleted: the plan removes them, they are not someone else's.
+	if strings.Contains(out, "since the last run") {
+		t.Fatalf("%s", out)
+	}
 	for _, k := range g.policyGrants(t) {
 		if strings.Contains(k, routerSA) {
 			t.Errorf("still in the policy: %q", k)
@@ -568,5 +572,23 @@ func TestUninstallForceLeavesTheBackendsOfAWorkloadThatCannotWakeDown(t *testing
 	defer g.s.Unlock()
 	if len(g.s.TagBindings) != 0 || len(g.s.TagValues) != 0 {
 		t.Errorf("left: %v %v", g.s.TagBindings, g.s.TagValues)
+	}
+}
+
+func TestUninstallShowsAndLeavesABindingGoogleAddedAfterTheInstall(t *testing.T) {
+	g := routerInstalled(t)
+	grantInFake(t, g.s, registryAgentRole, artifactAgent)
+	grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "IAM changes since the last run, not Dormeto's:\n"+
+		"  + "+registryAgentRole+" to "+artifactAgent+" on the project (Google, after install (seen later))\n"+
+		"  + roles/viewer to user:someone@example.com on the project (not a Google service agent: not recorded)\n",
+		"Left in place:\n", "  "+registryAgentRole+" to "+artifactAgent+" on the project (added by Google)\n")
+	p := g.projectPolicy(t)
+	if !has(p, Grant{Role: registryAgentRole, Member: artifactAgent}) {
+		t.Fatal("Google's binding is gone")
 	}
 }

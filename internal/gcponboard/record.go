@@ -2,7 +2,7 @@ package gcponboard
 
 // The install record: the document install/record of the router's database, its field data holding the record as JSON.
 // It lists the resources of the router's access (and the APIs the install turned on), its grants, the grants Google
-// added during the install (with the step after which they appeared), and the project's bindings before the first
+// added (with the step after which they appeared), and the project's bindings before the first
 // install, never removed. Until the database exists, the record waits in <Cache>/dormeto/gcp/<project>-<region>-
 // before.json: a later run starts from that file (its before is the true one of an earlier run that stopped), and the
 // file is deleted once the database holds the record.
@@ -22,10 +22,10 @@ const recordPath = "install/record"
 
 // Record is the install record. Its rule: Grants and Resources are Dormeto's that are present after the install, added
 // by it or found by it (a run adds what it finds of the router's, so a record rebuilt after a loss is whole again);
-// Google lists the grants Google added during an install, never removed; Before is the project's bindings before the
-// first install, for the uninstall only (which removes only the grants that are not in it; an install's verification
-// compares with its own run's first read). Image and RouterVersion are the router
-// part's (empty for the access alone); times are RFC 3339 UTC; By is the gcloud account that ran the install.
+// Google lists the grants Google added, during an install or seen by a later run, never removed; Before is the project's
+// bindings before the first install, for the uninstall only (which removes only the grants that are not in it; an
+// install's verification compares with its own run's first read). Image and RouterVersion are the router part's (empty
+// for the access alone); times are RFC 3339 UTC; By is the gcloud account that ran the install.
 type Record struct {
 	CLI            string          `json:"cli"`
 	Image          string          `json:"image"`
@@ -67,7 +67,8 @@ type RecordGrant struct {
 }
 
 // GoogleGrant is a grant Google added on its own during the install, after Step; "<step> (seen later)" when the run
-// after a stopped one found it (Google acting after the stop).
+// after a stopped one found it (Google acting after the stop), "install (seen later)" when a run after a finished install
+// did.
 type GoogleGrant struct {
 	Role   string `json:"role"`
 	Member string `json:"member"`
@@ -119,13 +120,15 @@ func (r *Record) addGrant(g RecordGrant) bool {
 	return true
 }
 
-func (r *Record) addGoogle(g GoogleGrant) {
+// addGoogle adds a grant of Google's the record lacks, and tells whether it did.
+func (r *Record) addGoogle(g GoogleGrant) bool {
 	for _, have := range r.Google {
 		if have.Role == g.Role && have.Member == g.Member {
-			return
+			return false
 		}
 	}
 	r.Google = append(r.Google, g)
+	return true
 }
 
 func bindingsOf(p *Policy) []RecordBinding {
@@ -194,18 +197,23 @@ func (x *run) loadRecord() error {
 	return nil
 }
 
-// resume takes up the record of an install that did not finish. The APIs its apis step asked for and that are on now
-// are recorded. The project's grants that the record does not explain — neither in its before, nor the router's, nor
-// Google's as that install saw them, nor another Dormeto router's — appeared since it read the policy last: Google may
-// have acted after it stopped (an API's operation finishing). They are shown in the plan; those of Google's service
-// agents are recorded as Google's, after the step that install was at "(seen later)"; the others are only shown.
+// resume takes up the record of an install that did not finish: the APIs its apis step asked for and that are on now are
+// recorded, and it is written again, finished. Then, as on every run with a record, sinceRecord.
 func (x *run) resume() {
-	if !x.resumed {
-		return
+	if x.resumed {
+		x.recChanged = true
+		x.recordAPIs(x.enabled)
+		x.rec.Enabling = nil // those still off are the apis step's again
 	}
-	x.recChanged = true // written again, finished
-	x.recordAPIs(x.enabled)
-	x.rec.Enabling = nil // those still off are the apis step's again
+	x.sinceRecord()
+}
+
+// sinceRecord compares the project's grants, as this run first read them, with the record. Those it does not explain —
+// neither in its before, nor the router's, nor Google's as it lists them, nor another Dormeto router's — appeared since:
+// Google may have acted after a run stopped (an API's operation finishing) or between two runs (a late grant, a repository
+// created by hand). They are shown in the plan; those of Google's service agents are recorded as Google's, after the step
+// that install was at "(seen later)", or after "install" when it had finished; the others are only shown, so at every run.
+func (x *run) sinceRecord() {
 	explained := &Policy{}
 	for _, b := range x.rec.Before {
 		explained.Bindings = append(explained.Bindings, Binding{Role: b.Role, Members: b.Members, Condition: b.Condition})
@@ -226,13 +234,32 @@ func (x *run) resume() {
 	added, _ := Diff(explained, x.start)
 	for _, g := range added {
 		switch {
-		case x.ours(g), x.otherRouter(g.Member):
+		case x.ours(g), x.oursDeleted(g), x.otherRouter(g.Member):
 		case x.serviceAgent(g.Member):
-			x.rec.addGoogle(GoogleGrant{Role: g.Role, Member: g.Member, Step: step})
-			x.sinceLast = append(x.sinceLast, "+ "+x.describe(g, "project")+" (Google, after "+step+")")
+			if x.rec.addGoogle(GoogleGrant{Role: g.Role, Member: g.Member, Step: step}) {
+				x.recChanged = true
+				x.sinceLast = append(x.sinceLast, "+ "+x.describe(g, "project")+" (Google, after "+step+")")
+			}
 		default:
 			x.sinceLast = append(x.sinceLast, "+ "+x.describe(g, "project")+" (not a Google service agent: not recorded)")
 		}
+	}
+}
+
+// oursDeleted tells that a grant is one of the router's, its service account deleted by hand: the member is then
+// deleted:serviceAccount:<email>?uid=<n>.
+func (x *run) oursDeleted(g Grant) bool {
+	return sameMember(g.Member, x.n.member) && x.ours(Grant{Role: g.Role, Member: x.n.member, Condition: g.Condition})
+}
+
+// printSinceLast says what sinceRecord found.
+func (x *run) printSinceLast() {
+	if len(x.sinceLast) == 0 {
+		return
+	}
+	x.say("IAM changes since the last run, not Dormeto's:")
+	for _, l := range x.sinceLast {
+		x.say("  %s", l)
 	}
 }
 

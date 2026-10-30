@@ -96,7 +96,7 @@ type run struct {
 
 	rec           *Record
 	resumed       bool     // the record is an unfinished install's: from the cache, or the database's with Running set
-	sinceLast     []string // the plan's lines of the project's grants that appeared since that install stopped
+	sinceLast     []string // the plan's lines of the project's grants that the record does not explain
 	enabled       []string // the manifest's APIs on at the start
 	recorded      bool     // the record is in the database (read, or written by this run)
 	recChanged    bool     // the plan found things the record lacks
@@ -179,6 +179,7 @@ func (x *run) install() error {
 
 // upToDate says that nothing differs, after asking the router: a health no step can change is not "up to date".
 func (x *run) upToDate() error {
+	x.printSinceLast()
 	if x.r.Image == "" {
 		x.say("The access of router %s in project %s is up to date.", x.n.router, x.n.project)
 		return nil
@@ -309,12 +310,7 @@ func (x *run) printPlan() {
 		}
 	}
 	x.headsUp()
-	if len(x.sinceLast) > 0 {
-		x.say("IAM changes since the last run, not Dormeto's:")
-		for _, l := range x.sinceLast {
-			x.say("  %s", l)
-		}
-	}
+	x.printSinceLast()
 }
 
 // headsUp says, after the plan, that turning APIs on and creating the database can make Google add bindings of its own,

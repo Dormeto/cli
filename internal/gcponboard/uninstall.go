@@ -104,13 +104,14 @@ func (x *run) planUninstall() error {
 	if err != nil {
 		return err
 	}
-	x.policy = p
+	x.policy, x.start = p, p
 	if err := x.loadRecord(); err != nil {
 		return err
 	}
 	if !x.recorded && !x.resumed {
 		return &stop{1, fmt.Sprintf("no router %s is installed in project %s: there is no install record\nNothing was changed.", x.n.router, x.n.project)}
 	}
+	x.sinceRecord()
 	workloads, unknown, err := x.workloads()
 	if err != nil {
 		return err
@@ -164,6 +165,7 @@ func (x *run) printUninstallPlan() {
 	if len(x.steps) == 0 {
 		x.say("  nothing is left of router %s to remove", x.n.router)
 	}
+	x.printSinceLast()
 }
 
 // listed tells whether the record lists a resource.
@@ -517,7 +519,7 @@ func (x *run) applyUninstall() error {
 }
 
 // leftInPlace lists what the uninstall does not touch: the APIs the install turned on (other things may use them) and
-// the bindings Google added during the install (its own service agents').
+// the bindings Google added (its own service agents').
 func (x *run) leftInPlace() {
 	var lines []string
 	for _, r := range x.rec.Resources {

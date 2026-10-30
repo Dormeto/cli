@@ -1116,7 +1116,7 @@ func TestInstallAfterAStoppedRunRecordsGooglesChangesSeenLater(t *testing.T) {
 	if apis(rec) != 10 || len(rec.Enabling) != 0 || rec.Running != "" || len(rec.Resources) != 17 {
 		t.Errorf("resources %+v, enabling %v, running %q", rec.Resources, rec.Enabling, rec.Running)
 	}
-	// Recorded: the next run has nothing to say.
+	// Recorded: the next run plans nothing (only the binding it does not record is shown again).
 	if code, out := g.run(t, europe); code != 0 || !strings.Contains(out, "is up to date.") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1871,5 +1871,60 @@ func TestInstallWritesTheRecordBeforeCreatingWhatAKilledRunWouldLeave(t *testing
 	}
 	if rec := g.recordBefore(t, "POST", "/queues"); rec.Running != "queue" {
 		t.Errorf("before the queue: running %q", rec.Running)
+	}
+}
+
+const registryAgentRole = "roles/artifactregistry.serviceAgent"
+
+var artifactAgent = "serviceAccount:service-1034397096264@gcp-sa-artifactregistry.iam.gserviceaccount.com"
+
+func TestInstallShowsAndRecordsAServiceAgentsBindingThatAppearedAfterAFinishedInstall(t *testing.T) {
+	g := routerInstalled(t)
+	grantInFake(t, g.s, registryAgentRole, artifactAgent)
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "IAM changes since the last run, not Dormeto's:\n"+
+		"  + "+registryAgentRole+" to "+artifactAgent+" on the project (Google, after install (seen later))\n")
+	want := GoogleGrant{Role: registryAgentRole, Member: artifactAgent, Step: "install (seen later)"}
+	if rec := g.record(t); !slices.Contains(rec.Google, want) || rec.Running != "" {
+		t.Fatalf("%+v", rec)
+	}
+	// Recorded: the next run has nothing to say.
+	code, out = g.run(t, withImage)
+	if code != 0 || !strings.Contains(out, "is up to date") || strings.Contains(out, "since the last run") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallDryRunShowsAServiceAgentsBindingThatAppearedAndRecordsNothing(t *testing.T) {
+	g := routerInstalled(t)
+	grantInFake(t, g.s, registryAgentRole, artifactAgent)
+	mark := len(g.s.Calls())
+	r := withImage
+	r.Yes, r.DryRun = false, true
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + "+registryAgentRole+" to "+artifactAgent+" on the project (Google, after install (seen later))\n")
+	if m := g.changes(mark); len(m) != 0 {
+		t.Fatalf("changes: %v", m)
+	}
+}
+
+func TestInstallUpToDateStillShowsABindingNotDormetosAndRecordsNothing(t *testing.T) {
+	g := routerInstalled(t)
+	grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "IAM changes since the last run, not Dormeto's:\n"+
+		"  + roles/viewer to user:someone@example.com on the project (not a Google service agent: not recorded)\n", "is up to date")
+	if m := g.changes(mark); len(m) != 0 {
+		t.Fatalf("changes: %v", m)
 	}
 }
