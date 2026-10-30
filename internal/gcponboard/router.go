@@ -323,6 +323,9 @@ func (x *run) writeService(s serviceSettings, create bool) (string, error) {
 			done += " (invoker check off)"
 		}
 	}
+	if err := x.recordFirst("service", x.serviceName(s.name)); err != nil {
+		return "", err
+	}
 	var op longOperation
 	err := x.call(method, u, x.wantService(s), &op)
 	if err == nil {
@@ -335,7 +338,6 @@ func (x *run) writeService(s serviceSettings, create bool) (string, error) {
 		}
 		return "", err
 	}
-	x.rec.addResource("service", x.serviceName(s.name))
 	return done, nil
 }
 
@@ -456,6 +458,9 @@ func (x *run) planNEG() (*step, error) {
 		}
 		in := googleNEG{Name: x.n.neg, NetworkEndpointType: "SERVERLESS"}
 		in.CloudRun.Service = x.n.waker
+		if err := x.recordFirst("neg", x.negName()); err != nil {
+			return "", err
+		}
 		var op struct {
 			SelfLink string `json:"selfLink"`
 		}
@@ -465,7 +470,6 @@ func (x *run) planNEG() (*step, error) {
 		if err := gcp.WaitCompute(x.ctx, x.d.Google, op.SelfLink, negTimeout); err != nil {
 			return "", err
 		}
-		x.rec.addResource("neg", x.negName())
 		if err := x.policyChanged("neg"); err != nil {
 			return "", err
 		}

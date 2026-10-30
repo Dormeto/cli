@@ -148,6 +148,11 @@ func (s *Server) cloudRun(w http.ResponseWriter, r *http.Request, body []byte) {
 		in.URLs = []string{"https://" + id + "-" + s.ProjectNumber + "." + region + ".run.app", in.URI}
 		in.TerminalCondition = RunCondition{Type: "Ready", State: "CONDITION_SUCCEEDED"}
 		s.withGoogleDefaults(&in.Template)
+		if message, fails := s.FailingRevisions[id]; fails {
+			in.TerminalCondition = RunCondition{Type: "Ready", State: "CONDITION_FAILED", Message: message}
+			s.operateFailing(w, operation+s.next(), 9, message, func() { s.RunServices[key] = &in })
+			return
+		}
 		s.operate(w, operation+s.next(), nil, func() {
 			s.RunServices[key] = &in
 			s.created("service")

@@ -99,6 +99,9 @@ type Server struct {
 	RunServices map[string]*RunService
 	NEGs        map[string]*NEG
 	Jobs        map[string]*Job
+	// FailingRevisions are the services whose first revision does not start, by service, with Google's message: the
+	// creation's operation fails and the service stays in Google, not ready.
+	FailingRevisions map[string]string
 	// Workloads are the workloads the controller lists, by ID, with their state (DELETE /v1/workloads/<id> offboards one);
 	// WorkloadDocs the other fields of a workload as GET /v1/workloads/<id> answers it (urlMap, backends…).
 	Workloads    map[string]string

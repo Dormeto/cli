@@ -352,17 +352,19 @@ func TestInstallChangesInTheStepsOrder(t *testing.T) {
 		}
 		got = append(got, c.Method+" "+path)
 	}
+	// Once the database holds the record, each step starts by writing it, with the step it is at.
+	const record = "PATCH databases/dmtr-europe-west1/documents/install/record"
 	want := []string{
 		"POST services:batchEnable",
 		"POST roles", "POST roles",
 		"POST serviceAccounts",
 		"POST tagKeys", "POST tagValues",
 		"POST databases",
-		"PATCH databases/dmtr-europe-west1/documents/install/record",
-		"POST projects/dormeto-dev:setIamPolicy",
-		"POST queues", "POST queues/dmtr-europe-west1:setIamPolicy",
-		"POST serviceAccounts/" + routerSA + ":setIamPolicy",
-		"PATCH databases/dmtr-europe-west1/documents/install/record",
+		record, // the database's first write
+		record, "POST projects/dormeto-dev:setIamPolicy",
+		record, "POST queues", "POST queues/dmtr-europe-west1:setIamPolicy",
+		record, "POST serviceAccounts/" + routerSA + ":setIamPolicy",
+		record, record, // the record step's start, and its end: finished
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("mutations:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -414,10 +416,12 @@ func TestInstallUndeletesThenUpdatesADeletedRole(t *testing.T) {
 			got = append(got, c.Method+" "+c.URL)
 		}
 	}
+	record := "PATCH https://firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record"
 	want := []string{
+		record,
 		"POST https://iam.googleapis.com/v1/projects/dormeto-dev/roles/dormetoRouter:undelete",
 		"PATCH https://iam.googleapis.com/v1/projects/dormeto-dev/roles/dormetoRouter?updateMask=title,description,includedPermissions,stage",
-		"PATCH https://firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record",
+		record, record,
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("%v", got)
@@ -779,7 +783,7 @@ func TestVerifyWarnsOfAnIAMChangeNotMadeByThisInstall(t *testing.T) {
 	injected := false
 	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
 		// Someone grants a role after the install's last read, before its verification.
-		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 2 {
+		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 6 {
 			injected = true
 			grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
 		}
@@ -1422,10 +1426,12 @@ func TestInstallAnotherTagUpdatesOnlyTheTwoServices(t *testing.T) {
 		"  ✓ cloudRun: updated "+controllerName+", updated "+wakerName+"\n",
 		"/v1/health answering version 0.35.0\n", "Installed router dmtr-europe-west1 in project dormeto-dev, version 0.35.0.\n")
 	mask := "?updateMask=ingress,invokerIamDisabled,template"
+	record := "PATCH firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record"
 	want := []string{
+		record,
 		"PATCH run.googleapis.com" + servicesPath + controllerName + mask,
 		"PATCH run.googleapis.com" + servicesPath + wakerName + mask,
-		"PATCH firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record",
+		record, record,
 	}
 	if got := g.changes(mark); !slices.Equal(got, want) {
 		t.Fatalf("%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -1639,7 +1645,7 @@ func TestInstallPutsBackTheJobsSettingsAndTheInvokerBinding(t *testing.T) {
 		"  ✓ cloudRun: granted roles/run.invoker on "+controllerName+"\n",
 		"  ✓ job: updated "+jobName+"\n")
 	got := g.changes(mark)
-	if !slices.Contains(got, "PATCH cloudscheduler.googleapis.com/v1/projects/dormeto-dev/locations/europe-west1/jobs/"+jobName+"?updateMask=schedule,timeZone,attemptDeadline,httpTarget") || len(got) != 3 {
+	if !slices.Contains(got, "PATCH cloudscheduler.googleapis.com/v1/projects/dormeto-dev/locations/europe-west1/jobs/"+jobName+"?updateMask=schedule,timeZone,attemptDeadline,httpTarget") || len(got) != 6 {
 		t.Fatalf("%v", got)
 	}
 	if g.s.Jobs["europe-west1/"+jobName].HTTPTarget.OIDCToken.Audience != controllerURL {
@@ -1743,7 +1749,7 @@ func TestInstallKeepsThePreviousImageRecordedUntilBothServicesHaveTheNewOne(t *t
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if got := g.changes(mark); len(got) != 2 || !strings.HasPrefix(got[0], "PATCH run.googleapis.com"+servicesPath+wakerName) {
+	if got := g.changes(mark); len(got) != 4 || !strings.HasPrefix(got[1], "PATCH run.googleapis.com"+servicesPath+wakerName) {
 		t.Fatalf("%v", got)
 	}
 	if rec := g.record(t); rec.Image != nextImage || rec.RouterVersion != "0.35.0" {
@@ -1766,5 +1772,104 @@ func TestInstallRecordsAnImageAlreadyDeployedByARunStoppedBeforeItsRecord(t *tes
 	contains(t, out, "  ~ record install/record in database dmtr-europe-west1\n")
 	if rec := g.record(t); rec.Image != routerImage || rec.RouterVersion != "0.34.0" {
 		t.Fatalf("%+v", rec)
+	}
+}
+
+// recordBefore is the record as last written before the first call of method whose URL contains part.
+func (g *installRig) recordBefore(t *testing.T, method, part string) Record {
+	t.Helper()
+	var rec Record
+	written := false
+	for _, c := range g.s.Calls() {
+		if c.Method == method && strings.Contains(c.URL, part) {
+			if !written {
+				t.Fatalf("no record was written before %s %s", method, part)
+			}
+			return rec
+		}
+		if c.Method == http.MethodPatch && strings.HasSuffix(c.Path, "/documents/install/record") {
+			var doc recordDocument
+			if err := json.Unmarshal([]byte(c.Body), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec); err != nil {
+				t.Fatal(err)
+			}
+			written = true
+		}
+	}
+	t.Fatalf("no %s %s", method, part)
+	return rec
+}
+
+func listsResource(rec Record, kind, name string) bool {
+	return slices.Contains(rec.Resources, Resource{Kind: kind, Name: name})
+}
+
+func TestInstallRecordsAServiceWhoseFirstRevisionDoesNotStartSoTheUninstallRemovesIt(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.FailingRevisions = map[string]string{wakerName: "the container did not start"}
+	code, out := g.run(t, withImage)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ cloudRun: ", "the container did not start")
+	if rec := g.record(t); !listsResource(rec, "service", "projects/dormeto-dev/locations/europe-west1/services/"+wakerName) {
+		t.Fatalf("the service is not recorded: %+v", rec.Resources)
+	}
+	code, out = g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("uninstall: exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  - service "+wakerName+"\n")
+	g.nothingLeft(t, "europe-west1")
+}
+
+func TestInstallRecordsANetworkEndpointGroupWhoseOperationIsNotSeenToEnd(t *testing.T) {
+	g := newRouterRig(t)
+	// Every try of the poll fails: the group exists in Google, the run stops waiting.
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "www.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/regions/europe-west1/operations/",
+		Times: 4, Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.run(t, withImage)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ neg: ")
+	if rec := g.record(t); !listsResource(rec, "neg", "projects/dormeto-dev/regions/europe-west1/networkEndpointGroups/"+wakerName) {
+		t.Fatalf("the group is not recorded: %+v", rec.Resources)
+	}
+	code, out = g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("uninstall: exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  - network endpoint group "+wakerName+"\n")
+	g.nothingLeft(t, "europe-west1")
+}
+
+// A run killed at any point (no failure path to write what it did) has written the step it was at, and the resource it
+// was creating, before the call that creates it.
+func TestInstallWritesTheRecordBeforeCreatingWhatAKilledRunWouldLeave(t *testing.T) {
+	g := newRouterRig(t)
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	cases := []struct {
+		method, part, running, kind, name string
+	}{
+		{"POST", "/services?serviceId=" + controllerName, "cloudRun", "service", "projects/dormeto-dev/locations/europe-west1/services/" + controllerName},
+		{"POST", "/services?serviceId=" + wakerName, "cloudRun", "service", "projects/dormeto-dev/locations/europe-west1/services/" + wakerName},
+		{"POST", "/regions/europe-west1/networkEndpointGroups", "neg", "neg", "projects/dormeto-dev/regions/europe-west1/networkEndpointGroups/" + wakerName},
+	}
+	for _, c := range cases {
+		rec := g.recordBefore(t, c.method, c.part)
+		if rec.Running != c.running || !listsResource(rec, c.kind, c.name) {
+			t.Errorf("before %s %s: running %q, resources %+v", c.method, c.part, rec.Running, rec.Resources)
+		}
+	}
+	if rec := g.recordBefore(t, "POST", "cloudscheduler.googleapis.com/v1/projects/dormeto-dev/locations/europe-west1/jobs"); rec.Running != "job" {
+		t.Errorf("before the job: running %q", rec.Running)
+	}
+	if rec := g.recordBefore(t, "POST", "/queues"); rec.Running != "queue" {
+		t.Errorf("before the queue: running %q", rec.Running)
 	}
 }

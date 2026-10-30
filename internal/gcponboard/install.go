@@ -388,19 +388,17 @@ func (x *run) warnEditor() {
 
 // apply runs the steps in order. A refused step stops the run: what Google did meanwhile is read again and said, what
 // was done and what was not are said, and the done part is kept in the record (or, before the database exists, in the
-// cache) for the next run to continue. Until the end the record names the step it is at (Running): a run stopped
-// without a word (killed) is known unfinished by the next one.
+// cache) for the next run to continue. Each step starts by writing the record with the step it is at (Running): a run
+// stopped without a word (killed) is known unfinished by the next one.
 func (x *run) apply() error {
 	for i, s := range x.steps {
 		x.iam = nil
 		x.rec.Running = s.name
-		if !x.recorded {
-			if err := x.writeCache(); err != nil {
-				if i == 0 {
-					return err
-				}
-				x.say("  ! %s", err)
+		if err := x.writeKept(); err != nil {
+			if i == 0 {
+				return err
 			}
+			x.say("  ! %s", err)
 		}
 		done, err := s.apply()
 		if err != nil {
@@ -485,15 +483,17 @@ func (x *run) printIAM() {
 
 // persist keeps what a stopped run did: in the record when it is in the database, else in the cache.
 func (x *run) persist() {
-	var err error
-	if x.recorded {
-		err = x.writeRecord()
-	} else {
-		err = x.writeCache()
-	}
-	if err != nil {
+	if err := x.writeKept(); err != nil {
 		x.say("  ! what was done is not recorded: %s", err)
 	}
+}
+
+// writeKept writes the record where it is kept: the database, else the cache.
+func (x *run) writeKept() error {
+	if x.recorded {
+		return x.writeRecord()
+	}
+	return x.writeCache()
 }
 
 func stepNames(steps []step) string {

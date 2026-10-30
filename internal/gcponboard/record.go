@@ -96,6 +96,18 @@ func (r *Record) addResource(kind, name string) bool {
 	return true
 }
 
+// recordFirst lists a resource before the call that creates it, and writes the record: whatever happens to that call (a
+// revision that does not start, a timeout, the run killed), the uninstall knows the resource, and tolerates its absence.
+func (x *run) recordFirst(kind, name string) error {
+	if !x.rec.addResource(kind, name) {
+		return nil
+	}
+	if err := x.writeKept(); err != nil {
+		return fmt.Errorf("the record is not written before %s is created: %w", name, err)
+	}
+	return nil
+}
+
 func (r *Record) addGrant(g RecordGrant) bool {
 	for _, have := range r.Grants {
 		if have.On == g.On && grantKey(Grant{Role: have.Role, Member: have.Member, Condition: have.Condition}) ==

@@ -126,11 +126,22 @@ type operation struct {
 	done     bool
 	effect   func()
 	response any
+	// code and message are its error, once done (code 0: it succeeds), its gRPC code as Google's operations answer it.
+	code    int
+	message string
 }
 
 // operate starts an operation named name and answers it: done at once when OperationPolls is 0.
 func (s *Server) operate(w http.ResponseWriter, name string, response any, effect func()) {
-	op := &operation{polls: s.OperationPolls, effect: effect, response: response}
+	s.start(w, name, &operation{polls: s.OperationPolls, effect: effect, response: response})
+}
+
+// operateFailing starts an operation that ends with an error, its effect applied all the same.
+func (s *Server) operateFailing(w http.ResponseWriter, name string, code int, message string, effect func()) {
+	s.start(w, name, &operation{polls: s.OperationPolls, effect: effect, code: code, message: message})
+}
+
+func (s *Server) start(w http.ResponseWriter, name string, op *operation) {
 	s.ops[name] = op
 	if op.polls <= 0 {
 		s.finish(op)
@@ -151,6 +162,9 @@ func (s *Server) operationBody(name string, op *operation) map[string]any {
 	out := map[string]any{"name": name, "done": op.done}
 	if op.done && op.response != nil {
 		out["response"] = op.response
+	}
+	if op.done && op.code != 0 {
+		out["error"] = map[string]any{"code": op.code, "message": op.message}
 	}
 	return out
 }
