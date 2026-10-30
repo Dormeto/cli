@@ -103,6 +103,9 @@ type Server struct {
 	// WorkloadDocs the other fields of a workload as GET /v1/workloads/<id> answers it (urlMap, backends…).
 	Workloads    map[string]string
 	WorkloadDocs map[string]map[string]any
+	// WakeFails are the workloads whose wake fails: DELETE /v1/workloads/<id> answers 409 wake-failed, and only
+	// ?force=true offboards them (answering the backends left down).
+	WakeFails map[string]bool
 	// DryRun is what the controller's onboarding dry run answers: the reasons it refuses (none: eligible), the VMs and
 	// the groups it would tag. The onboarding itself is refused (400) while one of them carries no tag binding.
 	DryRun DryRun
@@ -152,8 +155,8 @@ func New(t testing.TB) *Server {
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
 		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Workloads: map[string]string{},
-		WorkloadDocs: map[string]map[string]any{},
-		ops:          map[string]*operation{}, lag: map[string]int{},
+		WorkloadDocs: map[string]map[string]any{}, WakeFails: map[string]bool{},
+		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)

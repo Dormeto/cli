@@ -1350,15 +1350,15 @@ dormeto gcp uninstall --project my-project --region europe-west1
 | `workloads list` | the router's workloads and their states |
 | `workloads show <id>` | one workload: state, URL map, backend service, waker backend service, settings, backends |
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs and groups, onboard the workload awake |
-| `workloads offboard <id>` | the controller wakes it if needed and restores every reference, then the tag bindings are removed |
-| `workloads nap <id>`, `workloads wake <id>` | nap or wake it now |
+| `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its VMs and groups down (listed) |
+| `workloads nap <id>`, `workloads wake <id>` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends) |
 
 `--json` prints the controller's answer as it is. `onboard` first asks the controller for a dry run: a workload that is
 not eligible is refused with the reasons and nothing is changed (`--dry-run` stops there). Then it binds the tag
 `dormeto=managed` to each VM and managed group as you (the router itself holds no permission to tag, or it could tag any
 VM and stop it), then onboards. `--id` is the workload's ID (lowercase letters, digits and dashes, at most 40
 characters); it defaults to the backend service's name when that is a valid ID, else it is asked on a terminal and
-exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440), `--wait-seconds` (5 to 120) and `--hibernate
+exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440) and `--hibernate
 true|false` (suspend the VMs that can be suspended instead of stopping them); a value out of its range exits 2 before
 any call. A binding of the `dormeto=managed` tag that was on a VM or group before the onboarding is treated as Dormeto's and removed at the offboarding. The permissions of `onboard` and `offboard` (the tag bindings of VMs and groups) are listed by `gcp check`.
 

@@ -24,13 +24,14 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 			"with your identity token (the Cloud Run invoker role on it)."}
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
-		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version),
+		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version, false),
 		newGcpWorkloadsOnboard(runs.onboard, version),
 		newGcpWorkloadsOne("offboard", "Offboard a workload and remove its tag bindings",
 			"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
-				"unbound from its VMs and groups, as you.", runs.offboard, version),
-		newGcpWorkloadsOne("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version),
-		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version))
+				"unbound from its VMs and groups, as you. A workload that cannot wake is refused; --force offboards it anyway and\n"+
+				"leaves its VMs and groups down (they are listed).", runs.offboard, version, true),
+		newGcpWorkloadsOne("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
+		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false))
 	return cmd
 }
 
@@ -48,7 +49,8 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 }
 
 // newGcpWorkloadsOne is a command on the one workload named by its argument.
-func newGcpWorkloadsOne(verb, short, long string, run gcpRun, version string) *cobra.Command {
+// With force, --force is a flag of the command.
+func newGcpWorkloadsOne(verb, short, long string, run gcpRun, version string, force bool) *cobra.Command {
 	var f gcpFlags
 	var id string
 	cmd := gcpCommand(verb+" <workload>", short, long, &f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
@@ -64,15 +66,18 @@ func newGcpWorkloadsOne(verb, short, long string, run gcpRun, version string) *c
 		return nil
 	}
 	gcpRouterFlags(cmd, &f)
+	if force {
+		cmd.Flags().BoolVar(&f.force, "force", false, "offboard a workload that cannot wake anyway, leaving its VMs and groups down")
+	}
 	return cmd
 }
 
 func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
 	var urlMap, backendService, id, hibernate string
-	var idle, wait int
+	var idle int
 	var hibernating *bool
-	var idleGiven, waitGiven bool
+	var idleGiven bool
 	cmd := gcpCommand("onboard", "Onboard a backend service as a workload",
 		"Onboard a backend service of a global external Application Load Balancer as a workload. The controller checks the\n"+
 			"eligibility first and names the VMs and managed groups; the tag dormeto=managed is then bound to each of them as you\n"+
@@ -84,9 +89,6 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			if idleGiven {
 				r.IdleMinutes = &idle
 			}
-			if waitGiven {
-				r.WaitSeconds = &wait
-			}
 			return run(ctx, d, r)
 		})
 	prior := cmd.PreRunE
@@ -94,7 +96,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		idleGiven, waitGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wait-seconds")
+		idleGiven = c.Flags().Changed("idle-minutes")
 		if c.Flags().Changed("hibernate") {
 			var err error
 			if hibernating, err = parseHibernate(hibernate, false); err != nil {
@@ -110,7 +112,6 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&backendService, "backend-service", "", "the application's backend service (required)")
 	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
 	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the router's, 15)")
-	fl.IntVar(&wait, "wait-seconds", 0, "how long a visitor's wake waits, 5 to 120 seconds (default: the router's, 60)")
 	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
 	return cmd

@@ -205,8 +205,13 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 	return step{name: "offboard", lines: lines, apply: func() (string, error) {
 		for _, w := range workloads {
 			// The controller's workload, then its tag bindings: Google refuses to delete a tag value still bound.
-			if _, err := x.offboardWorkload(w.ID); err != nil && !gcp.IsNotFound(err) {
+			// --force is what asked for this step: a workload that cannot wake is offboarded with its backends left down.
+			_, left, err := x.offboardWorkload(w.ID, true)
+			if err != nil && !gcp.IsNotFound(err) {
 				return "", fmt.Errorf("workload %s: %w", w.ID, err)
+			}
+			if len(left) > 0 {
+				x.say("  ! workload %s is offboarded with its backends left down: %s", w.ID, strings.Join(leftDown(left), ", "))
 			}
 		}
 		return fmt.Sprintf("offboarded %d workloads", len(workloads)), nil

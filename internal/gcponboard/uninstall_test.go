@@ -544,3 +544,29 @@ func TestUninstallForceGoesOnWhenABindingIsGoneAlready(t *testing.T) {
 		t.Errorf("left: %v %v", g.s.TagBindings, g.s.TagValues)
 	}
 }
+
+func TestUninstallForceLeavesTheBackendsOfAWorkloadThatCannotWakeDown(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.failingToWake(t)
+	mark := len(g.s.Calls())
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var deletes []string
+	for _, c := range g.s.Calls()[mark:] {
+		if c.Method == "DELETE" && c.Host == controllerHost {
+			deletes = append(deletes, strings.TrimPrefix(c.URL, "https://"+controllerHost))
+		}
+	}
+	if !slices.Equal(deletes, []string{"/v1/workloads/shop", "/v1/workloads/shop?force=true"}) {
+		t.Fatalf("%v", deletes)
+	}
+	contains(t, out, "left down", "vm web-1 (europe-west1-b)", "group web-mig (europe-west1)")
+	g.nothingLeft(t, "europe-west1")
+	g.s.Lock()
+	defer g.s.Unlock()
+	if len(g.s.TagBindings) != 0 || len(g.s.TagValues) != 0 {
+		t.Errorf("left: %v %v", g.s.TagBindings, g.s.TagValues)
+	}
+}

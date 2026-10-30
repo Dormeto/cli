@@ -34,6 +34,9 @@ var (
 
 const tokenTTL = 5 * time.Minute
 
+// InvokeTimeout bounds one call of Invoke: the controller's longest request (a wake of up to 600 s) and a margin.
+const InvokeTimeout = 900 * time.Second
+
 // Runner runs a command and returns its standard output.
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
@@ -200,6 +203,14 @@ func IsPrecondition(err error) bool {
 }
 
 func parseError(code int, body []byte) *Error {
+	// The router's controller answers {"error": "<text>", "reason": "<code>"}: its text is shown whole.
+	var c struct {
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(body, &c) == nil && c.Error != "" {
+		return &Error{Code: code, Reason: c.Reason, Message: c.Error}
+	}
 	var p struct {
 		Error struct {
 			Code    int    `json:"code"`
@@ -278,9 +289,20 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 
 // Invoke is Do with an identity token for audience instead of the access token: a call of a Cloud Run service whose
 // invoker IAM check is on.
+//
+// A controller call may take long (an offboarding wakes the workload inside its request, up to 600 s): it is bound by
+// InvokeTimeout, not by the shorter timeout of the client Do uses.
 func (c *Client) Invoke(ctx context.Context, method, url, audience string, in, out any) error {
 	token := func(ctx context.Context) (string, error) { return c.Tokens.IdentityToken(ctx, audience) }
-	return c.exchange(ctx, method, url, token, "", in, out)
+	long := *c
+	h := http.DefaultClient
+	if c.HTTP != nil {
+		h = c.HTTP
+	}
+	patient := *h
+	patient.Timeout = InvokeTimeout
+	long.HTTP = &patient
+	return long.exchange(ctx, method, url, token, "", in, out)
 }
 
 // Head is Do's HEAD, asking for the media types of accept: nil when the resource is there.

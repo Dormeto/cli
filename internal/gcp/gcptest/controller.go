@@ -106,16 +106,36 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 		case verb == "" && r.Method == http.MethodGet:
 			Reply(w, s.workloadBody(id))
 		case verb == "" && r.Method == http.MethodDelete:
+			force := r.URL.Query().Get("force") == "true"
+			if s.WakeFails[id] && !force {
+				controllerFail(w, 409, "wake-failed", "cannot offboard "+id+": its wake failed; fix that and try again, or offboard with --force, which leaves its backends down")
+				return
+			}
+			left := []any{}
+			if force {
+				if backends, ok := s.WorkloadDocs[id]["backends"].([]any); ok {
+					left = backends
+				}
+			}
 			delete(s.Workloads, id)
 			delete(s.WorkloadDocs, id)
+			if force {
+				Reply(w, map[string]any{"id": id, "left": left})
+				return
+			}
 			Reply(w, map[string]any{})
+		case verb == "wake" && r.Method == http.MethodPost && state == "NAPPING":
+			// The wake is kept pending until the nap ends.
+			Reply(w, s.workloadBody(id))
 		case verb == "nap" && r.Method == http.MethodPost, verb == "wake" && r.Method == http.MethodPost:
 			if state != "AWAKE" && state != "ASLEEP" {
 				controllerFail(w, 409, "busy", "workload "+id+" is "+state)
 				return
 			}
+			// The answer is at once, with the state as it is; the action runs through Cloud Tasks (here: before the next call).
+			answer := s.workloadBody(id)
 			s.Workloads[id] = map[string]string{"nap": "ASLEEP", "wake": "AWAKE"}[verb]
-			Reply(w, s.workloadBody(id))
+			Reply(w, answer)
 		default:
 			noRoute(w, r)
 		}

@@ -39,17 +39,17 @@ func TestGcpWorkloadsWithAnIDTakeItAsTheArgument(t *testing.T) {
 
 func TestGcpWorkloadsOnboardReadsTheFlags(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m",
-		"--backend-service", "be", "--id", "shop", "--idle-minutes", "30", "--wait-seconds", "20", "--hibernate", "false", "--dry-run", "--json")
+		"--backend-service", "be", "--id", "shop", "--idle-minutes", "30", "--hibernate", "false", "--dry-run", "--json")
 	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads onboard" {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	r := calls[0].r
 	if r.URLMap != "m" || r.BackendService != "be" || r.ID != "shop" || !r.DryRun || !r.JSON ||
-		r.IdleMinutes == nil || *r.IdleMinutes != 30 || r.WaitSeconds == nil || *r.WaitSeconds != 20 || r.Hibernate == nil || *r.Hibernate {
+		r.IdleMinutes == nil || *r.IdleMinutes != 30 || r.Hibernate == nil || *r.Hibernate {
 		t.Fatalf("%+v", r)
 	}
 	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be")
-	if r := calls[0].r; r.IdleMinutes != nil || r.WaitSeconds != nil || r.Hibernate != nil || r.ID != "" {
+	if r := calls[0].r; r.IdleMinutes != nil || r.Hibernate != nil || r.ID != "" {
 		t.Fatalf("settings not given must stay nil: %+v", r)
 	}
 	// A zero is a value given, for the range check to refuse.
@@ -69,6 +69,7 @@ func TestGcpWorkloadsExitCodes(t *testing.T) {
 		{"gcp", "workloads", "list", "--project", "p", "--region", "europe-west1", "extra"},
 		{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "b", "--hibernate", "maybe"},
 		{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "b", "--idle-minutes", "x"},
+		{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "b", "--wait-seconds", "20"},
 		{"gcp", "workloads", "nap", "shop", "--project", "p", "--region", "europe-west1", "--nope"},
 	} {
 		calls, errs, exit := gcpRan(t, 0, args...)
@@ -80,7 +81,7 @@ func TestGcpWorkloadsExitCodes(t *testing.T) {
 
 func TestGcpWorkloadsAreWiredInTheRoot(t *testing.T) {
 	out, _, code := executed(t, build{}, "gcp", "workloads", "onboard", "--help")
-	for _, flag := range []string{"--url-map", "--backend-service", "--id", "--idle-minutes", "--wait-seconds", "--hibernate", "--dry-run", "--project", "--region", "--json"} {
+	for _, flag := range []string{"--url-map", "--backend-service", "--id", "--idle-minutes", "--hibernate", "--dry-run", "--project", "--region", "--json"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
 		}
@@ -90,5 +91,12 @@ func TestGcpWorkloadsAreWiredInTheRoot(t *testing.T) {
 		if code != 0 || !strings.Contains(out, verb) {
 			t.Errorf("%d %s lacks %s", code, out, verb)
 		}
+	}
+}
+
+func TestGcpWorkloadsOffboardForceReadsIntoTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "offboard", "shop", "--project", "p", "--region", "europe-west1", "--force")
+	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.Force || calls[0].r.ID != "shop" {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
 }

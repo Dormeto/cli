@@ -11,8 +11,9 @@
 - `gcp workloads onboard --url-map <map> --backend-service <name>` asks the controller for a dry run, binds the tag
   `dormeto=managed` to each VM and managed group it names as you (the router holds no permission to tag), then onboards
   the workload awake. `--id` defaults to the backend service's name when it is a valid workload ID, else it is asked on a
-  terminal (exit 2 without one); `--idle-minutes` (5 to 1440), `--wait-seconds` (5 to 120) and `--hibernate true|false`
-  are the router's ranges, refused with exit 2 before any call. `offboard` removes the tag bindings after the controller
+  terminal (exit 2 without one); `--idle-minutes` (5 to 1440, the router's range, refused with exit 2 before any call) and `--hibernate true|false`
+  are the settings. `offboard --force` (and `uninstall --force`) offboard a workload that cannot wake, leaving its VMs and groups down
+  (listed). `nap` and `wake` say the action was asked and how to follow it. `offboard` removes the tag bindings after the controller
   has restored the references, and `uninstall --force` does the same for each workload before it removes the tag.
   The README has a Google Cloud section.
 

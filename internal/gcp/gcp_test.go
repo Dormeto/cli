@@ -577,3 +577,37 @@ func TestHeadOfAMissingResourceIsNotFoundAndATransientAnswerIsRetried(t *testing
 		t.Fatalf("%v after %d calls", err, calls.Load())
 	}
 }
+
+func TestInvokeIsNotBoundByTheClientsShortTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	h := *srv.Client()
+	h.Timeout = 50 * time.Millisecond
+	c := &Client{HTTP: &h, Tokens: fakeTokens{}}
+	if err := c.Do(context.Background(), "GET", srv.URL, nil, nil); err == nil {
+		t.Fatal("Do should keep the client's timeout")
+	}
+	if err := c.Invoke(context.Background(), "GET", srv.URL, srv.URL, nil, nil); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if h.Timeout != 50*time.Millisecond {
+		t.Fatal("the caller's client was changed")
+	}
+}
+
+func TestAControllersLongRefusalIsShownWhole(t *testing.T) {
+	long := strings.Repeat("the VM web-1 cannot start because ", 30)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(409)
+		fmt.Fprintf(w, `{"error":%q,"reason":"wake-failed"}`, long)
+	}))
+	defer srv.Close()
+	err := newClient(srv).Do(context.Background(), "DELETE", srv.URL, nil, nil)
+	var e *Error
+	if !errors.As(err, &e) || e.Code != 409 || e.Message != long || e.Reason != "wake-failed" {
+		t.Fatalf("%v", err)
+	}
+}

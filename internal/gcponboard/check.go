@@ -48,7 +48,7 @@ type Request struct {
 	// The workloads commands: the workload's ID (an argument, or --id of onboard), the URL map and backend service to
 	// onboard, and the settings given (nil: not given).
 	ID, URLMap, BackendService string
-	IdleMinutes, WaitSeconds   *int
+	IdleMinutes                *int
 	Hibernate                  *bool
 }
 

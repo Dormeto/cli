@@ -175,11 +175,13 @@ func TestWorkloadsNapAndWakePostToTheController(t *testing.T) {
 	if code != 0 || g.s.Workloads["shop"] != "ASLEEP" {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "shop", "ASLEEP")
+	// The answer is at once and the action runs through Cloud Tasks: the state read is the current one, not the result.
+	contains(t, out, "Nap of workload shop asked", "current state: AWAKE", "workloads show shop")
 	code, out = g.call(t, WorkloadsWake, r)
 	if code != 0 || g.s.Workloads["shop"] != "AWAKE" {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
+	contains(t, out, "Wake of workload shop asked", "current state: ASLEEP", "workloads show shop")
 	if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/workloads/shop/nap", "POST /v1/workloads/shop/wake"}) {
 		t.Fatalf("%v", got)
 	}
@@ -227,7 +229,7 @@ func TestWorkloadsOnboardDryRunThenTagThenOnboard(t *testing.T) {
 	g := newWorkloadsRig(t)
 	mark := len(g.s.Calls())
 	r := shopOnboarding
-	r.IdleMinutes, r.WaitSeconds, r.Hibernate = ptr(30), ptr(20), ptr(true)
+	r.IdleMinutes, r.Hibernate = ptr(30), ptr(true)
 	code, out := g.call(t, WorkloadsOnboard, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -247,7 +249,7 @@ func TestWorkloadsOnboardDryRunThenTagThenOnboard(t *testing.T) {
 	if !slices.Equal(order, want) {
 		t.Fatalf("order:\n%s", strings.Join(order, "\n"))
 	}
-	settings := map[string]any{"idleMinutes": 30.0, "waitSeconds": 20.0, "hibernate": true}
+	settings := map[string]any{"idleMinutes": 30.0, "hibernate": true}
 	for _, query := range []string{"/v1/workloads?dryRun=true", "/v1/workloads"} {
 		in := g.body(t, "POST", controllerHost, query)
 		if in["urlMap"] != "shop-map" || in["backendService"] != "shop" || in["id"] != "shop" || len(in) != 4 || !jsonEqual(in["settings"], settings) {
@@ -381,8 +383,6 @@ func TestWorkloadsOnboardRefusesBadIDsAndSettingsBeforeAnyCall(t *testing.T) {
 		"router name too long": {func(r *Request) { r.ID = strings.Repeat("a", 40); r.Region = "northamerica-northeast1" }, []string{"--id", "63"}},
 		"idle too short":       {func(r *Request) { r.IdleMinutes = ptr(4) }, []string{"--idle-minutes", "5 to 1440"}},
 		"idle too long":        {func(r *Request) { r.IdleMinutes = ptr(1441) }, []string{"--idle-minutes", "5 to 1440"}},
-		"wait too short":       {func(r *Request) { r.WaitSeconds = ptr(4) }, []string{"--wait-seconds", "5 to 120"}},
-		"wait too long":        {func(r *Request) { r.WaitSeconds = ptr(121) }, []string{"--wait-seconds", "5 to 120"}},
 		"no url map":           {func(r *Request) { r.URLMap = "" }, []string{"--url-map"}},
 		"no backend service":   {func(r *Request) { r.BackendService = "" }, []string{"--backend-service"}},
 	} {
@@ -402,12 +402,12 @@ func TestWorkloadsOnboardRefusesBadIDsAndSettingsBeforeAnyCall(t *testing.T) {
 }
 
 func TestWorkloadsOnboardAcceptsTheRangesEnds(t *testing.T) {
-	for _, c := range []struct{ idle, wait int }{{5, 5}, {1440, 120}} {
+	for _, idle := range []int{5, 1440} {
 		g := newWorkloadsRig(t)
 		r := shopOnboarding
-		r.IdleMinutes, r.WaitSeconds = ptr(c.idle), ptr(c.wait)
+		r.IdleMinutes = ptr(idle)
 		if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
-			t.Fatalf("%v: exit %d:\n%s", c, code, out)
+			t.Fatalf("%d: exit %d:\n%s", idle, code, out)
 		}
 	}
 }
@@ -607,5 +607,93 @@ func TestWorkloadsOnboardRefusedSaysWhichBindingItCouldNotRemove(t *testing.T) {
 	contains(t, out, "workload shop is onboarded already", "not removed", "group web-mig (europe-west1)", "boom")
 	if len(g.bindings()) != 1 {
 		t.Fatalf("bindings %v", g.bindings())
+	}
+}
+
+func TestWorkloadsWakeDuringANapIsKeptPending(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "NAPPING"
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsWake, r)
+	if code != 0 || g.s.Workloads["shop"] != "NAPPING" {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "napping", "kept", "once the nap ends", "current state: NAPPING", "workloads show shop")
+	r.JSON = true
+	_, out = g.call(t, WorkloadsWake, r)
+	var w map[string]any
+	if err := json.Unmarshal([]byte(out), &w); err != nil || w["state"] != "NAPPING" || w["id"] != "shop" {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+}
+
+// failingToWake is a workload whose wake fails, with a VM and a group bound to the tag.
+func (g *workloadsRig) failingToWake(t *testing.T) {
+	t.Helper()
+	value := g.tagValue(t)
+	g.s.Workloads["shop"] = "FAILED"
+	g.s.WakeFails["shop"] = true
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "mig", "location": "europe-west1", "name": "web-mig", "id": "222"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: groupParent, TagValue: value}}
+}
+
+func TestWorkloadsOffboardOfAWorkloadThatCannotWakeNamesForce(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.failingToWake(t)
+	mark := len(g.s.Calls())
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "its wake failed", "--force", "left down")
+	if got := g.controllerCalls(mark); !slices.Equal(got[len(got)-1:], []string{"DELETE /v1/workloads/shop"}) || slices.Contains(got, "DELETE /v1/workloads/shop?force=true") {
+		t.Fatalf("%v", got)
+	}
+	if len(g.s.Workloads) != 1 || len(g.bindings()) != 2 {
+		t.Fatalf("workloads %v bindings %v", g.s.Workloads, g.bindings())
+	}
+}
+
+func TestWorkloadsOffboardForceLeavesTheBackendsDownAndRemovesTheTags(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.failingToWake(t)
+	mark := len(g.s.Calls())
+	r := workloadsEurope
+	r.ID, r.Force = "shop", true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var deletes []string
+	for _, c := range g.controllerCalls(mark) {
+		if strings.HasPrefix(c, "DELETE") {
+			deletes = append(deletes, c)
+		}
+	}
+	if !slices.Equal(deletes, []string{"DELETE /v1/workloads/shop", "DELETE /v1/workloads/shop?force=true"}) {
+		t.Fatalf("%v", deletes)
+	}
+	contains(t, out, "Offboarded workload shop", "left down", "vm web-1 (europe-west1-b)", "group web-mig (europe-west1)")
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("workloads %v bindings %v", g.s.Workloads, g.bindings())
+	}
+}
+
+func TestWorkloadsOffboardForceTriesThePlainDeleteFirst(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	mark := len(g.s.Calls())
+	r := workloadsEurope
+	r.ID, r.Force = "shop", true
+	if code, out := g.call(t, WorkloadsOffboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.controllerCalls(mark); slices.Contains(got, "DELETE /v1/workloads/shop?force=true") {
+		t.Fatalf("%v", got)
 	}
 }

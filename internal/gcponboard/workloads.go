@@ -26,9 +26,8 @@ import (
 )
 
 const (
-	// The settings' ranges are the router's: AWS's onboarding (router/lambda/src/lib/onboarding.mjs).
+	// The idle window's range is the router's: AWS's onboarding (router/lambda/src/lib/onboarding.mjs).
 	minIdleMinutes, maxIdleMinutes = 5, 1440
-	minWaitSeconds, maxWaitSeconds = 5, 120
 
 	// maxBackendServiceName is what Compute Engine allows of a backend service's name; the workload's waker backend service
 	// is dmtr-<region>-<workload>.
@@ -201,19 +200,6 @@ func (x *run) require(command string) error {
 	return nil
 }
 
-// controllerError is the controller's {"error", "reason"} as the error's message.
-func controllerError(err error) error {
-	var e *gcp.Error
-	if !errors.As(err, &e) {
-		return err
-	}
-	var body struct{ Error, Reason string }
-	if json.Unmarshal([]byte(e.Message), &body) != nil || body.Error == "" {
-		return err
-	}
-	return &gcp.Error{Code: e.Code, Status: e.Status, Reason: body.Reason, Message: body.Error}
-}
-
 // refusal is the error as one line: the controller's message, else Google's.
 func refusal(err error) string {
 	var e *gcp.Error
@@ -226,7 +212,7 @@ func refusal(err error) string {
 // controller calls the router's controller as the operator.
 func (x *run) controller(method, path string, in, out any) error {
 	u := x.controllerURL()
-	return controllerError(x.d.Google.Invoke(x.ctx, method, u+path, u, in, out))
+	return x.d.Google.Invoke(x.ctx, method, u+path, u, in, out)
 }
 
 func (x *run) workloadPath() (string, error) {
@@ -338,7 +324,19 @@ func (x *run) moves(verb string) error {
 	if err := x.controller(http.MethodPost, path+"/"+verb, nil, &raw); err != nil {
 		return err
 	}
-	return x.print(raw, func(w workload) { x.say("Workload %s: %s", w.ID, w.State) })
+	return x.print(raw, func(w workload) {
+		switch {
+		case verb == "wake" && w.State == "NAPPING":
+			x.say("Wake of workload %s asked while it is napping: the wake is kept and runs once the nap ends; current state: %s.", w.ID, w.State)
+		default:
+			x.say("%s of workload %s asked: the controller runs it through Cloud Tasks; current state: %s.", strings.ToUpper(verb[:1])+verb[1:], w.ID, w.State)
+		}
+		follow := fmt.Sprintf("dormeto gcp workloads show %s --project %s --region %s", w.ID, x.n.project, x.n.region)
+		if x.r.Configuration != "" {
+			follow += " --gcloud-configuration " + x.r.Configuration
+		}
+		x.say("Follow it with: %s", follow)
+	})
 }
 
 // onboardingIn is what the controller takes to onboard a workload, and to dry run it.
@@ -364,12 +362,6 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 			return in, &stop{2, fmt.Sprintf("--idle-minutes: %d is not from %d to %d", *v, minIdleMinutes, maxIdleMinutes)}
 		}
 		in.Settings["idleMinutes"] = *v
-	}
-	if v := r.WaitSeconds; v != nil {
-		if *v < minWaitSeconds || *v > maxWaitSeconds {
-			return in, &stop{2, fmt.Sprintf("--wait-seconds: %d is not from %d to %d", *v, minWaitSeconds, maxWaitSeconds)}
-		}
-		in.Settings["waitSeconds"] = *v
 	}
 	if r.Hibernate != nil {
 		in.Settings["hibernate"] = *r.Hibernate
@@ -506,20 +498,55 @@ func (x *run) offboard() error {
 	if _, err := x.workloadPath(); err != nil {
 		return err
 	}
-	untagged, err := x.offboardWorkload(x.r.ID)
+	untagged, left, err := x.offboardWorkload(x.r.ID, x.r.Force)
 	if err != nil {
 		return err
 	}
 	if x.r.JSON {
-		b, _ := json.Marshal(map[string]any{"id": x.r.ID, "offboarded": true, "untagged": untagged})
+		b, _ := json.Marshal(map[string]any{"id": x.r.ID, "offboarded": true, "untagged": untagged, "left": leftDown(left)})
 		fmt.Fprintf(x.d.Out, "%s\n", b)
 		return nil
 	}
 	x.say("Offboarded workload %s", x.r.ID)
+	if len(left) > 0 {
+		x.say("  left down: %s", strings.Join(leftDown(left), ", "))
+	}
 	for _, u := range untagged {
 		x.say("  untagged: %s", u)
 	}
 	return nil
+}
+
+// leftDown names the backends an offboarding left down.
+func leftDown(left []backend) []string {
+	names := []string{}
+	for _, b := range left {
+		names = append(names, b.String())
+	}
+	return names
+}
+
+// deleteWorkload offboards a workload at the controller, which wakes it first. One that cannot wake is refused
+// (wake-failed); with force it is offboarded anyway, its backends left down, and those are returned.
+func (x *run) deleteWorkload(path string, force bool) ([]backend, error) {
+	err := x.controller(http.MethodDelete, path, nil, nil)
+	var e *gcp.Error
+	if !errors.As(err, &e) || e.Reason != "wake-failed" {
+		if gcp.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !force {
+		return nil, fmt.Errorf("%s\nOffboard it anyway with --force: its VMs and groups are then left down.", e.Message)
+	}
+	var res struct {
+		Left []backend `json:"left"`
+	}
+	if err := x.controller(http.MethodDelete, path+"?force=true", nil, &res); err != nil && !gcp.IsNotFound(err) {
+		return nil, err
+	}
+	return res.Left, nil
 }
 
 // pendingPath is where the backends of a workload being offboarded wait until their tag bindings are removed ("" without
@@ -568,34 +595,33 @@ func (x *run) keepPending(id string, backends []backend) error {
 // the tag bindings of its VMs and groups, and says which. Its backends are kept in the cache before the controller
 // deletes the workload: a rerun that finds the workload gone finishes the unbinds from them. A workload the controller
 // does not know, with nothing kept, is an error that gcp.IsNotFound tells.
-func (x *run) offboardWorkload(id string) ([]string, error) {
+func (x *run) offboardWorkload(id string, force bool) (untagged []string, left []backend, err error) {
 	path := "/v1/workloads/" + esc(id)
 	var w workload
-	switch err := x.controller(http.MethodGet, path, nil, &w); {
-	case gcp.IsNotFound(err):
+	switch gotten := x.controller(http.MethodGet, path, nil, &w); {
+	case gcp.IsNotFound(gotten):
 		backends, ok := x.pending(id)
 		if !ok {
-			return nil, err
+			return nil, nil, gotten
 		}
 		w.Backends = backends
-	case err != nil:
-		return nil, err
+	case gotten != nil:
+		return nil, nil, gotten
 	default:
 		if err := x.keepPending(id, w.Backends); err != nil {
-			return nil, fmt.Errorf("the backends of workload %s are not kept for a rerun: %w", id, err)
+			return nil, nil, fmt.Errorf("the backends of workload %s are not kept for a rerun: %w", id, err)
 		}
-		if err := x.controller(http.MethodDelete, path, nil, nil); err != nil && !gcp.IsNotFound(err) {
-			return nil, err
+		if left, err = x.deleteWorkload(path, force); err != nil {
+			return nil, nil, err
 		}
 	}
-	untagged, err := x.untag(id, w.Backends)
-	if err != nil {
-		return untagged, err
+	if untagged, err = x.untag(id, w.Backends); err != nil {
+		return untagged, left, err
 	}
 	if p := x.pendingPath(id); p != "" {
 		os.Remove(p)
 	}
-	return untagged, nil
+	return untagged, left, nil
 }
 
 // untag removes the tag bindings of the backends of a workload that is offboarded.
