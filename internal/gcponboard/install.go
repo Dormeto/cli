@@ -85,6 +85,7 @@ type run struct {
 	recordedFeatures []string // the record's features at the start of the run
 	joining          []string // the features whose APIs the apis step turns on: in the record once it has
 	features         []string // the optional features of this run: --with's and the record's, sorted
+	lists            []IPList // the router's IP lists of this run: --ip-list's, none with --no-ip-lists, else the record's
 
 	turningOn []string        // the APIs off at the start: the apis step turns them on
 	turnedOn  bool            // the apis step ran: its APIs are on, though they may answer SERVICE_DISABLED for a while
@@ -226,6 +227,8 @@ func (x *run) validate() error {
 		return &stop{2, fmt.Sprintf("--region: %s is longer than a service account ID's 30 characters", x.n.router)}
 	case access.CheckFeatures(x.r.With) != nil:
 		return &stop{2, "--with: " + access.CheckFeatures(x.r.With).Error()}
+	case CheckIPLists(x.r.IPLists, x.r.NoIPLists) != nil:
+		return &stop{2, CheckIPLists(x.r.IPLists, x.r.NoIPLists).Error()}
 	case x.r.Image != "" && x.version == "":
 		return &stop{2, fmt.Sprintf("--image: %s has no tag: its tag is the router's version", x.r.Image)}
 	}
@@ -289,6 +292,9 @@ func (x *run) plan() error {
 		return err
 	}
 	if err := x.useFeatures(); err != nil {
+		return err
+	}
+	if err := x.useIPLists(); err != nil {
 		return err
 	}
 	x.resume()

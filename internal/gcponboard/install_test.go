@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1927,5 +1928,234 @@ func TestInstallUpToDateStillShowsABindingNotDormetosAndRecordsNothing(t *testin
 		"  + roles/viewer to user:someone@example.com on the project (not a Google service agent: not recorded)\n", "is up to date")
 	if m := g.changes(mark); len(m) != 0 {
 		t.Fatalf("changes: %v", m)
+	}
+}
+
+// The router's IP lists (--ip-list, --no-ip-lists).
+
+var (
+	blockList = IPList{Name: "scanners", URL: "https://example.com/scanners.txt", RefreshHours: 24}
+	botsList  = IPList{Name: "bots", URL: "http://example.com/bots.txt?token=abc", RefreshHours: 6}
+)
+
+const (
+	blockListEnv = `[{"name":"scanners","url":"https://example.com/scanners.txt","action":"ignore","refreshHours":24}]`
+	twoListsEnv  = `[{"name":"scanners","url":"https://example.com/scanners.txt","action":"ignore","refreshHours":24},` +
+		`{"name":"bots","url":"http://example.com/bots.txt?token=abc","action":"ignore","refreshHours":6}]`
+)
+
+func withLists(r Request, lists ...IPList) Request {
+	r.IPLists = lists
+	return r
+}
+
+func TestInstallIPListWithoutImageNorRecordedImageStopsBeforeAnyChange(t *testing.T) {
+	g := newRouterRig(t)
+	code, out := g.run(t, withLists(europe, blockList))
+	if code != 2 || !strings.Contains(out, "--image") || !strings.Contains(out, "--ip-list") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withLists(europe, blockList, botsList))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  ~ service "+controllerName+": environment DMT_IP_LISTS\n"+
+		"  ~ service "+wakerName+": environment DMT_IP_LISTS, 512 MiB\n",
+		"  ~ record install/record in database dmtr-europe-west1\n",
+		"  IP list scanners: https://example.com/scanners.txt, every 24 hours, action ignore\n",
+		"  IP list bots: http://example.com/bots.txt?token=abc, every 6 hours, action ignore\n")
+	mask := "?updateMask=ingress,invokerIamDisabled,template"
+	var patches []string
+	for _, c := range g.changes(mark) {
+		if !strings.HasSuffix(c, "install/record") {
+			patches = append(patches, c)
+		}
+	}
+	want := []string{"PATCH run.googleapis.com" + servicesPath + controllerName + mask, "PATCH run.googleapis.com" + servicesPath + wakerName + mask}
+	if !slices.Equal(patches, want) {
+		t.Fatalf("%v", patches)
+	}
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc.Template.Containers[0].Image != routerImage || svc.Env("DMT_IP_LISTS") != twoListsEnv || svc.Env("DMT_VERSION") != "0.34.0" {
+			t.Errorf("%s: %+v", name, svc.Template.Containers[0])
+		}
+	}
+	if m := g.s.RunServices["europe-west1/"+wakerName].Template.Containers[0].Resources.Limits["memory"]; m != "512Mi" {
+		t.Errorf("waker memory %q", m)
+	}
+	if m := g.s.RunServices["europe-west1/"+controllerName].Template.Containers[0].Resources.Limits["memory"]; m != "512Mi" {
+		t.Errorf("controller memory %q", m)
+	}
+	if rec := g.record(t); !reflect.DeepEqual(rec.IPLists, []RecordIPList{
+		{Name: "scanners", URL: blockList.URL, Action: "ignore", RefreshHours: 24},
+		{Name: "bots", URL: botsList.URL, Action: "ignore", RefreshHours: 6}}) || rec.Image != routerImage {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+func TestInstallIPListsAreVerifiedAndAgainIsUpToDate(t *testing.T) {
+	g := routerInstalled(t)
+	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withLists(europe, blockList))
+	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallIPListsOfAnotherSetReplaceTheRecordedOnes(t *testing.T) {
+	g := routerInstalled(t)
+	g.run(t, withLists(europe, blockList))
+	if code, out := g.run(t, withLists(europe, botsList)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.s.RunServices["europe-west1/"+wakerName].Env("DMT_IP_LISTS"); strings.Contains(got, "scanners") || !strings.Contains(got, "bots") {
+		t.Errorf("env %s", got)
+	}
+	if rec := g.record(t); len(rec.IPLists) != 1 || rec.IPLists[0].Name != "bots" {
+		t.Errorf("record %+v", rec.IPLists)
+	}
+}
+
+func TestInstallNoIPListsClearsThemAndGivesBackTheWakersMemory(t *testing.T) {
+	g := routerInstalled(t)
+	g.run(t, withLists(europe, blockList))
+	r := europe
+	r.NoIPLists = true
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ service "+controllerName+": environment DMT_IP_LISTS\n", "  ~ service "+wakerName+": environment DMT_IP_LISTS, 256 MiB\n")
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc.Env("DMT_IP_LISTS") != "" {
+			t.Errorf("%s keeps %s", name, svc.Env("DMT_IP_LISTS"))
+		}
+	}
+	if m := g.s.RunServices["europe-west1/"+wakerName].Template.Containers[0].Resources.Limits["memory"]; m != "256Mi" {
+		t.Errorf("waker memory %q", m)
+	}
+	if rec := g.record(t); len(rec.IPLists) != 0 {
+		t.Errorf("record %+v", rec.IPLists)
+	}
+}
+
+func TestInstallNoIPListsWithoutRecordedImageStopsBeforeAnyChange(t *testing.T) {
+	g := newRouterRig(t)
+	r := europe
+	r.NoIPLists = true
+	if code, out := g.run(t, r); code != 2 || !strings.Contains(out, "--no-ip-lists") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallALaterImageKeepsTheRecordedIPLists(t *testing.T) {
+	g := routerInstalled(t)
+	g.run(t, withLists(europe, blockList))
+	r := withImage
+	r.Image = nextImage
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ service "+controllerName+": image "+nextImage+", environment DMT_VERSION\n",
+		"  ~ service "+wakerName+": image "+nextImage+", environment DMT_VERSION\n")
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc.Env("DMT_IP_LISTS") != blockListEnv || svc.Template.Containers[0].Image != nextImage {
+			t.Errorf("%s: %+v", name, svc.Template.Containers[0])
+		}
+	}
+	if m := g.s.RunServices["europe-west1/"+wakerName].Template.Containers[0].Resources.Limits["memory"]; m != "512Mi" {
+		t.Errorf("waker memory %q", m)
+	}
+	if rec := g.record(t); len(rec.IPLists) != 1 || rec.Image != nextImage {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+func TestInstallWithoutEitherFlagChangesNothingOfTheLists(t *testing.T) {
+	g := routerInstalled(t)
+	g.run(t, withLists(europe, blockList))
+	mark := len(g.s.Calls())
+	code, out := g.run(t, europe)
+	if code != 0 || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.s.RunServices["europe-west1/"+wakerName].Env("DMT_IP_LISTS"); got != blockListEnv {
+		t.Errorf("env %s", got)
+	}
+}
+
+func TestInstallRefusesBadIPLists(t *testing.T) {
+	for name, tc := range map[string]struct {
+		lists []IPList
+		no    bool
+		want  string
+	}{
+		"s3":          {lists: []IPList{{Name: "a", URL: "s3://x/y", RefreshHours: 24}}, want: "http"},
+		"no host":     {lists: []IPList{{Name: "a", URL: "https://", RefreshHours: 24}}, want: "URL"},
+		"credentials": {lists: []IPList{{Name: "a", URL: "https://user:pass@example.com/l", RefreshHours: 24}}, want: "credentials"},
+		"slash":       {lists: []IPList{{Name: "a/b", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"percent":     {lists: []IPList{{Name: "a%2f", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"upper":       {lists: []IPList{{Name: "A", URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"too long":    {lists: []IPList{{Name: strings.Repeat("a", 41), URL: "https://example.com", RefreshHours: 24}}, want: "name"},
+		"refresh":     {lists: []IPList{{Name: "a", URL: "https://example.com", RefreshHours: 0}}, want: "refresh"},
+		"duplicate":   {lists: []IPList{blockList, blockList}, want: "twice"},
+		"both":        {lists: []IPList{blockList}, no: true, want: "--no-ip-lists"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := routerInstalled(t)
+			mark := len(g.s.Calls())
+			r := withLists(europe, tc.lists...)
+			r.NoIPLists = tc.no
+			code, out := g.run(t, r)
+			if code != 2 || !strings.Contains(out, tc.want) || len(g.s.Calls()) != mark {
+				t.Fatalf("exit %d (%d calls):\n%s", code, len(g.s.Calls())-mark, out)
+			}
+		})
+	}
+}
+
+func TestParseIPList(t *testing.T) {
+	l, err := ParseIPList("name=scanners,url=https://example.com/l.txt?a=1")
+	if err != nil || l != (IPList{Name: "scanners", URL: "https://example.com/l.txt?a=1", RefreshHours: 24}) {
+		t.Fatalf("%+v %v", l, err)
+	}
+	if l, err = ParseIPList("url=http://example.com/l,name=x,refresh=6"); err != nil || l.RefreshHours != 6 || l.Name != "x" {
+		t.Fatalf("%+v %v", l, err)
+	}
+	for in, want := range map[string]string{
+		"name=a,url=https://example.com,action=defer": "only ignore",
+		"name=a":                  "url",
+		"url=https://example.com": "name",
+		"name=a,url=https://example.com,refresh=0":  "refresh",
+		"name=a,url=https://example.com,refresh=x":  "refresh",
+		"name=a,url=https://example.com,refresh=-3": "refresh",
+		"name=a,url=https://example.com,color=red":  "color",
+		"name=a,url=https://example.com,name=b":     "twice",
+		"name=a,url=s3://x/y":                       "http",
+		"name=a,url=https://u:p@example.com":        "credentials",
+		"nonsense":                                  "name=",
+	} {
+		if _, err := ParseIPList(in); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", in, err, want)
+		}
 	}
 }

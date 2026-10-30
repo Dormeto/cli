@@ -174,8 +174,12 @@ func (x *run) controllerSettings() serviceSettings {
 }
 
 func (x *run) wakerSettings() serviceSettings {
+	memory := "256Mi"
+	if len(x.lists) > 0 {
+		memory = withListsMemory
+	}
 	return serviceSettings{role: "waker", name: x.n.waker, ingress: ingressLB, ingressWords: "ingress internal and Cloud Load Balancing",
-		invokerOff: true, maxInstances: 10, requests: 80, timeoutSeconds: 120, memory: "256Mi"}
+		invokerOff: true, maxInstances: 10, requests: 80, timeoutSeconds: 120, memory: memory}
 }
 
 func (s serviceSettings) invokerWords() string {
@@ -213,7 +217,7 @@ func (x *run) serviceName(service string) string {
 
 // environment is what the router reads, for one of its roles. PORT is Cloud Run's own (containerPort).
 func (x *run) environment(role string) []runEnv {
-	return []runEnv{
+	env := []runEnv{
 		{"DMT_ROLE", role},
 		{"DMT_PROJECT", x.n.project},
 		{"DMT_PROJECT_NUMBER", x.number},
@@ -225,6 +229,10 @@ func (x *run) environment(role string) []runEnv {
 		{"DMT_WAKER_NEG", x.n.neg},
 		{"DMT_VERSION", x.version},
 	}
+	if len(x.lists) > 0 {
+		env = append(env, runEnv{ipListsEnv, ipListsValue(x.lists)})
+	}
+	return env
 }
 
 // wantService is the service as the install writes it.
@@ -350,10 +358,14 @@ func (x *run) writeService(s serviceSettings, create bool) (string, error) {
 	return done, nil
 }
 
-// noteImage records the image the two services run.
+// noteImage records the image the two services run, and their IP lists.
 func (x *run) noteImage() {
 	if x.rec.Image != x.r.Image || x.rec.RouterVersion != x.version {
 		x.rec.Image, x.rec.RouterVersion = x.r.Image, x.version
+		x.recChanged = true
+	}
+	if lists := recordLists(x.lists); !slices.Equal(x.rec.IPLists, lists) {
+		x.rec.IPLists = lists
 		x.recChanged = true
 	}
 }
@@ -390,6 +402,7 @@ func (x *run) planCloudRun() (*step, error) {
 		x.noteImage()
 		return nil, nil
 	}
+	lines = append(lines, x.listLines()...)
 	return &step{name: "cloudRun", lines: lines, apply: func() (string, error) {
 		if err := x.catchUp(); err != nil {
 			return "", err

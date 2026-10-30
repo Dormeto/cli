@@ -230,3 +230,33 @@ func TestGcpWithIsCommaSeparatedAndRepeatable(t *testing.T) {
 		}
 	}
 }
+
+func TestGcpInstallIPListFlagsReadIntoTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1",
+		"--ip-list", "name=scanners,url=https://example.com/s.txt", "--ip-list", "name=bots,url=http://example.com/b.txt?a=1,refresh=6")
+	want := []gcponboard.IPList{{Name: "scanners", URL: "https://example.com/s.txt", RefreshHours: 24}, {Name: "bots", URL: "http://example.com/b.txt?a=1", RefreshHours: 6}}
+	if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.IPLists, want) || calls[0].r.NoIPLists {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+	calls, _, exit = gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1", "--no-ip-lists")
+	if exit != 0 || len(calls) != 1 || !calls[0].r.NoIPLists || calls[0].r.IPLists != nil {
+		t.Fatalf("%d %+v", exit, calls)
+	}
+}
+
+func TestGcpInstallRefusesABadIPListBeforeAnyRun(t *testing.T) {
+	for _, args := range [][]string{
+		{"--ip-list", "name=a,url=s3://x/y"},
+		{"--ip-list", "name=a,url=https://example.com,action=defer"},
+		{"--ip-list", "name=a/b,url=https://example.com"},
+		{"--ip-list", "name=a,url=https://u:p@example.com"},
+		{"--ip-list", "name=a,url=https://example.com,refresh=0"},
+		{"--ip-list", "name=a,url=https://example.com", "--ip-list", "name=a,url=https://example.org"},
+		{"--ip-list", "name=a,url=https://example.com", "--no-ip-lists"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "install", "--project", "p", "--region", "europe-west1"}, args...)...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
+		}
+	}
+}

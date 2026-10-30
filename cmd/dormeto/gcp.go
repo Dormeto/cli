@@ -46,6 +46,8 @@ type gcpFlags struct {
 	project, region, image, configuration string
 	json, yes, dryRun, force              bool
 	with                                  []string
+	ipLists                               []string
+	noIPLists                             bool
 }
 
 // gcpCommand is a gcp command calling run with the flags' request; a bad flag, an argument or a missing required flag
@@ -54,10 +56,24 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 	cmd := &cobra.Command{
 		Use: use, Short: short, Long: long, Args: noArgs, SilenceErrors: true,
 		RunE: func(c *cobra.Command, _ []string) error {
+			var lists []gcponboard.IPList
+			for _, s := range f.ipLists {
+				l, err := gcponboard.ParseIPList(s)
+				if err != nil {
+					fmt.Fprintln(c.ErrOrStderr(), err)
+					return exitCode(2)
+				}
+				lists = append(lists, l)
+			}
+			if err := gcponboard.CheckIPLists(lists, f.noIPLists); err != nil {
+				fmt.Fprintln(c.ErrOrStderr(), err)
+				return exitCode(2)
+			}
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
 			code := run(ctx, gcpDeps(c, f.configuration, version), gcponboard.Request{
-				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with})
+				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with,
+				IPLists: lists, NoIPLists: f.noIPLists})
 			if s := signalled(); s != nil {
 				code = signalCode(s)
 			}
@@ -121,13 +137,22 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"With --with cloud-sql,gke it also installs the optional access of those features: their APIs, their custom\n"+
 			"roles (dormetoRouterDatabasesRead and dormetoRouterDatabases; dormetoRouterKubernetes) and the router's grants,\n"+
 			"kept in the install record. Without it, neither API is turned on (Google then adds service agents of its own). A\n"+
-			"later run with more features adds them; a run without --with keeps the record's; only uninstall removes them.",
+			"later run with more features adds them; a run without --with keeps the record's; only uninstall removes them.\n\n"+
+			"With --ip-list name=<n>,url=<u>[,refresh=<hours>] (repeatable) the router ignores the addresses of those lists: it\n"+
+			"downloads each over http(s), every 24 hours unless refresh says otherwise, and an address on one never wakes a\n"+
+			"workload by a visit (only the action ignore exists on Google Cloud; an API client's explicit POST /_dormeto/wake\n"+
+			"still wakes). The lists go in DMT_IP_LISTS on both Cloud Run services and in the install record, so the URL is\n"+
+			"printed in the plan, and one with credentials is refused. The set is replaced by each run with --ip-list, cleared by\n"+
+			"--no-ip-lists, and kept by a run with neither (a later --image included). Either flag changes the two services, so it\n"+
+			"needs the router: without --image the recorded image is reused. The waker runs at 512 MiB with a list, else 256 MiB.",
 		&f, []string{"project", "region"}, version, run)
 	fl := cmd.Flags()
 	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
 	fl.StringVar(&f.image, "image", "", "the router's container image, with its version as tag: installs the router too")
 	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
+	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh=<hours, default 24>], repeatable; replaces the set; needs the router (the recorded image is reused without --image)")
+	fl.BoolVar(&f.noIPLists, "no-ip-lists", false, "clear the router's IP lists")
 	withFlag(cmd, &f, "also install the optional access of these features (a later run adds more and a run without --with keeps the record's; only uninstall removes them)")
 	return cmd
 }

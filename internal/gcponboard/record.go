@@ -49,6 +49,9 @@ type Record struct {
 	Enabling []string `json:"enabling,omitempty"`
 	// Features are the optional features installed (--with), sorted; a run without --with keeps them.
 	Features []string `json:"features,omitempty"`
+	// IPLists are the router's IP lists, as DMT_IP_LISTS holds them on both services; a run without --ip-list nor
+	// --no-ip-lists keeps them.
+	IPLists []RecordIPList `json:"ipLists,omitempty"`
 }
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role

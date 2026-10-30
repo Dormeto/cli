@@ -53,6 +53,10 @@ type Request struct {
 
 	// With are the optional features (--with): cloud-sql, gke.
 	With []string
+
+	// IPLists are the router's IP lists (--ip-list); NoIPLists clears them (--no-ip-lists).
+	IPLists   []IPList
+	NoIPLists bool
 }
 
 // ProjectInfo is the project as the report names it; Number is empty when the caller cannot see it.
