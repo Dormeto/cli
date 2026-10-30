@@ -27,7 +27,7 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 			return code
 		}
 	}
-	runs := gcpRuns{check: ran("check"), install: ran("install")}
+	runs := gcpRuns{check: ran("check"), install: ran("install"), status: ran("status")}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
 	root.AddCommand(newGcp(runs, "1.2.3"))
 	var out, errs bytes.Buffer
@@ -118,6 +118,60 @@ func TestGcpInstallExitCodes(t *testing.T) {
 func TestGcpInstallIsWiredInTheRoot(t *testing.T) {
 	out, _, code := executed(t, build{}, "gcp", "install", "--help")
 	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--yes", "--dry-run"} {
+		if code != 0 || !strings.Contains(out, flag) {
+			t.Errorf("%d %s lacks %s", code, out, flag)
+		}
+	}
+}
+
+func TestGcpInstallImageReadIntoTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1", "--image", "europe-west1-docker.pkg.dev/p/d/router:0.34.0")
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	want := gcponboard.Request{Project: "p", Region: "europe-west1", Image: "europe-west1-docker.pkg.dev/p/d/router:0.34.0"}
+	if calls[0].r != want {
+		t.Fatalf("%+v", calls[0].r)
+	}
+}
+
+func TestGcpInstallImageIsInItsHelp(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	if code != 0 || !strings.Contains(out, "--image") || !strings.Contains(out, "dmtr-<region>-controller") {
+		t.Fatalf("%d %s", code, out)
+	}
+}
+
+func TestGcpStatusFlagsReadIntoTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "status", "--project", "p", "--region", "europe-west1", "--json", "--gcloud-configuration", "c")
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "status" {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	want := gcponboard.Request{Project: "p", Region: "europe-west1", Configuration: "c", JSON: true}
+	if calls[0].r != want {
+		t.Fatalf("%+v", calls[0].r)
+	}
+	calls, _, exit = gcpRan(t, 0, "gcp", "status", "--project", "p")
+	if exit != 0 || len(calls) != 1 || calls[0].r != (gcponboard.Request{Project: "p"}) {
+		t.Fatalf("%d %+v", exit, calls)
+	}
+}
+
+func TestGcpStatusExitCodes(t *testing.T) {
+	if _, _, exit := gcpRan(t, 1, "gcp", "status", "--project", "p"); exit != 1 {
+		t.Fatalf("exit %d", exit)
+	}
+	for _, args := range [][]string{{"gcp", "status"}, {"gcp", "status", "--project", "p", "--nope"}, {"gcp", "status", "--project", "p", "extra"}} {
+		calls, errs, exit := gcpRan(t, 0, args...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
+		}
+	}
+}
+
+func TestGcpStatusIsWiredInTheRoot(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "status", "--help")
+	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--json"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
 		}
