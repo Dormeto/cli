@@ -170,7 +170,7 @@ type serviceSettings struct {
 
 func (x *run) controllerSettings() serviceSettings {
 	return serviceSettings{role: "controller", name: x.n.controller, ingress: ingressAll, ingressWords: "ingress all",
-		maxInstances: 3, requests: 10, timeoutSeconds: 900, memory: "512Mi"}
+		maxInstances: 10, requests: 10, timeoutSeconds: 1800, memory: "512Mi"}
 }
 
 func (x *run) wakerSettings() serviceSettings {

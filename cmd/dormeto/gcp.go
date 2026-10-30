@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/gcponboard"
 	"github.com/Dormeto/cli/internal/install"
 )
@@ -43,6 +45,7 @@ func newGcp(runs gcpRuns, version string) *cobra.Command {
 type gcpFlags struct {
 	project, region, image, configuration string
 	json, yes, dryRun, force              bool
+	with                                  []string
 }
 
 // gcpCommand is a gcp command calling run with the flags' request; a bad flag, an argument or a missing required flag
@@ -54,7 +57,7 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
 			code := run(ctx, gcpDeps(c, f.configuration, version), gcponboard.Request{
-				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force})
+				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with})
 			if s := signalled(); s != nil {
 				code = signalCode(s)
 			}
@@ -92,7 +95,13 @@ func newGcpCheck(run gcpRun, version string) *cobra.Command {
 		&f, []string{"project"}, version, run)
 	cmd.Flags().StringVar(&f.region, "region", "", "the router's region")
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the report as JSON")
+	withFlag(cmd, &f, "also test the permissions and APIs of these optional features (those of the install record are tested too with --region)")
 	return cmd
+}
+
+// withFlag is --with of check, install and uninstall: the optional access, comma-separated or repeated.
+func withFlag(cmd *cobra.Command, f *gcpFlags, usage string) {
+	cmd.Flags().StringSliceVar(&f.with, "with", nil, usage+": "+strings.Join(access.FeatureNames(), ", "))
 }
 
 func newGcpInstall(run gcpRun, version string) *cobra.Command {
@@ -115,6 +124,7 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&f.image, "image", "", "the router's container image, with its version as tag: installs the router too")
 	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
+	withFlag(cmd, &f, "also install the optional access of these features (a later run adds more and a run without --with keeps the record's; only uninstall removes them)")
 	return cmd
 }
 
@@ -148,6 +158,7 @@ func newGcpUninstall(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
 	fl.BoolVar(&f.force, "force", false, "offboard the onboarded workloads first")
+	withFlag(cmd, &f, "also test the offboard permissions of these features with --force (the uninstall removes every feature the install record lists)")
 	return cmd
 }
 

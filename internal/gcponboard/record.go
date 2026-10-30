@@ -47,6 +47,8 @@ type Record struct {
 	// Enabling are the APIs an apis step asked Google to turn on and did not see on before it stopped: the next run
 	// records those it finds on.
 	Enabling []string `json:"enabling,omitempty"`
+	// Features are the optional features installed (--with), sorted; a run without --with keeps them.
+	Features []string `json:"features,omitempty"`
 }
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role

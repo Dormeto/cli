@@ -155,7 +155,7 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + API iam.googleapis.com
   + API cloudresourcemanager.googleapis.com
   + API logging.googleapis.com
-  + role dormetoRouter "Dormeto router" (27 permissions)
+  + role dormetoRouter "Dormeto router" (43 permissions)
   + role dormetoRouterBackends "Dormeto router backends" (6 permissions)
   + service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
   + tag dormeto/managed
@@ -976,7 +976,7 @@ func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
 	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
 		"  … iam.googleapis.com is on but does not answer yet: waiting for Google to propagate it (up to 5 minutes)\n"+
 		"Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
-		"  + role dormetoRouter \"Dormeto router\" (27 permissions)\n", "  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n",
+		"  + role dormetoRouter \"Dormeto router\" (43 permissions)\n", "  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n",
 		"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
 	if !slices.Equal(*g.slept, []time.Duration{5 * time.Second, 5 * time.Second}) {
 		t.Fatalf("slept %v", *g.slept)
@@ -1228,7 +1228,7 @@ const (
 
 var withImage = Request{Project: "dormeto-dev", Region: "europe-west1", Image: routerImage, Yes: true}
 
-const routerPlan = "  + service " + controllerName + " (image " + routerImage + ", ingress all, invoker check on, 0 to 3 instances, 10 concurrent requests, timeout 900 s, 512 MiB, CPU during requests only, as " + routerSA + ")\n" +
+const routerPlan = "  + service " + controllerName + " (image " + routerImage + ", ingress all, invoker check on, 0 to 10 instances, 10 concurrent requests, timeout 1800 s, 512 MiB, CPU during requests only, as " + routerSA + ")\n" +
 	"  + grant roles/run.invoker to " + routerMember + " on controller " + controllerName + "\n" +
 	"  + service " + wakerName + " (image " + routerImage + ", ingress internal and Cloud Load Balancing, invoker check off, 0 to 10 instances, 80 concurrent requests, timeout 120 s, 256 MiB, CPU during requests only, as " + routerSA + ")\n" +
 	"  + network endpoint group " + wakerName + " (serverless, Cloud Run service " + wakerName + ")\n" +
@@ -1318,7 +1318,7 @@ func TestInstallImageCreatesTheRouter(t *testing.T) {
 		maxInst, concurr int
 		timeout, memory  string
 		role             string
-	}{{c, 3, 10, "900s", "512Mi", "controller"}, {w, 10, 80, "120s", "256Mi", "waker"}} {
+	}{{c, 10, 10, "1800s", "512Mi", "controller"}, {w, 10, 80, "120s", "256Mi", "waker"}} {
 		tmpl := want.svc.Template
 		ct := tmpl.Containers[0]
 		if tmpl.ServiceAccount != routerSA || tmpl.Scaling.MinInstanceCount != 0 || tmpl.Scaling.MaxInstanceCount != want.maxInst ||

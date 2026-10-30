@@ -228,6 +228,9 @@ func (s *Server) batchEnable(w http.ResponseWriter, number string, body []byte) 
 				s.Policy = addBinding(s.Policy, "roles/run.serviceAgent",
 					"serviceAccount:service-"+s.ProjectNumber+"@serverless-robot-prod.iam.gserviceaccount.com")
 			}
+			if g, ok := s.GrantOnEnable[api]; ok {
+				s.Policy = addBinding(s.Policy, g[0], g[1])
+			}
 			if api == "compute.googleapis.com" && s.DefaultEditor {
 				s.Policy = addBinding(s.Policy, "roles/editor", "serviceAccount:"+s.ProjectNumber+"-compute@developer.gserviceaccount.com")
 			}

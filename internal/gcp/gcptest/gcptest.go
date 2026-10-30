@@ -129,6 +129,9 @@ type Server struct {
 	// GrantOnCreate plays a binding Google adds to the project (role, member) when a resource of a kind (service, neg, job)
 	// is created.
 	GrantOnCreate map[string][2]string
+	// GrantOnEnable plays a binding Google adds to the project (role, member) when an API is turned on, by API
+	// (sqladmin.googleapis.com…), beside the ones the fake knows.
+	GrantOnEnable map[string][2]string
 	// Policies are the IAM policies of service accounts, queues and Cloud Run services, by resource name
 	// (projects/<id>/serviceAccounts/<email>, projects/<id>/locations/<region>/queues/<queue>,
 	// projects/<id>/locations/<region>/services/<service>).

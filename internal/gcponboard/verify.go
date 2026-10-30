@@ -34,7 +34,7 @@ func (x *run) verify() (warnings []string, err error) {
 		warnings = x.othersChanges(p)
 	}
 
-	for _, id := range roleIDs() {
+	for _, id := range x.roleIDs() {
 		want := x.wantRole(id)
 		var got googleRole
 		if err := x.d.Google.Do(x.ctx, http.MethodGet, x.rolesURL()+"/"+id, nil, &got); err != nil {

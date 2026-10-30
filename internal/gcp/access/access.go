@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -35,6 +36,15 @@ type Grant struct {
 	Condition *Condition `json:"condition,omitempty"`
 }
 
+// Feature is an optional access (`--with`): its APIs, custom roles, the router's grants and, per `dormeto gcp` command, the
+// permissions the operator needs for it.
+type Feature struct {
+	APIs     []string                       `json:"apis"`
+	Roles    map[string]Role                `json:"roles"`
+	Router   []Grant                        `json:"router"`
+	Operator map[string]map[string][]string `json:"operator"`
+}
+
 // Manifest is access.json.
 type Manifest struct {
 	Version    int                 `json:"version"`
@@ -42,6 +52,7 @@ type Manifest struct {
 	Roles      map[string]Role     `json:"roles"`
 	Predefined map[string][]string `json:"predefined"`
 	Router     []Grant             `json:"router"`
+	Features   map[string]Feature  `json:"features"`
 
 	commands []string
 	steps    map[string][]string
@@ -135,6 +146,42 @@ func Needs(command string) []string {
 	var out []string
 	for _, ps := range steps {
 		out = append(out, ps...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// FeatureNames are the optional features, sorted.
+func FeatureNames() []string {
+	names := make([]string, 0, len(Load().Features))
+	for name := range Load().Features {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// CheckFeatures is nil when every name is a feature, else an error naming the first that is not and the features there are.
+func CheckFeatures(names []string) error {
+	for _, name := range names {
+		if _, ok := Load().Features[name]; !ok {
+			return fmt.Errorf("%q is not a feature: the features are %s", name, strings.Join(FeatureNames(), ", "))
+		}
+	}
+	return nil
+}
+
+// NeedsWith are Needs(command) and, for each named feature, the permissions its operator steps need for the command (a
+// name that is not a feature adds nothing).
+func NeedsWith(command string, features []string) []string {
+	out := Needs(command)
+	if out == nil {
+		return nil
+	}
+	for _, name := range features {
+		for _, ps := range Load().Features[name].Operator[command] {
+			out = append(out, ps...)
+		}
 	}
 	slices.Sort(out)
 	return slices.Compact(out)

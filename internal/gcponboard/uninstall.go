@@ -113,6 +113,7 @@ func (x *run) planUninstall() error {
 	if !x.recorded && !x.resumed {
 		return &stop{1, fmt.Sprintf("no router %s is installed in project %s: there is no install record\nNothing was changed.", x.n.router, x.n.project)}
 	}
+	x.features = featureSet(x.rec.Features, x.r.With)
 	x.sinceRecord()
 	workloads, unknown, err := x.workloads()
 	if err != nil {
@@ -513,7 +514,7 @@ func (x *run) planAccountRemoval() (*step, error) {
 // lists them.
 func (x *run) planRolesRemoval() (*step, error) {
 	var steps []*step
-	for _, id := range roleIDs() {
+	for _, id := range allRoleIDs() {
 		name := x.roleName(id)
 		if !x.listed("role", name) {
 			continue

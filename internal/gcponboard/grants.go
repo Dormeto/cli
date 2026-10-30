@@ -7,6 +7,7 @@ package gcponboard
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Dormeto/cli/internal/gcp/access"
@@ -28,7 +29,11 @@ func (x *run) fill(s string) string {
 // accessGrants are the router's grants, in the manifest's order.
 func (x *run) accessGrants() []accessGrant {
 	var out []accessGrant
-	for _, g := range access.Load().Router {
+	grants := slices.Clone(access.Load().Router)
+	for _, name := range x.features {
+		grants = append(grants, access.Load().Features[name].Router...)
+	}
+	for _, g := range grants {
 		ag := accessGrant{Grant: Grant{Role: x.fill(g.Role), Member: x.n.member}, On: g.On}
 		if g.Condition != nil {
 			ag.Condition = &Condition{Title: x.fill(g.Condition.Title), Expression: x.fill(g.Condition.Expression)}

@@ -50,6 +50,9 @@ type Request struct {
 	ID, URLMap, BackendService string
 	IdleMinutes                *int
 	Hibernate                  *bool
+
+	// With are the optional features (--with): cloud-sql, gke.
+	With []string
 }
 
 // ProjectInfo is the project as the report names it; Number is empty when the caller cannot see it.
@@ -199,6 +202,14 @@ func denied(err error) bool { return gcp.IsDenied(err) || gcp.IsNotFound(err) }
 // Check tells, per command, the permissions the caller lacks in the project. A caller with no role in the project is a
 // report (every command refused), not an error; any other refusal by Google is an error.
 func Check(ctx context.Context, d Deps, r Request) (Report, error) {
+	if err := access.CheckFeatures(r.With); err != nil {
+		return Report{}, fmt.Errorf("--with: %w", err)
+	}
+	// The features of the router's install record are tested too, when the region says which router.
+	if r.Region != "" {
+		x := newRun(ctx, d, r)
+		r.With = featureSet(r.With, recordedFeatures(x))
+	}
 	return check(ctx, d, r, access.Commands())
 }
 
@@ -228,7 +239,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 
 	var all []string
 	for _, c := range commands {
-		all = append(all, access.Needs(c)...)
+		all = append(all, access.NeedsWith(c, r.With)...)
 	}
 	slices.Sort(all)
 	all = slices.Compact(all)
@@ -241,7 +252,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 	}
 	for _, c := range commands {
 		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}}
-		for _, perm := range access.Needs(c) {
+		for _, perm := range access.NeedsWith(c, r.With) {
 			if rep.Visible && slices.Contains(held, perm) {
 				cr.Held = append(cr.Held, perm)
 			} else {
@@ -262,7 +273,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 	case err != nil:
 		return Report{}, err
 	default:
-		for _, api := range access.Load().APIs {
+		for _, api := range apisWith(r.With) {
 			if slices.Contains(enabled, api) {
 				rep.APIs.Enabled = append(rep.APIs.Enabled, api)
 			} else {
@@ -407,6 +418,10 @@ func PrintJSON(w io.Writer, r Report) error {
 // RunCheck is `dormeto gcp check`: the report printed, and the exit code: 0 when every command is allowed, 1 when
 // any is not or Google refuses.
 func RunCheck(ctx context.Context, d Deps, r Request) int {
+	if err := access.CheckFeatures(r.With); err != nil {
+		fmt.Fprintln(d.Err, "--with: "+err.Error())
+		return 2
+	}
 	rep, err := Check(ctx, d, r)
 	if err != nil {
 		fmt.Fprintln(d.Err, err)

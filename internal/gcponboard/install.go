@@ -74,14 +74,15 @@ func (s *stop) Error() string { return s.msg }
 
 // run is one install.
 type run struct {
-	ctx     context.Context
-	d       Deps
-	r       Request
-	n       names
-	number  string // the project's number
-	parent  string // the project's organization or folder, "" for none
-	account string // the caller, from gcloud
-	version string // the router's version: the tag of --image
+	ctx      context.Context
+	d        Deps
+	r        Request
+	n        names
+	number   string   // the project's number
+	parent   string   // the project's organization or folder, "" for none
+	account  string   // the caller, from gcloud
+	version  string   // the router's version: the tag of --image
+	features []string // the optional features of this run: --with's and the record's, sorted
 
 	turningOn []string        // the APIs off at the start: the apis step turns them on
 	turnedOn  bool            // the apis step ran: its APIs are on, though they may answer SERVICE_DISABLED for a while
@@ -221,6 +222,8 @@ func (x *run) validate() error {
 		return &stop{2, fmt.Sprintf("--region: %q is not a Google Cloud region such as europe-west1", x.r.Region)}
 	case len(x.n.router) > 30:
 		return &stop{2, fmt.Sprintf("--region: %s is longer than a service account ID's 30 characters", x.n.router)}
+	case access.CheckFeatures(x.r.With) != nil:
+		return &stop{2, "--with: " + access.CheckFeatures(x.r.With).Error()}
 	case x.r.Image != "" && x.version == "":
 		return &stop{2, fmt.Sprintf("--image: %s has no tag: its tag is the router's version", x.r.Image)}
 	}
@@ -281,6 +284,9 @@ func (x *run) plan() error {
 	}
 	x.policy, x.start = p, p
 	if err := x.loadRecord(); err != nil {
+		return err
+	}
+	if err := x.useFeatures(); err != nil {
 		return err
 	}
 	x.resume()
@@ -584,7 +590,7 @@ func (x *run) lagging(err error) (kind, api string) {
 	if !errors.As(err, &e) {
 		return "", ""
 	}
-	if e.Reason == "SERVICE_DISABLED" && (e.Service == "" || slices.Contains(access.Load().APIs, e.Service)) {
+	if e.Reason == "SERVICE_DISABLED" && (e.Service == "" || slices.Contains(everyAPI(), e.Service)) {
 		return "api", e.Service
 	}
 	if e.Code == 400 && strings.Contains(strings.ToLower(e.Message), "service account") && strings.Contains(e.Message, "does not exist") {

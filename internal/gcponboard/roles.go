@@ -44,26 +44,16 @@ func (x *run) rolesURL() string {
 
 func (x *run) roleName(id string) string { return "projects/" + x.n.project + "/roles/" + id }
 
-// roleIDs are the manifest's custom roles, sorted.
-func roleIDs() []string {
-	var ids []string
-	for id := range access.Load().Roles {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
 // wantRole is a custom role as the install writes it.
 func (x *run) wantRole(id string) access.Role {
-	r := access.Load().Roles[id]
+	r := roleDef(id)
 	return access.Role{Title: r.Title, Description: "Dormeto " + x.d.Version + ": " + r.Description, Permissions: slices.Clone(r.Permissions)}
 }
 
 func (x *run) planRoles() (*step, error) {
 	var changes []roleChange
 	var lines []string
-	for _, id := range roleIDs() {
+	for _, id := range x.roleIDs() {
 		want := x.wantRole(id)
 		var got googleRole
 		found, err := x.get(iamAPI, x.rolesURL()+"/"+id, &got)

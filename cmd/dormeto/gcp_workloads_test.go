@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ func TestGcpWorkloadsListReadsTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	want := gcponboard.Request{Project: "p", Region: "europe-west1", Configuration: "c", JSON: true}
-	if calls[0].r != want {
+	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
 }
@@ -24,7 +25,7 @@ func TestGcpWorkloadsWithAnIDTakeItAsTheArgument(t *testing.T) {
 		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads "+verb {
 			t.Fatalf("%s: %d %q %v", verb, exit, errs, calls)
 		}
-		if want := (gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop"}); calls[0].r != want {
+		if want := (gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop"}); !reflect.DeepEqual(calls[0].r, want) {
 			t.Fatalf("%s: %+v", verb, calls[0].r)
 		}
 		for _, args := range [][]string{{"gcp", "workloads", verb, "--project", "p", "--region", "europe-west1"},

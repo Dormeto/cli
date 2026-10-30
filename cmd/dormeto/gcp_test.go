@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestGcpCheckFlagsReadIntoTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	want := gcponboard.Request{Project: "dormeto-dev", Region: "europe-west1", JSON: true}
-	if calls[0].r != want {
+	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
 }
@@ -81,7 +82,7 @@ func TestGcpInstallFlagsReadIntoTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	want := gcponboard.Request{Project: "dormeto-dev", Region: "europe-west1", Configuration: "dormeto-dev", Yes: true, DryRun: true}
-	if calls[0].r != want {
+	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
 	d := calls[0].d
@@ -133,7 +134,7 @@ func TestGcpInstallImageReadIntoTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	want := gcponboard.Request{Project: "p", Region: "europe-west1", Image: "europe-west1-docker.pkg.dev/p/d/router:0.34.0"}
-	if calls[0].r != want {
+	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
 }
@@ -151,11 +152,11 @@ func TestGcpStatusFlagsReadIntoTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	want := gcponboard.Request{Project: "p", Region: "europe-west1", Configuration: "c", JSON: true}
-	if calls[0].r != want {
+	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
 	calls, _, exit = gcpRan(t, 0, "gcp", "status", "--project", "p")
-	if exit != 0 || len(calls) != 1 || calls[0].r != (gcponboard.Request{Project: "p"}) {
+	if exit != 0 || len(calls) != 1 || !reflect.DeepEqual(calls[0].r, gcponboard.Request{Project: "p"}) {
 		t.Fatalf("%d %+v", exit, calls)
 	}
 }
@@ -187,7 +188,7 @@ func TestGcpUninstallFlagsReadIntoTheRequest(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	want := gcponboard.Request{Project: "p", Region: "europe-west1", Configuration: "c", Yes: true, Force: true, DryRun: true}
-	if calls[0].r != want {
+	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
 }
@@ -213,6 +214,19 @@ func TestGcpUninstallIsWiredInTheRoot(t *testing.T) {
 	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--yes", "--dry-run", "--force"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
+		}
+	}
+}
+
+func TestGcpWithIsCommaSeparatedAndRepeatable(t *testing.T) {
+	for _, cmd := range []string{"check", "install", "uninstall"} {
+		calls, errs, exit := gcpRan(t, 0, "gcp", cmd, "--project", "p", "--region", "europe-west1", "--with", "cloud-sql,gke", "--with", "gke")
+		if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.With, []string{"cloud-sql", "gke", "gke"}) {
+			t.Errorf("%s: %d %q %+v", cmd, exit, errs, calls)
+		}
+		calls, _, _ = gcpRan(t, 0, "gcp", cmd, "--project", "p", "--region", "europe-west1")
+		if len(calls) != 1 || calls[0].r.With != nil {
+			t.Errorf("%s without --with: %+v", cmd, calls)
 		}
 	}
 }
