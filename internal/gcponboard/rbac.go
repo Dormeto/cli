@@ -767,6 +767,19 @@ func (x *run) confirm(question string) error {
 	return nil
 }
 
+// grantWarnings say what a grant cannot do alone, without refusing it: the feature gke is what gives the router
+// container.clusters.connect, and without it the router's calls answer 403 for that reason, not for this access's.
+func (x *run) grantWarnings() []string {
+	if slices.Contains(x.rec.Features, "gke") {
+		return nil
+	}
+	hint := fmt.Sprintf("dormeto gcp install --project %s --region %s --with gke", x.n.project, x.n.region)
+	if x.r.Configuration != "" {
+		hint += " --gcloud-configuration " + x.r.Configuration
+	}
+	return []string{fmt.Sprintf("the install record lacks the feature gke: router %s holds no container.clusters.connect, so its calls to this cluster would answer 403, whatever this Role allows. Add it with: %s", x.n.router, hint)}
+}
+
 func (x *run) noRouter() error {
 	return &stop{1, fmt.Sprintf("No router %s is installed in project %s: there is no install record. Run dormeto gcp install first.\nNothing was changed.", x.n.router, x.n.project)}
 }
@@ -788,8 +801,10 @@ func (x *run) accessGrant() error {
 		return err
 	}
 	x.rbacHeader(plan)
+	warnings := x.grantWarnings()
 	if !x.r.JSON {
 		x.printWrites(plan, true)
+		x.warn(warnings)
 	}
 	if err := plan.Refused(); err != nil {
 		return err
@@ -822,8 +837,9 @@ func (x *run) accessGrant() error {
 	if x.r.JSON {
 		return x.printJSON(struct {
 			RbacPlan
-			Changed []string `json:"changed"`
-		}{plan, done})
+			Changed  []string `json:"changed"`
+			Warnings []string `json:"warnings,omitempty"`
+		}{plan, done, warnings})
 	}
 	if len(done) == 0 {
 		x.say("The Role and RoleBinding %s of namespace %s are up to date.", rb.name(), rb.Namespace)

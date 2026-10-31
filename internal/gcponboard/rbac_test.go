@@ -1742,3 +1742,65 @@ func TestRbacASubjectAddedBeforeTheDeleteKeepsTheBinding(t *testing.T) {
 		t.Errorf("left: %+v", out)
 	}
 }
+
+// plantFeatures gives the record these features, as an install with --with would.
+func (g *rbacRig) plantFeatures(t *testing.T, features ...string) {
+	t.Helper()
+	rec := g.record(t)
+	rec.Features = features
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.s.Lock()
+	defer g.s.Unlock()
+	g.s.Documents[recordDB+"/install/record"]["data"] = map[string]any{"stringValue": string(b)}
+}
+
+// Without the feature gke the router holds no container.clusters.connect: said before asking, and not refused.
+func TestRbacGrantWarnsWhenTheRecordLacksTheFeatureGke(t *testing.T) {
+	g := newRbacRig(t)
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("y\n"), g.out, true)
+	r := shopAccess
+	r.Yes = false
+	code, out := g.call(t, WorkloadsAccessGrant, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	warning := "  ! the install record lacks the feature gke: router dmtr-europe-west1 holds no container.clusters.connect, so its calls to this cluster would answer 403, whatever this Role allows. Add it with: dormeto gcp install --project dormeto-dev --region europe-west1 --with gke\n"
+	if i := strings.Index(out, warning); i < 0 || i > strings.Index(out, "[y/N]") {
+		t.Errorf("not said before asking:\n%s", out)
+	}
+	if !g.k.has(shopBinding) {
+		t.Error("refused")
+	}
+}
+
+func TestRbacGrantWithTheFeatureGkeWarnsOfNothing(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantFeatures(t, "gke")
+	code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+	if code != 0 || strings.Contains(out, "container.clusters.connect") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestRbacGrantWithJSONCarriesTheWarning(t *testing.T) {
+	g := newRbacRig(t)
+	r := shopAccess
+	r.JSON = true
+	code, out := g.call(t, WorkloadsAccessGrant, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var granted struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(out), &granted); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if len(granted.Warnings) != 1 || !strings.Contains(granted.Warnings[0], "container.clusters.connect") {
+		t.Errorf("%+v", granted)
+	}
+}
