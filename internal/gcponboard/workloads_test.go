@@ -247,6 +247,9 @@ func TestWorkloadsCommandsNeedTheirPermissions(t *testing.T) {
 
 var shopOnboarding = Request{Project: "dormeto-dev", Region: "europe-west1", URLMap: "shop-map", BackendService: "shop"}
 
+// refusedOnboarding is what the controller says at the onboarding of what its dry run found eligible: what changed between the two.
+const refusedOnboarding = "cannot onboard shop: backend service shop is not named in URL map shop-map"
+
 func TestWorkloadsOnboardDryRunThenTagThenOnboard(t *testing.T) {
 	g := newWorkloadsRig(t)
 	mark := len(g.s.Calls())
@@ -657,7 +660,7 @@ func TestWorkloadsOffboardKeepsTheTagUntilTheControllerDeleted(t *testing.T) {
 
 func TestWorkloadsOnboardRefusedAfterTheTagsRemovesTheOnesItMade(t *testing.T) {
 	g := newWorkloadsRig(t)
-	g.s.Workloads["shop"] = "AWAKE" // the controller refuses: 409
+	g.s.OnboardingRefused = refusedOnboarding
 	value := g.tagValue(t)
 	before := gcptest.TagBinding{Parent: vmParent, TagValue: value} // there first: kept
 	g.s.TagBindings = []gcptest.TagBinding{before}
@@ -665,7 +668,7 @@ func TestWorkloadsOnboardRefusedAfterTheTagsRemovesTheOnesItMade(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "removed", "web-mig", "fix the refusal", "run the same command again")
+	contains(t, out, refusedOnboarding, "removed", "web-mig", "fix the refusal", "run the same command again")
 	if strings.Contains(out, "or offboard") {
 		t.Fatalf("there is no workload to offboard:\n%s", out)
 	}
@@ -676,13 +679,13 @@ func TestWorkloadsOnboardRefusedAfterTheTagsRemovesTheOnesItMade(t *testing.T) {
 
 func TestWorkloadsOnboardRefusedSaysWhichBindingItCouldNotRemove(t *testing.T) {
 	g := newWorkloadsRig(t)
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: regionHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
 	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "not removed", "group web-mig (europe-west1)", "boom")
+	contains(t, out, refusedOnboarding, "not removed", "group web-mig (europe-west1)", "boom")
 	if len(g.bindings()) != 1 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -1427,7 +1430,7 @@ func TestWorkloadsOnboardAsksTheFeaturesPermissionsOfItsFlagsAlone(t *testing.T)
 
 func TestWorkloadsOnboardRefusedRemovesTheDatabasesTagItBoundAndNoOther(t *testing.T) {
 	g := newDatabaseRig(t)
-	g.s.Workloads["shop"] = "AWAKE" // the controller refuses: 409
+	g.s.OnboardingRefused = refusedOnboarding
 	value := g.tagValue(t)
 	before := gcptest.TagBinding{Parent: vmParent, TagValue: value}
 	g.s.TagBindings = []gcptest.TagBinding{before}
@@ -1435,7 +1438,7 @@ func TestWorkloadsOnboardRefusedRemovesTheDatabasesTagItBoundAndNoOther(t *testi
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "removed", "Cloud SQL instance shop-db")
+	contains(t, out, refusedOnboarding, "removed", "Cloud SQL instance shop-db")
 	if got := g.bindings(); !slices.Equal(got, []gcptest.TagBinding{before}) {
 		t.Fatalf("bindings %v", got)
 	}
@@ -1443,7 +1446,7 @@ func TestWorkloadsOnboardRefusedRemovesTheDatabasesTagItBoundAndNoOther(t *testi
 
 func TestWorkloadsOnboardRefusedKeepsADatabasesTagBoundBeforeThisRun(t *testing.T) {
 	g := newDatabaseRig(t)
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	before := gcptest.TagBinding{Parent: databaseParent, TagValue: g.tagValue(t)}
 	g.s.TagBindings = []gcptest.TagBinding{before}
 	if code, out := g.call(t, WorkloadsOnboard, shopWithDatabase); code != 1 {
@@ -1456,13 +1459,13 @@ func TestWorkloadsOnboardRefusedKeepsADatabasesTagBoundBeforeThisRun(t *testing.
 
 func TestWorkloadsOnboardRefusedSaysWhichDatabaseItCouldNotUntag(t *testing.T) {
 	g := newDatabaseRig(t)
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
 	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "not removed", "Cloud SQL instance shop-db", "boom")
+	contains(t, out, refusedOnboarding, "not removed", "Cloud SQL instance shop-db", "boom")
 }
 
 func TestWorkloadsOnboardChangesNothingWhenTheDatabasesRegionIsNotRead(t *testing.T) {
@@ -1617,12 +1620,12 @@ func TestWorkloadsOnboardGKESendsTheClusterThenTheOwner(t *testing.T) {
 // Review focus 5: an onboarding refused after the CLI changed a cluster.
 func TestWorkloadsOnboardGKERefusedAtTheOnboardingRemovesTheRbacItAdded(t *testing.T) {
 	g, _ := newGKERig(t)
-	g.s.Workloads["shop"] = "AWAKE" // the controller refuses: 409
+	g.s.OnboardingRefused = refusedOnboarding
 	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "removed", "RoleBinding dormeto-shop", "Role dormeto-shop", "fix the refusal")
+	contains(t, out, refusedOnboarding, "removed", "RoleBinding dormeto-shop", "Role dormeto-shop", "fix the refusal")
 	if w := g.k.writes(0); !slices.Equal(w, []string{createRole, createBinding, "DELETE " + shopBinding, "DELETE " + shopRole}) {
 		t.Fatalf("writes %v", w)
 	}
@@ -1645,7 +1648,7 @@ func TestWorkloadsOnboardGKERefusedLeavesTheRbacThatWasThereBefore(t *testing.T)
 	g, _ := newGKERig(t)
 	g.grantedBefore(t)
 	mark := len(g.k.writes(0))
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1656,7 +1659,7 @@ func TestWorkloadsOnboardGKERefusedLeavesTheRbacThatWasThereBefore(t *testing.T)
 	if !g.k.has(shopRole) || !g.k.has(shopBinding) || !slices.Contains(g.rbacOf(t), shopEntry) {
 		t.Fatal("what was there is gone")
 	}
-	contains(t, out, "workload shop is onboarded already", "there before this run", "stay")
+	contains(t, out, refusedOnboarding, "there before this run", "stay")
 }
 
 func TestWorkloadsOnboardGKERefusedRemovesTheRoleBindingItAddedAndLeavesTheRole(t *testing.T) {
@@ -1665,7 +1668,7 @@ func TestWorkloadsOnboardGKERefusedRemovesTheRoleBindingItAddedAndLeavesTheRole(
 	g.k.mu.Lock()
 	delete(g.k.objects, shopBinding)
 	g.k.mu.Unlock()
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1685,7 +1688,7 @@ func TestWorkloadsOnboardGKERefusedTakesOutTheSubjectItAddedToABindingThatWasThe
 	someone := map[string]any{"kind": "User", "name": "someone@example.com", "apiGroup": "rbac.authorization.k8s.io"}
 	g.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{"subjects": []any{someone},
 		"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "dormeto-shop"}})
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1701,7 +1704,7 @@ func TestWorkloadsOnboardGKERefusedTakesOutTheSubjectItAddedToABindingThatWasThe
 
 func TestWorkloadsOnboardGKERefusedSaysWhatItCouldNotRemove(t *testing.T) {
 	g, _ := newGKERig(t)
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	g.k.deny = func(call string) *kubeStatus {
 		if call == "DELETE "+shopBinding {
 			return &kubeStatus{403, "Forbidden", "rolebindings is forbidden"}
@@ -1714,7 +1717,7 @@ func TestWorkloadsOnboardGKERefusedSaysWhatItCouldNotRemove(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "not removed", "RoleBinding dormeto-shop", "rolebindings is forbidden",
+	contains(t, out, refusedOnboarding, "not removed", "RoleBinding dormeto-shop", "rolebindings is forbidden",
 		"dormeto gcp workloads access revoke --project dormeto-dev --region europe-west1 --gke-cluster "+shopCluster+" --namespace shop --workload shop --gcloud-configuration c")
 	if !slices.Contains(g.rbacOf(t), shopEntry) {
 		t.Fatal("what is left must stay listed")
@@ -1726,7 +1729,7 @@ func TestWorkloadsOnboardGKERefusedSaysWhatItCouldNotRemove(t *testing.T) {
 
 func TestWorkloadsOnboardGKESaysWhatIsLeftWhenTheClusterCannotBeReadAgain(t *testing.T) {
 	g, _ := newGKERig(t)
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	g.k.before = func(call string) {
 		if call == createBinding {
 			g.denied = true
@@ -1736,7 +1739,7 @@ func TestWorkloadsOnboardGKESaysWhatIsLeftWhenTheClusterCannotBeReadAgain(t *tes
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is onboarded already", "not removed", "access revoke", "container.clusters.get")
+	contains(t, out, refusedOnboarding, "not removed", "access revoke", "container.clusters.get")
 	if !slices.Contains(g.rbacOf(t), shopEntry) {
 		t.Fatal("what is left must stay listed")
 	}
@@ -1787,7 +1790,7 @@ func TestWorkloadsOnboardGKEWithADatabaseBindsThatTagAndARefusalUndoesBoth(t *te
 	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
 	r := shopOnGKE
 	r.CloudSQL = []string{"shop-db"}
-	g.s.Workloads["shop"] = "AWAKE"
+	g.s.OnboardingRefused = refusedOnboarding
 	code, out := g.call(t, WorkloadsOnboard, r)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1795,7 +1798,7 @@ func TestWorkloadsOnboardGKEWithADatabaseBindsThatTagAndARefusalUndoesBoth(t *te
 	if len(g.bindings()) != 0 || g.k.has(shopRole) || g.k.has(shopBinding) {
 		t.Fatalf("bindings %v role %v binding %v:\n%s", g.bindings(), g.k.has(shopRole), g.k.has(shopBinding), out)
 	}
-	delete(g.s.Workloads, "shop")
+	g.s.OnboardingRefused = ""
 	if code, out = g.call(t, WorkloadsOnboard, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1895,6 +1898,20 @@ func TestWorkloadsOnboardGKEWithoutATerminalNeedsYes(t *testing.T) {
 	contains(t, out, "--yes", "+ Role dormeto-shop")
 	if w := g.k.writes(0); len(w) != 0 || len(g.s.Workloads) != 0 {
 		t.Fatalf("writes %v workloads %v", w, g.s.Workloads)
+	}
+}
+
+// An onboarded workload, run again with its flags: the dry run says so, as the router's does.
+func TestWorkloadsOnboardGKEOfAWorkloadOnboardedStopsAtTheDryRun(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "Nothing was changed.")
+	if len(g.k.callList()) != 0 {
+		t.Fatalf("the cluster was called: %v", g.k.callList())
 	}
 }
 

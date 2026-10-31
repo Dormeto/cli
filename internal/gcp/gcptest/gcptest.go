@@ -127,6 +127,8 @@ type Server struct {
 	// DryRun is what the controller's onboarding dry run answers: the reasons it refuses (none: eligible), the VMs and
 	// the groups it would tag. The onboarding itself is refused (400) while one of them carries no tag binding.
 	DryRun DryRun
+	// OnboardingRefused, when set, is the 400 the onboarding answers after an eligible dry run: what changed between the two.
+	OnboardingRefused string
 	// AnswerOnboarding, when set, answers an onboarding the controller did: the answer lost, or a gateway's error. It runs
 	// under the server's lock.
 	AnswerOnboarding func(w http.ResponseWriter)

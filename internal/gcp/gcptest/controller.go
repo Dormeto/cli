@@ -234,6 +234,9 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 			}
 			databases = append(databases, map[string]any{"name": name, "selfLink": "https://sqladmin.googleapis.com/v1/projects/" + s.ProjectID + "/instances/" + name})
 		}
+		if _, there := s.Workloads[id]; there {
+			reasons = append(slices.Clone(reasons), "workload "+id+" is onboarded already")
+		}
 		answer := map[string]any{"eligible": len(reasons) == 0, "reasons": reasons, "vms": vms, "groups": groups}
 		if !s.ControllerBelow035 {
 			kind := in.LoadBalancer
@@ -246,6 +249,10 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		Reply(w, answer)
+		return
+	}
+	if s.OnboardingRefused != "" {
+		controllerFail(w, 400, "not-eligible", s.OnboardingRefused)
 		return
 	}
 	if _, ok := s.Workloads[id]; ok {
