@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1487,5 +1489,506 @@ func TestWorkloadsOnboardStopsWhenTheDryRunNamesNotADatabase(t *testing.T) {
 	contains(t, out, "--cloud-sql shop-db", "0.35.0", "Nothing was changed.")
 	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
 		t.Fatal("something was changed")
+	}
+}
+
+const (
+	servicePath = "/api/v1/namespaces/shop/services/web"
+	podsPath    = "/api/v1/namespaces/shop/pods"
+	setsPath    = "/apis/apps/v1/namespaces/shop/replicasets"
+	shopCluster = "europe-west1-b/shop-cluster"
+)
+
+var shopOnGKE = func() Request {
+	r := shopOnboarding
+	r.GKECluster, r.Yes = shopCluster, true
+	return r
+}()
+
+// orderRecorder notes every call, Google's and the cluster's, in the order they are sent.
+type orderRecorder struct {
+	next http.RoundTripper
+	mu   sync.Mutex
+	got  []string
+}
+
+func (o *orderRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	o.mu.Lock()
+	o.got = append(o.got, req.Method+" "+req.URL.Host+req.URL.RequestURI())
+	o.mu.Unlock()
+	return o.next.RoundTrip(req)
+}
+
+func (o *orderRecorder) calls() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.got)
+}
+
+// newGKERig is an installed router with the feature gke, a backend service whose NEGs name Service web of namespace shop on
+// an Autopilot cluster, and that Service's Deployment web in the cluster. It tags nothing.
+func newGKERig(t *testing.T) (*rbacRig, *orderRecorder) {
+	t.Helper()
+	g := newRbacRig(t)
+	g.plantFeatures(t, "gke")
+	g.s.DryRun = gcptest.DryRun{GKE: &gcptest.DryRunGKE{Namespace: "shop", Service: "web", Autopilot: true}}
+	g.k.reads = map[string]any{
+		servicePath: map[string]any{"metadata": map[string]any{"name": "web"}, "spec": map[string]any{"selector": map[string]any{"app": "web"}}},
+		podsPath: map[string]any{"items": []any{map[string]any{"metadata": map[string]any{"name": "web-1", "namespace": "shop",
+			"ownerReferences": []any{map[string]any{"kind": "ReplicaSet", "name": "web-abc", "controller": true}}}, "status": map[string]any{"phase": "Running"}}}},
+		setsPath: map[string]any{"items": []any{map[string]any{"metadata": map[string]any{"name": "web-abc",
+			"ownerReferences": []any{map[string]any{"kind": "Deployment", "name": "web", "controller": true}}}}}},
+	}
+	http2 := *g.d.Google.HTTP
+	order := &orderRecorder{next: http2.Transport}
+	http2.Transport = order
+	g.d.Google.HTTP = &http2
+	return g, order
+}
+
+// The order of spec §8: the dry run, the reading of the cluster, the RBAC printed, asked and applied, the onboarding.
+func TestWorkloadsOnboardGKEFollowsTheOrderOfTheDesign(t *testing.T) {
+	g, order := newGKERig(t)
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("y\n"), g.out, true)
+	r := shopOnGKE
+	r.Yes = false
+	var atFirstWrite string
+	listedFirst := false
+	g.k.before = func(string) {
+		if atFirstWrite == "" {
+			atFirstWrite = g.out.String()
+			listedFirst = slices.Contains(g.rbacOf(t), shopEntry)
+		}
+	}
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var got []string
+	for _, c := range order.calls() {
+		switch method, rest, _ := strings.Cut(c, " "); {
+		case method == "POST" && strings.HasPrefix(rest, controllerHost):
+			got = append(got, "controller "+strings.TrimPrefix(rest, controllerHost))
+		case strings.HasPrefix(rest, kubeHost) && !strings.Contains(rest, "/rbac.authorization.k8s.io/"):
+			got = append(got, "read "+strings.TrimPrefix(rest, kubeHost))
+		case strings.HasPrefix(rest, kubeHost) && method != "GET":
+			got = append(got, method+" "+strings.TrimPrefix(rest, kubeHost))
+		}
+	}
+	want := []string{"controller /v1/workloads?dryRun=true", "read " + servicePath, "read " + podsPath + "?labelSelector=app%3Dweb", "read " + setsPath,
+		createRole, createBinding, "controller /v1/workloads"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order:\n%s", strings.Join(got, "\n"))
+	}
+	asked := strings.Index(atFirstWrite, "[y/N]")
+	if asked < 0 {
+		t.Fatalf("written before asking:\n%s", atFirstWrite)
+	}
+	for _, line := range []string{"+ Role dormeto-shop", "+ RoleBinding dormeto-shop", "User " + routerSA} {
+		if i := strings.Index(atFirstWrite, line); i < 0 || i > asked {
+			t.Errorf("%q not printed before asking:\n%s", line, atFirstWrite)
+		}
+	}
+	if !listedFirst {
+		t.Error("the record did not list the access before it was applied")
+	}
+	if !g.k.has(shopRole) || !g.k.has(shopBinding) || g.s.Workloads["shop"] != "AWAKE" {
+		t.Fatalf("role %v binding %v workloads %v", g.k.has(shopRole), g.k.has(shopBinding), g.s.Workloads)
+	}
+	contains(t, out, "Onboarded workload shop", "Deployment web", shopCluster)
+}
+
+func TestWorkloadsOnboardGKESendsTheClusterThenTheOwner(t *testing.T) {
+	g, _ := newGKERig(t)
+	if code, out := g.call(t, WorkloadsOnboard, shopOnGKE); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	cluster := map[string]any{"location": "europe-west1-b", "name": "shop-cluster"}
+	if got := g.body(t, "POST", controllerHost, "/v1/workloads?dryRun=true")["gke"]; !jsonEqual(got, map[string]any{"cluster": cluster}) {
+		t.Errorf("the dry run's: %v", got)
+	}
+	want := map[string]any{"cluster": cluster, "namespace": "shop", "owner": map[string]any{"kind": "Deployment", "name": "web"}, "service": "web"}
+	if got := g.onboarding(t)["gke"]; !jsonEqual(got, want) {
+		t.Errorf("the onboarding's: %v", got)
+	}
+}
+
+// Review focus 5: an onboarding refused after the CLI changed a cluster.
+func TestWorkloadsOnboardGKERefusedAtTheOnboardingRemovesTheRbacItAdded(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.Workloads["shop"] = "AWAKE" // the controller refuses: 409
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "removed", "RoleBinding dormeto-shop", "Role dormeto-shop", "fix the refusal")
+	if w := g.k.writes(0); !slices.Equal(w, []string{createRole, createBinding, "DELETE " + shopBinding, "DELETE " + shopRole}) {
+		t.Fatalf("writes %v", w)
+	}
+	if g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatal("the RBAC stays")
+	}
+	if got := g.rbacOf(t); len(got) != 0 {
+		t.Fatalf("the record still lists %v", got)
+	}
+}
+
+func (g *rbacRig) grantedBefore(t *testing.T) {
+	t.Helper()
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestWorkloadsOnboardGKERefusedLeavesTheRbacThatWasThereBefore(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.grantedBefore(t)
+	mark := len(g.k.writes(0))
+	g.s.Workloads["shop"] = "AWAKE"
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if w := g.k.writes(0)[mark:]; len(w) != 0 {
+		t.Fatalf("writes %v", w)
+	}
+	if !g.k.has(shopRole) || !g.k.has(shopBinding) || !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatal("what was there is gone")
+	}
+	contains(t, out, "workload shop is onboarded already", "there before this run", "stay")
+}
+
+func TestWorkloadsOnboardGKERefusedRemovesTheRoleBindingItAddedAndLeavesTheRole(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.grantedBefore(t)
+	g.k.mu.Lock()
+	delete(g.k.objects, shopBinding)
+	g.k.mu.Unlock()
+	g.s.Workloads["shop"] = "AWAKE"
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatalf("role %v binding %v", g.k.has(shopRole), g.k.has(shopBinding))
+	}
+	if !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatal("the Role stays: the record must list it")
+	}
+	contains(t, out, "removed", "RoleBinding dormeto-shop", "Role dormeto-shop", "there before this run")
+}
+
+func TestWorkloadsOnboardGKERefusedTakesOutTheSubjectItAddedToABindingThatWasThere(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.grantedBefore(t)
+	someone := map[string]any{"kind": "User", "name": "someone@example.com", "apiGroup": "rbac.authorization.k8s.io"}
+	g.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{"subjects": []any{someone},
+		"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "dormeto-shop"}})
+	g.s.Workloads["shop"] = "AWAKE"
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.k.object(shopBinding)["subjects"]; !reflect.DeepEqual(got, []any{someone}) {
+		t.Fatalf("subjects %v", got)
+	}
+	if !g.k.has(shopRole) {
+		t.Fatal("the Role was there")
+	}
+	contains(t, out, "removed", routerSA)
+}
+
+func TestWorkloadsOnboardGKERefusedSaysWhatItCouldNotRemove(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.k.deny = func(call string) *kubeStatus {
+		if call == "DELETE "+shopBinding {
+			return &kubeStatus{403, "Forbidden", "rolebindings is forbidden"}
+		}
+		return nil
+	}
+	r := shopOnGKE
+	r.Configuration = "c"
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "not removed", "RoleBinding dormeto-shop", "rolebindings is forbidden",
+		"dormeto gcp workloads access revoke --project dormeto-dev --region europe-west1 --gke-cluster "+shopCluster+" --namespace shop --workload shop --gcloud-configuration c")
+	if !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatal("what is left must stay listed")
+	}
+	if !g.k.has(shopBinding) {
+		t.Fatal("the binding went")
+	}
+}
+
+func TestWorkloadsOnboardGKESaysWhatIsLeftWhenTheClusterCannotBeReadAgain(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.k.before = func(call string) {
+		if call == createBinding {
+			g.denied = true
+		}
+	}
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "not removed", "access revoke", "container.clusters.get")
+	if !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatal("what is left must stay listed")
+	}
+}
+
+func TestWorkloadsOnboardGKEWithALostAnswerKeepsTheRbacAndSaysSo(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.AnswerOnboarding = gcptest.Cut
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "the workload may be onboarded", "The Kubernetes access stays", "workloads show shop")
+	if strings.Contains(out, "The tag bindings stay") {
+		t.Fatalf("no tag was bound:\n%s", out)
+	}
+	if !g.k.has(shopRole) || !g.k.has(shopBinding) || !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatal("the RBAC went")
+	}
+}
+
+func TestWorkloadsOnboardGKEOnlyBindsNoTagAndNeedsNone(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.Lock()
+	g.s.TagValues = map[string]*gcptest.Tag{}
+	g.s.Unlock()
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 0 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+	for _, c := range g.s.Calls()[mark:] {
+		if strings.Contains(c.Path, "/tagBindings") || strings.Contains(c.Path, "/tagValues") {
+			t.Errorf("%s %s%s", c.Method, c.Host, c.Path)
+		}
+	}
+	if strings.Contains(out, "tagged:") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestWorkloadsOnboardGKEWithADatabaseBindsThatTagAndARefusalUndoesBoth(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.plantFeatures(t, "cloud-sql", "gke")
+	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+	r := shopOnGKE
+	r.CloudSQL = []string{"shop-db"}
+	g.s.Workloads["shop"] = "AWAKE"
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 0 || g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatalf("bindings %v role %v binding %v:\n%s", g.bindings(), g.k.has(shopRole), g.k.has(shopBinding), out)
+	}
+	delete(g.s.Workloads, "shop")
+	if code, out = g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.bindings(); len(got) != 1 || got[0].Parent != databaseParent {
+		t.Fatalf("bindings %v", got)
+	}
+}
+
+func TestWorkloadsOnboardGKEWhenATagIsRefusedRemovesTheRbacItAdded(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.plantFeatures(t, "cloud-sql", "gke")
+	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "no tag for you"})
+	r := shopOnGKE
+	r.CloudSQL = []string{"shop-db"}
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "the tag is not bound to Cloud SQL instance shop-db", "no tag for you", "removed")
+	if g.k.has(shopRole) || g.k.has(shopBinding) || len(g.s.Workloads) != 0 {
+		t.Fatalf("role %v binding %v workloads %v", g.k.has(shopRole), g.k.has(shopBinding), g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardOnAStandardClusterWarnsAndGoesOn(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.DryRun.GKE.Autopilot = false
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "! Cluster "+shopCluster+" is a Standard cluster", "saves money only on Autopilot", "the node autoscaler freeing a node")
+	if g.s.Workloads["shop"] != "AWAKE" {
+		t.Fatal("not onboarded")
+	}
+	// The warning before the RBAC is asked for, and with --dry-run too.
+	r := shopOnGKE
+	r.DryRun, r.ID = true, "other"
+	if code, out = g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "saves money only on Autopilot")
+}
+
+func TestWorkloadsOnboardOnAutopilotDoesNotWarn(t *testing.T) {
+	g, _ := newGKERig(t)
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 0 || strings.Contains(out, "saves money") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestWorkloadsOnboardGKEWithJSONKeepsItsWordsOutOfTheAnswer(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.DryRun.GKE.Autopilot = false
+	var errs bytes.Buffer
+	g.d.Err = &errs
+	r := shopOnGKE
+	r.JSON = true
+	code, out := g.call(t, WorkloadsOnboard, r)
+	var w map[string]any
+	if err := json.Unmarshal([]byte(out), &w); code != 0 || err != nil || w["id"] != "shop" {
+		t.Fatalf("%d %v:\n%s", code, err, out)
+	}
+	contains(t, errs.String(), "saves money only on Autopilot")
+}
+
+func TestWorkloadsOnboardGKEDeclinedChangesNothing(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+	r := shopOnGKE
+	r.Yes = false
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Nothing was changed.")
+	if w := g.k.writes(0); len(w) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("writes %v workloads %v", w, g.s.Workloads)
+	}
+	if m := g.changes(mark); len(m) != 1 {
+		t.Fatalf("changes %v", m)
+	}
+}
+
+func TestWorkloadsOnboardGKEWithoutATerminalNeedsYes(t *testing.T) {
+	g, _ := newGKERig(t)
+	r := shopOnGKE
+	r.Yes = false
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 2 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "--yes", "+ Role dormeto-shop")
+	if w := g.k.writes(0); len(w) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("writes %v workloads %v", w, g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardGKERefusesASomeoneElsesRoleBeforeAnyChange(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.k.put(t, shopRole, "Role", map[string]string{"team": "shop"}, map[string]any{"rules": []any{}})
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "is not Dormeto's", "Nothing was changed.")
+	if w := g.k.writes(0); len(w) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("writes %v workloads %v", w, g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardGKESaysWhyTheOwnerCannotBeRead(t *testing.T) {
+	for name, c := range map[string]struct {
+		change func(*rbacRig)
+		want   []string
+	}{
+		"no service":   {func(g *rbacRig) { delete(g.k.reads, servicePath) }, []string{"Service web is not in namespace shop"}},
+		"no pod":       {func(g *rbacRig) { g.k.reads[podsPath] = map[string]any{"items": []any{}} }, []string{"no pod behind Service web"}},
+		"denied":       {func(g *rbacRig) { g.k.deny = denyCall("GET "+podsPath, 403, "Forbidden", `pods is forbidden`) }, []string{"container.pods.list", "pods is forbidden"}},
+		"the endpoint": {func(g *rbacRig) { g.k.deny = denyCall("GET "+servicePath, 403, "", "IAM says no") }, []string{"container.clusters.connect", "IAM says no"}},
+	} {
+		g, _ := newGKERig(t)
+		c.change(g)
+		code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+		if code != 1 {
+			t.Errorf("%s: exit %d:\n%s", name, code, out)
+			continue
+		}
+		contains(t, out, append(c.want, "Nothing was changed.")...)
+		if w := g.k.writes(0); len(w) != 0 || len(g.s.Workloads) != 0 {
+			t.Errorf("%s: writes %v workloads %v", name, w, g.s.Workloads)
+		}
+	}
+}
+
+func denyCall(call string, code int, reason, message string) func(string) *kubeStatus {
+	return func(c string) *kubeStatus {
+		if c == call {
+			return &kubeStatus{code, reason, message}
+		}
+		return nil
+	}
+}
+
+func TestWorkloadsOnboardGKEStopsWhenTheDryRunSaysNothingOfTheCluster(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.DryRun.GKE = nil // as the router before its GKE
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "--gke-cluster "+shopCluster, "Nothing was changed.")
+	if len(g.k.callList()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("calls %v workloads %v", g.k.callList(), g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardGKEDryRunReadsNoClusterAndNamesWhatItWouldApply(t *testing.T) {
+	g, _ := newGKERig(t)
+	r := shopOnGKE
+	r.DryRun, r.Yes = true, false
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "eligible", "Role and RoleBinding dormeto-shop", "namespace shop", shopCluster, "dormeto gcp workloads access show")
+	if strings.Contains(out, "bind the tag") {
+		t.Fatalf("no tag to bind:\n%s", out)
+	}
+	if len(g.k.callList()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("calls %v workloads %v", g.k.callList(), g.s.Workloads)
+	}
+}
+
+func TestWorkloadsOnboardAsksTheGKEPermissionsWithItsFlag(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	missing := "container.roles.escalate"
+	for _, p := range access.NeedsWith("onboard", []string{"gke"}) {
+		g.s.Held[p] = p != missing
+	}
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "missing "+missing, "Nothing was changed.")
+	if m := g.changes(mark); len(m) != 0 || len(g.k.callList()) != 0 {
+		t.Fatalf("changes %v %v", m, g.k.callList())
 	}
 }

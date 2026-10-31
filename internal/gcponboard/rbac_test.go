@@ -55,6 +55,8 @@ type fakeKube struct {
 	before func(call string)
 	// raw answers every call, in place of the API: the DNS endpoint's own refusal.
 	raw http.HandlerFunc
+	// reads answers a GET of these paths, what the onboarding reads of a workload.
+	reads map[string]any
 }
 
 func newFakeKube(t *testing.T) *fakeKube {
@@ -85,6 +87,10 @@ func (k *fakeKube) serve(w http.ResponseWriter, r *http.Request) {
 			k.failure(w, s.code, s.reason, s.status)
 			return
 		}
+	}
+	if o, there := k.reads[r.URL.Path]; there && r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(o)
+		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/apis/rbac.authorization.k8s.io/v1/namespaces/") {
 		k.failure(w, 404, "NotFound", "the fake knows namespaced RBAC only: "+call)

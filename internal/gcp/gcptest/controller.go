@@ -25,6 +25,14 @@ type DryRun struct {
 	Reasons []string
 	VMs     []Resource
 	Groups  []Resource
+	// GKE is what the NEGs say of a cluster the request names; nil: nothing, as a controller before GKE.
+	GKE *DryRunGKE
+}
+
+// DryRunGKE is what a dry run reads of a GKE workload.
+type DryRunGKE struct {
+	Namespace, Service string
+	Autopilot          bool
 }
 
 // TagBinding is a tag value bound to a resource.
@@ -105,6 +113,7 @@ type workloadIn struct {
 	Settings       map[string]any `json:"settings"`
 	LoadBalancer   string         `json:"loadBalancer"`
 	CloudSQL       []string       `json:"cloudSql"`
+	GKE            map[string]any `json:"gke"`
 }
 
 // workloads serves /v1/workloads…, as the router's controller does.
@@ -232,6 +241,9 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 				kind = "global"
 			}
 			answer["lb"], answer["databases"] = map[string]any{"kind": kind}, databases
+			if s.DryRun.GKE != nil && in.GKE != nil {
+				answer["gke"] = map[string]any{"cluster": in.GKE["cluster"], "namespace": s.DryRun.GKE.Namespace, "service": s.DryRun.GKE.Service, "autopilot": s.DryRun.GKE.Autopilot}
+			}
 		}
 		Reply(w, answer)
 		return
@@ -261,6 +273,13 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		backends = append(backends, map[string]any{"kind": "cloudsql", "name": name})
+	}
+	if in.GKE != nil {
+		backend := map[string]any{"kind": "k8s"}
+		for key, v := range in.GKE {
+			backend[key] = v
+		}
+		backends = append(backends, backend)
 	}
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,

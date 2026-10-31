@@ -283,12 +283,16 @@ func kubeFailure(cluster, verb string, o kubeObject, err error) error {
 	case e.Code != http.StatusForbidden:
 		return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: %s", verb, what, e.Message)}
 	case e.Reason != "Forbidden":
-		// Not a Kubernetes Status: the endpoint's own IAM check, before the cluster's API.
-		return &stop{1, fmt.Sprintf("The DNS endpoint of cluster %s refuses you: you need container.clusters.connect on its project.\n%s", cluster, e.Message)}
+		return &stop{1, endpointRefusal(cluster, e.Message)}
 	case escalation(e.Message):
 		return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: it lets no one grant rights they do not hold. You need container.roles.escalate and container.roles.bind, or those rights themselves.\n%s", verb, what, e.Message)}
 	}
 	return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: you need %s, by IAM or by Kubernetes RBAC.\n%s", verb, what, kubePermission(verb, o), e.Message)}
+}
+
+// endpointRefusal says a 403 that is no Kubernetes Status: the DNS endpoint's own IAM check, before the cluster's API.
+func endpointRefusal(cluster, message string) string {
+	return fmt.Sprintf("The DNS endpoint of cluster %s refuses you: you need container.clusters.connect on its project.\n%s", cluster, message)
 }
 
 // escalation tells that Kubernetes's 403 is its escalation rule, and no missing right on the object itself.
@@ -612,9 +616,12 @@ func (x *run) unrecordRbac(rb Rbac) error {
 }
 
 // revokeCommand is the command that removes a workload's access.
-func (x *run) revokeCommand(e RecordRbac) string {
-	c := fmt.Sprintf("dormeto gcp workloads access revoke --project %s --region %s --gke-cluster %s --namespace %s --workload %s",
-		x.n.project, x.n.region, e.Cluster, e.Namespace, e.Workload)
+func (x *run) revokeCommand(e RecordRbac) string { return x.accessCommand("revoke", e) }
+
+// accessCommand is the command that does this to a workload's access.
+func (x *run) accessCommand(verb string, e RecordRbac) string {
+	c := fmt.Sprintf("dormeto gcp workloads access %s --project %s --region %s --gke-cluster %s --namespace %s --workload %s",
+		verb, x.n.project, x.n.region, e.Cluster, e.Namespace, e.Workload)
 	if x.r.Configuration != "" {
 		c += " --gcloud-configuration " + x.r.Configuration
 	}
@@ -838,62 +845,75 @@ func (x *run) accessGrant() error {
 	if err != nil {
 		return err
 	}
-	found, err := x.rbacRecord()
+	g, err := x.grantRbac(rb)
 	if err != nil {
 		return err
-	}
-	if !found {
-		return x.noRouter()
-	}
-	plan, err := x.PlanRbac(rb)
-	if err != nil {
-		return err
-	}
-	x.rbacHeader(plan)
-	warnings := x.grantWarnings()
-	if !x.r.JSON {
-		x.printWrites(plan, true)
-		x.warn(warnings)
-	}
-	if err := plan.Refused(); err != nil {
-		return err
-	}
-	done := []string{}
-	if !plan.Changes() {
-		// A record that lost it is whole again.
-		if _, err := x.recordRbac(rb); err != nil {
-			return err
-		}
-	} else {
-		if err := x.confirm(fmt.Sprintf("Apply these to namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
-			return err
-		}
-		// A prompt can wait long: what is listed is read again, so that an entry revoked meanwhile is listed again.
-		if found, err = x.rbacRecord(); err != nil {
-			return err
-		}
-		if !found {
-			return x.noRouter()
-		}
-		added, err := x.recordRbac(rb)
-		if err != nil {
-			return err
-		}
-		if done, err = x.applyGrant(rb, plan, added); err != nil {
-			return err
-		}
 	}
 	if x.r.JSON {
 		return x.printJSON(struct {
 			RbacPlan
 			Changed  []string `json:"changed"`
 			Warnings []string `json:"warnings,omitempty"`
-		}{plan, done, warnings})
+		}{g.plan, g.done, g.warnings})
 	}
-	if len(done) == 0 {
+	if len(g.done) == 0 {
 		x.say("The Role and RoleBinding %s of namespace %s are up to date.", rb.name(), rb.Namespace)
 	}
 	return nil
+}
+
+// rbacGrant is what a grant did: the plan it applied, what it wrote, whether the install record's entry is this run's, and
+// what it warned of.
+type rbacGrant struct {
+	plan     RbacPlan
+	done     []string
+	listed   bool
+	warnings []string
+}
+
+// grantRbac is step 2 of spec §8, and all of `access grant`: the record read, the objects printed, asked, listed in the
+// record, then applied.
+func (x *run) grantRbac(rb Rbac) (rbacGrant, error) {
+	g := rbacGrant{done: []string{}}
+	found, err := x.rbacRecord()
+	if err != nil {
+		return g, err
+	}
+	if !found {
+		return g, x.noRouter()
+	}
+	if g.plan, err = x.PlanRbac(rb); err != nil {
+		return g, err
+	}
+	x.rbacHeader(g.plan)
+	g.warnings = x.grantWarnings()
+	if !x.r.JSON {
+		x.printWrites(g.plan, true)
+		x.warn(g.warnings)
+	}
+	if err := g.plan.Refused(); err != nil {
+		return g, err
+	}
+	if !g.plan.Changes() {
+		// A record that lost it is whole again.
+		g.listed, err = x.recordRbac(rb)
+		return g, err
+	}
+	if err := x.confirm(fmt.Sprintf("Apply these to namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
+		return g, err
+	}
+	// A prompt can wait long: what is listed is read again, so that an entry revoked meanwhile is listed again.
+	if found, err = x.rbacRecord(); err != nil {
+		return g, err
+	}
+	if !found {
+		return g, x.noRouter()
+	}
+	if g.listed, err = x.recordRbac(rb); err != nil {
+		return g, err
+	}
+	g.done, err = x.applyGrant(rb, g.plan, g.listed)
+	return g, err
 }
 
 // applyGrant applies the plan and says what it did. A first write refused made nothing: the record's entry this run added

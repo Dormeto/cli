@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/kubernetes"
 )
 
 const (
@@ -37,7 +38,7 @@ const (
 	maxBackendServiceName = 63
 
 	// A workload's backend kinds beyond a VM's and a group's.
-	kindDatabase = "cloudsql"
+	kindDatabase, kindPods = "cloudsql", "k8s"
 )
 
 var (
@@ -54,11 +55,28 @@ type backend struct {
 	Location string `json:"location,omitempty"`
 	Name     string `json:"name,omitempty"`
 	ID       string `json:"id,omitempty"` // numeric: a tag binding's parent names it
+
+	// A k8s backend's: where its owner is. It takes no tag.
+	Cluster   *gkeCluster       `json:"cluster,omitempty"`
+	Namespace string            `json:"namespace,omitempty"`
+	Service   string            `json:"service,omitempty"`
+	Owner     *kubernetes.Owner `json:"owner,omitempty"`
 }
 
 func (b backend) String() string {
-	if b.Kind == kindDatabase {
+	switch b.Kind {
+	case kindDatabase:
 		return "Cloud SQL instance " + b.Name
+	case kindPods:
+		owner := "Service " + b.Service
+		if b.Owner != nil {
+			owner = b.Owner.Kind + " " + b.Owner.Name
+		}
+		cluster := ""
+		if b.Cluster != nil {
+			cluster = ", cluster " + b.Cluster.String()
+		}
+		return fmt.Sprintf("%s (namespace %s%s)", owner, b.Namespace, cluster)
 	}
 	kind := "group"
 	if b.Kind == "vm" {
@@ -95,6 +113,14 @@ type dryRun struct {
 	LB       *lbRef     `json:"lb"`
 	// Databases are the Cloud SQL instances the request named, as the controller found them.
 	Databases []databaseRef `json:"databases"`
+	// GKE is what the load balancer's NEGs say of the cluster the request named. The request's flag names the cluster.
+	GKE *gkeRef `json:"gke"`
+}
+
+type gkeRef struct {
+	Namespace string `json:"namespace"`
+	Service   string `json:"service"`
+	Autopilot bool   `json:"autopilot"`
 }
 
 type databaseRef struct {
@@ -421,7 +447,25 @@ type onboardingIn struct {
 	Settings       map[string]any `json:"settings,omitempty"`
 	LoadBalancer   string         `json:"loadBalancer,omitempty"`
 	CloudSQL       []string       `json:"cloudSql,omitempty"`
+	GKE            *onboardingGKE `json:"gke,omitempty"`
 }
+
+// onboardingGKE is a GKE workload in the controller's request: the dry run names the cluster alone, and answers the namespace
+// and the Service; the onboarding names them all, with the owner the CLI read.
+type onboardingGKE struct {
+	Cluster   gkeCluster        `json:"cluster"`
+	Namespace string            `json:"namespace,omitempty"`
+	Service   string            `json:"service,omitempty"`
+	Owner     *kubernetes.Owner `json:"owner,omitempty"`
+}
+
+// gkeCluster is a cluster as the controller names it.
+type gkeCluster struct {
+	Location string `json:"location"`
+	Name     string `json:"name"`
+}
+
+func (c gkeCluster) String() string { return c.Location + "/" + c.Name }
 
 // onboardingInput validates the flags, before any call: exit 2 for a bad one.
 func (x *run) onboardingInput() (onboardingIn, error) {
@@ -440,12 +484,14 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 		return in, err
 	}
 	if r.GKECluster != "" {
-		if _, _, err := clusterOf(r.GKECluster); err != nil {
+		location, name, err := clusterOf(r.GKECluster)
+		if err != nil {
 			return in, err
 		}
 		if r.JSON && !r.Yes && !r.DryRun {
 			return in, &stop{2, "--yes: needed with --json"}
 		}
+		in.GKE = &onboardingGKE{Cluster: gkeCluster{location, name}}
 	}
 	if v := r.WakeTimeout; v != nil {
 		if *v < minWakeTimeout || *v > maxWakeTimeout {
@@ -536,14 +582,23 @@ func (x *run) onboard() error {
 	if err := x.covers(dry); err != nil {
 		return err
 	}
+	x.warnStandard(dry)
 	if x.r.DryRun {
 		if x.r.JSON {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
 			return nil
 		}
-		x.say("Backend service %s is eligible as workload %s; onboarding would bind the tag dormeto=managed to:", in.BackendService, in.ID)
-		for _, label := range dry.labels() {
-			x.say("  %s", label)
+		if labels := dry.labels(); len(labels) > 0 || dry.GKE == nil {
+			x.say("Backend service %s is eligible as workload %s; onboarding would bind the tag dormeto=managed to:", in.BackendService, in.ID)
+			for _, label := range labels {
+				x.say("  %s", label)
+			}
+		} else {
+			x.say("Backend service %s is eligible as workload %s.", in.BackendService, in.ID)
+		}
+		if dry.GKE != nil {
+			rb := x.onboardingRbac(in.ID, dry.GKE)
+			x.say("Onboarding would read the owner of Service %s in cluster %s, then ask and apply the Role and RoleBinding %s of namespace %s; read them with: %s", dry.GKE.Service, rb.Cluster, rb.name(), rb.Namespace, x.accessCommand("show", rb.entry()))
 		}
 		return nil
 	}
@@ -558,12 +613,30 @@ func (x *run) onboard() error {
 		}
 		targets = append(targets, t)
 	}
-	value, found, err := x.tag("tagValues", x.n.project+"/dormeto/managed")
-	if err != nil {
-		return err
+	// A GKE workload alone needs no tag.
+	value := ""
+	if len(targets) > 0 {
+		var found bool
+		if value, found, err = x.tag("tagValues", x.n.project+"/dormeto/managed"); err != nil {
+			return err
+		}
+		if !found {
+			return &stop{1, fmt.Sprintf("The tag dormeto/managed does not exist in project %s: run dormeto gcp install first.\nNothing was changed.", x.n.project)}
+		}
 	}
-	if !found {
-		return &stop{1, fmt.Sprintf("The tag dormeto/managed does not exist in project %s: run dormeto gcp install first.\nNothing was changed.", x.n.project)}
+	var grant *rbacGrant
+	if dry.GKE != nil {
+		rb := x.onboardingRbac(in.ID, dry.GKE)
+		owner, err := x.readOwner(rb, dry.GKE.Service)
+		if err != nil {
+			return err
+		}
+		in.GKE.Namespace, in.GKE.Service, in.GKE.Owner = rb.Namespace, dry.GKE.Service, &owner
+		g, err := x.grantRbac(rb)
+		if err != nil {
+			return err
+		}
+		grant = &g
 	}
 	var created []target
 	for _, t := range targets {
@@ -572,19 +645,26 @@ func (x *run) onboard() error {
 			created = append(created, t)
 		}
 		if err != nil {
-			return fmt.Errorf("the tag is not bound to %s: %s\n%s", t.label, refusal(err), x.undoBindings(created, value))
+			return fmt.Errorf("the tag is not bound to %s: %s\n%s", t.label, refusal(err), x.undoOnboarding(grant, created, value))
 		}
 	}
 	if err := x.controller(http.MethodPost, "/v1/workloads", in, &raw); err != nil {
 		if refused(err) {
-			return fmt.Errorf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoBindings(created, value))
+			return fmt.Errorf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoOnboarding(grant, created, value))
 		}
 		// A lost answer says nothing of what the controller did: untagged, an onboarded workload could not be woken.
 		code := 1
 		if x.ctx.Err() != nil {
 			code = exitInterrupted
 		}
-		return &stop{code, fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. The tag bindings stay.\nCheck with: %s\nNot there, run the same command again: a tag bound already is not an error.", refusal(err), x.showCommand(in.ID))}
+		stays, again := "The tag bindings stay.", "a tag bound already is not an error"
+		switch {
+		case grant != nil && len(targets) > 0:
+			stays, again = stays+" The Kubernetes access stays.", "a tag bound or an access there already is not an error"
+		case grant != nil:
+			stays, again = "The Kubernetes access stays.", "an access there already is not an error"
+		}
+		return &stop{code, fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.", refusal(err), stays, x.showCommand(in.ID), again)}
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Onboarded workload %s: %s", w.ID, w.State)
@@ -604,6 +684,15 @@ func (x *run) covers(dry dryRun) error {
 	for _, name := range x.r.CloudSQL {
 		if !slices.Contains(dry.Databases, databaseRef{name}) {
 			return x.ignoredFlag("--cloud-sql " + name)
+		}
+	}
+	if x.r.GKECluster != "" {
+		if dry.GKE == nil {
+			return x.ignoredFlag("--gke-cluster " + x.r.GKECluster)
+		}
+		// They name what the operator's token reads and writes in the cluster.
+		if !namespacePattern.MatchString(dry.GKE.Namespace) || !namespacePattern.MatchString(dry.GKE.Service) {
+			return &stop{1, fmt.Sprintf("The dry run of router %s names namespace %q and Service %q for cluster %s, which are not Kubernetes names.\nNothing was changed.", x.n.router, dry.GKE.Namespace, dry.GKE.Service, x.r.GKECluster)}
 		}
 	}
 	return nil
@@ -635,8 +724,19 @@ func (x *run) tagBind(t target, value string) (made bool, err error) {
 	return true, x.wait(t.base(), op, tagTimeout)
 }
 
-// undoBindings removes the bindings a refused onboarding made, and says what it did and what to do.
-func (x *run) undoBindings(created []target, value string) string {
+// undoOnboarding removes what a refused onboarding added, its Kubernetes access and its tag bindings, and says what it did
+// and what to do.
+func (x *run) undoOnboarding(grant *rbacGrant, created []target, value string) string {
+	var msg []string
+	if grant != nil {
+		msg = x.undoGrant(*grant)
+	}
+	msg = append(msg, x.undoBindings(created, value)...)
+	return strings.Join(append(msg, "To go on, fix the refusal, then run the same command again."), "\n")
+}
+
+// undoBindings removes the bindings a refused onboarding made, and says what it did.
+func (x *run) undoBindings(created []target, value string) []string {
 	var msg, removed []string
 	for _, t := range created {
 		if _, err := x.unbind(t, value); err != nil {
@@ -648,7 +748,7 @@ func (x *run) undoBindings(created []target, value string) string {
 	if len(removed) > 0 {
 		msg = append(msg, "The tag bindings this run made are removed: "+strings.Join(removed, ", ")+".")
 	}
-	return strings.Join(append(msg, "To go on, fix the refusal, then run the same command again."), "\n")
+	return msg
 }
 
 func (x *run) offboard() error {
