@@ -241,7 +241,7 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 			// The controller's workload, then its tag bindings: Google refuses to delete a tag value still bound.
 			// --force is what asked for this step: a workload that cannot wake is offboarded with its backends left down.
 			left, out, err := x.offboardWorkload(w.ID, true)
-			if err != nil && !gcp.IsNotFound(err) {
+			if err != nil && !workloadNotThere(err) {
 				return "", fmt.Errorf("workload %s: %s", w.ID, refusal(err))
 			}
 			if len(left) > 0 {

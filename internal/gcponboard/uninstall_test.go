@@ -1143,3 +1143,17 @@ func TestUninstallForceStopsOnADatabasesTagWhoseBindingsAreDenied(t *testing.T) 
 	}
 	contains(t, out, "Cloud SQL instance shop-db", forbidden, "Run the same command again")
 }
+
+func TestUninstallForceStopsOnAWorkloadsReadAnswering404NotTheControllers(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedBoth(t)
+	g.s.Refuse(cloudRun404("GET"))
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "no such service", "Run the same command again")
+	if len(g.bindings()) != 1 || !g.k.has(shopRole) {
+		t.Fatalf("bindings %v role %v:\n%s", g.bindings(), g.k.has(shopRole), out)
+	}
+}

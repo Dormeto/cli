@@ -830,18 +830,18 @@ func (x *run) deleteWorkload(path string, force bool) ([]backend, error) {
 	err := x.controller(http.MethodDelete, path, nil, nil)
 	var e *gcp.Error
 	if !errors.As(err, &e) || e.Reason != "wake-failed" {
-		if gcp.IsNotFound(err) {
+		if workloadNotThere(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	if !force {
-		return nil, fmt.Errorf("%s\nOffboard it anyway with --force: its VMs and groups are then left down.", e.Message)
+		return nil, &stop{1, fmt.Sprintf("%s\nOffboard it anyway with --force: its VMs and groups are then left down.", e.Message)}
 	}
 	var res struct {
 		Left []backend `json:"left"`
 	}
-	if err := x.controller(http.MethodDelete, path+"?force=true", nil, &res); err != nil && !gcp.IsNotFound(err) {
+	if err := x.controller(http.MethodDelete, path+"?force=true", nil, &res); err != nil && !workloadNotThere(err) {
 		return nil, err
 	}
 	return res.Left, nil
@@ -918,23 +918,21 @@ func (x *run) offboardWorkload(id string, force bool) (down []backend, out offbo
 }
 
 // offboardee reads what an offboarding has to go through: the workload's backends, and whether the controller still holds it.
+// Only the controller's own answer that it holds no such workload lets what the cache or the record keeps be finished: anything
+// else says nothing of a workload that may still need its tags and its access to wake.
 func (x *run) offboardee(id string) (backends []backend, there bool, err error) {
 	var w workload
 	gotten := x.controller(http.MethodGet, "/v1/workloads/"+esc(id), nil, &w)
 	switch {
 	case gotten == nil:
 		return w.Backends, true, nil
-	case !gcp.IsNotFound(gotten):
+	case !workloadNotThere(gotten):
 		return nil, false, gotten
 	}
 	if backends, ok := x.pending(id); ok {
 		return backends, false, nil
 	}
-	if controllerGone(gotten) {
-		return nil, false, gotten
-	}
-	// Not the controller's any more, nothing kept in the cache: the record alone may name its access. One the operator cannot
-	// read names nothing.
+	// Nothing kept in the cache: the record alone may name its access. One the operator cannot read names nothing.
 	if _, err := x.rbacRecord(); err == nil && len(x.recordedAccess(id)) > 0 {
 		return nil, false, nil
 	}
@@ -959,7 +957,13 @@ func (x *run) deleteAtController(id string, backends []backend, force bool) ([]b
 	if err := x.keepPending(id, backends); err != nil {
 		return nil, fmt.Errorf("the backends of workload %s are not kept for a rerun: %w", id, err)
 	}
-	return x.deleteWorkload("/v1/workloads/"+esc(id), force)
+	down, err := x.deleteWorkload("/v1/workloads/"+esc(id), force)
+	// Refused, nothing was done, and the workload is there: the file would read as an offboarding that stopped.
+	var s *stop
+	if p := x.pendingPath(id); p != "" && (refused(err) || errors.As(err, &s)) {
+		os.Remove(p)
+	}
+	return down, err
 }
 
 // afterController removes what the controller's workload no longer needs: its tags (a wake needs them, so they went on until
@@ -978,6 +982,9 @@ func (x *run) afterController(id string, backends []backend, force bool) (offboa
 	}
 	return out, nil
 }
+
+// workloadNotThere tells that the controller itself answers that it holds no such workload.
+func workloadNotThere(err error) bool { return gcp.IsNotFound(err) && !controllerGone(err) }
 
 // controllerGone tells that a controller's call says nothing of the workload: no answer, a 5xx, or a 404 that is not the
 // controller's own.

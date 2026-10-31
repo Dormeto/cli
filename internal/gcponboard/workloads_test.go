@@ -2416,3 +2416,120 @@ func TestWorkloadsOnboardRefusedSaysADatabasesTagWhoseBindingsAreDenied(t *testi
 	}
 	contains(t, out, "The tag binding of Cloud SQL instance shop-db is not removed", forbidden)
 }
+
+// cloudRun404 is Cloud Run's own 404: no controller answered, so it says nothing of the workload.
+func cloudRun404(method string) gcptest.Refusal {
+	return gcptest.Refusal{Method: method, Host: controllerHost, Path: "/v1/workloads/shop", Code: 404, Status: "NOT_FOUND", Message: "no such service"}
+}
+
+// onboardedBoth is workload shop on GKE with a database, its tag and its RBAC there.
+func (g *rbacRig) onboardedBoth(t *testing.T) {
+	t.Helper()
+	g.onboardedOnGKE(t)
+	g.plantFeatures(t, "cloud-sql", "gke")
+	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+	g.s.WorkloadDocs["shop"]["backends"] = append(g.s.WorkloadDocs["shop"]["backends"].([]any), map[string]any{"kind": "cloudsql", "name": "shop-db"})
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: databaseParent, TagValue: g.tagValue(t)}}
+}
+
+// nothingRemoved checks that the tag and the RBAC are there, with the workload.
+func (g *rbacRig) nothingRemoved(t *testing.T, out string) {
+	t.Helper()
+	if strings.Contains(out, "Offboarded workload") {
+		t.Errorf("it says so:\n%s", out)
+	}
+	if len(g.bindings()) != 1 || !g.k.has(shopRole) || !g.k.has(shopBinding) || g.s.Workloads["shop"] != "AWAKE" || !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Errorf("bindings %v role %v binding %v workloads %v record %v:\n%s", g.bindings(), g.k.has(shopRole), g.k.has(shopBinding), g.s.Workloads, g.rbacOf(t), out)
+	}
+}
+
+func TestWorkloadsOffboardWithAFileLeftAndA404NotTheControllersRemovesNothing(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		g, _ := newGKERig(t)
+		g.onboardedBoth(t)
+		// A delete with no answer leaves the file, as it may have gone through.
+		g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+		if code, out := g.call(t, WorkloadsOffboard, shopOffboard); code != 1 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		if _, err := os.Stat(g.offboardFile()); err != nil {
+			t.Fatalf("no file: %v", err)
+		}
+		g.s.Refuse(cloudRun404("GET"))
+		r := shopOffboard
+		r.Force = force
+		code, out := g.call(t, WorkloadsOffboard, r)
+		if code != 1 {
+			t.Fatalf("force %v: exit %d:\n%s", force, code, out)
+		}
+		contains(t, out, "no such service")
+		g.nothingRemoved(t, out)
+		if force {
+			contains(t, out, "does not answer", "the tag dormeto=managed of Cloud SQL instance shop-db", "access revoke")
+		}
+	}
+}
+
+func TestWorkloadsOffboardWithADeleteAnswering404NotTheControllersRemovesNothing(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		g, _ := newGKERig(t)
+		g.onboardedBoth(t)
+		g.s.Refuse(cloudRun404("DELETE"))
+		r := shopOffboard
+		r.Force = force
+		code, out := g.call(t, WorkloadsOffboard, r)
+		if code != 1 {
+			t.Fatalf("force %v: exit %d:\n%s", force, code, out)
+		}
+		contains(t, out, "no such service")
+		g.nothingRemoved(t, out)
+	}
+}
+
+// With force, the second delete: a wake failed, then Cloud Run's own 404.
+func TestWorkloadsOffboardForceWithItsForcedDeleteAnswering404NotTheControllersRemovesNothing(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedBoth(t)
+	g.s.Route(controllerHost, "/v1/workloads/shop", func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.Method == http.MethodGet:
+			gcptest.Reply(w, map[string]any{"id": "shop", "state": "FAILED", "backends": g.s.WorkloadDocs["shop"]["backends"]})
+		case req.URL.Query().Get("force") == "true":
+			gcptest.Fail(w, 404, "NOT_FOUND", "no such service")
+		default:
+			w.WriteHeader(409)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "its wake failed", "reason": "wake-failed"})
+		}
+	})
+	r := shopOffboard
+	r.Force = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "does not answer", "no such service")
+	g.nothingRemoved(t, out)
+}
+
+func TestWorkloadsOffboardRefusedAtTheControllerKeepsNoFile(t *testing.T) {
+	for name, set := range map[string]func(*rbacRig){
+		"a failed wake": func(g *rbacRig) { g.s.WakeFails["shop"] = true },
+		"a refusal": func(g *rbacRig) {
+			g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Code: 409, Status: "ABORTED", Message: "busy"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, _ := newGKERig(t)
+			g.onboardedBoth(t)
+			set(g)
+			code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+			if code != 1 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			g.nothingRemoved(t, out)
+			if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+				t.Fatalf("the file stays: %v", err)
+			}
+		})
+	}
+}
