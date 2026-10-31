@@ -1638,6 +1638,81 @@ func TestWorkloadsOnboardGKERefusedAtTheOnboardingRemovesTheRbacItAdded(t *testi
 	}
 }
 
+// iamOfKubeCall is the IAM permission of a call of the cluster's API on GKE, a resource by its verb: a GET of a collection is a list.
+func iamOfKubeCall(t *testing.T, call string) string {
+	t.Helper()
+	method, path, _ := strings.Cut(call, " ")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	at := slices.Index(parts, "namespaces")
+	if at < 0 || len(parts) < at+3 {
+		t.Fatalf("a call out of a namespace: %s", call)
+	}
+	resources := map[string]string{"services": "services", "pods": "pods", "replicasets": "replicaSets", "roles": "roles", "rolebindings": "roleBindings"}
+	resource, known := resources[parts[at+2]]
+	verb, verbKnown := map[string]string{"GET": "get", "POST": "create", "PUT": "update", "DELETE": "delete"}[method]
+	if !known || !verbKnown {
+		t.Fatalf("a call with no permission known here: %s", call)
+	}
+	if method == http.MethodGet && len(parts) == at+3 {
+		verb = "list"
+	}
+	return "container." + resource + "." + verb
+}
+
+// The router's manifest (a sibling checkout, as the parity test) asks of a GKE onboarding exactly what its calls take, undo included:
+// each call of the cluster's API by running them, and what no response shows: clusters.get and clusters.connect, which the DNS endpoint
+// asks of each call, escalate and bind, with which Kubernetes lets the Role carry rights the operator does not hold, and so reads none
+// of the Role's deployments or statefulsets.
+func TestWorkloadsOnboardGKERoutersManifestAsksExactlyWhatItsCallsTake(t *testing.T) {
+	data, err := os.ReadFile("../../../router/gcp/access.json")
+	if err != nil {
+		t.Skipf("the router repository is absent: %v", err)
+	}
+	var manifest struct {
+		Features map[string]struct {
+			Operator map[string]map[string][]string `json:"operator"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	for _, step := range manifest.Features["gke"].Operator["onboard"] {
+		for _, p := range step {
+			if strings.HasPrefix(p, "container.") {
+				asked = append(asked, p)
+			}
+		}
+	}
+	slices.Sort(asked)
+
+	called := []string{"container.clusters.connect", "container.clusters.get", "container.roles.bind", "container.roles.escalate"}
+	// Refused by the controller: the objects created, then undone.
+	refusedRun, _ := newGKERig(t)
+	refusedRun.s.OnboardingRefused = refusedOnboarding
+	if code, out := refusedRun.call(t, WorkloadsOnboard, shopOnGKE); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// With Dormeto's objects there and different: updated.
+	updatedRun, _ := newGKERig(t)
+	updatedRun.k.put(t, shopRole, "Role", ourLabels, map[string]any{"rules": []any{}})
+	updatedRun.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{
+		"subjects": []any{map[string]any{"kind": "User", "name": "someone@example.com", "apiGroup": rbacGroup}},
+		"roleRef":  map[string]any{"apiGroup": rbacGroup, "kind": "Role", "name": "dormeto-shop"},
+	})
+	if code, out := updatedRun.call(t, WorkloadsOnboard, shopOnGKE); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, c := range append(refusedRun.k.callList(), updatedRun.k.callList()...) {
+		called = append(called, iamOfKubeCall(t, c))
+	}
+	slices.Sort(called)
+	called = slices.Compact(called)
+	if !slices.Equal(asked, called) {
+		t.Fatalf("the manifest asks:\n  %s\nthe calls take:\n  %s", strings.Join(asked, "\n  "), strings.Join(called, "\n  "))
+	}
+}
+
 func (g *rbacRig) grantedBefore(t *testing.T) {
 	t.Helper()
 	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
