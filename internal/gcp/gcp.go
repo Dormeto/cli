@@ -34,8 +34,9 @@ var (
 
 const tokenTTL = 5 * time.Minute
 
-// InvokeTimeout bounds one call of Invoke: the controller's longest request (a wake of up to 600 s) and a margin.
-const InvokeTimeout = 900 * time.Second
+// InvokeTimeout bounds one call of Invoke: the controller's longest request (its timeoutSeconds, 1800 s: a wake of up to
+// 1700 s runs inside it) and a margin to read its answer.
+const InvokeTimeout = 1860 * time.Second
 
 // Runner runs a command and returns its standard output.
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -301,7 +302,7 @@ func (c *Client) Do(ctx context.Context, method, url string, in, out any) error 
 // Invoke is Do with an identity token for audience instead of the access token: a call of a Cloud Run service whose
 // invoker IAM check is on.
 //
-// A controller call may take long (an offboarding wakes the workload inside its request, up to 600 s): it is bound by
+// A controller call may take long (an offboarding wakes the workload inside its request, up to 1700 s): it is bound by
 // InvokeTimeout, not by the shorter timeout of the client Do uses.
 func (c *Client) Invoke(ctx context.Context, method, url, audience string, in, out any) error {
 	token := func(ctx context.Context) (string, error) { return c.Tokens.IdentityToken(ctx, audience) }

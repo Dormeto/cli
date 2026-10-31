@@ -10,7 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
 	"github.com/Dormeto/cli/internal/install"
@@ -1100,5 +1102,14 @@ func TestWorkloadsShowAndListShowAPause(t *testing.T) {
 	}
 	if !strings.Contains(shop, "paused") || strings.Contains(blog, "paused") || strings.Contains(shop, "audit") {
 		t.Fatalf("shop %q blog %q", shop, blog)
+	}
+}
+
+// An offboarding wakes inside its request: its answer is not lost to the CLI's own timeout.
+func TestWorkloadsACallOfTheControllerOutlastsItsRequest(t *testing.T) {
+	x := newRun(context.Background(), Deps{}, workloadsEurope)
+	request := time.Duration(x.controllerSettings().timeoutSeconds) * time.Second
+	if gcp.InvokeTimeout <= request {
+		t.Fatalf("InvokeTimeout %s, the controller's request %s", gcp.InvokeTimeout, request)
 	}
 }

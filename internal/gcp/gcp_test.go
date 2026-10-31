@@ -639,3 +639,10 @@ func TestErrorReadsAKubernetesStatus(t *testing.T) {
 		t.Fatal("not denied")
 	}
 }
+
+// The controller's request runs up to 1800 s: a call of it outlasts that, by a margin to see the answer.
+func TestInvokeTimeoutOutlastsTheControllersRequest(t *testing.T) {
+	if InvokeTimeout != 1860*time.Second {
+		t.Fatalf("InvokeTimeout is %s", InvokeTimeout)
+	}
+}
