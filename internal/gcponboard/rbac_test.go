@@ -1749,7 +1749,7 @@ func TestRbacASubjectAddedBeforeTheDeleteKeepsTheBinding(t *testing.T) {
 }
 
 // plantFeatures gives the record these features, as an install with --with would.
-func (g *rbacRig) plantFeatures(t *testing.T, features ...string) {
+func (g *installRig) plantFeatures(t *testing.T, features ...string) {
 	t.Helper()
 	rec := g.record(t)
 	rec.Features = features

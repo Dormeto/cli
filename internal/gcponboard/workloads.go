@@ -35,6 +35,9 @@ const (
 	// maxBackendServiceName is what Compute Engine allows of a backend service's name; the workload's waker backend service
 	// is dmtr-<region>-<workload>.
 	maxBackendServiceName = 63
+
+	// A workload's backend kinds beyond a VM's and a group's.
+	kindDatabase = "cloudsql"
 )
 
 var (
@@ -45,15 +48,18 @@ var (
 
 const workloadIDRule = "lowercase letters, digits and dashes, starting with a letter and ending with a letter or a digit, at most 40 characters"
 
-// backend is a VM or a managed group of a workload, as the controller names it.
+// backend is a VM, a managed group, a Cloud SQL instance or a GKE owner of a workload, as the controller names it.
 type backend struct {
-	Kind     string `json:"kind"` // vm or mig
-	Location string `json:"location"`
-	Name     string `json:"name"`
-	ID       string `json:"id"` // numeric: a tag binding's parent names it
+	Kind     string `json:"kind"` // vm, mig, cloudsql or k8s
+	Location string `json:"location,omitempty"`
+	Name     string `json:"name,omitempty"`
+	ID       string `json:"id,omitempty"` // numeric: a tag binding's parent names it
 }
 
 func (b backend) String() string {
+	if b.Kind == kindDatabase {
+		return "Cloud SQL instance " + b.Name
+	}
 	kind := "group"
 	if b.Kind == "vm" {
 		kind = "vm"
@@ -87,6 +93,12 @@ type dryRun struct {
 	VMs      []vmRef    `json:"vms"`
 	Groups   []groupRef `json:"groups"`
 	LB       *lbRef     `json:"lb"`
+	// Databases are the Cloud SQL instances the request named, as the controller found them.
+	Databases []databaseRef `json:"databases"`
+}
+
+type databaseRef struct {
+	Name string `json:"name"`
 }
 
 // lbRef is a workload's load balancer as the controller names it: global, regional in a region, or classic.
@@ -110,14 +122,18 @@ type groupRef struct {
 	Kind, Location, Name, ID string
 }
 
-// target is a VM or a group that carries the tag: its place and its numeric ID, which a tag binding's parent names.
+// target is a VM, a group or a database that carries the tag: its place and what a tag binding's parent names it by.
 type target struct {
 	label    string // "vm web-1 (europe-west1-b)"
 	location string // the zone or region: the tag binding endpoint's prefix
 	path     string // zones/<zone>/instances/<id>, zones/<zone>/instanceGroupManagers/<id> or regions/<region>/instanceGroupManagers/<id>
+	resource string // the whole parent of what is not Compute Engine's: then no path
 }
 
 func (t target) parent(number string) string {
+	if t.resource != "" {
+		return t.resource
+	}
 	return "//compute.googleapis.com/projects/" + number + "/" + t.path
 }
 
@@ -128,14 +144,26 @@ func (t target) base() string {
 func (d dryRun) targets() []target {
 	var out []target
 	for _, v := range d.VMs {
-		out = append(out, target{backend{Kind: "vm", Location: v.Zone, Name: v.Name}.String(), v.Zone, "zones/" + v.Zone + "/instances/" + v.ID})
+		out = append(out, target{label: backend{Kind: "vm", Location: v.Zone, Name: v.Name}.String(), location: v.Zone, path: "zones/" + v.Zone + "/instances/" + v.ID})
 	}
 	for _, g := range d.Groups {
 		place := "zones/"
 		if g.Kind == "regional" {
 			place = "regions/"
 		}
-		out = append(out, target{backend{Kind: "mig", Location: g.Location, Name: g.Name}.String(), g.Location, place + g.Location + "/instanceGroupManagers/" + g.ID})
+		out = append(out, target{label: backend{Kind: "mig", Location: g.Location, Name: g.Name}.String(), location: g.Location, path: place + g.Location + "/instanceGroupManagers/" + g.ID})
+	}
+	return out
+}
+
+// labels name what the onboarding would tag.
+func (d dryRun) labels() []string {
+	var out []string
+	for _, t := range d.targets() {
+		out = append(out, t.label)
+	}
+	for _, db := range d.Databases {
+		out = append(out, backend{Kind: kindDatabase, Name: db.Name}.String())
 	}
 	return out
 }
@@ -197,13 +225,15 @@ func (x *run) workloadsEnd(err error) int {
 	return 1
 }
 
-// require validates the project and region and asks the permissions of one command, the missing ones named and nothing
-// done.
-func (x *run) require(command string) error {
+// require validates the project and region and asks the permissions of one command, with those of the features named, the
+// missing ones named and nothing done.
+func (x *run) require(command string, features ...string) error {
 	if err := x.validate(); err != nil {
 		return err
 	}
-	rep, err := check(x.ctx, x.d, x.r, []string{command})
+	r := x.r
+	r.With = featureSet(r.With, features)
+	rep, err := check(x.ctx, x.d, r, []string{command})
 	if err != nil {
 		return err
 	}
@@ -390,6 +420,7 @@ type onboardingIn struct {
 	ID             string         `json:"id"`
 	Settings       map[string]any `json:"settings,omitempty"`
 	LoadBalancer   string         `json:"loadBalancer,omitempty"`
+	CloudSQL       []string       `json:"cloudSql,omitempty"`
 }
 
 // onboardingInput validates the flags, before any call: exit 2 for a bad one.
@@ -401,7 +432,7 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 	case r.BackendService == "":
 		return onboardingIn{}, &stop{2, "--backend-service: needed"}
 	}
-	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, LoadBalancer: r.LoadBalancer, Settings: map[string]any{}}
+	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, LoadBalancer: r.LoadBalancer, CloudSQL: r.CloudSQL, Settings: map[string]any{}}
 	if v := r.LoadBalancer; v != "" && !slices.Contains([]string{"global", "regional", "classic"}, v) {
 		return in, &stop{2, fmt.Sprintf("--load-balancer: %q is not global, regional or classic", v)}
 	}
@@ -484,7 +515,11 @@ func (x *run) onboard() error {
 	if err != nil {
 		return err
 	}
-	if err := x.require("onboard"); err != nil {
+	features := x.onboardFeatures()
+	if err := x.require("onboard", features...); err != nil {
+		return err
+	}
+	if err := x.needFeatures(features); err != nil {
 		return err
 	}
 	var raw json.RawMessage
@@ -501,17 +536,27 @@ func (x *run) onboard() error {
 	if err := x.covers(dry); err != nil {
 		return err
 	}
-	targets := dry.targets()
 	if x.r.DryRun {
 		if x.r.JSON {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
 			return nil
 		}
 		x.say("Backend service %s is eligible as workload %s; onboarding would bind the tag dormeto=managed to:", in.BackendService, in.ID)
-		for _, t := range targets {
-			x.say("  %s", t.label)
+		for _, label := range dry.labels() {
+			x.say("  %s", label)
 		}
 		return nil
+	}
+	targets := dry.targets()
+	for _, db := range dry.Databases {
+		t, found, err := x.databaseTarget(db.Name)
+		if err == nil && !found {
+			err = fmt.Errorf("it is not found")
+		}
+		if err != nil {
+			return &stop{1, fmt.Sprintf("Cloud SQL instance %s is not read, and its region says where its tag goes: %s\nNothing was changed.", db.Name, refusal(err))}
+		}
+		targets = append(targets, t)
 	}
 	value, found, err := x.tag("tagValues", x.n.project+"/dormeto/managed")
 	if err != nil {
@@ -555,6 +600,11 @@ func (x *run) onboard() error {
 func (x *run) covers(dry dryRun) error {
 	if asked := x.r.LoadBalancer; asked != "" && (dry.LB == nil || dry.LB.Kind != asked) {
 		return x.ignoredFlag("--load-balancer " + asked)
+	}
+	for _, name := range x.r.CloudSQL {
+		if !slices.Contains(dry.Databases, databaseRef{name}) {
+			return x.ignoredFlag("--cloud-sql " + name)
+		}
 	}
 	return nil
 }

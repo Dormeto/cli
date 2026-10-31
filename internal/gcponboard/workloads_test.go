@@ -99,6 +99,22 @@ func (g *workloadsRig) body(t *testing.T, method, host, pathPrefix string) map[s
 	return nil
 }
 
+// onboarding is the body of the onboarding itself, not of its dry run.
+func (g *workloadsRig) onboarding(t *testing.T) map[string]any {
+	t.Helper()
+	for _, c := range g.s.Calls() {
+		if c.Method == "POST" && c.URL == "https://"+controllerHost+"/v1/workloads" {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(c.Body), &m); err != nil {
+				t.Fatalf("%s: %v", c.Body, err)
+			}
+			return m
+		}
+	}
+	t.Fatal("no onboarding")
+	return nil
+}
+
 func TestWorkloadsListCallsTheControllerAsTheOperator(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"], g.s.Workloads["blog"] = "AWAKE", "ASLEEP"
@@ -1274,4 +1290,202 @@ func TestWorkloadsScheduleShowSaysWhoSetItAndWhen(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "Schedule of workload shop (set by me@example.com, 2026-11-01T10:00:00.000Z):\n")
+}
+
+const (
+	databaseParent = "//sqladmin.googleapis.com/projects/dormeto-dev/instances/shop-db"
+	// The instance's region, not the router's: its tag bindings are at its own endpoint.
+	databaseHost = "europe-west3-cloudresourcemanager.googleapis.com"
+)
+
+// newDatabaseRig is an installed router with the feature cloud-sql, and the instance shop-db in another region.
+func newDatabaseRig(t *testing.T) *workloadsRig {
+	t.Helper()
+	g := newWorkloadsRig(t)
+	g.plantFeatures(t, "cloud-sql")
+	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+	return g
+}
+
+var shopWithDatabase = func() Request {
+	r := shopOnboarding
+	r.CloudSQL = []string{"shop-db"}
+	return r
+}()
+
+func TestWorkloadsOnboardBindsTheDatabasesTagOnItsParentBeforeTheOnboarding(t *testing.T) {
+	g := newDatabaseRig(t)
+	value := g.tagValue(t)
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var order []string
+	for _, c := range g.s.Calls()[mark:] {
+		switch {
+		case c.Host == controllerHost && c.Method == "POST":
+			order = append(order, "POST "+strings.TrimPrefix(c.URL, "https://"+controllerHost))
+		case c.Method == "POST" && strings.HasSuffix(c.Path, "/v3/tagBindings"):
+			order = append(order, "POST "+c.Host)
+		}
+	}
+	want := []string{"POST /v1/workloads?dryRun=true", "POST " + zoneHost, "POST " + regionHost, "POST " + databaseHost, "POST /v1/workloads"}
+	if !slices.Equal(order, want) {
+		t.Fatalf("order:\n%s", strings.Join(order, "\n"))
+	}
+	if !slices.Contains(g.bindings(), gcptest.TagBinding{Parent: databaseParent, TagValue: value}) {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+	if b := g.body(t, "POST", databaseHost, "/v3/tagBindings"); b["parent"] != databaseParent || b["tagValue"] != value {
+		t.Fatalf("%v", b)
+	}
+	for _, in := range []map[string]any{g.body(t, "POST", controllerHost, "/v1/workloads?dryRun=true"), g.onboarding(t)} {
+		if !jsonEqual(in["cloudSql"], []string{"shop-db"}) {
+			t.Fatalf("%v", in)
+		}
+	}
+	contains(t, out, "backend: Cloud SQL instance shop-db", "tagged: Cloud SQL instance shop-db")
+}
+
+func TestWorkloadsOnboardDryRunNamesTheDatabaseAndBindsNothing(t *testing.T) {
+	g := newDatabaseRig(t)
+	r := shopWithDatabase
+	r.DryRun = true
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Cloud SQL instance shop-db")
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatal("something was changed")
+	}
+}
+
+func TestWorkloadsOnboardNeedsTheFeaturesOfItsFlagsInTheRecord(t *testing.T) {
+	for name, c := range map[string]struct {
+		change func(*Request)
+		has    []string
+		want   string
+	}{
+		"cloud sql":        {func(r *Request) { r.CloudSQL = []string{"shop-db"} }, nil, "--with cloud-sql "},
+		"gke":              {func(r *Request) { r.GKECluster = "europe-west1-b/shop-cluster" }, nil, "--with gke "},
+		"both":             {func(r *Request) { r.CloudSQL, r.GKECluster = []string{"shop-db"}, "europe-west1-b/shop-cluster" }, nil, "--with cloud-sql,gke "},
+		"gke, has the sql": {func(r *Request) { r.CloudSQL, r.GKECluster = []string{"shop-db"}, "europe-west1-b/shop-cluster" }, []string{"cloud-sql"}, "--with gke "},
+	} {
+		g := newWorkloadsRig(t)
+		g.plantFeatures(t, c.has...)
+		g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+		r := shopOnboarding
+		r.Configuration, r.Yes = "c", true
+		c.change(&r)
+		mark := len(g.s.Calls())
+		code, out := g.call(t, WorkloadsOnboard, r)
+		if code != 1 {
+			t.Errorf("%s: exit %d:\n%s", name, code, out)
+			continue
+		}
+		contains(t, out, "dormeto gcp install --project dormeto-dev --region europe-west1 "+c.want+"--gcloud-configuration c", "Nothing was changed.")
+		if m := g.changes(mark); len(m) != 0 {
+			t.Errorf("%s: changes %v", name, m)
+		}
+	}
+}
+
+func TestWorkloadsOnboardAsksTheFeaturesPermissionsOfItsFlagsAlone(t *testing.T) {
+	missing := "cloudsql.instances.createTagBinding"
+	for _, withFlag := range []bool{true, false} {
+		g := newDatabaseRig(t)
+		g.s.HoldsAll = false
+		g.s.Held = map[string]bool{}
+		for _, p := range access.NeedsWith("onboard", []string{"cloud-sql", "gke"}) {
+			g.s.Held[p] = p != missing
+		}
+		r := shopOnboarding
+		if withFlag {
+			r.CloudSQL = []string{"shop-db"}
+		}
+		mark := len(g.s.Calls())
+		code, out := g.call(t, WorkloadsOnboard, r)
+		if !withFlag {
+			if code != 0 {
+				t.Fatalf("no flag: exit %d:\n%s", code, out)
+			}
+			continue
+		}
+		if code != 1 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "missing "+missing, "Nothing was changed.")
+		if m := g.changes(mark); len(m) != 0 || len(g.controllerCalls(mark)) != 0 {
+			t.Fatalf("changes %v", m)
+		}
+	}
+}
+
+func TestWorkloadsOnboardRefusedRemovesTheDatabasesTagItBoundAndNoOther(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.Workloads["shop"] = "AWAKE" // the controller refuses: 409
+	value := g.tagValue(t)
+	before := gcptest.TagBinding{Parent: vmParent, TagValue: value}
+	g.s.TagBindings = []gcptest.TagBinding{before}
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "removed", "Cloud SQL instance shop-db")
+	if got := g.bindings(); !slices.Equal(got, []gcptest.TagBinding{before}) {
+		t.Fatalf("bindings %v", got)
+	}
+}
+
+func TestWorkloadsOnboardRefusedKeepsADatabasesTagBoundBeforeThisRun(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	before := gcptest.TagBinding{Parent: databaseParent, TagValue: g.tagValue(t)}
+	g.s.TagBindings = []gcptest.TagBinding{before}
+	if code, out := g.call(t, WorkloadsOnboard, shopWithDatabase); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.bindings(); !slices.Equal(got, []gcptest.TagBinding{before}) {
+		t.Fatalf("bindings %v", got)
+	}
+}
+
+func TestWorkloadsOnboardRefusedSaysWhichDatabaseItCouldNotUntag(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is onboarded already", "not removed", "Cloud SQL instance shop-db", "boom")
+}
+
+func TestWorkloadsOnboardChangesNothingWhenTheDatabasesRegionIsNotRead(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "sqladmin.googleapis.com", Path: "/v1/projects/", Code: 403, Status: "PERMISSION_DENIED", Message: "not allowed"})
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Cloud SQL instance shop-db", "cloudsql.instances.get", "not allowed", "Nothing was changed.")
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("changes %v", g.changes(mark))
+	}
+}
+
+func TestWorkloadsOnboardStopsWhenTheDryRunNamesNotADatabase(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.ControllerBelow035 = true
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "--cloud-sql shop-db", "0.35.0", "Nothing was changed.")
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatal("something was changed")
+	}
 }

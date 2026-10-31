@@ -116,6 +116,8 @@ type Server struct {
 	Schedules       map[string]map[string]any
 	NextEvents      []any
 	ScheduleProblem string
+	// SQLInstances are the project's Cloud SQL instances, by name, with their region.
+	SQLInstances map[string]string
 	// ControllerBelow035 plays a controller older than 0.35.0: no route for a workload's schedule, pause and resume, and a
 	// dry run that says nothing of a load balancer, a database or a cluster.
 	ControllerBelow035 bool
@@ -295,6 +297,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serviceUsage(w, r, strings.TrimPrefix(path, "/v1/projects/"), body)
 	case r.Host == "serviceusage.googleapis.com" && strings.HasPrefix(path, "/v1/operations/"):
 		s.poll(w, strings.TrimPrefix(path, "/v1/"))
+	case r.Host == "sqladmin.googleapis.com":
+		s.cloudSQL(w, r)
 	case r.Host == "cloudbilling.googleapis.com" && path == "/v1/projects/"+s.ProjectID+"/billingInfo" && r.Method == http.MethodGet:
 		s.billing(w)
 	case r.Host == "iam.googleapis.com":

@@ -817,11 +817,16 @@ func (x *run) grantWarnings() []string {
 	if slices.Contains(x.rec.Features, "gke") {
 		return nil
 	}
-	hint := fmt.Sprintf("dormeto gcp install --project %s --region %s --with gke", x.n.project, x.n.region)
+	return []string{fmt.Sprintf("the install record lacks the feature gke: router %s holds no container.clusters.connect, so its calls to this cluster would answer 403, whatever this Role allows. Add it with: %s", x.n.router, x.installWith("gke"))}
+}
+
+// installWith is the command that adds features to the router.
+func (x *run) installWith(features ...string) string {
+	hint := fmt.Sprintf("dormeto gcp install --project %s --region %s --with %s", x.n.project, x.n.region, strings.Join(features, ","))
 	if x.r.Configuration != "" {
 		hint += " --gcloud-configuration " + x.r.Configuration
 	}
-	return []string{fmt.Sprintf("the install record lacks the feature gke: router %s holds no container.clusters.connect, so its calls to this cluster would answer 403, whatever this Role allows. Add it with: %s", x.n.router, hint)}
+	return hint
 }
 
 func (x *run) noRouter() error {

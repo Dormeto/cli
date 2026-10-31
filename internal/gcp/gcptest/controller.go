@@ -48,6 +48,25 @@ func (s *Server) parentOf(r Resource, vm bool) string {
 	return base + "/zones/" + r.Location + "/instanceGroupManagers/" + r.ID
 }
 
+// databaseParent is the full resource name of a Cloud SQL instance: the project's ID and the instance's name.
+func (s *Server) databaseParent(name string) string {
+	return "//sqladmin.googleapis.com/projects/" + s.ProjectID + "/instances/" + name
+}
+
+// cloudSQL serves a Cloud SQL instance's read: what its region says of where its tag bindings are.
+func (s *Server) cloudSQL(w http.ResponseWriter, r *http.Request) {
+	name, ok := strings.CutPrefix(r.URL.Path, "/v1/projects/"+s.ProjectID+"/instances/")
+	region, there := s.SQLInstances[name]
+	switch {
+	case !ok || r.Method != http.MethodGet:
+		noRoute(w, r)
+	case !there:
+		Fail(w, 404, "NOT_FOUND", "The Cloud SQL instance does not exist.")
+	default:
+		Reply(w, map[string]any{"name": name, "region": region, "selfLink": "https://sqladmin.googleapis.com/v1/projects/" + s.ProjectID + "/instances/" + name})
+	}
+}
+
 func (s *Server) tagged(parent string) bool {
 	return slices.ContainsFunc(s.TagBindings, func(b TagBinding) bool { return b.Parent == parent })
 }
@@ -85,6 +104,7 @@ type workloadIn struct {
 	ID             string         `json:"id"`
 	Settings       map[string]any `json:"settings"`
 	LoadBalancer   string         `json:"loadBalancer"`
+	CloudSQL       []string       `json:"cloudSql"`
 }
 
 // workloads serves /v1/workloads…, as the router's controller does.
@@ -197,13 +217,21 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 		if reasons == nil {
 			reasons = []string{}
 		}
+		databases := []map[string]any{}
+		for _, name := range in.CloudSQL {
+			if _, there := s.SQLInstances[name]; !there {
+				reasons = append(reasons, "Cloud SQL instance "+name+" not found: name an instance of this project")
+				continue
+			}
+			databases = append(databases, map[string]any{"name": name, "selfLink": "https://sqladmin.googleapis.com/v1/projects/" + s.ProjectID + "/instances/" + name})
+		}
 		answer := map[string]any{"eligible": len(reasons) == 0, "reasons": reasons, "vms": vms, "groups": groups}
 		if !s.ControllerBelow035 {
 			kind := in.LoadBalancer
 			if kind == "" {
 				kind = "global"
 			}
-			answer["lb"] = map[string]any{"kind": kind}
+			answer["lb"], answer["databases"] = map[string]any{"kind": kind}, databases
 		}
 		Reply(w, answer)
 		return
@@ -227,6 +255,13 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 		}
 		backends = append(backends, map[string]any{"kind": "mig", "location": g.Location, "name": g.Name, "id": g.ID})
 	}
+	for _, name := range in.CloudSQL {
+		if !s.tagged(s.databaseParent(name)) {
+			controllerFail(w, 400, "not-tagged", "Cloud SQL instance "+name+" carries no dormeto tag")
+			return
+		}
+		backends = append(backends, map[string]any{"kind": "cloudsql", "name": name})
+	}
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,
 		"wakerBackendService": "dmtr-fake-" + id, "settings": in.Settings}
@@ -247,6 +282,9 @@ func (s *Server) tagBindings(w http.ResponseWriter, r *http.Request, body []byte
 	}
 	location := strings.TrimSuffix(r.Host, "-cloudresourcemanager.googleapis.com")
 	valid := func(parent string) bool {
+		if name, ok := strings.CutPrefix(parent, "//sqladmin.googleapis.com/projects/"+s.ProjectID+"/instances/"); ok && s.SQLInstances[name] == location {
+			return true
+		}
 		m := parentPattern.FindStringSubmatch(parent)
 		if m == nil || m[1] != s.ProjectNumber || m[3] != location {
 			Fail(w, 400, "INVALID_ARGUMENT", "invalid parent "+parent+" for location "+location)
