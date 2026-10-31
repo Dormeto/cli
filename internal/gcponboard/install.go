@@ -117,7 +117,8 @@ type run struct {
 	iam          []string          // the IAM lines of the running step
 	editorWarned bool              // the default service account's Editor, appeared during this run, was warned of
 
-	workloadsUnknown bool // the uninstall goes on, with --force, without its controller's list of workloads
+	workloadsUnknown bool     // the uninstall goes on, with --force, without its controller's list of workloads
+	offboarding      []string // the workloads the uninstall's plan offboards: their Kubernetes access goes with them
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {

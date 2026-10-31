@@ -1992,3 +1992,353 @@ func TestWorkloadsOnboardAsksTheGKEPermissionsWithItsFlag(t *testing.T) {
 		t.Fatalf("changes %v %v", m, g.k.callList())
 	}
 }
+
+// onboardedDatabase is workload shop with a VM and a database, both tagged.
+func (g *workloadsRig) onboardedDatabase(t *testing.T) {
+	t.Helper()
+	value := g.tagValue(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+		map[string]any{"kind": "cloudsql", "name": "shop-db"}}}
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: databaseParent, TagValue: value}}
+}
+
+var shopOffboard = func() Request {
+	r := workloadsEurope
+	r.ID = "shop"
+	return r
+}()
+
+func TestWorkloadsOffboardRemovesTheTagOfADatabase(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("bindings %v workloads %v", g.bindings(), g.s.Workloads)
+	}
+	changes := g.changes(mark)
+	if len(changes) != 3 || changes[0] != "DELETE "+controllerHost+"/v1/workloads/shop" || !strings.HasPrefix(changes[2], "DELETE "+databaseHost+"/v3/tagBindings/") {
+		t.Fatalf("changes:\n%s", strings.Join(changes, "\n"))
+	}
+	contains(t, out, "Offboarded workload shop", "untagged: vm web-1", "untagged: Cloud SQL instance shop-db")
+}
+
+func TestWorkloadsOffboardGoesOnForADatabaseThatIsGone(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.SQLInstances = map[string]string{}
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Fatalf("the file stays: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardAsksTheDatabasesPermissionsOfAWorkloadThatHasOne(t *testing.T) {
+	missing := "cloudsql.instances.deleteTagBinding"
+	for _, has := range []bool{true, false} {
+		g := newDatabaseRig(t)
+		g.onboardedDatabase(t)
+		if !has {
+			g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
+		}
+		g.s.HoldsAll = false
+		g.s.Held = map[string]bool{}
+		for _, p := range access.NeedsWith("offboard", []string{"cloud-sql", "gke"}) {
+			g.s.Held[p] = p != missing
+		}
+		code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+		if !has {
+			if code != 0 {
+				t.Fatalf("no database: exit %d:\n%s", code, out)
+			}
+			continue
+		}
+		if code != 1 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "missing "+missing, "Nothing was changed.")
+		if g.s.Workloads["shop"] != "AWAKE" || len(g.bindings()) != 2 {
+			t.Fatalf("workloads %v bindings %v", g.s.Workloads, g.bindings())
+		}
+	}
+}
+
+func TestWorkloadsOffboardSaysADatabasesTagIsLeftThenARerunFinishes(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "sqladmin.googleapis.com", Path: "/v1/projects/", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "not allowed"})
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is offboarded, but the tag of Cloud SQL instance shop-db is not removed", "cloudsql.instances.get", "run the same command again")
+	if code, out = g.call(t, WorkloadsOffboard, shopOffboard); code != 0 {
+		t.Fatalf("rerun: exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 0 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+}
+
+// onboardedOnGKE is workload shop as a GKE onboarding left it: its RBAC applied and recorded, a k8s backend.
+func (g *rbacRig) onboardedOnGKE(t *testing.T) {
+	t.Helper()
+	g.grantedBefore(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "k8s", "cluster": map[string]any{"location": "europe-west1-b", "name": "shop-cluster"},
+		"namespace": "shop", "service": "web", "owner": map[string]any{"kind": "Deployment", "name": "web"}}}}
+}
+
+func TestWorkloadsOffboardRemovesTheRbacAfterTheController(t *testing.T) {
+	g, order := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.s.Lock()
+	g.s.TagValues = map[string]*gcptest.Tag{}
+	g.s.Unlock()
+	mark := len(order.calls())
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var got []string
+	for _, c := range order.calls()[mark:] {
+		if method, rest, _ := strings.Cut(c, " "); method == "DELETE" {
+			got = append(got, strings.TrimPrefix(strings.TrimPrefix(rest, controllerHost), kubeHost))
+		}
+	}
+	if !slices.Equal(got, []string{"/v1/workloads/shop", shopBinding, shopRole}) {
+		t.Fatalf("order:\n%s", strings.Join(got, "\n"))
+	}
+	if g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatal("the RBAC stays")
+	}
+	if got := g.rbacOf(t); len(got) != 0 {
+		t.Fatalf("the record still lists %v", got)
+	}
+	contains(t, out, "Offboarded workload shop", "removed: RoleBinding dormeto-shop", "removed: Role dormeto-shop")
+	for _, c := range order.calls()[mark:] {
+		if strings.Contains(c, "tagValues") || strings.Contains(c, "tagBindings") {
+			t.Errorf("a GKE workload has no tag: %s", c)
+		}
+	}
+}
+
+func TestWorkloadsOffboardJSONSaysTheRbacItRemoved(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	r := shopOffboard
+	r.JSON = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	var got struct{ Removed []string }
+	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !slices.Equal(got.Removed, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) {
+		t.Fatalf("%d %v:\n%s", code, err, out)
+	}
+}
+
+func TestWorkloadsOffboardAsksTheGKEPermissionsOfAWorkloadOnGKE(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	missing := "container.roles.delete"
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range access.NeedsWith("offboard", []string{"gke"}) {
+		g.s.Held[p] = p != missing
+	}
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "missing "+missing, "Nothing was changed.")
+	if g.s.Workloads["shop"] != "AWAKE" || !g.k.has(shopRole) {
+		t.Fatal("something was changed")
+	}
+}
+
+func TestWorkloadsOffboardLeavesWhatIsNotOursAndSaysSo(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.k.mu.Lock()
+	delete(g.k.objects, shopBinding)
+	delete(g.k.objects, shopRole)
+	g.k.mu.Unlock()
+	g.k.put(t, shopRole, "Role", map[string]string{"team": "shop"}, map[string]any{"rules": []any{}})
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Role dormeto-shop stays")
+	if !g.k.has(shopRole) || len(g.rbacOf(t)) != 0 {
+		t.Fatalf("role %v record %v", g.k.has(shopRole), g.rbacOf(t))
+	}
+}
+
+func TestWorkloadsOffboardGoesOnForAClusterThatIsGone(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.gone = true
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(g.rbacOf(t)) != 0 {
+		t.Fatalf("record %v", g.rbacOf(t))
+	}
+}
+
+func TestWorkloadsOffboardSaysTheRbacIsLeftThenARerunFinishes(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.k.deny = denyCall("DELETE "+shopRole, 403, "Forbidden", "roles is forbidden")
+	r := shopOffboard
+	r.Configuration = "c"
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is offboarded, but its Kubernetes access is not removed", "roles is forbidden", "run the same command again",
+		"dormeto gcp workloads access revoke --project dormeto-dev --region europe-west1 --gke-cluster "+shopCluster+" --namespace shop --workload shop --gcloud-configuration c")
+	if len(g.s.Workloads) != 0 || !g.k.has(shopRole) || !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatalf("workloads %v role %v record %v", g.s.Workloads, g.k.has(shopRole), g.rbacOf(t))
+	}
+	g.k.deny = nil
+	if code, out = g.call(t, WorkloadsOffboard, r); code != 0 {
+		t.Fatalf("rerun: exit %d:\n%s", code, out)
+	}
+	if g.k.has(shopRole) || len(g.rbacOf(t)) != 0 {
+		t.Fatalf("role %v record %v", g.k.has(shopRole), g.rbacOf(t))
+	}
+}
+
+// Without a cache, the record alone names the access of a workload the controller no longer knows.
+func TestWorkloadsOffboardRerunFinishesFromTheRecordAlone(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.grantedBefore(t)
+	g.d.Cache = ""
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if g.k.has(shopRole) || len(g.rbacOf(t)) != 0 {
+		t.Fatalf("role %v record %v", g.k.has(shopRole), g.rbacOf(t))
+	}
+}
+
+func TestWorkloadsOffboardForceNamesEverythingItCouldNotRemove(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.plantFeatures(t, "cloud-sql", "gke")
+	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+	value := g.tagValue(t)
+	g.s.WorkloadDocs["shop"]["backends"] = append(g.s.WorkloadDocs["shop"]["backends"].([]any),
+		map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}, map[string]any{"kind": "cloudsql", "name": "shop-db"})
+	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}, {Parent: databaseParent, TagValue: value}}
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: zoneHost, Path: "/v3/tagBindings", Code: 500, Status: "INTERNAL", Message: "boom"})
+	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
+	r := shopOffboard
+	r.Force = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Offboarded workload shop", "the tag of vm web-1 (europe-west1-b) is not removed", "boom", "untagged: Cloud SQL instance shop-db",
+		"Role and RoleBinding dormeto-shop, namespace shop, cluster "+shopCluster, "rolebindings is forbidden", "access revoke")
+	if len(g.s.Workloads) != 0 || !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatalf("workloads %v record %v", g.s.Workloads, g.rbacOf(t))
+	}
+	if _, err := os.Stat(g.offboardFile()); err != nil {
+		t.Fatalf("a tag left is finished by a rerun: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardForceJSONNamesWhatIsLeft(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
+	var errs bytes.Buffer
+	g.d.Err = &errs
+	r := shopOffboard
+	r.Force, r.JSON = true, true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	var got struct {
+		Offboarded bool
+		NotRemoved []string
+	}
+	if err := json.Unmarshal([]byte(out), &got); code != 1 || err != nil || !got.Offboarded || len(got.NotRemoved) != 1 {
+		t.Fatalf("%d %v:\n%s", code, err, out)
+	}
+}
+
+func TestWorkloadsOffboardForceOfAWorkloadThatCannotWakeNamesItsPods(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.s.WakeFails["shop"] = true
+	r := shopOffboard
+	r.Force = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "left down: Deployment web (namespace shop, cluster "+shopCluster+")")
+	if g.k.has(shopRole) {
+		t.Fatal("the RBAC stays")
+	}
+}
+
+func TestWorkloadsOffboardForceWithTheControllerGoneNamesWhatIsLeft(t *testing.T) {
+	for name, refuse := range map[string]gcptest.Refusal{
+		"a 404 not the controller's": {Method: "GET", Host: controllerHost, Path: "/v1/workloads/shop", Code: 404, Status: "NOT_FOUND", Message: "no such service"},
+		"a 503":                      {Method: "GET", Host: controllerHost, Path: "/v1/workloads/shop", Code: 503, Status: "UNAVAILABLE", Message: "down"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, _ := newGKERig(t)
+			g.onboardedOnGKE(t)
+			g.s.Refuse(refuse)
+			mark := len(g.k.writes(0))
+			before := len(g.s.Calls())
+			r := shopOffboard
+			r.Force = true
+			code, out := g.call(t, WorkloadsOffboard, r)
+			if code != 1 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, "does not answer", refuse.Message, "not offboarded", "dmtr-europe-west1-shop", "tag dormeto=managed",
+				"Role and RoleBinding dormeto-shop, namespace shop, cluster "+shopCluster, "access revoke")
+			if w := g.k.writes(0)[mark:]; len(w) != 0 {
+				t.Fatalf("writes %v", w)
+			}
+			if m := g.changes(before); len(m) != 0 {
+				t.Fatalf("changes %v", m)
+			}
+			// Without --force, the refusal alone.
+			r.Force = false
+			g.s.Refuse(refuse)
+			if code, out = g.call(t, WorkloadsOffboard, r); code != 1 || strings.Contains(out, "access revoke") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+		})
+	}
+}
+
+func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Code: 503, Status: "UNAVAILABLE", Message: "down"})
+	r := shopOffboard
+	r.Force = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "does not answer", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db")
+	if len(g.bindings()) != 2 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+}

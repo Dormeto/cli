@@ -5,8 +5,8 @@ package gcponboard
 // refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
 // removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
 // (the recorded grants that the project's bindings before the first install did not hold), tag, serviceAccount, roles —
-// and lists the APIs and the bindings Google added as left in place, and the Kubernetes access of workloads as left in the
-// cluster, with the command to remove it (it reaches no cluster), every IAM change printed, then reads the project's
+// and lists the APIs and the bindings Google added as left in place, and the Kubernetes access no offboarding removed as left
+// in the cluster, with the command to remove it (it reaches no other cluster), every IAM change printed, then reads the project's
 // policy and warns of what differs from its bindings before the install and Google's. The custom roles and the tag are the
 // project's: they stay while another router's record lists them. The record goes with the database: the step before it
 // keeps it in the cache, from which a run after a stopped one continues, and which the end removes, unless a tag Google
@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/Dormeto/cli/internal/gcp"
@@ -144,12 +145,16 @@ func (x *run) planUninstall() error {
 		return &stop{1, fmt.Sprintf("Workloads are onboarded in router %s: %s.\nOffboard them, or run the same command with --force to offboard each first.\nNothing was changed.",
 			x.n.router, strings.Join(names, ", "))}
 	}
+	for _, w := range workloads {
+		x.offboarding = append(x.offboarding, w.ID)
+	}
 	if len(workloads) > 0 {
 		x.steps = append(x.steps, x.planOffboard(workloads))
 	}
 	if x.r.Force {
 		if s := x.planPendingOffboards(workloads); s != nil {
 			x.steps = append(x.steps, *s)
+			x.offboarding = append(x.offboarding, x.pendingOffboards()...)
 		}
 	}
 	planners := []func() (*step, error){x.planJobRemoval, x.planNEGRemoval, x.planCloudRunRemoval, x.planQueueRemoval,
@@ -163,9 +168,6 @@ func (x *run) planUninstall() error {
 			x.steps = append(x.steps, *s)
 		}
 	}
-	for _, l := range x.rbacLeft() {
-		x.kept = append(x.kept, "= "+l)
-	}
 	return nil
 }
 
@@ -178,6 +180,12 @@ func (x *run) printUninstallPlan() {
 	}
 	for _, l := range x.kept {
 		x.say("  %s", l)
+	}
+	// As the plan stands: the workloads it offboards take theirs, and the end of the run says what is left.
+	for _, e := range x.rec.Rbac {
+		if !slices.Contains(x.offboarding, e.Workload) {
+			x.say("  = %s", x.rbacLeftLine(e))
+		}
 	}
 	if len(x.steps) == 0 {
 		x.say("  nothing is left of router %s to remove", x.n.router)
@@ -226,17 +234,21 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 	var lines []string
 	for _, w := range workloads {
 		lines = append(lines, "- offboard workload "+w.ID+" ("+w.State+")")
+		lines = append(lines, x.accessLines(w.ID)...)
 	}
 	return step{name: "offboard", lines: lines, apply: func() (string, error) {
 		for _, w := range workloads {
 			// The controller's workload, then its tag bindings: Google refuses to delete a tag value still bound.
 			// --force is what asked for this step: a workload that cannot wake is offboarded with its backends left down.
-			_, left, err := x.offboardWorkload(w.ID, true)
+			left, out, err := x.offboardWorkload(w.ID, true)
 			if err != nil && !gcp.IsNotFound(err) {
 				return "", fmt.Errorf("workload %s: %s", w.ID, refusal(err))
 			}
 			if len(left) > 0 {
 				x.say("  ! workload %s is offboarded with its backends left down: %s", w.ID, strings.Join(leftDown(left), ", "))
+			}
+			if err := x.endOffboarding(w.ID, out); err != nil {
+				return "", err
 			}
 		}
 		return fmt.Sprintf("offboarded %d workloads", len(workloads)), nil

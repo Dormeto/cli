@@ -32,11 +32,13 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 		newGcpWorkloadsList(runs.list, version),
 		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version, false),
 		newGcpWorkloadsOnboard(runs.onboard, version),
-		newGcpWorkloadsOne("offboard", "Offboard a workload and remove its tag bindings",
+		newGcpWorkloadsOne("offboard", "Offboard a workload and remove its tag bindings and Kubernetes access",
 			"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
-				"unbound from its VMs and groups, as you. A workload that cannot wake is refused; --force offboards it anyway and\n"+
-				"leaves its VMs and groups down (they are listed). --force passes only a failed wake: a workload still NAPPING or\n"+
-				"WAKING is refused as busy, with or without it, until that ends or the router's check fails it.", runs.offboard, version, true),
+				"unbound from its VMs, groups and databases, and its Role and RoleBinding are removed from its cluster, as you. A workload\n"+
+				"that cannot wake is refused; --force offboards it anyway and leaves its backends down (they are listed). --force passes\n"+
+				"only a failed wake: a workload still NAPPING or WAKING is refused as busy, with or without it, until that ends or\n"+
+				"the router's check fails it. With --force, a tag or an access it cannot remove does not stop the rest: it names each,\n"+
+				"exit 1, and it names what is left when the controller does not answer, removing nothing.", runs.offboard, version, true),
 		newGcpWorkloadsOne("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
 		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false),
 		newGcpWorkloadsSchedule(runs, version),
@@ -83,7 +85,7 @@ func newGcpWorkloadsOneWith(verb, short, long string, run gcpRun, version string
 	}
 	gcpRouterFlags(cmd, f)
 	if force {
-		cmd.Flags().BoolVar(&f.force, "force", false, "offboard a workload that cannot wake anyway, leaving its VMs and groups down")
+		cmd.Flags().BoolVar(&f.force, "force", false, "offboard a workload that cannot wake anyway, leaving its backends down, and name what cannot be removed")
 	}
 	return cmd
 }
@@ -123,6 +125,13 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			return err
 		}
 		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout")
+		// Given empty, as a variable with no value: read as not given, it would onboard something else.
+		for _, name := range []string{"load-balancer", "gke-cluster"} {
+			if v, _ := c.Flags().GetString(name); v == "" && c.Flags().Changed(name) {
+				fmt.Fprintf(c.ErrOrStderr(), "--%s: empty\n", name)
+				return exitCode(2)
+			}
+		}
 		if c.Flags().Changed("hibernate") {
 			var err error
 			if hibernating, err = parseHibernate(hibernate, false); err != nil {

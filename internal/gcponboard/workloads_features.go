@@ -249,3 +249,87 @@ func (x *run) undoGrant(g rbacGrant) []string {
 	}
 	return lines
 }
+
+// recordedAccess are the entries of a workload in the install record.
+func (x *run) recordedAccess(id string) []RecordRbac {
+	if x.rec == nil {
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(x.rec.Rbac), func(e RecordRbac) bool { return e.Workload != id })
+}
+
+// accessOf is the Kubernetes access of a workload: what its pods' backends say and what the install record lists.
+func (x *run) accessOf(id string, backends []backend) []RecordRbac {
+	var out []RecordRbac
+	for _, b := range backends {
+		if b.Kind == kindPods && b.Cluster != nil {
+			out = append(out, RecordRbac{Cluster: b.Cluster.String(), Namespace: b.Namespace, Workload: id})
+		}
+	}
+	for _, e := range x.recordedAccess(id) {
+		if !slices.Contains(out, e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// removeAccess removes the Kubernetes access of an offboarded workload, in out. The router's own access goes once its workload
+// no longer needs it: never before the controller's delete, which may wake it. A cluster gone holds no access. With force, what
+// it cannot remove is named and stays in the record, which any uninstall lists; without, it stops on the first, and a rerun
+// finishes.
+func (x *run) removeAccess(id string, backends []backend, force bool, out *offboarding) error {
+	if x.rec == nil && slices.ContainsFunc(backends, func(b backend) bool { return b.Kind == kindPods }) {
+		if _, err := x.rbacRecord(); err != nil {
+			out.kept = append(out.kept, "! the install record is not read, and it may still list this access: "+refusal(err))
+		}
+	}
+	for _, e := range x.accessOf(id, backends) {
+		rb := Rbac{Cluster: e.Cluster, Namespace: e.Namespace, Workload: e.Workload, ServiceAccount: x.n.email}
+		removal, err := x.RemoveRbac(rb)
+		out.removed = append(out.removed, removal.Removed...)
+		var gone *clusterGone
+		if errors.As(err, &gone) {
+			err = nil
+		}
+		if err != nil {
+			why := strings.TrimSuffix(refusal(err), "\n"+nothingChanged)
+			if !force {
+				return fmt.Errorf("workload %s is offboarded, but its Kubernetes access is not removed: %s\n(run the same command again to finish, or remove it with: %s)", id, why, x.revokeCommand(e))
+			}
+			out.accessLeft = append(out.accessLeft, x.rbacLeftLine(e)+" ("+why+")")
+			if x.rec != nil {
+				x.rec.addRbac(e)
+			}
+			continue
+		}
+		for _, l := range removal.Left {
+			out.kept = append(out.kept, fmt.Sprintf("%s stays in namespace %s: it is not Dormeto's, or another subject holds it", l, e.Namespace))
+		}
+		if err := x.unrecordRbac(rb); err != nil {
+			out.kept = append(out.kept, "! the install record still lists this access: "+refusal(err))
+		}
+	}
+	return nil
+}
+
+// accessLines are the plan's lines of the access an offboarding of a workload removes.
+func (x *run) accessLines(id string) []string {
+	var lines []string
+	for _, e := range x.recordedAccess(id) {
+		lines = append(lines, fmt.Sprintf("- Role and RoleBinding dormeto-%s, namespace %s, cluster %s (what the cluster refuses is said at the end)", e.Workload, e.Namespace, e.Cluster))
+	}
+	return lines
+}
+
+// endOffboarding is the end of an uninstall's offboarding: a tag left stops it, as Google refuses to delete a tag still bound; an
+// access left is said, and listed with what the uninstall leaves.
+func (x *run) endOffboarding(id string, out offboarding) error {
+	for _, l := range out.accessLeft {
+		x.say("  ! workload %s: %s", id, l)
+	}
+	if len(out.tagsLeft) > 0 {
+		return fmt.Errorf("workload %s is offboarded, but %s\n(run the same command again to finish)", id, strings.Join(out.tagsLeft, "; "))
+	}
+	return nil
+}

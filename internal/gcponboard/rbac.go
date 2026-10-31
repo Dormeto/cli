@@ -609,7 +609,7 @@ func (x *run) recordRbac(rb Rbac) (bool, error) {
 
 // unrecordRbac takes a workload's access out of the record, after its removal. The record follows rbacRecord.
 func (x *run) unrecordRbac(rb Rbac) error {
-	if !x.rec.removeRbac(rb.entry()) {
+	if x.rec == nil || !x.rec.removeRbac(rb.entry()) {
 		return nil
 	}
 	return x.writeRbacRecord()
@@ -633,9 +633,13 @@ func (x *run) accessCommand(verb string, e RecordRbac) string {
 func (x *run) rbacLeft() []string {
 	var lines []string
 	for _, e := range x.rec.Rbac {
-		lines = append(lines, fmt.Sprintf("Role and RoleBinding dormeto-%s, namespace %s, cluster %s: left in the cluster; remove them with: %s", e.Workload, e.Namespace, e.Cluster, x.revokeCommand(e)))
+		lines = append(lines, x.rbacLeftLine(e))
 	}
 	return lines
+}
+
+func (x *run) rbacLeftLine(e RecordRbac) string {
+	return fmt.Sprintf("Role and RoleBinding dormeto-%s, namespace %s, cluster %s: left in the cluster; remove them with: %s", e.Workload, e.Namespace, e.Cluster, x.revokeCommand(e))
 }
 
 // WorkloadsAccessShow is `dormeto gcp workloads access show`: what is in the cluster and what grant would write.

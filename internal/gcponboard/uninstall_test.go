@@ -1048,3 +1048,87 @@ func TestUninstallARoleVanishingBetweenTwoReadsIsNoStep(t *testing.T) {
 		t.Errorf("the other role is not planned:\n%s", out)
 	}
 }
+
+func TestUninstallForceRemovesTheRbacOfTheWorkloadItOffboards(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	line := "Role and RoleBinding dormeto-shop, namespace shop, cluster " + shopCluster
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "- "+line)
+	if strings.Contains(out, line+": left") {
+		t.Fatalf("stale: it is removed:\n%s", out)
+	}
+	if g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatal("the RBAC stays")
+	}
+}
+
+func TestUninstallForceNamesTheRbacItCouldNotRemoveAndGoesOn(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	at := strings.Index(out, "Left in place:")
+	if at < 0 {
+		t.Fatalf("%s", out)
+	}
+	contains(t, out[at:], "Role and RoleBinding dormeto-shop, namespace shop, cluster "+shopCluster+": left in the cluster", "access revoke")
+	contains(t, out, "rolebindings is forbidden")
+}
+
+func TestUninstallForceWithTheWorkloadsUnknownListsTheRbacAsLeft(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: controllerHost, Path: "/v1/workloads", Code: 500, Status: "UNAVAILABLE", Message: "down"})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	at := strings.Index(out, "Left in place:")
+	if at < 0 || !strings.Contains(out[at:], "Role and RoleBinding dormeto-shop") || !g.k.has(shopRole) {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestUninstallForceFinishesTheRbacOfAnOffboardingThatStopped(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.k.deny = denyCall("DELETE "+shopRole, 403, "Forbidden", "roles is forbidden")
+	if code, out := g.call(t, WorkloadsOffboard, shopOffboard); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.k.deny = nil
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if g.k.has(shopRole) {
+		t.Fatalf("the Role stays:\n%s", out)
+	}
+	if strings.Contains(out, "left in the cluster") {
+		t.Fatalf("stale:\n%s", out)
+	}
+}
+
+func TestUninstallForceStopsOnADatabasesTagItCouldNotRemove(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Cloud SQL instance shop-db", "boom", "Run the same command again")
+	if code, out = g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true}); code != 0 {
+		t.Fatalf("rerun: exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 0 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+}

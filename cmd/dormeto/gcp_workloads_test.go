@@ -83,6 +83,15 @@ func TestGcpWorkloadsOnboardReadsTheFeaturesFlags(t *testing.T) {
 	}
 }
 
+func TestGcpWorkloadsOnboardRefusesAFeaturesFlagGivenEmpty(t *testing.T) {
+	for _, flag := range []string{"--load-balancer", "--gke-cluster"} {
+		calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", flag, "")
+		if exit != 2 || len(calls) != 0 || !strings.Contains(errs, flag) {
+			t.Errorf("%s: %d %q %v", flag, exit, errs, calls)
+		}
+	}
+}
+
 func TestGcpWorkloadsExitCodes(t *testing.T) {
 	if _, _, exit := gcpRan(t, 1, "gcp", "workloads", "list", "--project", "p", "--region", "europe-west1"); exit != 1 {
 		t.Fatalf("exit %d", exit)
