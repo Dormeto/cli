@@ -1351,6 +1351,8 @@ dormeto gcp uninstall --project my-project --region europe-west1
 - **`gcp workloads`** call the router's controller with your identity token, so you need `run.routes.invoke` on it
   (`gcp check` says whether you hold it). `gcp install` does not give it to you: it grants the role to the router's
   service account only, so ask for `roles/run.invoker` on the controller if you lack it.
+  If Terraform writes the load balancer or the VMs, it must ignore what the router changes: the fields are on the website's
+  [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
 
 | Command | What it does |
 |---|---|
