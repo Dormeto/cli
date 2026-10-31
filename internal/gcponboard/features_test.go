@@ -312,6 +312,30 @@ func holdingOnlyTheBase(g *installRig) {
 	}
 }
 
+// A revoke with other subjects updates the RoleBinding, which Kubernetes also wants bind for: check says so at the offboarding.
+func TestUninstallForceChecksWhatARevokeWithOtherSubjectsNeeds(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, withFeatures("gke")); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	holdingOnlyTheBase(g)
+	r := uninstallEurope
+	r.Force, r.DryRun = true, true
+	code, out := g.uninstall(t, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "✗ offboard: missing") {
+			if !strings.Contains(line, "container.roleBindings.update") || !strings.Contains(line, "container.roles.bind") {
+				t.Errorf("%s", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("no offboard line:\n%s", out)
+}
+
 func TestUninstallForceChecksTheOffboardPermissionsOfTheRecordsFeatures(t *testing.T) {
 	g := newInstallRig(t)
 	if code, out := g.run(t, withFeatures("cloud-sql", "gke")); code != 0 {
