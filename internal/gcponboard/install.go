@@ -113,6 +113,7 @@ type run struct {
 	steps        []step
 	kept         []string          // the uninstall's plan lines of what it keeps
 	stranded     []string          // what the uninstall could not remove, with Google's reason
+	notGivenBack []string          // what the routers of its forced offboardings could not give back
 	others       map[string]Record // the uninstall's other routers' records of the project, by region
 	iam          []string          // the IAM lines of the running step
 	editorWarned bool              // the default service account's Editor, appeared during this run, was warned of

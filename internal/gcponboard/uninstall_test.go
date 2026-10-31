@@ -575,6 +575,22 @@ func TestUninstallForceLeavesTheBackendsOfAWorkloadThatCannotWakeDown(t *testing
 	}
 }
 
+// As what else an uninstall leaves: said at once, and listed at its end, with no exit of its own.
+func TestUninstallForceSaysWhatARouterCouldNotGiveBack(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.failingToWake(t)
+	g.s.NotGivenBack = map[string][]string{"shop": {pausedLeft}}
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	_, end, found := strings.Cut(out, "Left in place:")
+	if !found || !strings.Contains(end, "workload shop: "+pausedLeft) {
+		t.Fatalf("not listed at the end:\n%s", out)
+	}
+	contains(t, out, "! workload shop: "+pausedLeft)
+}
+
 func TestUninstallShowsAndLeavesABindingGoogleAddedAfterTheInstall(t *testing.T) {
 	g := routerInstalled(t)
 	grantInFake(t, g.s, registryAgentRole, artifactAgent)

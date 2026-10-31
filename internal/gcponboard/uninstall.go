@@ -240,12 +240,17 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 		for _, w := range workloads {
 			// The controller's workload, then its tag bindings: Google refuses to delete a tag value still bound.
 			// --force is what asked for this step: a workload that cannot wake is offboarded with its backends left down.
-			left, out, err := x.offboardWorkload(w.ID, true)
+			forced, out, err := x.offboardWorkload(w.ID, true)
 			if err != nil && !workloadNotThere(err) {
 				return "", fmt.Errorf("workload %s: %s", w.ID, refusal(err))
 			}
-			if len(left) > 0 {
-				x.say("  ! workload %s is offboarded with its backends left down: %s", w.ID, strings.Join(leftDown(left), ", "))
+			if len(forced.Left) > 0 {
+				x.say("  ! workload %s is offboarded with its backends left down: %s", w.ID, strings.Join(leftDown(forced.Left), ", "))
+			}
+			for _, l := range forced.NotGivenBack {
+				line := fmt.Sprintf("workload %s: %s", w.ID, l)
+				x.say("  ! %s", line)
+				x.notGivenBack = append(x.notGivenBack, line)
 			}
 			if err := x.endOffboarding(w.ID, out); err != nil {
 				return "", err
@@ -637,7 +642,8 @@ func (x *run) checkPolicy() {
 }
 
 // leftInPlace lists what the uninstall does not touch: the APIs the install turned on (other things may use them), the
-// bindings Google added (its own service agents') and the Kubernetes access of workloads.
+// bindings Google added (its own service agents'), the Kubernetes access of workloads and what a forced offboarding's router
+// could not give back.
 func (x *run) leftInPlace() {
 	var lines []string
 	for _, r := range x.rec.Resources {
@@ -650,6 +656,7 @@ func (x *run) leftInPlace() {
 	}
 	lines = append(lines, x.stranded...)
 	lines = append(lines, x.rbacLeft()...)
+	lines = append(lines, x.notGivenBack...)
 	if len(lines) == 0 {
 		return
 	}

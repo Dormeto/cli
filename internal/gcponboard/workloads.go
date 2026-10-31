@@ -830,9 +830,9 @@ func (x *run) offboard() error {
 			return err
 		}
 	}
-	var down []backend
+	var forced forcedOff
 	if there {
-		if down, err = x.deleteAtController(id, backends, x.r.Force); err != nil {
+		if forced, err = x.deleteAtController(id, backends, x.r.Force); err != nil {
 			if x.ctx.Err() != nil {
 				return x.ended(fmt.Sprintf("Interrupted during the controller's delete: workload %s may be offboarded. Its tags and its Kubernetes access stay: run the same command again to finish.", id))
 			}
@@ -845,8 +845,8 @@ func (x *run) offboard() error {
 	}
 	left := append(slices.Clone(out.tagsLeft), out.accessLeft...)
 	if x.r.JSON {
-		answer := map[string]any{"id": id, "offboarded": true, "untagged": out.untagged, "left": leftDown(down)}
-		for key, value := range map[string][]string{"removed": out.removed, "kept": out.kept, "notRemoved": left} {
+		answer := map[string]any{"id": id, "offboarded": true, "untagged": out.untagged, "left": leftDown(forced.Left)}
+		for key, value := range map[string][]string{"removed": out.removed, "kept": out.kept, "notRemoved": left, "notGivenBack": forced.NotGivenBack} {
 			if len(value) > 0 {
 				answer[key] = value
 			}
@@ -855,8 +855,11 @@ func (x *run) offboard() error {
 		fmt.Fprintf(x.d.Out, "%s\n", b)
 	} else {
 		x.say("Offboarded workload %s", id)
-		if len(down) > 0 {
-			x.say("  left down: %s", strings.Join(leftDown(down), ", "))
+		if len(forced.Left) > 0 {
+			x.say("  left down: %s", strings.Join(leftDown(forced.Left), ", "))
+		}
+		for _, l := range forced.NotGivenBack {
+			x.say("  ! %s", l)
 		}
 		for _, u := range out.untagged {
 			x.say("  untagged: %s", u)
@@ -874,6 +877,9 @@ func (x *run) offboard() error {
 	if len(left) > 0 {
 		return x.ended("Run the same command again to finish what is not removed.")
 	}
+	if len(forced.NotGivenBack) > 0 {
+		return x.ended(fmt.Sprintf("What the router could not give back is yours to change: workload %s is offboarded, and no rerun reaches it.", id))
+	}
 	return nil
 }
 
@@ -886,27 +892,32 @@ func leftDown(left []backend) []string {
 	return names
 }
 
+// forcedOff is what the controller answers of a forced offboarding: the backends it left down, and in its own words what it could
+// not give back. A router below this version answers no such field: none.
+type forcedOff struct {
+	Left         []backend `json:"left"`
+	NotGivenBack []string  `json:"notGivenBack"`
+}
+
 // deleteWorkload offboards a workload at the controller, which wakes it first. One that cannot wake is refused
-// (wake-failed); with force it is offboarded anyway, its backends left down, and those are returned.
-func (x *run) deleteWorkload(path string, force bool) ([]backend, error) {
+// (wake-failed); with force it is offboarded anyway, its backends left down, and what it left is returned.
+func (x *run) deleteWorkload(path string, force bool) (forcedOff, error) {
 	err := x.controller(http.MethodDelete, path, nil, nil)
 	var e *gcp.Error
 	if !errors.As(err, &e) || e.Reason != "wake-failed" {
 		if workloadNotThere(err) {
-			return nil, nil
+			return forcedOff{}, nil
 		}
-		return nil, err
+		return forcedOff{}, err
 	}
 	if !force {
-		return nil, &stop{1, fmt.Sprintf("%s\nOffboard it anyway with --force: its VMs and groups are then left down.", e.Message)}
+		return forcedOff{}, &stop{1, fmt.Sprintf("%s\nOffboard it anyway with --force: its VMs and groups are then left down.", e.Message)}
 	}
-	var res struct {
-		Left []backend `json:"left"`
-	}
+	var res forcedOff
 	if err := x.controller(http.MethodDelete, path+"?force=true", nil, &res); err != nil && !workloadNotThere(err) {
-		return nil, err
+		return forcedOff{}, err
 	}
-	return res.Left, nil
+	return res, nil
 }
 
 // pendingPath is where the backends of a workload being offboarded wait until their tag bindings are removed ("" without
@@ -965,18 +976,18 @@ type offboarding struct {
 // bindings of its VMs, groups and databases and its Kubernetes access, and says which. Its backends are kept in the cache before
 // the controller deletes the workload: a rerun that finds the workload gone finishes from them. A workload the controller does
 // not know, with nothing kept and no access in the record, is an error that gcp.IsNotFound tells.
-func (x *run) offboardWorkload(id string, force bool) (down []backend, out offboarding, err error) {
+func (x *run) offboardWorkload(id string, force bool) (forced forcedOff, out offboarding, err error) {
 	backends, there, err := x.offboardee(id)
 	if err != nil {
-		return nil, out, err
+		return forcedOff{}, out, err
 	}
 	if there {
-		if down, err = x.deleteAtController(id, backends, force); err != nil {
-			return nil, out, err
+		if forced, err = x.deleteAtController(id, backends, force); err != nil {
+			return forcedOff{}, out, err
 		}
 	}
 	out, err = x.afterController(id, backends, force)
-	return down, out, err
+	return forced, out, err
 }
 
 // offboardee reads what an offboarding has to go through: the workload's backends, and whether the controller still holds it.
@@ -1013,19 +1024,19 @@ func (x *run) offboardFeatures(id string, backends []backend) []string {
 	return features
 }
 
-// deleteAtController keeps the backends for a rerun, then deletes the workload at the controller. It returns the backends left
-// down, with force.
-func (x *run) deleteAtController(id string, backends []backend, force bool) ([]backend, error) {
+// deleteAtController keeps the backends for a rerun, then deletes the workload at the controller. It returns what it left, with
+// force.
+func (x *run) deleteAtController(id string, backends []backend, force bool) (forcedOff, error) {
 	if err := x.keepPending(id, backends); err != nil {
-		return nil, fmt.Errorf("the backends of workload %s are not kept for a rerun: %w", id, err)
+		return forcedOff{}, fmt.Errorf("the backends of workload %s are not kept for a rerun: %w", id, err)
 	}
-	down, err := x.deleteWorkload("/v1/workloads/"+esc(id), force)
+	forced, err := x.deleteWorkload("/v1/workloads/"+esc(id), force)
 	// Refused, nothing was done, and the workload is there: the file would read as an offboarding that stopped.
 	var s *stop
 	if p := x.pendingPath(id); p != "" && (refused(err) || errors.As(err, &s)) {
 		os.Remove(p)
 	}
-	return down, err
+	return forced, err
 }
 
 // afterController removes what the controller's workload no longer needs: its tags (a wake needs them, so they went on until

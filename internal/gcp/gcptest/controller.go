@@ -165,7 +165,11 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 			delete(s.Workloads, id)
 			delete(s.WorkloadDocs, id)
 			if force {
-				Reply(w, map[string]any{"id": id, "left": left})
+				answer := map[string]any{"id": id, "left": left}
+				if notGivenBack := s.NotGivenBack[id]; len(notGivenBack) > 0 {
+					answer["notGivenBack"] = notGivenBack
+				}
+				Reply(w, answer)
 				return
 			}
 			Reply(w, map[string]any{})

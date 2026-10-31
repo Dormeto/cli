@@ -124,6 +124,8 @@ type Server struct {
 	// WakeFails are the workloads whose wake fails: DELETE /v1/workloads/<id> answers 409 wake-failed, and only
 	// ?force=true offboards them (answering the backends left down).
 	WakeFails map[string]bool
+	// NotGivenBack is what ?force=true answers it could not give back, by ID; none, no field.
+	NotGivenBack map[string][]string
 	// DryRun is what the controller's onboarding dry run answers: the reasons it refuses (none: eligible), the VMs and
 	// the groups it would tag. The onboarding itself is refused (400) while one of them carries no tag binding.
 	DryRun DryRun

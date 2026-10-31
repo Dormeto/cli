@@ -2404,6 +2404,67 @@ func TestWorkloadsOffboardForceOfAWorkloadThatCannotWakeNamesItsPods(t *testing.
 	}
 }
 
+const pausedLeft = "ScaledObject shop/web-scaler is still paused at 0: remove its annotation autoscaling.keda.sh/paused-replicas, or KEDA takes Deployment shop/web down again; it had 2 replicas"
+
+func TestWorkloadsOffboardForceSaysWhatTheRouterCouldNotGiveBackAndExits1(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.s.WakeFails["shop"] = true
+	g.s.NotGivenBack = map[string][]string{"shop": {pausedLeft}}
+	r := shopOffboard
+	r.Force = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "left down: Deployment web", "! "+pausedLeft, "yours to change")
+	if strings.Contains(out, "Run the same command again") {
+		t.Fatalf("a rerun gives none of it back:\n%s", out)
+	}
+	if g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatal("the RBAC stays")
+	}
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Fatalf("nothing is left for a rerun, and the file stays: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardForceJSONSaysWhatTheRouterCouldNotGiveBack(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.s.WakeFails["shop"] = true
+	g.s.NotGivenBack = map[string][]string{"shop": {pausedLeft}}
+	r := shopOffboard
+	r.Force, r.JSON = true, true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var answer struct {
+		NotGivenBack []string `json:"notGivenBack"`
+	}
+	line, _, _ := strings.Cut(out, "\n")
+	if err := json.Unmarshal([]byte(line), &answer); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if !slices.Equal(answer.NotGivenBack, []string{pausedLeft}) {
+		t.Fatalf("%v", answer)
+	}
+}
+
+// A router below this version answers no such field: none, and the exit as it was.
+func TestWorkloadsOffboardForceOfARouterWithoutTheFieldReadsAsNone(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.s.WakeFails["shop"] = true
+	r := shopOffboard
+	r.Force, r.JSON = true, true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 0 || strings.Contains(out, "notGivenBack") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
 func TestWorkloadsOffboardForceWithTheControllerGoneNamesWhatIsLeft(t *testing.T) {
 	for name, refuse := range map[string]gcptest.Refusal{
 		"a 404 not the controller's": {Method: "GET", Host: controllerHost, Path: "/v1/workloads/shop", Code: 404, Status: "NOT_FOUND", Message: "no such service"},
