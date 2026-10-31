@@ -4,8 +4,10 @@ package gcponboard
 // RoleBinding dormeto-<workload> in the workload's namespace, for the router's service account, nothing cluster-wide. The
 // router's IAM grants nothing inside a cluster, so the operator writes them, as themselves: HTTPS with the public CAs to the
 // cluster's DNS endpoint, their access token as bearer. An object of that name without the label managed-by is someone
-// else's: never changed, never removed. The install record lists each workload's access before it is applied and until it
-// is removed. Exit codes: 0; 1 when Google or Kubernetes refuses, an object is someone else's, or the cluster has no
+// else's: never changed, never removed. On our RoleBinding, the subjects Dormeto did not add stay: an update keeps them, and
+// while one remains a removal takes the router's subject alone and leaves both objects. Another router's service account
+// there is a refusal, as two routers cannot share one dormeto-<workload>. The install record lists each workload's access
+// before it is applied and until it is removed. Exit codes: 0; 1 when Google or Kubernetes refuses, an object is someone else's, or the cluster has no
 // DNS endpoint; 2 for a bad flag or a missing answer; 130 when interrupted.
 
 import (
@@ -61,10 +63,13 @@ type rbacRule struct {
 }
 
 type rbacSubject struct {
-	Kind     string `json:"kind"`
-	Name     string `json:"name"`
-	APIGroup string `json:"apiGroup"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	APIGroup  string `json:"apiGroup,omitempty"`  // a Kubernetes ServiceAccount has none
+	Namespace string `json:"namespace,omitempty"` // a Kubernetes ServiceAccount's
 }
+
+func (s rbacSubject) String() string { return s.Kind + " " + s.Name }
 
 type rbacRoleRef struct {
 	APIGroup string `json:"apiGroup"`
@@ -134,11 +139,22 @@ const (
 	rbacRefused = "refused"
 )
 
-// rbacChange is what a grant would do to one object: create, update, none, or refused (the object is someone else's).
+// rbacChange is what a grant would do to one object: create, update, none, or refused (the object is someone else's, or
+// binds OtherRouters).
 type rbacChange struct {
-	Action  string      `json:"action"`
-	Current *kubeObject `json:"current"`
-	Wanted  kubeObject  `json:"wanted"`
+	Action       string      `json:"action"`
+	Current      *kubeObject `json:"current"`
+	Wanted       kubeObject  `json:"wanted"`
+	OtherRouters []string    `json:"otherRouters,omitempty"`
+}
+
+// routerRefusal is the refusal of a binding that names another router: nil when it names none.
+func (c rbacChange) routerRefusal() error {
+	if len(c.OtherRouters) == 0 {
+		return nil
+	}
+	return &stop{1, fmt.Sprintf("%s in namespace %s binds %s, another router's service account: two routers cannot share one %s, so Dormeto changes neither. Take that subject out by hand if it should not be there, or use another workload ID.\nNothing was changed.",
+		c.Wanted, c.Wanted.Metadata.Namespace, strings.Join(c.OtherRouters, ", "), c.Wanted.Metadata.Name)}
 }
 
 // RbacPlan is what is in the cluster and what a grant would write.
@@ -154,8 +170,12 @@ func (p RbacPlan) Changes() bool {
 	return p.Role.Action != rbacNone || p.RoleBinding.Action != rbacNone
 }
 
-// Refused is the refusal of an object of that name that is someone else's: nil when there is none.
+// Refused is the refusal of an object of that name that is someone else's, or that names another router: nil when there
+// is none.
 func (p RbacPlan) Refused() error {
+	if err := p.RoleBinding.routerRefusal(); err != nil {
+		return err
+	}
 	for _, c := range []rbacChange{p.Role, p.RoleBinding} {
 		if c.Action == rbacRefused {
 			return &stop{1, fmt.Sprintf("%s exists in namespace %s and is not Dormeto's (it lacks the label %s: %s): rename it, or name the workload otherwise.\nNothing was changed.",
@@ -298,13 +318,46 @@ func (x *run) readChange(rb Rbac, endpoint string, wanted kubeObject) (rbacChang
 		return rbacChange{}, withNothingChanged(kubeFailure(rb.Cluster, "get", wanted, err))
 	}
 	c := rbacChange{Action: rbacUpdate, Current: &current, Wanted: wanted}
-	switch {
-	case !current.ours(rb.name()):
+	if !current.ours(rb.name()) {
 		c.Action = rbacRefused
-	case current.sameContent(wanted):
+		return c, nil
+	}
+	if wanted.Kind == "RoleBinding" {
+		if c.OtherRouters = rb.otherRouters(current); len(c.OtherRouters) > 0 {
+			c.Action = rbacRefused
+			return c, nil
+		}
+		c.Wanted.Subjects = rb.subjectsWithRouter(current)
+	}
+	if current.sameContent(c.Wanted) {
 		c.Action = rbacNone
 	}
 	return c, nil
+}
+
+// routerSubject tells that a subject is this router's.
+func (rb Rbac) routerSubject(s rbacSubject) bool {
+	return s.Kind == "User" && s.Name == rb.ServiceAccount
+}
+
+// otherRouters are the subjects of a binding that are another router's service account: dmtr-<region>@…, a Kubernetes
+// User or ServiceAccount, in this project or another.
+func (rb Rbac) otherRouters(o kubeObject) []string {
+	var out []string
+	for _, s := range o.Subjects {
+		if (s.Kind == "User" || s.Kind == "ServiceAccount") && s.Name != rb.ServiceAccount && strings.HasPrefix(s.Name, "dmtr-") && strings.Contains(s.Name, "@") {
+			out = append(out, s.String())
+		}
+	}
+	return out
+}
+
+// subjectsWithRouter are a binding's subjects as they stand, the router's among them.
+func (rb Rbac) subjectsWithRouter(o kubeObject) []rbacSubject {
+	if slices.ContainsFunc(o.Subjects, rb.routerSubject) {
+		return o.Subjects
+	}
+	return append(slices.Clone(o.Subjects), rb.roleBinding().Subjects...)
 }
 
 // PlanRbac reads the cluster's DNS endpoint and the workload's objects, and compares them with what they should be. It
@@ -350,26 +403,52 @@ func (x *run) ApplyRbac(plan RbacPlan) ([]string, error) {
 	return done, nil
 }
 
-// RbacRemoval is what a removal did: the objects removed and those left, someone else's.
+// RbacRemoval is what a removal did: what it removed, the objects it left (someone else's, or ours while another subject
+// holds them), and the subjects that still hold those of ours.
 type RbacRemoval struct {
-	Removed []string `json:"removed"`
-	Left    []string `json:"left"`
+	Removed  []string `json:"removed"`
+	Left     []string `json:"left"`
+	Subjects []string `json:"subjects,omitempty"`
 }
 
-// removal sorts the objects there: those a removal takes, the binding first as the router then loses its rights before the
-// Role goes, and those it leaves.
-func (p RbacPlan) removal() (ours []kubeObject, left []string) {
-	left = []string{}
+// rbacRemovalPlan is what a removal does.
+type rbacRemovalPlan struct {
+	deleted  []rbacChange // the objects it deletes, the binding first as the router then loses its rights before the Role goes
+	stripped *kubeObject  // our binding without the router's subject, when others remain
+	subject  string       // the router's subject, when stripped
+	kept     []string     // our objects that stay, for the subjects that remain
+	foreign  []string     // the objects that are someone else's
+	others   []string     // the subjects that remain on our binding
+}
+
+func (r rbacRemovalPlan) left() []string { return append(slices.Clone(r.foreign), r.kept...) }
+
+// removal sorts the objects there. While a subject other than the router's holds our binding, the binding stays without the
+// router's subject, and the Role with it; both go only when the router is the sole subject. Asked once routerRefusal is
+// nil: another router's subject leaves everything.
+func (p RbacPlan) removal() rbacRemovalPlan {
+	var out rbacRemovalPlan
+	out.others = p.otherSubjects()
 	for _, c := range []rbacChange{p.RoleBinding, p.Role} {
 		switch {
 		case c.Current == nil:
 		case c.Action == rbacRefused:
-			left = append(left, c.Wanted.String())
+			out.foreign = append(out.foreign, c.Wanted.String())
+		case len(out.others) > 0:
+			out.kept = append(out.kept, c.Wanted.String())
 		default:
-			ours = append(ours, c.Wanted)
+			out.deleted = append(out.deleted, c)
 		}
 	}
-	return ours, left
+	if len(out.others) > 0 {
+		binding := *p.RoleBinding.Current
+		binding.Subjects = slices.DeleteFunc(slices.Clone(binding.Subjects), p.routerSubject)
+		if len(binding.Subjects) != len(p.RoleBinding.Current.Subjects) {
+			out.stripped = &binding
+			out.subject = "subject " + p.roleBinding().Subjects[0].String() + " of " + binding.String()
+		}
+	}
+	return out
 }
 
 // otherSubjects are the subjects of our binding other than the router's: someone added them by hand.
@@ -377,30 +456,62 @@ func (p RbacPlan) otherSubjects() []string {
 	var out []string
 	if c := p.RoleBinding.Current; c != nil && p.RoleBinding.Action != rbacRefused {
 		for _, s := range c.Subjects {
-			if s.Kind != "User" || s.Name != p.ServiceAccount {
-				out = append(out, s.Kind+" "+s.Name)
+			if !p.routerSubject(s) {
+				out = append(out, s.String())
 			}
 		}
 	}
 	return out
 }
 
-// RemoveRbac reads the workload's objects again and removes those that are Dormeto's. An object not there is no error, and
-// another of that name is left, and said. It returns what it did, also when it fails on the way. An error that is a *stop
-// is Kubernetes's refusal.
+// there are the objects that exist.
+func (p RbacPlan) there() []string {
+	out := []string{}
+	for _, c := range []rbacChange{p.RoleBinding, p.Role} {
+		if c.Current != nil {
+			out = append(out, c.Wanted.String())
+		}
+	}
+	return out
+}
+
+// deleteOptions make a delete of what was read: an object written since is a conflict, not lost.
+func deleteOptions(o kubeObject) any {
+	return map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": map[string]string{"resourceVersion": o.Metadata.ResourceVersion}}
+}
+
+// RemoveRbac reads the workload's objects again and removes what the router holds of them, with no prompt: its subject, or
+// both objects when it is the sole subject. An object not there is no error, and another of that name is left, and said. A
+// binding naming another router is refused, and leaves everything. It returns what it did and what it left, also when it
+// fails on the way. An error that is a *stop is Kubernetes's refusal, or that of another router.
 func (x *run) RemoveRbac(rb Rbac) (RbacRemoval, error) {
 	out := RbacRemoval{Removed: []string{}, Left: []string{}}
 	plan, err := x.PlanRbac(rb)
 	if err != nil {
 		return out, err
 	}
-	var ours []kubeObject
-	ours, out.Left = plan.removal()
-	for _, o := range ours {
-		if err := x.kubeDo(http.MethodDelete, kubeObjectURL(plan.Endpoint, o), nil, nil); err != nil && !gcp.IsNotFound(err) {
+	if err := plan.RoleBinding.routerRefusal(); err != nil {
+		out.Left = plan.there()
+		return out, err
+	}
+	removal := plan.removal()
+	out.Left, out.Subjects = removal.left(), removal.others
+	if o := removal.stripped; o != nil {
+		// With the version read: someone's write since is a conflict, not lost.
+		if err := x.kubeDo(http.MethodPut, kubeObjectURL(plan.Endpoint, *o), *o, nil); err != nil && !gcp.IsNotFound(err) {
+			return out, kubeFailure(rb.Cluster, "update", *o, err)
+		}
+		out.Removed = append(out.Removed, removal.subject)
+	}
+	for i, c := range removal.deleted {
+		o := *c.Current
+		if err := x.kubeDo(http.MethodDelete, kubeObjectURL(plan.Endpoint, o), deleteOptions(o), nil); err != nil && !gcp.IsNotFound(err) {
+			for _, rest := range removal.deleted[i:] {
+				out.Left = append(out.Left, rest.Wanted.String())
+			}
 			return out, kubeFailure(rb.Cluster, "delete", o, err)
 		}
-		out.Removed = append(out.Removed, o.String())
+		out.Removed = append(out.Removed, c.Wanted.String())
 	}
 	return out, nil
 }
@@ -571,6 +682,10 @@ func (x *run) printWrites(p RbacPlan, replaced bool) {
 			x.say("  = %s, as it should be", c.Wanted)
 			continue
 		case rbacRefused:
+			if len(c.OtherRouters) > 0 {
+				x.say("  ! %s binds %s, another router's: grant refuses it", c.Wanted, strings.Join(c.OtherRouters, ", "))
+				continue
+			}
 			x.say("  ! %s is not Dormeto's: grant refuses it, and would write:", c.Wanted)
 		case rbacUpdate:
 			x.say("  ~ %s", c.Wanted)
@@ -618,6 +733,8 @@ func (x *run) accessShow() error {
 		case c.Current == nil:
 			x.say("  %s: none", c.Wanted)
 			continue
+		case len(c.OtherRouters) > 0:
+			x.say("  %s: Dormeto's, and it binds another router", c.Wanted)
 		case c.Action == rbacRefused:
 			x.say("  %s: not Dormeto's", c.Wanted)
 		default:
@@ -763,19 +880,29 @@ func (x *run) accessRevoke() error {
 		return err
 	}
 	x.rbacHeader(plan)
-	ours, left := plan.removal()
-	for _, o := range ours {
-		x.tell("  - %s", o)
+	if err := plan.RoleBinding.routerRefusal(); err != nil {
+		return err
 	}
-	for _, other := range plan.otherSubjects() {
-		x.tell("  ! it also binds %s, who loses it too", other)
+	removal := plan.removal()
+	for _, c := range removal.deleted {
+		x.tell("  - %s", c.Wanted)
 	}
-	for _, l := range left {
+	if removal.stripped != nil {
+		x.tell("  - %s", removal.subject)
+	}
+	for _, kept := range removal.kept {
+		what := "it also binds " + strings.Join(removal.others, ", ")
+		if !strings.HasPrefix(kept, "RoleBinding") {
+			what = "that binding names it"
+		}
+		x.tell("  = %s stays: %s", kept, what)
+	}
+	for _, l := range removal.foreign {
 		x.tell("  = %s is not Dormeto's: left as it is", l)
 	}
-	if len(ours) == 0 {
+	if len(removal.deleted) == 0 && removal.stripped == nil {
 		x.tell("  nothing of Dormeto's to remove")
-		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: left})
+		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: removal.left(), Subjects: removal.others})
 	}
 	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
 		return err

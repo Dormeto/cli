@@ -3,6 +3,7 @@ package gcponboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -129,8 +130,19 @@ func (k *fakeKube) serve(w http.ResponseWriter, r *http.Request) {
 		k.store(r.URL.Path, o)
 		_ = json.NewEncoder(w).Encode(o)
 	case http.MethodDelete:
-		if _, there := k.objects[r.URL.Path]; !there {
+		old, there := k.objects[r.URL.Path]
+		if !there {
 			k.failure(w, 404, "NotFound", r.URL.Path+" not found")
+			return
+		}
+		var options struct {
+			Preconditions struct {
+				ResourceVersion string `json:"resourceVersion"`
+			} `json:"preconditions"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&options)
+		if v := options.Preconditions.ResourceVersion; v != "" && v != old["metadata"].(map[string]any)["resourceVersion"] {
+			k.failure(w, 409, "Conflict", "Precondition failed: ResourceVersion in precondition: "+v)
 			return
 		}
 		delete(k.objects, r.URL.Path)
@@ -1453,8 +1465,8 @@ func TestRbacRevokeNamesAnotherSubjectBeforeAsking(t *testing.T) {
 	if i := strings.Index(out, "Group team@example.com"); i < 0 || i > strings.Index(out, "[y/N]") {
 		t.Errorf("not named before asking:\n%s", out)
 	}
-	if strings.Contains(out, "User "+routerSA) {
-		t.Errorf("the router's own is named:\n%s", out)
+	if !strings.Contains(out, "- subject User "+routerSA+" of RoleBinding dormeto-shop") || strings.Contains(out, "loses it too") {
+		t.Errorf("what goes is not said:\n%s", out)
 	}
 	if !g.k.has(shopBinding) {
 		t.Error("declined, removed")
@@ -1473,5 +1485,260 @@ func TestRbacA5xxSaysWhichCall(t *testing.T) {
 	code, out := g.call(t, WorkloadsAccessShow, shopAccess)
 	if code != 1 || !strings.Contains(out, "get Role dormeto-shop in namespace shop: etcd is away") {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+const (
+	subjectsTeam   = "team@example.com"
+	otherRouterSA  = "dmtr-europe-north1@dormeto-dev.iam.gserviceaccount.com"
+	rbacGroup      = "rbac.authorization.k8s.io"
+	subjectsOfShop = "dormeto-shop"
+)
+
+func rbacUser(name string) map[string]any {
+	return map[string]any{"kind": "User", "name": name, "apiGroup": rbacGroup}
+}
+
+// plantBinding places our RoleBinding with these subjects, and our Role.
+func (g *rbacRig) plantBinding(t *testing.T, subjects ...any) {
+	t.Helper()
+	rb := Rbac{Cluster: shopAccess.GKECluster, Namespace: "shop", Workload: "shop", ServiceAccount: routerSA}
+	g.k.put(t, shopRole, "Role", ourLabels, map[string]any{"rules": jsonOf(t, rb.role().Rules)})
+	g.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{"subjects": subjects,
+		"roleRef": map[string]any{"apiGroup": rbacGroup, "kind": "Role", "name": subjectsOfShop}})
+}
+
+func subjectsOf(k *fakeKube) []any {
+	subjects, _ := k.object(shopBinding)["subjects"].([]any)
+	return subjects
+}
+
+// Ruling: an update keeps the subjects Dormeto did not add, a Kubernetes ServiceAccount's namespace with them.
+func TestRbacGrantKeepsTheOtherSubjects(t *testing.T) {
+	g := newRbacRig(t)
+	team := map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup}
+	ksa := map[string]any{"kind": "ServiceAccount", "name": "deployer", "namespace": "ci"}
+	g.plantBinding(t, team, ksa)
+	code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	want := []any{team, ksa, rbacUser(routerSA)}
+	if got := subjectsOf(g.k); !reflect.DeepEqual(got, want) {
+		t.Errorf("subjects: %v", got)
+	}
+	if !strings.Contains(out, "subject: Group "+subjectsTeam) {
+		t.Errorf("what stays is not shown:\n%s", out)
+	}
+}
+
+func TestRbacGrantWithTheRouterAmongOthersWritesNothing(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup}, rbacUser(routerSA))
+	mark := len(g.k.callList())
+	code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if w := g.k.writes(mark); len(w) != 0 {
+		t.Errorf("written: %v\n%s", w, out)
+	}
+	if !slices.Equal(g.rbacOf(t), []RecordRbac{shopEntry}) {
+		t.Errorf("record: %v", g.rbacOf(t))
+	}
+}
+
+// Ruling: revoke takes the router's subject alone while others remain, and the record's entry goes as its access did.
+func TestRbacRevokeWithOtherSubjectsTakesOnlyTheRouters(t *testing.T) {
+	g := newRbacRig(t)
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	team := map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup}
+	g.plantBinding(t, team, rbacUser(routerSA))
+	mark := len(g.k.callList())
+	r := shopAccess
+	code, out := g.call(t, WorkloadsAccessRevoke, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if w := g.k.writes(mark); !slices.Equal(w, []string{"PUT " + shopBinding}) {
+		t.Fatalf("writes: %v", w)
+	}
+	if got := subjectsOf(g.k); !reflect.DeepEqual(got, []any{team}) {
+		t.Errorf("subjects: %v", got)
+	}
+	if !g.k.has(shopRole) {
+		t.Error("the Role is gone though a subject holds it")
+	}
+	if len(g.rbacOf(t)) != 0 {
+		t.Errorf("record: %v", g.rbacOf(t))
+	}
+	for _, want := range []string{"- subject User " + routerSA + " of RoleBinding dormeto-shop", "RoleBinding dormeto-shop stays: it also binds Group " + subjectsTeam, "Role dormeto-shop stays", "removed subject User " + routerSA} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q not said:\n%s", want, out)
+		}
+	}
+}
+
+func TestRbacRevokeWithOtherSubjectsWithoutTheRouterWritesNothing(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup})
+	r := shopAccess
+	r.Yes = false // nothing to remove: nothing to ask
+	code, out := g.call(t, WorkloadsAccessRevoke, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if w := g.k.writes(0); len(w) != 0 {
+		t.Errorf("written: %v", w)
+	}
+	if !strings.Contains(out, "stays: it also binds Group "+subjectsTeam) {
+		t.Errorf("not said:\n%s", out)
+	}
+}
+
+// Ruling: two routers cannot share dormeto-<workload>: another's subject is a refusal, named, at grant.
+func TestRbacGrantRefusesAnotherRoutersSubject(t *testing.T) {
+	for name, subject := range map[string]map[string]any{
+		"a User":             rbacUser(otherRouterSA),
+		"a serviceAccount":   {"kind": "ServiceAccount", "name": otherRouterSA, "namespace": "shop"},
+		"in another project": rbacUser("dmtr-europe-west1@another.iam.gserviceaccount.com"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newRbacRig(t)
+			g.plantBinding(t, subject, rbacUser(routerSA))
+			google := len(g.s.Mutations())
+			code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+			if code != 1 || !strings.Contains(out, subject["name"].(string)) || !strings.Contains(out, "another router") || !strings.Contains(out, "Nothing was changed.") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if w := g.k.writes(0); len(w) != 0 {
+				t.Errorf("written: %v", w)
+			}
+			if m := g.s.Mutations(); len(m) != google {
+				t.Errorf("the record is written: %v", m[google:])
+			}
+		})
+	}
+}
+
+// A dmtr- name that is no email is no router's service account; the router's own name of another kind is no other router.
+func TestRbacOnlyAnEmailOfDmtrIsAnotherRouter(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, map[string]any{"kind": "ServiceAccount", "name": "dmtr-tools", "namespace": "shop"},
+		map[string]any{"kind": "Group", "name": "dmtr-admins@example.com", "apiGroup": rbacGroup})
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := subjectsOf(g.k); len(got) != 3 {
+		t.Errorf("subjects: %v", got)
+	}
+}
+
+// Ruling: another router's subject is a refusal at revoke too: nothing goes, the record's entry stays.
+func TestRbacRevokeRefusesAnotherRoutersSubject(t *testing.T) {
+	g := newRbacRig(t)
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.plantBinding(t, rbacUser(routerSA), rbacUser(otherRouterSA))
+	mark := len(g.k.callList())
+	code, out := g.call(t, WorkloadsAccessRevoke, shopAccess)
+	if code != 1 || !strings.Contains(out, otherRouterSA) || !strings.Contains(out, "another router") || !strings.Contains(out, "Nothing was changed.") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if w := g.k.writes(mark); len(w) != 0 {
+		t.Errorf("written: %v", w)
+	}
+	if !slices.Equal(g.rbacOf(t), []RecordRbac{shopEntry}) {
+		t.Errorf("record: %v", g.rbacOf(t))
+	}
+}
+
+func TestRbacShowNamesAnotherRoutersSubject(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, rbacUser(routerSA), rbacUser(otherRouterSA))
+	code, out := g.call(t, WorkloadsAccessShow, shopAccess)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "RoleBinding dormeto-shop binds User "+otherRouterSA+", another router's: grant refuses it") || strings.Contains(out, "not Dormeto's") {
+		t.Errorf("not said:\n%s", out)
+	}
+}
+
+func removeRbacOf(g *rbacRig) (RbacRemoval, error) {
+	x := newRun(context.Background(), g.d, shopAccess)
+	return x.RemoveRbac(Rbac{Cluster: shopAccess.GKECluster, Namespace: "shop", Workload: "shop", ServiceAccount: routerSA})
+}
+
+// C5 calls RemoveRbac with no prompt: it follows the same rules and reports what it left.
+func TestRbacRemoveFollowsTheSameRulesAndReportsWhatItLeft(t *testing.T) {
+	t.Run("the sole subject", func(t *testing.T) {
+		g := newRbacRig(t)
+		g.plantBinding(t, rbacUser(routerSA))
+		out, err := removeRbacOf(g)
+		if err != nil || !slices.Equal(out.Removed, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) || len(out.Left) != 0 || len(out.Subjects) != 0 {
+			t.Fatalf("%+v %v", out, err)
+		}
+		if g.k.has(shopBinding) || g.k.has(shopRole) {
+			t.Error("not removed")
+		}
+	})
+	t.Run("other subjects", func(t *testing.T) {
+		g := newRbacRig(t)
+		g.plantBinding(t, rbacUser(routerSA), map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup})
+		out, err := removeRbacOf(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(out.Removed, []string{"subject User " + routerSA + " of RoleBinding dormeto-shop"}) ||
+			!slices.Equal(out.Left, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) ||
+			!slices.Equal(out.Subjects, []string{"Group " + subjectsTeam}) {
+			t.Fatalf("%+v", out)
+		}
+		if len(subjectsOf(g.k)) != 1 || !g.k.has(shopRole) {
+			t.Errorf("subjects %v", subjectsOf(g.k))
+		}
+	})
+	t.Run("another router", func(t *testing.T) {
+		g := newRbacRig(t)
+		g.plantBinding(t, rbacUser(routerSA), rbacUser(otherRouterSA))
+		out, err := removeRbacOf(g)
+		var s *stop
+		if !errors.As(err, &s) || s.code != 1 || !strings.Contains(s.msg, otherRouterSA) {
+			t.Fatalf("%v", err)
+		}
+		if len(out.Removed) != 0 || !slices.Equal(out.Left, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) {
+			t.Fatalf("%+v", out)
+		}
+		if w := g.k.writes(0); len(w) != 0 {
+			t.Errorf("written: %v", w)
+		}
+	})
+}
+
+// A subject added between the read and the removal is not removed with the binding: the delete names the version it read.
+func TestRbacASubjectAddedBeforeTheDeleteKeepsTheBinding(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, rbacUser(routerSA))
+	done := false
+	g.k.before = func(call string) {
+		if call == "DELETE "+shopBinding && !done {
+			done = true
+			g.plantBinding(t, rbacUser(routerSA), map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup})
+		}
+	}
+	out, err := removeRbacOf(g)
+	var s *stop
+	if !errors.As(err, &s) || len(out.Removed) != 0 {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if !g.k.has(shopBinding) || !g.k.has(shopRole) || len(subjectsOf(g.k)) != 2 {
+		t.Errorf("binding: %v", g.k.object(shopBinding))
+	}
+	if !slices.Contains(out.Left, "RoleBinding dormeto-shop") || !slices.Contains(out.Left, "Role dormeto-shop") {
+		t.Errorf("left: %+v", out)
 	}
 }
