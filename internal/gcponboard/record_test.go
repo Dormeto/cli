@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
 	"github.com/Dormeto/cli/internal/install"
@@ -250,6 +251,106 @@ func TestMergedRecordAppliesThisRunsChangesOnTheirs(t *testing.T) {
 		Grants: []RecordGrant{{Role: "r1", Condition: &Condition{Title: "t"}}, {Role: "r3"}, {Role: "r2"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+// The set of lists is one value: replaced by each run, never a mix that no run deployed.
+func TestMergedRecordTakesAChangedIPListsWhole(t *testing.T) {
+	list := func(name, url string) RecordIPList {
+		return RecordIPList{Name: name, URL: url, Action: "ignore", RefreshHours: 24}
+	}
+	base := Record{IPLists: []RecordIPList{list("a", "https://a")}}
+	ours := Record{IPLists: []RecordIPList{list("scanners", "https://ours")}}
+	theirs := Record{IPLists: []RecordIPList{list("scanners", "https://theirs")}}
+	if got := mergedRecord(base, ours, theirs); !slices.Equal(got.IPLists, ours.IPLists) {
+		t.Errorf("changed: %+v", got.IPLists)
+	}
+	if got := mergedRecord(base, Record{IPLists: []RecordIPList{}}, theirs); len(got.IPLists) != 0 {
+		t.Errorf("cleared: %+v", got.IPLists)
+	}
+	if got := mergedRecord(base, base, theirs); !slices.Equal(got.IPLists, theirs.IPLists) {
+		t.Errorf("unchanged: %+v", got.IPLists)
+	}
+}
+
+// Two --ip-list runs at once, the other's record written once this run has deployed its own: the record holds this run's
+// set, the one the services have, not a mix that no run deployed, with the name twice.
+func TestRecordTwoIPListRunsAtOnceLeaveTheSetOfOne(t *testing.T) {
+	g := listsRouter(t)
+	if code, out := g.run(t, withLists(europe, IPList{Name: "first", URL: "https://example.com/first.txt", RefreshHours: 24})); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	now, written := g.d.Now, false
+	// complete() asks the time before each write of the record.
+	g.d.Now = func() time.Time {
+		g.s.Lock()
+		defer g.s.Unlock()
+		if svc := g.s.RunServices["europe-west1/"+wakerName]; !written && svc.Env("DMT_IP_LISTS") == blockListEnv {
+			written = true
+			var rec Record
+			if err := json.Unmarshal([]byte(g.s.Documents[recordDB+"/install/record"]["data"].(map[string]any)["stringValue"].(string)), &rec); err != nil {
+				t.Error(err)
+			}
+			rec.IPLists = recordLists([]IPList{{Name: "scanners", URL: "https://example.com/other.txt", RefreshHours: 24}})
+			b, _ := json.Marshal(rec)
+			g.s.Documents[recordDB+"/install/record"]["data"] = map[string]any{"stringValue": string(b)}
+		}
+		return now()
+	}
+	code, out := g.run(t, withLists(europe, blockList))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !written {
+		t.Fatal("the other's write did not happen")
+	}
+	if got := g.record(t).IPLists; len(got) != 1 || got[0].URL != blockList.URL {
+		t.Fatalf("record: %+v", got)
+	}
+}
+
+// A record deleted at the prompt: no router any more, nothing written in the cluster nor in the record, whichever way
+// Firestore would answer a write naming the version read.
+func TestRecordDeletedAtTheGrantsPromptIsNoRouter(t *testing.T) {
+	const document = "/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record"
+	for name, answer := range map[string]func(http.ResponseWriter){
+		"NOT_FOUND": func(w http.ResponseWriter) { gcptest.Fail(w, 404, "NOT_FOUND", "No document to update") },
+		"FAILED_PRECONDITION": func(w http.ResponseWriter) {
+			gcptest.Fail(w, 400, "FAILED_PRECONDITION", "the stored version does not match")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newRbacRig(t)
+			g.waitingAtItsPrompt(func() {
+				g.s.Lock()
+				delete(g.s.Documents, recordDB+"/install/record")
+				g.s.Unlock()
+				g.s.Route("firestore.googleapis.com", document, func(w http.ResponseWriter, r *http.Request) {
+					switch {
+					case r.Method != http.MethodPatch:
+						gcptest.Fail(w, 404, "NOT_FOUND", "Document not found.")
+					case r.URL.Query().Get("currentDocument.exists") == "false":
+						// As Firestore: nothing there, a first write would be accepted, and the record made anew.
+						g.s.Lock()
+						g.s.Documents[recordDB+"/install/record"] = map[string]any{"data": map[string]any{"stringValue": "{}"}}
+						g.s.Unlock()
+						gcptest.Reply(w, map[string]any{"updateTime": "2026-11-01T10:00:00.000001Z"})
+					default:
+						answer(w)
+					}
+				})
+			})
+			code, out := g.call(t, WorkloadsAccessGrant, asking(shopAccess))
+			if code != 1 || !strings.Contains(out, "No router dmtr-europe-west1 is installed") || !strings.Contains(out, "Nothing was changed.") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if w := g.k.writes(0); len(w) != 0 {
+				t.Errorf("written in the cluster: %v", w)
+			}
+			if g.s.Field(recordDB, "install/record", "data") != "" {
+				t.Error("the record is made anew")
+			}
+		})
 	}
 }
 

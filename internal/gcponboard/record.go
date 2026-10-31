@@ -210,8 +210,9 @@ func (d recordDocument) record() (Record, error) {
 }
 
 // loadRecord reads the database and its record; without a record, the one waiting in the cache, else a new one whose
-// before is the project's policy as just read.
+// before is the project's policy as just read. Read again, it says what is there now: nothing of an earlier read stays.
 func (x *run) loadRecord() error {
+	x.recorded, x.resumed, x.recordTime, x.recordBase = false, false, "", Record{}
 	found, err := x.get(firestoreAPI, x.databaseURL(), nil)
 	if err != nil {
 		return err
@@ -409,14 +410,15 @@ func (x *run) rereadRecord() error {
 }
 
 // mergedRecord is theirs with what ours changed since base: a field ours did not change is theirs; a list ours changed is
-// theirs with ours' removals and additions; another field ours changed is ours.
+// theirs with ours' removals and additions; another field ours changed is ours, as IPLists, one value that each run replaces
+// and deploys whole.
 func mergedRecord(base, ours, theirs Record) Record {
 	out := theirs
 	b, o, m := reflect.ValueOf(base), reflect.ValueOf(ours), reflect.ValueOf(&out).Elem()
 	for i := 0; i < m.NumField(); i++ {
 		switch field := o.Field(i); {
 		case reflect.DeepEqual(b.Field(i).Interface(), field.Interface()):
-		case field.Kind() == reflect.Slice:
+		case field.Kind() == reflect.Slice && m.Type().Field(i).Name != "IPLists":
 			m.Field(i).Set(mergedList(b.Field(i), field, m.Field(i)))
 		default:
 			m.Field(i).Set(field)
