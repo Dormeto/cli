@@ -190,14 +190,14 @@ func (d dryRun) targets() []target {
 	return out
 }
 
-// labels name what the onboarding would tag.
-func (d dryRun) labels() []string {
+// labels name what the onboarding would tag: the dry run's VMs and groups, and the databases named.
+func (d dryRun) labels(databases []string) []string {
 	var out []string
 	for _, t := range d.targets() {
 		out = append(out, t.label)
 	}
-	for _, db := range d.Databases {
-		out = append(out, backend{Kind: kindDatabase, Name: db.Name}.String())
+	for _, name := range databases {
+		out = append(out, backend{Kind: kindDatabase, Name: name}.String())
 	}
 	return out
 }
@@ -584,6 +584,9 @@ func (x *run) onboard() error {
 	if err := json.Unmarshal(raw, &dry); err != nil {
 		return fmt.Errorf("the controller's dry run is not understood: %w", err)
 	}
+	if in.GKE == nil {
+		dry.GKE = nil // not asked: what the flags name decides
+	}
 	if !dry.Eligible {
 		return &stop{1, fmt.Sprintf("Backend service %s is not eligible:\n  - %s\nNothing was changed.", in.BackendService, strings.Join(dry.Reasons, "\n  - "))}
 	}
@@ -596,7 +599,7 @@ func (x *run) onboard() error {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
 			return nil
 		}
-		if labels := dry.labels(); len(labels) > 0 || dry.GKE == nil {
+		if labels := dry.labels(x.r.CloudSQL); len(labels) > 0 || dry.GKE == nil {
 			x.say("Backend service %s is eligible as workload %s; onboarding would bind the tag dormeto=managed to:", in.BackendService, in.ID)
 			for _, label := range labels {
 				x.say("  %s", label)
@@ -611,13 +614,14 @@ func (x *run) onboard() error {
 		return nil
 	}
 	targets := dry.targets()
-	for _, db := range dry.Databases {
-		t, found, err := x.databaseTarget(db.Name)
+	// What the flags name, which covers has found in the dry run: nothing else gets the tag.
+	for _, name := range x.r.CloudSQL {
+		t, found, err := x.databaseTarget(name)
 		if err == nil && !found {
 			err = fmt.Errorf("it is not found")
 		}
 		if err != nil {
-			return &stop{1, fmt.Sprintf("Cloud SQL instance %s is not read, and its region says where its tag goes: %s\nNothing was changed.", db.Name, refusal(err))}
+			return &stop{1, fmt.Sprintf("Cloud SQL instance %s is not read, and its region says where its tag goes: %s\nNothing was changed.", name, refusal(err))}
 		}
 		targets = append(targets, t)
 	}
@@ -645,6 +649,12 @@ func (x *run) onboard() error {
 			return err
 		}
 		grant = &g
+		if x.r.JSON {
+			// The answer stays JSON, and what was applied is said all the same.
+			for _, d := range g.done {
+				fmt.Fprintf(x.d.Err, "  ✓ %s, namespace %s, cluster %s\n", d, rb.Namespace, rb.Cluster)
+			}
+		}
 	}
 	var created []target
 	for _, t := range targets {
@@ -678,7 +688,11 @@ func (x *run) onboard() error {
 		case grant != nil:
 			stays, again = "The Kubernetes access stays.", "an access there already is not an error"
 		}
-		return x.ended(fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.", refusal(err), stays, x.showCommand(in.ID), again))
+		giveUp := ""
+		if grant != nil {
+			giveUp = "\nNot there and given up, remove the access with: " + x.revokeCommand(grant.plan.entry())
+		}
+		return x.ended(fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.%s", refusal(err), stays, x.showCommand(in.ID), again, giveUp))
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Onboarded workload %s: %s", w.ID, w.State)
@@ -803,7 +817,7 @@ func (x *run) offboard() error {
 	id := x.r.ID
 	backends, there, err := x.offboardee(id)
 	if err != nil {
-		return x.controllerFailure(id, nil, err)
+		return x.controllerFailure(id, nil, err, false)
 	}
 	// What the workload holds says which features' permissions it asks: nothing has changed yet.
 	if features := x.offboardFeatures(id, backends); len(features) > 0 {
@@ -817,7 +831,7 @@ func (x *run) offboard() error {
 			if x.ctx.Err() != nil {
 				return x.ended(fmt.Sprintf("Interrupted during the controller's delete: workload %s may be offboarded. Its tags and its Kubernetes access stay: run the same command again to finish.", id))
 			}
-			return x.controllerFailure(id, backends, err)
+			return x.controllerFailure(id, backends, err, true)
 		}
 	}
 	out, err := x.afterController(id, backends, x.r.Force)
@@ -1010,7 +1024,7 @@ func (x *run) deleteAtController(id string, backends []backend, force bool) ([]b
 }
 
 // afterController removes what the controller's workload no longer needs: its tags (a wake needs them, so they went on until
-// now), then its Kubernetes access. What it kept for a rerun goes once no tag is left: the record names any access left.
+// now), then its Kubernetes access. What it kept for a rerun goes once nothing is left: the record may not name an access left.
 func (x *run) afterController(id string, backends []backend, force bool) (offboarding, error) {
 	var out offboarding
 	var err error
@@ -1020,7 +1034,7 @@ func (x *run) afterController(id string, backends []backend, force bool) (offboa
 	if err := x.removeAccess(id, backends, force, &out); err != nil {
 		return out, err
 	}
-	if p := x.pendingPath(id); p != "" && len(out.tagsLeft) == 0 {
+	if p := x.pendingPath(id); p != "" && len(out.tagsLeft) == 0 && len(out.accessLeft) == 0 {
 		os.Remove(p)
 	}
 	return out, nil
@@ -1041,8 +1055,8 @@ func controllerGone(err error) bool {
 
 // controllerFailure is the end of an offboarding the controller did not answer. With force it names what is left: nothing is
 // removed, as the workload may still be running, and a tag or an access gone would keep it from waking. backends are what is
-// known of it (nil: the cache's).
-func (x *run) controllerFailure(id string, backends []backend, err error) error {
+// known of it (nil: the cache's). deleting says the call was the delete: with no answer, it may have gone through.
+func (x *run) controllerFailure(id string, backends []backend, err error, deleting bool) error {
 	if !x.r.Force || !controllerGone(err) || x.ctx.Err() != nil {
 		return err
 	}
@@ -1071,8 +1085,12 @@ func (x *run) controllerFailure(id string, backends []backend, err error) error 
 	if x.r.Configuration != "" {
 		flags += " --gcloud-configuration " + x.r.Configuration
 	}
-	return &stop{1, fmt.Sprintf("The controller %s does not answer (%s): workload %s is not offboarded, and nothing was removed, as it may still be running.\nLeft:\n  - %s\nOnce it answers, run the same command again; a good image brings it back: dormeto gcp install %s --image <a good image>",
-		x.n.controller, refusal(err), id, strings.Join(left, "\n  - "), flags)}
+	state := "is not offboarded"
+	if deleting && !refused(err) {
+		state = "may not be offboarded"
+	}
+	return &stop{1, fmt.Sprintf("The controller %s does not answer (%s): workload %s %s, and nothing was removed, as it may still be running.\nLeft:\n  - %s\nOnce it answers, run the same command again; a good image brings it back: dormeto gcp install %s --image <a good image>",
+		x.n.controller, refusal(err), id, state, strings.Join(left, "\n  - "), flags)}
 }
 
 // untag removes the tag bindings of the backends of a workload that is offboarded: none for pods, which carry no tag, and then

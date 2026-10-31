@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 
@@ -69,8 +70,9 @@ func (x *run) databaseTarget(name string) (t target, found bool, err error) {
 		return target{}, false, fmt.Errorf("you need cloudsql.instances.get on project %s, or it does not exist (%s)", x.n.project, refusal(err))
 	case err != nil:
 		return target{}, false, err
-	case instance.Region == "":
-		return target{}, false, fmt.Errorf("Cloud SQL answers no region for it")
+	case !regionPattern.MatchString(instance.Region):
+		// It names the host the operator's token goes to.
+		return target{}, false, fmt.Errorf("Cloud SQL answers %q as its region", instance.Region)
 	}
 	return target{label: backend{Kind: kindDatabase, Name: name}.String(), location: instance.Region, read: true,
 		resource: "//sqladmin.googleapis.com/projects/" + x.n.project + "/instances/" + name}, true, nil
@@ -174,15 +176,28 @@ func (x *run) readOwner(rb Rbac, service string) (kubernetes.Owner, error) {
 }
 
 // undoGrant removes what this run's grant added to a cluster, and says what it did and what is left: an object it created, the
-// router's subject it added to a binding that was there. What was there before stays, updated or not. The objects are read
-// again, for the versions to delete and to find what someone else added since.
+// router's subject it added to a binding that was there. What was there before stays, updated or not, and an update is said. The
+// objects are read again, for the versions to delete, and what a removal would leave stays here too: what someone else holds, or
+// a Role while a binding names it.
 func (x *run) undoGrant(g rbacGrant) []string {
 	rb, role, binding := g.plan.Rbac, g.plan.Role, g.plan.RoleBinding
-	roleMade := slices.Contains(g.done, "created "+role.Wanted.String())
-	bindingMade := slices.Contains(g.done, "created "+binding.Wanted.String())
-	subjectAdded := slices.Contains(g.done, "updated "+binding.Wanted.String()) && !slices.ContainsFunc(binding.Current.Subjects, rb.routerSubject)
-	if !roleMade && !bindingMade && !subjectAdded {
-		return []string{fmt.Sprintf("The Role and RoleBinding %s of namespace %s were there before this run: they stay.", rb.name(), rb.Namespace)}
+	did := func(verb string, c rbacChange) bool { return slices.Contains(g.done, verb+" "+c.Wanted.String()) }
+	subjectAdded := did("updated", binding) && !slices.ContainsFunc(binding.Current.Subjects, rb.routerSubject)
+	var updated []string
+	if did("updated", role) {
+		updated = append(updated, role.Wanted.String())
+	}
+	if did("updated", binding) && !subjectAdded {
+		updated = append(updated, binding.Wanted.String())
+	}
+	updates := func(lines []string) []string {
+		if len(updated) == 0 {
+			return lines
+		}
+		return append(lines, "Of what was there, this run updated: "+strings.Join(updated, ", ")+".")
+	}
+	if !did("created", role) && !did("created", binding) && !subjectAdded {
+		return updates([]string{fmt.Sprintf("The Role and RoleBinding %s of namespace %s were there before this run: they stay.", rb.name(), rb.Namespace)})
 	}
 	revoke := "Remove it with: " + x.revokeCommand(rb.entry())
 	now, err := x.PlanRbac(rb)
@@ -192,32 +207,20 @@ func (x *run) undoGrant(g rbacGrant) []string {
 	if err != nil {
 		return []string{fmt.Sprintf("The Kubernetes access this run added is not removed: %s\n%s", strings.TrimSuffix(refusal(err), "\n"+nothingChanged), revoke)}
 	}
+	removal := now.removal()
 	var lines, removed []string
-	whole := true
+	whole := len(removal.foreign) == 0 && len(removal.kept) == 0
+	for _, f := range removal.foreign {
+		lines = append(lines, f+" is not Dormeto's: it stays.")
+	}
+	for _, k := range removal.kept {
+		lines = append(lines, fmt.Sprintf("%s stays: %s.", k.name, k.why))
+	}
 	notRemoved := func(what string, err error) {
 		whole = false
 		lines = append(lines, fmt.Sprintf("%s of namespace %s is not removed: %s\n%s", what, rb.Namespace, refusal(err), revoke))
 	}
-	stays := func(what, why string) {
-		whole = false
-		lines = append(lines, fmt.Sprintf("%s %s: it stays.", what, why))
-	}
-	remove := func(c rbacChange) {
-		o := *c.Current
-		if err := x.kubeDo(http.MethodDelete, kubeObjectURL(now.Endpoint, o), deleteOptions(o), nil); err != nil && !gcp.IsNotFound(err) {
-			notRemoved(c.Wanted.String(), kubeFailure(rb.Cluster, "delete", o, err))
-		} else {
-			removed = append(removed, c.Wanted.String())
-		}
-	}
-	others := now.otherSubjects()
-	switch c := now.RoleBinding; {
-	case c.Current == nil:
-	case c.Action == rbacRefused:
-		stays(c.Wanted.String(), "is not Dormeto's")
-	case bindingMade && len(others) == 0:
-		remove(c)
-	case bindingMade || subjectAdded:
+	if c := now.RoleBinding; c.Current != nil && c.Action != rbacRefused && (subjectAdded || (did("created", binding) && len(removal.others) > 0)) {
 		whole = false // the binding stays
 		o := *c.Current
 		o.Subjects = slices.DeleteFunc(slices.Clone(o.Subjects), rb.routerSubject)
@@ -227,19 +230,22 @@ func (x *run) undoGrant(g rbacGrant) []string {
 		} else {
 			removed = append(removed, subject)
 		}
-	default:
-		stays(c.Wanted.String(), "was there before this run")
 	}
-	switch c := now.Role; {
-	case c.Current == nil:
-	case !roleMade:
-		stays(c.Wanted.String(), "was there before this run")
-	case c.Action == rbacRefused:
-		stays(c.Wanted.String(), "is not Dormeto's")
-	case len(others) > 0:
-		stays(c.Wanted.String(), binding.Wanted.String()+", which also binds "+strings.Join(others, ", ")+", names it")
-	default:
-		remove(c)
+	for i, c := range removal.deleted {
+		if !did("created", c) {
+			whole = false
+			lines = append(lines, c.Wanted.String()+" was there before this run: it stays.")
+			continue
+		}
+		o := *c.Current
+		if err := x.kubeDo(http.MethodDelete, kubeObjectURL(now.Endpoint, o), deleteOptions(o), nil); err != nil && !gcp.IsNotFound(err) {
+			notRemoved(c.Wanted.String(), kubeFailure(rb.Cluster, "delete", o, err))
+			for _, rest := range removal.deleted[i+1:] {
+				lines = append(lines, rest.Wanted.String()+" stays, as that binding names it.")
+			}
+			break
+		}
+		removed = append(removed, c.Wanted.String())
 	}
 	if len(removed) > 0 {
 		lines = append([]string{"The Kubernetes access this run added is removed: " + strings.Join(removed, ", ") + "."}, lines...)
@@ -249,7 +255,7 @@ func (x *run) undoGrant(g rbacGrant) []string {
 			lines = append(lines, "The install record still lists this access: "+refusal(err))
 		}
 	}
-	return lines
+	return updates(lines)
 }
 
 // recordedAccess are the entries of a workload in the install record.
@@ -325,13 +331,22 @@ func (x *run) accessLines(id string) []string {
 }
 
 // endOffboarding is the end of an uninstall's offboarding: a tag left stops it, as Google refuses to delete a tag still bound; an
-// access left is said, and listed with what the uninstall leaves.
+// access left is said, and listed with what the uninstall leaves, so nothing waits in the cache for it.
 func (x *run) endOffboarding(id string, out offboarding) error {
+	for _, r := range out.removed {
+		x.say("  workload %s: removed %s", id, r)
+	}
+	for _, k := range out.kept {
+		x.say("  workload %s: %s", id, k)
+	}
 	for _, l := range out.accessLeft {
 		x.say("  ! workload %s: %s", id, l)
 	}
 	if len(out.tagsLeft) > 0 {
 		return fmt.Errorf("workload %s is offboarded, but %s\n(run the same command again to finish)", id, strings.Join(out.tagsLeft, "; "))
+	}
+	if p := x.pendingPath(id); p != "" {
+		os.Remove(p)
 	}
 	return nil
 }

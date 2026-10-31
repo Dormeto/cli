@@ -27,6 +27,9 @@ type DryRun struct {
 	Groups  []Resource
 	// GKE is what the NEGs say of a cluster the request names; nil: nothing, as a controller before GKE.
 	GKE *DryRunGKE
+	// GKEUnasked answers GKE with no cluster in the request; MoreDatabases names instances the request does not.
+	GKEUnasked    bool
+	MoreDatabases []string
 }
 
 // DryRunGKE is what a dry run reads of a GKE workload.
@@ -244,7 +247,11 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 				kind = "global"
 			}
 			answer["lb"], answer["databases"] = map[string]any{"kind": kind}, databases
-			if s.DryRun.GKE != nil && in.GKE != nil {
+			for _, name := range s.DryRun.MoreDatabases {
+				databases = append(databases, map[string]any{"name": name, "selfLink": "https://sqladmin.googleapis.com/v1/projects/" + s.ProjectID + "/instances/" + name})
+			}
+			answer["databases"] = databases
+			if s.DryRun.GKE != nil && (in.GKE != nil || s.DryRun.GKEUnasked) {
 				answer["gke"] = map[string]any{"cluster": in.GKE["cluster"], "namespace": s.DryRun.GKE.Namespace, "service": s.DryRun.GKE.Service, "autopilot": s.DryRun.GKE.Autopilot}
 			}
 		}

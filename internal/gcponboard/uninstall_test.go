@@ -1057,7 +1057,7 @@ func TestUninstallForceRemovesTheRbacOfTheWorkloadItOffboards(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "- "+line)
+	contains(t, out, "- "+line, "workload shop: removed RoleBinding dormeto-shop", "workload shop: removed Role dormeto-shop")
 	if strings.Contains(out, line+": left") {
 		t.Fatalf("stale: it is removed:\n%s", out)
 	}
@@ -1080,6 +1080,25 @@ func TestUninstallForceNamesTheRbacItCouldNotRemoveAndGoesOn(t *testing.T) {
 	}
 	contains(t, out[at:], "Role and RoleBinding dormeto-shop, namespace shop, cluster "+shopCluster+": left in the cluster", "access revoke")
 	contains(t, out, "rolebindings is forbidden")
+	// The record, then the end's words, name it: nothing is left to finish from.
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Fatalf("the file stays: %v", err)
+	}
+}
+
+func TestUninstallForceSaysWhatStaysInTheCluster(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	g.k.mu.Lock()
+	delete(g.k.objects, shopBinding)
+	delete(g.k.objects, shopRole)
+	g.k.mu.Unlock()
+	g.k.put(t, shopRole, "Role", map[string]string{"team": "shop"}, map[string]any{"rules": []any{}})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop: Role dormeto-shop stays")
 }
 
 func TestUninstallForceWithTheWorkloadsUnknownListsTheRbacAsLeft(t *testing.T) {

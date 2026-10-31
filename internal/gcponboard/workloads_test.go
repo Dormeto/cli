@@ -1753,7 +1753,7 @@ func TestWorkloadsOnboardGKEWithALostAnswerKeepsTheRbacAndSaysSo(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "the workload may be onboarded", "The Kubernetes access stays", "workloads show shop")
+	contains(t, out, "the workload may be onboarded", "The Kubernetes access stays", "workloads show shop", "access revoke")
 	if strings.Contains(out, "The tag bindings stay") {
 		t.Fatalf("no tag was bound:\n%s", out)
 	}
@@ -1865,7 +1865,7 @@ func TestWorkloadsOnboardGKEWithJSONKeepsItsWordsOutOfTheAnswer(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &w); code != 0 || err != nil || w["id"] != "shop" {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
-	contains(t, errs.String(), "saves money only on Autopilot")
+	contains(t, errs.String(), "saves money only on Autopilot", "created Role dormeto-shop", "created RoleBinding dormeto-shop", "namespace shop", shopCluster)
 }
 
 func TestWorkloadsOnboardGKEDeclinedChangesNothing(t *testing.T) {
@@ -2355,7 +2355,7 @@ func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *te
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "does not answer", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db")
+	contains(t, out, "does not answer", "may not be offboarded", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db")
 	if len(g.bindings()) != 2 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -2484,6 +2484,9 @@ func TestWorkloadsOffboardWithADeleteAnswering404NotTheControllersRemovesNothing
 		}
 		contains(t, out, "no such service")
 		g.nothingRemoved(t, out)
+		if force {
+			contains(t, out, "is not offboarded")
+		}
 	}
 }
 
@@ -2710,5 +2713,144 @@ func TestWorkloadsOffboardInterruptedInTheDeleteSaysItMayBeDone(t *testing.T) {
 	}
 	if _, err := os.Stat(g.offboardFile()); err != nil {
 		t.Fatalf("a rerun finishes from the file: %v", err)
+	}
+}
+
+func TestWorkloadsOnboardGKERefusedSaysWhatItUpdatedOnARoleThatWasThere(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.grantedBefore(t)
+	g.k.put(t, shopRole, "Role", ourLabels, map[string]any{"rules": []any{}})
+	g.s.OnboardingRefused = refusedOnboarding
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "there before this run", "this run updated: Role dormeto-shop")
+	if !g.k.has(shopRole) {
+		t.Fatal("the Role was there")
+	}
+}
+
+func TestWorkloadsOnboardBindsNoTagOnADatabaseTheFlagsDoNotName(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.SQLInstances["other-db"] = "europe-west3"
+	g.s.DryRun.MoreDatabases = []string{"other-db"}
+	r := shopWithDatabase
+	r.DryRun = true
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 || strings.Contains(out, "other-db") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out = g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 0 || strings.Contains(out, "other-db") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, b := range g.bindings() {
+		if strings.Contains(b.Parent, "other-db") {
+			t.Fatalf("bindings %v", g.bindings())
+		}
+	}
+}
+
+func TestWorkloadsOnboardReadsNoClusterItWasNotAskedFor(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.DryRun.GKEUnasked, g.s.DryRun.GKE.Autopilot = true, false
+	g.s.DryRun.VMs = []gcptest.Resource{{Location: "europe-west1-b", Name: "web-1", ID: "111"}}
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "Standard") || len(g.k.callList()) != 0 {
+		t.Fatalf("calls %v:\n%s", g.k.callList(), out)
+	}
+	if _, there := g.onboarding(t)["gke"]; there {
+		t.Fatalf("%v", g.onboarding(t))
+	}
+}
+
+// The region names the host the operator's token goes to.
+func TestWorkloadsOnboardRefusesARegionThatIsNoRegion(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.SQLInstances["shop-db"] = "evil.example.com/x"
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "evil.example.com/x", "Nothing was changed.")
+	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
+		t.Fatal("something was changed")
+	}
+}
+
+func TestWorkloadsOnboardGKERefusedWhenTheBindingWillNotGoLeavesTheRole(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.OnboardingRefused = refusedOnboarding
+	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "RoleBinding dormeto-shop of namespace shop is not removed", "Role dormeto-shop stays")
+	if !g.k.has(shopRole) || !g.k.has(shopBinding) || !slices.Contains(g.rbacOf(t), shopEntry) {
+		t.Fatalf("role %v binding %v record %v", g.k.has(shopRole), g.k.has(shopBinding), g.rbacOf(t))
+	}
+}
+
+// A binding of that name that is no longer ours may name our Role: as a revoke, the undo leaves it.
+func TestWorkloadsOnboardGKERefusedLeavesTheRoleWhenABindingOfThatNameIsNotOurs(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.Route(controllerHost, "/v1/workloads", func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("dryRun") == "true" {
+			gcptest.Reply(w, map[string]any{"eligible": true, "reasons": []any{}, "vms": []any{}, "groups": []any{}, "lb": map[string]any{"kind": "global"}, "databases": []any{},
+				"gke": map[string]any{"namespace": "shop", "service": "web", "autopilot": true}})
+			return
+		}
+		g.k.put(t, shopBinding, "RoleBinding", map[string]string{"team": "shop"}, map[string]any{"subjects": []any{},
+			"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "dormeto-shop"}})
+		w.WriteHeader(400)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": refusedOnboarding, "reason": "not-eligible"})
+	})
+	code, out := g.call(t, WorkloadsOnboard, shopOnGKE)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "RoleBinding dormeto-shop", "not Dormeto's", "Role dormeto-shop stays")
+	if !g.k.has(shopRole) || !g.k.has(shopBinding) {
+		t.Fatalf("role %v binding %v", g.k.has(shopRole), g.k.has(shopBinding))
+	}
+}
+
+// What the record does not list: only the file lets a rerun find it.
+func TestWorkloadsOffboardForceKeepsTheFileForAnAccessTheRecordDoesNotList(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	rec := g.record(t)
+	rec.Rbac = nil
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.s.Lock()
+	g.s.Documents[recordDB+"/install/record"]["data"] = map[string]any{"stringValue": string(b)}
+	g.s.Unlock()
+	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
+	r := shopOffboard
+	r.Force = true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(g.offboardFile()); err != nil {
+		t.Fatalf("no file: %v", err)
+	}
+	g.k.deny = nil
+	if code, out = g.call(t, WorkloadsOffboard, r); code != 0 {
+		t.Fatalf("rerun: exit %d:\n%s", code, out)
+	}
+	if g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatal("the RBAC stays")
+	}
+	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
+		t.Fatalf("the file stays: %v", err)
 	}
 }
