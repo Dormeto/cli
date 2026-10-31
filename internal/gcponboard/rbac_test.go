@@ -293,10 +293,11 @@ func TestRbacGrantWritesExactlyTheRoleAndTheRoleBinding(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	wantRules := []any{
-		map[string]any{"apiGroups": []any{"apps"}, "resources": []any{"deployments", "statefulsets", "replicasets"}, "verbs": []any{"get", "list", "watch"}},
-		map[string]any{"apiGroups": []any{"apps"}, "resources": []any{"deployments/scale", "statefulsets/scale"}, "verbs": []any{"get", "patch"}},
-		map[string]any{"apiGroups": []any{""}, "resources": []any{"pods", "services", "events"}, "verbs": []any{"get", "list", "watch"}},
-		map[string]any{"apiGroups": []any{"keda.sh"}, "resources": []any{"scaledobjects"}, "verbs": []any{"get", "list", "watch", "patch"}},
+		map[string]any{"apiGroups": []any{"apps"}, "resources": []any{"deployments", "statefulsets"}, "verbs": []any{"get"}},
+		map[string]any{"apiGroups": []any{"apps"}, "resources": []any{"replicasets"}, "verbs": []any{"list"}},
+		map[string]any{"apiGroups": []any{"apps"}, "resources": []any{"deployments/scale", "statefulsets/scale"}, "verbs": []any{"patch"}},
+		map[string]any{"apiGroups": []any{""}, "resources": []any{"pods", "events"}, "verbs": []any{"list"}},
+		map[string]any{"apiGroups": []any{"keda.sh"}, "resources": []any{"scaledobjects"}, "verbs": []any{"list", "patch"}},
 	}
 	wantLabels := map[string]any{"app.kubernetes.io/managed-by": "dormeto"}
 	role := g.k.object(shopRole)
@@ -389,9 +390,9 @@ func TestRbacGrantPrintsTheObjectsBeforeAsking(t *testing.T) {
 	if asked < 0 {
 		t.Fatalf("not asked:\n%s", out)
 	}
-	for _, want := range []string{"+ Role dormeto-shop", "+ RoleBinding dormeto-shop", "apps: deployments, statefulsets, replicasets: get, list, watch",
-		"apps: deployments/scale, statefulsets/scale: get, patch", `"": pods, services, events: get, list, watch`,
-		"keda.sh: scaledobjects: get, list, watch, patch", "User " + routerSA, "app.kubernetes.io/managed-by: dormeto"} {
+	for _, want := range []string{"+ Role dormeto-shop", "+ RoleBinding dormeto-shop", "apps: deployments, statefulsets: get",
+		"apps: replicasets: list", "apps: deployments/scale, statefulsets/scale: patch", `"": pods, events: list`,
+		"keda.sh: scaledobjects: list, patch", "User " + routerSA, "app.kubernetes.io/managed-by: dormeto"} {
 		if i := strings.Index(out, want); i < 0 || i > asked {
 			t.Errorf("%q not printed before asking:\n%s", want, out)
 		}
@@ -482,7 +483,7 @@ func TestRbacGrantWritesOnlyWhatDiffersAndKeepsTheObjectsMetadata(t *testing.T) 
 		t.Fatalf("writes: %v", got)
 	}
 	role := g.k.object(shopRole)
-	if rules := role["rules"].([]any); len(rules) != 4 {
+	if rules := role["rules"].([]any); len(rules) != 5 {
 		t.Errorf("rules: %v", rules)
 	}
 	meta := role["metadata"].(map[string]any)
@@ -982,7 +983,7 @@ func TestRbacShowChangesNothingAndPrintsBothSides(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	for _, want := range []string{`"": secrets: get`, "RoleBinding dormeto-shop: none", "~ Role dormeto-shop", "+ RoleBinding dormeto-shop",
-		"keda.sh: scaledobjects: get, list, watch, patch", "User " + routerSA} {
+		"keda.sh: scaledobjects: list, patch", "User " + routerSA} {
 		if !strings.Contains(out, want) {
 			t.Errorf("%q not said:\n%s", want, out)
 		}
@@ -1038,7 +1039,7 @@ func TestRbacShowWithJSON(t *testing.T) {
 	if got.Cluster != shopEntry.Cluster || got.Namespace != "shop" || got.Workload != "shop" || got.ServiceAccount != routerSA {
 		t.Errorf("%+v", got)
 	}
-	if got.Role.Action != "refused" || got.Role.Current == nil || got.Role.Current.Kind != "Role" || len(got.Role.Wanted.Rules) != 4 {
+	if got.Role.Action != "refused" || got.Role.Current == nil || got.Role.Current.Kind != "Role" || len(got.Role.Wanted.Rules) != 5 {
 		t.Errorf("role: %+v", got.Role)
 	}
 	if got.RoleBinding.Action != "create" || got.RoleBinding.Current != nil {
@@ -1451,7 +1452,7 @@ func TestRbacGrantPrintsWhatAnUpdateReplacesBeforeAsking(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	asked := strings.Index(out, "[y/N]")
-	for _, want := range []string{`"": secrets (named token): get`, "subject: User someone@example.com", "keda.sh: scaledobjects: get, list, watch, patch", "subject: User " + routerSA} {
+	for _, want := range []string{`"": secrets (named token): get`, "subject: User someone@example.com", "keda.sh: scaledobjects: list, patch", "subject: User " + routerSA} {
 		if i := strings.Index(out, want); i < 0 || i > asked {
 			t.Errorf("%q not printed before asking:\n%s", want, out)
 		}

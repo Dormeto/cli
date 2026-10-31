@@ -120,10 +120,11 @@ func (rb Rbac) metadata() kubeMetadata {
 // role is the Role of spec §8: what the router's nap, wake and checks read and scale in the namespace.
 func (rb Rbac) role() kubeObject {
 	return kubeObject{APIVersion: rbacAPIVersion, Kind: "Role", Metadata: rb.metadata(), Rules: []rbacRule{
-		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "replicasets"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"apps"}, Resources: []string{"deployments/scale", "statefulsets/scale"}, Verbs: []string{"get", "patch"}},
-		{APIGroups: []string{""}, Resources: []string{"pods", "services", "events"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"keda.sh"}, Resources: []string{"scaledobjects"}, Verbs: []string{"get", "list", "watch", "patch"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets"}, Verbs: []string{"get"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"replicasets"}, Verbs: []string{"list"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments/scale", "statefulsets/scale"}, Verbs: []string{"patch"}},
+		{APIGroups: []string{""}, Resources: []string{"pods", "events"}, Verbs: []string{"list"}},
+		{APIGroups: []string{"keda.sh"}, Resources: []string{"scaledobjects"}, Verbs: []string{"list", "patch"}},
 	}}
 }
 
