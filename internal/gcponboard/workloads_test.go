@@ -732,7 +732,7 @@ func TestWorkloadsOffboardOfAWorkloadThatCannotWakeNamesForce(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "its wake failed", "--force", "left down")
+	contains(t, out, "its wake failed", "--force", "its backends are then left down")
 	if got := g.controllerCalls(mark); !slices.Equal(got[len(got)-1:], []string{"DELETE /v1/workloads/shop"}) || slices.Contains(got, "DELETE /v1/workloads/shop?force=true") {
 		t.Fatalf("%v", got)
 	}

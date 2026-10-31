@@ -911,7 +911,7 @@ func (x *run) deleteWorkload(path string, force bool) (forcedOff, error) {
 		return forcedOff{}, err
 	}
 	if !force {
-		return forcedOff{}, &stop{1, fmt.Sprintf("%s\nOffboard it anyway with --force: its VMs and groups are then left down.", e.Message)}
+		return forcedOff{}, &stop{1, fmt.Sprintf("%s\nOffboard it anyway with --force: its backends are then left down.", e.Message)}
 	}
 	var res forcedOff
 	if err := x.controller(http.MethodDelete, path+"?force=true", nil, &res); err != nil && !workloadNotThere(err) {
