@@ -5,6 +5,7 @@ package gcptest
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -142,8 +143,10 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 		case verb == "resume" && r.Method == http.MethodPost:
 			delete(s.WorkloadDocs[id], "paused")
 			Reply(w, s.workloadBody(id))
-		case verb == "nap" && r.Method == http.MethodPost && s.WorkloadDocs[id]["paused"] != nil:
-			controllerFail(w, 409, "paused", "workload "+id+" is paused")
+		case verb == "nap" && r.Method == http.MethodPost && state == "AWAKE" && s.WorkloadDocs[id]["paused"] != nil:
+			// Only on one that would act: an asleep one is there already, as onboarding.mjs's move and napUnlessPaused.
+			paused := s.WorkloadDocs[id]["paused"].(map[string]any)
+			controllerFail(w, 409, "paused", fmt.Sprintf("workload %s is paused by %v: %v", id, paused["by"], paused["reason"]))
 		case verb == "wake" && r.Method == http.MethodPost && state == "NAPPING":
 			// The wake is kept pending until the nap ends.
 			Reply(w, s.workloadBody(id))
@@ -318,6 +321,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request, id string) {
 			controllerFail(w, 400, "bad-request", s.ScheduleProblem)
 			return
 		}
+		in["at"] = "2026-11-01T10:00:00.000Z"
 		s.Schedules[id] = in
 		shown()
 	case http.MethodDelete:

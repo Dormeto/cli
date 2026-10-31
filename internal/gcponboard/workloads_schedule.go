@@ -237,12 +237,15 @@ func (x *run) pauseWorkload() error {
 	if x.r.KeepAsleep {
 		in["keepAsleep"] = true
 	}
+	ends := "until it is resumed"
 	if x.r.Until != "" {
 		until, err := time.Parse(time.RFC3339, x.r.Until)
 		if err != nil {
 			return &stop{2, fmt.Sprintf("--until: %q is not a time in RFC 3339, such as 2026-12-01T08:00:00+01:00", x.r.Until)}
 		}
-		in["until"] = until.UTC().Format(time.RFC3339)
+		at := until.UTC().Format(time.RFC3339)
+		in["until"] = at
+		ends = "until " + at + ", unless it is resumed sooner"
 	}
 	if err := x.require("workloads"); err != nil {
 		return err
@@ -259,14 +262,30 @@ func (x *run) pauseWorkload() error {
 		return err
 	}
 	return x.print(raw, func(w workload) {
-		x.say("Workload %s is paused (%s): none of its naps runs until it is resumed.", w.ID, reason)
+		x.say("Workload %s is paused (%s): none of its naps runs %s.", w.ID, reason, ends)
 		if x.r.KeepAsleep {
-			x.say("It stays as it is (%s): a visitor still wakes the workload, and scheduled wakes wait until the pause ends.", strings.ToLower(w.State))
+			x.say("It stays as it is (%s): a visitor still wakes the workload, and scheduled and maintenance wakes wait until the pause ends.", strings.ToLower(w.State))
 		} else {
-			x.say("A workload asleep is woken (now %s), and kept awake.", strings.ToLower(w.State))
+			x.say("%s", pausedState(w.State))
 		}
 		x.say("End it with: %s", strings.Replace(x.showCommand(w.ID), " show ", " resume ", 1))
 	})
+}
+
+// pausedState says what a plain pause makes of a workload, from its state in the answer, as the pause was asked: one asleep
+// is woken in the background.
+func pausedState(state string) string {
+	switch state {
+	case "AWAKE":
+		return "It stays awake."
+	case "ASLEEP":
+		return "It was asleep: it is being woken, and then stays awake."
+	case "FAILED":
+		return "It had failed: it is being woken, and then stays awake."
+	case "NAPPING":
+		return "It is napping: it wakes once its nap ends, and then stays awake."
+	}
+	return "It is " + strings.ToLower(state) + ", and then stays awake."
 }
 
 func (x *run) resumeWorkload() error {

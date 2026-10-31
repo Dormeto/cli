@@ -163,7 +163,7 @@ func TestGcpWorkloadsPauseWithoutAReasonIsExitTwo(t *testing.T) {
 
 func TestGcpWorkloadsPauseHelpSaysWhatEachKindDoes(t *testing.T) {
 	out, _, code := executed(t, build{}, "gcp", "workloads", "pause", "--help")
-	for _, want := range []string{"--reason", "--keep-asleep", "--until", "a visitor still wakes the workload", "scheduled wakes wait", "asleep is woken", "RFC 3339"} {
+	for _, want := range []string{"--reason", "--keep-asleep", "--until", "a visitor still wakes the workload", "scheduled and maintenance wakes wait", "asleep is woken", "RFC 3339"} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Errorf("%d %s lacks %s", code, out, want)
 		}

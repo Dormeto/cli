@@ -1048,7 +1048,7 @@ func TestWorkloadsPauseKeepAsleepAndUntilSayWhatTheyDo(t *testing.T) {
 	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, "a visitor still wakes the workload", "scheduled wakes wait")
+	contains(t, out, "a visitor still wakes the workload", "scheduled and maintenance wakes wait")
 	if strings.Contains(out, "woken") {
 		t.Fatalf("%s", out)
 	}
@@ -1080,7 +1080,7 @@ func TestWorkloadsNapOfAPausedWorkloadSaysItIsPaused(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is paused\n")
+	contains(t, out, "workload shop is paused by me@example.com: freeze\n")
 }
 
 func TestWorkloadsShowAndListShowAPause(t *testing.T) {
@@ -1143,4 +1143,79 @@ func TestWorkloadsScheduleOfAnUnknownWorkloadSaysSo(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "no workload nope") || strings.Contains(out, "0.35.0") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
+}
+
+// The answer's state is the one as the pause was asked: it must not read as a contradiction.
+func TestWorkloadsPauseSaysWhatBecomesOfTheWorkloadByItsState(t *testing.T) {
+	for state, want := range map[string]string{
+		"ASLEEP":  "It was asleep: it is being woken, and then stays awake.\n",
+		"FAILED":  "It had failed: it is being woken, and then stays awake.\n",
+		"NAPPING": "It is napping: it wakes once its nap ends, and then stays awake.\n",
+		"WAKING":  "It is waking, and then stays awake.\n",
+		"AWAKE":   "It stays awake.\n",
+	} {
+		g := newWorkloadsRig(t)
+		g.s.Workloads["shop"] = state
+		r := workloadsEurope
+		r.ID, r.Reason = "shop", "freeze"
+		code, out := g.call(t, WorkloadsPause, r)
+		if code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", state, code, out)
+		}
+		contains(t, out, want, "none of its naps runs until it is resumed.\n")
+		if strings.Contains(out, "(now ") {
+			t.Errorf("%s:\n%s", state, out)
+		}
+	}
+}
+
+func TestWorkloadsPauseWithUntilSaysTheTime(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.ID, r.Reason, r.Until = "shop", "freeze", "2026-12-01T08:00:00+01:00"
+	code, out := g.call(t, WorkloadsPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "none of its naps runs until 2026-12-01T07:00:00Z, unless it is resumed sooner.\n")
+}
+
+func TestWorkloadsPauseKeepAsleepNamesMaintenanceWakes(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "ASLEEP"
+	r := workloadsEurope
+	r.ID, r.Reason, r.KeepAsleep = "shop", "freeze", true
+	code, out := g.call(t, WorkloadsPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "It stays as it is (asleep): a visitor still wakes the workload, and scheduled and maintenance wakes wait until the pause ends.\n")
+}
+
+// As the router: a paused workload's nap is refused only when it would act, on an AWAKE one.
+func TestWorkloadsNapOfAPausedWorkloadAlreadyAsleepIsNoRefusal(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "ASLEEP"
+	r := workloadsEurope
+	r.ID, r.Reason, r.KeepAsleep = "shop", "freeze", true
+	g.call(t, WorkloadsPause, r)
+	if code, out := g.call(t, WorkloadsNap, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestWorkloadsScheduleShowSaysWhoSetItAndWhen(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.ID, r.File = "shop", g.scheduleFile(t, parisSchedule)
+	if code, out := g.call(t, WorkloadsScheduleSet, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.call(t, WorkloadsScheduleShow, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Schedule of workload shop (set by me@example.com, 2026-11-01T10:00:00.000Z):\n")
 }

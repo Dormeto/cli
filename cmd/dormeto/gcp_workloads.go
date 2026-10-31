@@ -173,14 +173,14 @@ func newGcpWorkloadsPause(run gcpRun, version string) *cobra.Command {
 	cmd := newGcpWorkloadsOneWith("pause", "Pause a workload's naps",
 		"Pause a workload: it is not napped, by its idle window, its schedule or 'nap', until it is resumed or --until.\n"+
 			"A workload asleep is woken. With --keep-asleep it is not: it stays as it is, a visitor still wakes the workload,\n"+
-			"and scheduled wakes wait until the pause ends. --until takes a time in RFC 3339 (2026-12-01T08:00:00+01:00), at most 366 days away.",
+			"and scheduled and maintenance wakes wait until the pause ends. --until takes a time in RFC 3339 (2026-12-01T08:00:00+01:00), at most 366 days away.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, until
 			return run(ctx, d, r)
 		}, version, &f, false)
 	fl := cmd.Flags()
 	fl.StringVar(&reason, "reason", "", "why the workload is paused, at most 256 characters (required)")
-	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake a workload asleep: a visitor still wakes it, scheduled wakes wait")
+	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake a workload asleep: a visitor still wakes it, scheduled and maintenance wakes wait")
 	fl.StringVar(&until, "until", "", "end the pause at this time, in RFC 3339 (default: when resumed)")
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
