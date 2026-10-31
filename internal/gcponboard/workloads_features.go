@@ -72,7 +72,7 @@ func (x *run) databaseTarget(name string) (t target, found bool, err error) {
 	case instance.Region == "":
 		return target{}, false, fmt.Errorf("Cloud SQL answers no region for it")
 	}
-	return target{label: backend{Kind: kindDatabase, Name: name}.String(), location: instance.Region,
+	return target{label: backend{Kind: kindDatabase, Name: name}.String(), location: instance.Region, read: true,
 		resource: "//sqladmin.googleapis.com/projects/" + x.n.project + "/instances/" + name}, true, nil
 }
 

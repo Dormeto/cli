@@ -155,6 +155,7 @@ type target struct {
 	location string // the zone or region: the tag binding endpoint's prefix
 	path     string // zones/<zone>/instances/<id>, zones/<zone>/instanceGroupManagers/<id> or regions/<region>/instanceGroupManagers/<id>
 	resource string // the whole parent of what is not Compute Engine's: then no path
+	read     bool   // this run has just read it: a 403 on its bindings does not mean it is gone
 }
 
 func (t target) parent(number string) string {
@@ -1129,7 +1130,8 @@ func (x *run) planPendingOffboards(listed []workloadRef) *step {
 
 // unbind removes the binding of the tag value from a VM or a group; false when there was none. Resource Manager answers
 // 403 for a resource that does not exist (the permission being held, as the checks proved; see tag): a VM deleted by hand
-// is warned of, on the error stream (the answer may be JSON), and the run goes on.
+// is warned of, on the error stream (the answer may be JSON), and the run goes on. For a target this run has just read, that
+// reason is false: the 403 is an error.
 func (x *run) unbind(t target, value string) (bool, error) {
 	var list struct {
 		TagBindings []struct{ Name, TagValue string } `json:"tagBindings"`
@@ -1138,7 +1140,7 @@ func (x *run) unbind(t target, value string) (bool, error) {
 		if gcp.IsNotFound(err) {
 			return false, nil
 		}
-		if gcp.IsDenied(err) && !serviceDisabled(err) {
+		if gcp.IsDenied(err) && !serviceDisabled(err) && !t.read {
 			fmt.Fprintf(x.d.Err, "  ! the tag bindings of %s are not read (%s): it may be gone, going on\n", t.label, refusal(err))
 			return false, nil
 		}

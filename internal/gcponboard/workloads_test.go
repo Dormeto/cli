@@ -2359,3 +2359,60 @@ func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *te
 		t.Fatalf("bindings %v", g.bindings())
 	}
 }
+
+// The instance was just read: a 403 on its bindings is no sign that it is gone, and its tag is left.
+func TestWorkloadsOffboardForceNamesADatabasesTagWhoseBindingsAreDenied(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: databaseHost, Path: "/v3/tagBindings", Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
+	var errs bytes.Buffer
+	g.d.Err = &errs
+	r := shopOffboard
+	r.Force, r.JSON = true, true
+	code, out := g.call(t, WorkloadsOffboard, r)
+	var got struct {
+		Offboarded bool
+		NotRemoved []string
+	}
+	if err := json.Unmarshal([]byte(out), &got); code != 1 || err != nil || !got.Offboarded || len(got.NotRemoved) != 1 {
+		t.Fatalf("%d %v:\n%s\n%s", code, err, out, errs.String())
+	}
+	contains(t, got.NotRemoved[0], "the tag of Cloud SQL instance shop-db is not removed", forbidden)
+	if !slices.Contains(g.bindings(), gcptest.TagBinding{Parent: databaseParent, TagValue: g.tagValue(t)}) {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+	if _, err := os.Stat(g.offboardFile()); err != nil {
+		t.Fatalf("a rerun finishes from the file: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardStopsOnADatabasesTagWhoseBindingsAreDeniedThenARerunFinishes(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
+	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "workload shop is offboarded, but the tag of Cloud SQL instance shop-db is not removed", forbidden, "run the same command again")
+	if strings.Contains(out, "it may be gone") {
+		t.Fatalf("it was just read:\n%s", out)
+	}
+	if code, out = g.call(t, WorkloadsOffboard, shopOffboard); code != 0 {
+		t.Fatalf("rerun: exit %d:\n%s", code, out)
+	}
+	if len(g.bindings()) != 0 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+}
+
+func TestWorkloadsOnboardRefusedSaysADatabasesTagWhoseBindingsAreDenied(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.OnboardingRefused = refusedOnboarding
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: databaseHost, Path: "/v3/tagBindings", Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "The tag binding of Cloud SQL instance shop-db is not removed", forbidden)
+}

@@ -1132,3 +1132,14 @@ func TestUninstallForceStopsOnADatabasesTagItCouldNotRemove(t *testing.T) {
 		t.Fatalf("bindings %v", g.bindings())
 	}
 }
+
+func TestUninstallForceStopsOnADatabasesTagWhoseBindingsAreDenied(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Cloud SQL instance shop-db", forbidden, "Run the same command again")
+}
