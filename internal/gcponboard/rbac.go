@@ -7,8 +7,9 @@ package gcponboard
 // else's: never changed, never removed. On our RoleBinding, the subjects Dormeto did not add stay: an update keeps them, and
 // while one remains a removal takes the router's subject alone and leaves both objects. Another router's service account
 // there is a refusal, as two routers cannot share one dormeto-<workload>. The install record lists each workload's access
-// before it is applied and until it is removed. Exit codes: 0; 1 when Google or Kubernetes refuses, an object is someone else's, or the cluster has no
-// DNS endpoint; 2 for a bad flag or a missing answer; 130 when interrupted.
+// before it is applied and until it is removed. Exit codes: 0; 1 when Google or Kubernetes refuses, an object is someone
+// else's or names another router, or the cluster has no DNS endpoint; 2 for a bad flag or a missing answer; 130 when
+// interrupted.
 
 import (
 	"context"

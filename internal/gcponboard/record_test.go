@@ -36,14 +36,15 @@ func (g *rbacRig) waitingAtItsPrompt(meanwhile func()) {
 	g.d.Prompter = install.NewPrompter(&atPrompt{meanwhile: meanwhile}, g.out, true)
 }
 
-// another runs a command of another person's: its own output, the same project.
+// another runs a command of another person's: its own output, the same project. It runs on the prompt's goroutine: a
+// failure is not fatal there.
 func (g *rbacRig) another(t *testing.T, f func(context.Context, Deps, Request) int, r Request) {
 	t.Helper()
 	var out bytes.Buffer
 	d := g.d
 	d.Out, d.Err, d.Terminal = &out, &out, false
 	if code := f(context.Background(), d, r); code != 0 {
-		t.Fatalf("exit %d:\n%s", code, out.String())
+		t.Errorf("exit %d:\n%s", code, out.String())
 	}
 }
 
@@ -74,15 +75,9 @@ func TestRecordAGrantAtItsPromptLosesNoWriteMadeMeanwhile(t *testing.T) {
 func TestRecordAGrantKeepsWhatAnInstallWroteMeanwhile(t *testing.T) {
 	g := newRbacRig(t)
 	g.waitingAtItsPrompt(func() {
-		d := g.d
-		d.Terminal = false
-		var out bytes.Buffer
-		d.Out, d.Err = &out, &out
 		r := withImage
 		r.Image = nextImage
-		if code := Install(context.Background(), d, r); code != 0 {
-			t.Fatalf("exit %d:\n%s", code, out.String())
-		}
+		g.another(t, Install, r)
 	})
 	code, out := g.call(t, WorkloadsAccessGrant, asking(shopAccess))
 	if code != 0 {
