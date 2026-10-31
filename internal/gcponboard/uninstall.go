@@ -552,7 +552,10 @@ func (x *run) planRolesRemoval() (*step, error) {
 		if err != nil {
 			return nil, err
 		}
-		steps = append(steps, s)
+		// Gone since the read above: nothing to remove.
+		if s != nil {
+			steps = append(steps, s)
+		}
 	}
 	return combine("roles", steps), nil
 }

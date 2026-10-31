@@ -1019,3 +1019,32 @@ func TestUninstallForceSaysTheControllersRefusalOfAnOffboardingAlone(t *testing.
 	}
 	contains(t, out, "  ✗ offboard: workload shop: cannot offboard shop: it is NAPPING\n")
 }
+
+// A role that goes between the listing's read and the removal's is no step: it panicked in combine.
+func TestUninstallARoleVanishingBetweenTwoReadsIsNoStep(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	reads := 0
+	const role = "/v1/projects/dormeto-dev/roles/dormetoRouterBackends"
+	g.s.Route("iam.googleapis.com", role, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == role {
+			if reads++; reads == 1 {
+				gcptest.Reply(w, map[string]any{"name": "projects/dormeto-dev/roles/dormetoRouterBackends", "stage": "GA"})
+				return
+			}
+		}
+		gcptest.Fail(w, 404, "NOT_FOUND", "The role was not found.")
+	})
+	code, out := g.uninstall(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "- role dormetoRouterBackends") {
+		t.Errorf("planned:\n%s", out)
+	}
+	if !strings.Contains(out, "- role dormetoRouter\n") {
+		t.Errorf("the other role is not planned:\n%s", out)
+	}
+}
