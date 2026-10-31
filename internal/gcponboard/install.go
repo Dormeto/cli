@@ -99,6 +99,8 @@ type run struct {
 	granted, google map[string]bool
 
 	rec           *Record
+	recordBase    Record   // the database's record as this run last read or wrote it: what its changes are since
+	recordTime    string   // that document's version, "" when this run knows none
 	resumed       bool     // the record is an unfinished install's: from the cache, or the database's with Running set
 	sinceLast     []string // the plan's lines of the project's grants that the record does not explain
 	enabled       []string // the manifest's APIs on at the start

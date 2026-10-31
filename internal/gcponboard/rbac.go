@@ -767,6 +767,10 @@ func (x *run) confirm(question string) error {
 	return nil
 }
 
+func (x *run) noRouter() error {
+	return &stop{1, fmt.Sprintf("No router %s is installed in project %s: there is no install record. Run dormeto gcp install first.\nNothing was changed.", x.n.router, x.n.project)}
+}
+
 func (x *run) accessGrant() error {
 	rb, err := x.rbacRequest(true)
 	if err != nil {
@@ -777,7 +781,7 @@ func (x *run) accessGrant() error {
 		return err
 	}
 	if !found {
-		return &stop{1, fmt.Sprintf("No router %s is installed in project %s: there is no install record. Run dormeto gcp install first.\nNothing was changed.", x.n.router, x.n.project)}
+		return x.noRouter()
 	}
 	plan, err := x.PlanRbac(rb)
 	if err != nil {
@@ -799,6 +803,13 @@ func (x *run) accessGrant() error {
 	} else {
 		if err := x.confirm(fmt.Sprintf("Apply these to namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
 			return err
+		}
+		// A prompt can wait long: what is listed is read again, so that an entry revoked meanwhile is listed again.
+		if found, err = x.rbacRecord(); err != nil {
+			return err
+		}
+		if !found {
+			return x.noRouter()
 		}
 		added, err := x.recordRbac(rb)
 		if err != nil {

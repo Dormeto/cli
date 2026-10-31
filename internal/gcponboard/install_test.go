@@ -414,7 +414,8 @@ func TestInstallUndeletesThenUpdatesADeletedRole(t *testing.T) {
 	var got []string
 	for _, c := range g.s.Calls()[mark:] {
 		if c.Mutating() {
-			got = append(got, c.Method+" "+c.URL)
+			u, _, _ := strings.Cut(c.URL, "?currentDocument.")
+			got = append(got, c.Method+" "+u)
 		}
 	}
 	record := "PATCH https://firestore.googleapis.com/v1/projects/dormeto-dev/databases/dmtr-europe-west1/documents/install/record"
@@ -1260,7 +1261,8 @@ func (g *installRig) changes(mark int) []string {
 	var got []string
 	for _, c := range g.s.Calls()[mark:] {
 		if c.Mutating() {
-			got = append(got, c.Method+" "+strings.TrimPrefix(c.URL, "https://"))
+			u, _, _ := strings.Cut(c.URL, "?currentDocument.") // TestRecordEachWriteNamesTheVersionItRead has it
+			got = append(got, c.Method+" "+strings.TrimPrefix(u, "https://"))
 		}
 	}
 	return got
@@ -1384,7 +1386,8 @@ func TestInstallImageCreatesInOrderControllerBindingWakerNEGJob(t *testing.T) {
 	var got []string
 	for _, c := range g.s.Mutations() {
 		if c.Host == "run.googleapis.com" || c.Host == "compute.googleapis.com" || c.Host == "cloudscheduler.googleapis.com" {
-			got = append(got, c.Method+" "+strings.TrimPrefix(c.URL, "https://"))
+			u, _, _ := strings.Cut(c.URL, "?currentDocument.") // TestRecordEachWriteNamesTheVersionItRead has it
+			got = append(got, c.Method+" "+strings.TrimPrefix(u, "https://"))
 		}
 	}
 	want := []string{

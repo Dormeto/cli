@@ -6,6 +6,7 @@ package gcptest
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"slices"
 	"strconv"
@@ -637,7 +638,7 @@ func (s *Server) firestore(w http.ResponseWriter, r *http.Request, body []byte) 
 			Fail(w, 404, "NOT_FOUND", "Document \"projects/"+s.ProjectID+"/databases/"+id+"/documents/"+path+"\" not found.")
 			return
 		}
-		Reply(w, map[string]any{"name": "projects/" + s.ProjectID + "/databases/" + id + "/documents/" + path, "fields": fields})
+		Reply(w, map[string]any{"name": "projects/" + s.ProjectID + "/databases/" + id + "/documents/" + path, "fields": fields, "updateTime": updateTime(fields)})
 	case isDocument && r.Method == http.MethodPatch:
 		var in struct {
 			Fields map[string]any `json:"fields"`
@@ -646,11 +647,33 @@ func (s *Server) firestore(w http.ResponseWriter, r *http.Request, body []byte) 
 			Fail(w, 400, "INVALID_ARGUMENT", "bad document")
 			return
 		}
+		current, exists := s.Documents[id+"/"+path]
+		query := r.URL.Query()
+		switch time := query.Get("currentDocument.updateTime"); {
+		case query.Get("currentDocument.exists") == "false" && exists:
+			Fail(w, 409, "ALREADY_EXISTS", "Document already exists: "+path)
+			return
+		case (time != "" || query.Get("currentDocument.exists") == "true") && !exists:
+			Fail(w, 404, "NOT_FOUND", "No document to update: "+path)
+			return
+		case time != "" && time != updateTime(current):
+			Fail(w, 400, "FAILED_PRECONDITION", "the stored version ("+updateTime(current)+") does not match the required base version ("+time+")")
+			return
+		}
 		s.Documents[id+"/"+path] = in.Fields
-		Reply(w, map[string]any{"name": "projects/" + s.ProjectID + "/databases/" + id + "/documents/" + path, "fields": in.Fields})
+		Reply(w, map[string]any{"name": "projects/" + s.ProjectID + "/databases/" + id + "/documents/" + path, "fields": in.Fields, "updateTime": updateTime(in.Fields)})
 	default:
 		noRoute(w, r)
 	}
+}
+
+// updateTime is a document's version, as Firestore writes it: it follows the fields, so a test that places a document by
+// hand is a write too.
+func updateTime(fields map[string]any) string {
+	b, _ := json.Marshal(fields)
+	h := fnv.New32a()
+	h.Write(b)
+	return fmt.Sprintf("2026-11-01T10:00:00.%06dZ", h.Sum32()%1000000)
 }
 
 func (s *Server) queueBody(region, id string, q *Queue) map[string]any {

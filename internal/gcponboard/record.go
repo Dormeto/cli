@@ -5,7 +5,8 @@ package gcponboard
 // added (with the step after which they appeared), and the project's bindings before the first
 // install, never removed. Until the database exists, the record waits in <Cache>/dormeto/gcp/<project>-<region>-
 // before.json: a later run starts from that file (its before is the true one of an earlier run that stopped), and the
-// file is deleted once the database holds the record.
+// file is deleted once the database holds the record. Each write names the version of the document it read: another's
+// write since is read, this run's changes are applied on it, and it is written again, so neither is lost.
 
 import (
 	"encoding/json"
@@ -13,10 +14,14 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/Dormeto/cli/internal/gcp"
 )
 
 const recordPath = "install/record"
@@ -194,6 +199,14 @@ type recordDocument struct {
 			StringValue string `json:"stringValue"`
 		} `json:"data"`
 	} `json:"fields"`
+	UpdateTime string `json:"updateTime"`
+}
+
+// record parses the document's record.
+func (d recordDocument) record() (Record, error) {
+	var rec Record
+	err := json.Unmarshal([]byte(d.Fields.Data.StringValue), &rec)
+	return rec, err
 }
 
 // loadRecord reads the database and its record; without a record, the one waiting in the cache, else a new one whose
@@ -211,11 +224,13 @@ func (x *run) loadRecord() error {
 			return err
 		}
 		if found {
-			var rec Record
-			if err := json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec); err != nil {
+			rec, err := doc.record()
+			if err != nil {
 				return fmt.Errorf("%s in database %s: %w", recordPath, x.n.database, err)
 			}
 			x.rec, x.recorded, x.resumed = &rec, true, rec.Running != ""
+			x.recordBase, _ = doc.record()
+			x.recordTime = doc.UpdateTime
 			return nil
 		}
 	}
@@ -340,16 +355,115 @@ func (x *run) complete() {
 	}
 }
 
-// writeRecord writes the record in the database, then deletes the cache's copy.
-func (x *run) writeRecord() error {
+// recordTries bounds the writes of the record that find another's write first.
+const recordTries = 5
+
+// recordConflict tells that the document is not the version the write named, or that it exists when none was read.
+func recordConflict(err error) bool {
+	var e *gcp.Error
+	return errors.As(err, &e) && slices.Contains([]string{"FAILED_PRECONDITION", "ABORTED", "ALREADY_EXISTS"}, e.Status)
+}
+
+// patchRecord writes the record if the document is still the version this run knows, or if there is none when it knows none.
+func (x *run) patchRecord() error {
 	x.complete()
 	b, err := json.Marshal(x.rec)
 	if err != nil {
 		return err
 	}
 	in := map[string]any{"fields": map[string]any{"data": map[string]any{"stringValue": string(b)}}}
-	if err := x.call(http.MethodPatch, x.recordURL(), in, nil); err != nil {
+	precondition := "currentDocument.exists=false"
+	if x.recordTime != "" {
+		precondition = "currentDocument.updateTime=" + url.QueryEscape(x.recordTime)
+	}
+	var written struct {
+		UpdateTime string `json:"updateTime"`
+	}
+	if err := x.call(http.MethodPatch, x.recordURL()+"?"+precondition, in, &written); err != nil {
 		return err
+	}
+	x.recordTime = written.UpdateTime
+	x.recordBase = Record{}
+	return json.Unmarshal(b, &x.recordBase)
+}
+
+// rereadRecord reads the document another's write changed, and applies this run's changes on it.
+func (x *run) rereadRecord() error {
+	var doc recordDocument
+	found, err := x.get(firestoreAPI, x.recordURL(), &doc)
+	if err != nil {
+		return err
+	}
+	if !found {
+		x.recordTime = ""
+		return nil
+	}
+	theirs, err := doc.record()
+	if err != nil {
+		return fmt.Errorf("%s in database %s: %w", recordPath, x.n.database, err)
+	}
+	*x.rec = mergedRecord(x.recordBase, *x.rec, theirs)
+	x.recordBase, _ = doc.record()
+	x.recordTime = doc.UpdateTime
+	return nil
+}
+
+// mergedRecord is theirs with what ours changed since base: a field ours did not change is theirs; a list ours changed is
+// theirs with ours' removals and additions; another field ours changed is ours.
+func mergedRecord(base, ours, theirs Record) Record {
+	out := theirs
+	b, o, m := reflect.ValueOf(base), reflect.ValueOf(ours), reflect.ValueOf(&out).Elem()
+	for i := 0; i < m.NumField(); i++ {
+		switch field := o.Field(i); {
+		case reflect.DeepEqual(b.Field(i).Interface(), field.Interface()):
+		case field.Kind() == reflect.Slice:
+			m.Field(i).Set(mergedList(b.Field(i), field, m.Field(i)))
+		default:
+			m.Field(i).Set(field)
+		}
+	}
+	slices.Sort(out.Features)
+	return out
+}
+
+// mergedList is theirs without what ours took out of base, then with what ours added to it.
+func mergedList(base, ours, theirs reflect.Value) reflect.Value {
+	has := func(list, item reflect.Value) bool {
+		for i := 0; i < list.Len(); i++ {
+			if reflect.DeepEqual(list.Index(i).Interface(), item.Interface()) {
+				return true
+			}
+		}
+		return false
+	}
+	out := reflect.MakeSlice(theirs.Type(), 0, theirs.Len()+ours.Len())
+	for i := 0; i < theirs.Len(); i++ {
+		if item := theirs.Index(i); !has(base, item) || has(ours, item) {
+			out = reflect.Append(out, item)
+		}
+	}
+	for i := 0; i < ours.Len(); i++ {
+		if item := ours.Index(i); !has(base, item) && !has(out, item) {
+			out = reflect.Append(out, item)
+		}
+	}
+	return out
+}
+
+// writeRecord writes the record in the database, then deletes the cache's copy. Another's write since this run's read is
+// not lost, nor is this run's (mergedRecord).
+func (x *run) writeRecord() error {
+	for tries := 1; ; tries++ {
+		err := x.patchRecord()
+		if err == nil {
+			break
+		}
+		if !recordConflict(err) || tries == recordTries {
+			return err
+		}
+		if err := x.rereadRecord(); err != nil {
+			return err
+		}
 	}
 	x.recorded = true
 	if path := x.cachePath(); path != "" {
