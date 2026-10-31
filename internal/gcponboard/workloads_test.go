@@ -993,7 +993,8 @@ func TestWorkloadsScheduleSetRefusesAMissingOrUnreadableFileBeforeAnyCall(t *tes
 			t.Errorf("%s: exit %d:\n%s", name, code, out)
 		}
 	}
-	if got := g.controllerCalls(mark); len(got) != 0 {
+	// Before the permission calls too: nothing at all is asked of Google.
+	if got := g.s.Calls()[mark:]; len(got) != 0 {
 		t.Fatalf("%v", got)
 	}
 }

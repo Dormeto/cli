@@ -35,7 +35,7 @@ func WorkloadsScheduleShow(ctx context.Context, d Deps, r Request) int {
 // WorkloadsScheduleSet is `dormeto gcp workloads schedule set <id> --file <schedule.json>`.
 func WorkloadsScheduleSet(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
-	return x.workloadsEnd(x.schedule(http.MethodPut, x.scheduleFromFile))
+	return x.workloadsEnd(x.scheduleSet())
 }
 
 // WorkloadsScheduleClear is `dormeto gcp workloads schedule clear <id>`.
@@ -80,8 +80,24 @@ type nextEvent struct {
 	Window int    `json:"window"`
 }
 
-// scheduleFromFile is the body of a PUT: the file's schedule, `by` the operator's account.
-func (x *run) scheduleFromFile() (any, error) {
+// scheduleSet reads the file first, before any call; the body of the PUT is its schedule, `by` the operator's account.
+func (x *run) scheduleSet() error {
+	schedule, err := x.scheduleFile()
+	if err != nil {
+		return err
+	}
+	return x.schedule(http.MethodPut, func() (any, error) {
+		by, err := x.d.Google.Tokens.Account(x.ctx)
+		if err != nil {
+			return nil, err
+		}
+		schedule["by"] = by
+		return schedule, nil
+	})
+}
+
+// scheduleFile is the schedule of --file.
+func (x *run) scheduleFile() (map[string]any, error) {
 	if x.r.File == "" {
 		return nil, &stop{2, "--file: needed, the file of the schedule as JSON"}
 	}
@@ -93,11 +109,6 @@ func (x *run) scheduleFromFile() (any, error) {
 	if err := json.Unmarshal(raw, &schedule); err != nil || schedule == nil {
 		return nil, &stop{2, fmt.Sprintf("--file: %s is not a JSON object (a schedule)", x.r.File)}
 	}
-	by, err := x.d.Google.Tokens.Account(x.ctx)
-	if err != nil {
-		return nil, err
-	}
-	schedule["by"] = by
 	return schedule, nil
 }
 
