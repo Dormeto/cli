@@ -22,6 +22,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/kubernetes"
@@ -37,6 +38,11 @@ const (
 	// maxBackendServiceName is what Compute Engine allows of a backend service's name; the workload's waker backend service
 	// is dmtr-<region>-<workload>.
 	maxBackendServiceName = 63
+
+	// undoTimeout bounds what a stopped onboarding removes, as it no longer stops at an interrupt.
+	undoTimeout = 2 * time.Minute
+
+	notSent = "Interrupted before the onboarding was sent."
 
 	// A workload's backend kinds beyond a VM's and a group's.
 	kindDatabase, kindPods = "cloudsql", "k8s"
@@ -647,18 +653,24 @@ func (x *run) onboard() error {
 			created = append(created, t)
 		}
 		if err != nil {
-			return fmt.Errorf("the tag is not bound to %s: %s\n%s", t.label, refusal(err), x.undoOnboarding(grant, created, value))
+			what := fmt.Sprintf("the tag is not bound to %s: %s", t.label, refusal(err))
+			if x.ctx.Err() != nil {
+				what = notSent
+				if !made {
+					what += fmt.Sprintf(" The tag of %s may be bound: it was being asked for, and no answer came.", t.label)
+				}
+			}
+			return x.ended(what + "\n" + x.undoOnboarding(grant, created, value))
 		}
+	}
+	if x.ctx.Err() != nil {
+		return x.ended(notSent + "\n" + x.undoOnboarding(grant, created, value))
 	}
 	if err := x.controller(http.MethodPost, "/v1/workloads", in, &raw); err != nil {
 		if refused(err) {
-			return fmt.Errorf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoOnboarding(grant, created, value))
+			return x.ended(fmt.Sprintf("the controller refuses the onboarding: %s\n%s", refusal(err), x.undoOnboarding(grant, created, value)))
 		}
 		// A lost answer says nothing of what the controller did: untagged, an onboarded workload could not be woken.
-		code := 1
-		if x.ctx.Err() != nil {
-			code = exitInterrupted
-		}
 		stays, again := "The tag bindings stay.", "a tag bound already is not an error"
 		switch {
 		case grant != nil && len(targets) > 0:
@@ -666,7 +678,7 @@ func (x *run) onboard() error {
 		case grant != nil:
 			stays, again = "The Kubernetes access stays.", "an access there already is not an error"
 		}
-		return &stop{code, fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.", refusal(err), stays, x.showCommand(in.ID), again)}
+		return x.ended(fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.", refusal(err), stays, x.showCommand(in.ID), again))
 	}
 	return x.print(raw, func(w workload) {
 		x.say("Onboarded workload %s: %s", w.ID, w.State)
@@ -726,15 +738,43 @@ func (x *run) tagBind(t target, value string) (made bool, err error) {
 	return true, x.wait(t.base(), op, tagTimeout)
 }
 
-// undoOnboarding removes what a refused onboarding added, its Kubernetes access and its tag bindings, and says what it did
-// and what to do.
+// undoOnboarding removes what an onboarding refused or interrupted before its call added, its Kubernetes access and its tag
+// bindings, and says what it did and what to do. It finishes whatever the interrupt, up to undoTimeout: the onboarding is not
+// there, so what it added serves nothing. Once interrupted, a second interrupt is the shell's and stops the process.
 func (x *run) undoOnboarding(grant *rbacGrant, created []target, value string) string {
+	next := "To go on, fix the refusal, then run the same command again."
+	if x.ctx.Err() != nil {
+		next = "To go on, run the same command again."
+	}
+	asked := x.ctx
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(asked), undoTimeout)
+	x.ctx = ctx
+	defer func() {
+		cancel()
+		x.ctx = asked
+	}()
 	var msg []string
 	if grant != nil {
 		msg = x.undoGrant(*grant)
 	}
 	msg = append(msg, x.undoBindings(created, value)...)
-	return strings.Join(append(msg, "To go on, fix the refusal, then run the same command again."), "\n")
+	return strings.Join(append(msg, next), "\n")
+}
+
+// ended is the stop of a run past its first change: its words say what is left, an interrupt or not.
+func (x *run) ended(msg string) error {
+	if x.ctx.Err() != nil {
+		return &stop{exitInterrupted, msg}
+	}
+	return &stop{1, msg}
+}
+
+// why is why a call failed, as a line.
+func (x *run) why(err error) string {
+	if x.ctx.Err() != nil {
+		return "interrupted"
+	}
+	return refusal(err)
 }
 
 // undoBindings removes the bindings a refused onboarding made, and says what it did.
@@ -774,6 +814,9 @@ func (x *run) offboard() error {
 	var down []backend
 	if there {
 		if down, err = x.deleteAtController(id, backends, x.r.Force); err != nil {
+			if x.ctx.Err() != nil {
+				return x.ended(fmt.Sprintf("Interrupted during the controller's delete: workload %s may be offboarded. Its tags and its Kubernetes access stay: run the same command again to finish.", id))
+			}
 			return x.controllerFailure(id, backends, err)
 		}
 	}
@@ -810,7 +853,7 @@ func (x *run) offboard() error {
 		}
 	}
 	if len(left) > 0 {
-		return &stop{1, "Run the same command again to finish what is not removed."}
+		return x.ended("Run the same command again to finish what is not removed.")
 	}
 	return nil
 }
@@ -1040,23 +1083,25 @@ func (x *run) untag(id string, backends []backend, force bool) (untagged, left [
 		return nil, nil, nil
 	}
 	value, found, err := x.tag("tagValues", x.n.project+"/dormeto/managed")
-	if err != nil && force {
+	switch {
+	case err != nil && force:
 		for _, b := range tagged {
-			left = append(left, fmt.Sprintf("the tag of %s is not removed: %s", b, refusal(err)))
+			left = append(left, fmt.Sprintf("the tag of %s is not removed: %s", b, x.why(err)))
 		}
 		return nil, left, nil
-	}
-	if err != nil || !found {
-		return nil, nil, err
+	case err != nil:
+		return nil, nil, x.ended(fmt.Sprintf("workload %s is offboarded, but its tags are not removed: %s\n(run the same command again to finish)", id, x.why(err)))
+	case !found:
+		return nil, nil, nil
 	}
 	for _, b := range tagged {
 		removed, err := x.unbindBackend(b, value)
 		if err != nil {
 			if force {
-				left = append(left, fmt.Sprintf("the tag of %s is not removed: %s", b, refusal(err)))
+				left = append(left, fmt.Sprintf("the tag of %s is not removed: %s", b, x.why(err)))
 				continue
 			}
-			return untagged, nil, fmt.Errorf("workload %s is offboarded, but the tag of %s is not removed: %s\n(run the same command again to finish)", id, b, refusal(err))
+			return untagged, nil, x.ended(fmt.Sprintf("workload %s is offboarded, but the tag of %s is not removed: %s\n(run the same command again to finish)", id, b, x.why(err)))
 		}
 		if removed {
 			untagged = append(untagged, b.String())

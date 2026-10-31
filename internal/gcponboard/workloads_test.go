@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2531,5 +2532,183 @@ func TestWorkloadsOffboardRefusedAtTheControllerKeepsNoFile(t *testing.T) {
 				t.Fatalf("the file stays: %v", err)
 			}
 		})
+	}
+}
+
+// cancelAfter cancels once a call matched has been answered whole: the run goes on with its context cancelled, the call done.
+type cancelAfter struct {
+	next   http.RoundTripper
+	call   string // "<method> <host><path>"
+	cancel context.CancelFunc
+}
+
+func (c cancelAfter) RoundTrip(req *http.Request) (*http.Response, error) {
+	res, err := c.next.RoundTrip(req)
+	if err != nil || req.Method+" "+req.URL.Host+req.URL.Path != c.call {
+		return res, err
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	res.Body = io.NopCloser(bytes.NewReader(body))
+	c.cancel()
+	return res, nil
+}
+
+// cancelledAfter is a context cancelled once that call is answered.
+func (g *installRig) cancelledAfter(t *testing.T, call string) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	http2 := *g.d.Google.HTTP
+	http2.Transport = cancelAfter{http2.Transport, call, cancel}
+	g.d.Google.HTTP = &http2
+	return ctx
+}
+
+func (g *installRig) interrupted(t *testing.T, ctx context.Context, f func(context.Context, Deps, Request) int, r Request) string {
+	t.Helper()
+	g.out.Reset()
+	code := f(ctx, g.d, r)
+	out := g.out.String()
+	if code != 130 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	return out
+}
+
+// The onboarding was never sent: what this run added is removed, whatever the interrupt.
+func TestWorkloadsOnboardInterruptedAtATagRemovesWhatItAddedAndSaysSo(t *testing.T) {
+	g, order := newGKERig(t)
+	g.plantFeatures(t, "cloud-sql", "gke")
+	g.s.SQLInstances = map[string]string{"shop-db": "europe-west3"}
+	g.s.DryRun.VMs = []gcptest.Resource{{Location: "europe-west1-b", Name: "web-1", ID: "111"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g.s.Route(databaseHost, "/v3/tagBindings", func(w http.ResponseWriter, _ *http.Request) { cancel(); gcptest.Cut(w) })
+	r := shopOnGKE
+	r.CloudSQL = []string{"shop-db"}
+	out := g.interrupted(t, ctx, WorkloadsOnboard, r)
+	contains(t, out, "Interrupted before the onboarding was sent", "The tag of Cloud SQL instance shop-db may be bound", "removed", "RoleBinding dormeto-shop", "vm web-1 (europe-west1-b)", "run the same command again")
+	if g.k.has(shopRole) || g.k.has(shopBinding) || len(g.bindings()) != 0 {
+		t.Fatalf("role %v binding %v bindings %v:\n%s", g.k.has(shopRole), g.k.has(shopBinding), g.bindings(), out)
+	}
+	if got := g.rbacOf(t); len(got) != 0 {
+		t.Fatalf("the record still lists %v", got)
+	}
+	if slices.Contains(order.calls(), "POST "+controllerHost+"/v1/workloads") {
+		t.Fatal("the onboarding was sent")
+	}
+}
+
+// Cancelled once the RBAC is applied, the onboarding was not sent: this is no lost answer.
+func TestWorkloadsOnboardInterruptedBeforeItsCallRemovesTheRbac(t *testing.T) {
+	g, order := newGKERig(t)
+	ctx := g.cancelledAfter(t, "POST "+kubeHost+bindingsPath)
+	out := g.interrupted(t, ctx, WorkloadsOnboard, shopOnGKE)
+	contains(t, out, "Interrupted before the onboarding was sent", "removed")
+	if strings.Contains(out, "may be onboarded") {
+		t.Fatalf("it was not sent:\n%s", out)
+	}
+	if g.k.has(shopRole) || g.k.has(shopBinding) {
+		t.Fatalf("role %v binding %v:\n%s", g.k.has(shopRole), g.k.has(shopBinding), out)
+	}
+	if slices.Contains(order.calls(), "POST "+controllerHost+"/v1/workloads") {
+		t.Fatal("the onboarding was sent")
+	}
+}
+
+func TestWorkloadsOnboardInterruptedDuringTheUndoFinishesIt(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.s.OnboardingRefused = refusedOnboarding
+	ctx := g.cancelledAfter(t, "DELETE "+kubeHost+shopBinding)
+	out := g.interrupted(t, ctx, WorkloadsOnboard, shopOnGKE)
+	contains(t, out, refusedOnboarding, "removed", "RoleBinding dormeto-shop", "Role dormeto-shop")
+	if g.k.has(shopRole) || g.k.has(shopBinding) || len(g.rbacOf(t)) != 0 {
+		t.Fatalf("role %v binding %v record %v:\n%s", g.k.has(shopRole), g.k.has(shopBinding), g.rbacOf(t), out)
+	}
+}
+
+func TestWorkloadsOnboardInterruptedReadingTheOwnerSaysSoAlone(t *testing.T) {
+	g, _ := newGKERig(t)
+	ctx := g.cancelledAfter(t, "GET "+kubeHost+servicePath)
+	out := g.interrupted(t, ctx, WorkloadsOnboard, shopOnGKE)
+	contains(t, out, "Interrupted.")
+	if strings.Contains(out, "is not read") || len(g.k.writes(0)) != 0 {
+		t.Fatalf("writes %v:\n%s", g.k.writes(0), out)
+	}
+}
+
+func TestWorkloadsOffboardInterruptedAtTheRbacSaysWhatIsLeft(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	ctx := g.cancelledAfter(t, "DELETE "+kubeHost+shopBinding)
+	r := shopOffboard
+	r.Configuration = "c"
+	out := g.interrupted(t, ctx, WorkloadsOffboard, r)
+	contains(t, out, "workload shop is offboarded, but its Kubernetes access is not removed: interrupted", "run the same command again", "access revoke")
+	if _, err := os.Stat(g.offboardFile()); err != nil {
+		t.Fatalf("a rerun finishes from the file: %v", err)
+	}
+}
+
+func TestWorkloadsOffboardForceInterruptedSaysWhatIsLeftAsInterrupted(t *testing.T) {
+	g, _ := newGKERig(t)
+	g.onboardedOnGKE(t)
+	ctx := g.cancelledAfter(t, "DELETE "+kubeHost+shopBinding)
+	r := shopOffboard
+	r.Force = true
+	out := g.interrupted(t, ctx, WorkloadsOffboard, r)
+	contains(t, out, "Offboarded workload shop", "Role and RoleBinding dormeto-shop", "interrupted", "access revoke")
+	if strings.Contains(out, "context canceled") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestWorkloadsOffboardInterruptedAtTheTagsSaysTheyAreLeft(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		g := newDatabaseRig(t)
+		g.onboardedDatabase(t)
+		ctx := g.cancelledAfter(t, "DELETE "+controllerHost+"/v1/workloads/shop")
+		r := shopOffboard
+		r.Force = force
+		out := g.interrupted(t, ctx, WorkloadsOffboard, r)
+		want := "workload shop is offboarded, but its tags are not removed: interrupted"
+		if force {
+			want = "the tag of Cloud SQL instance shop-db is not removed: interrupted"
+		}
+		contains(t, out, want)
+		if strings.Contains(out, "context canceled") || len(g.bindings()) != 2 {
+			t.Fatalf("bindings %v:\n%s", g.bindings(), out)
+		}
+		if _, err := os.Stat(g.offboardFile()); err != nil {
+			t.Fatalf("a rerun finishes from the file: %v", err)
+		}
+	}
+}
+
+// The delete's outcome is unknown: nothing more is removed, and a rerun tells.
+func TestWorkloadsOffboardInterruptedInTheDeleteSaysItMayBeDone(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.onboardedDatabase(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g.s.Route(controllerHost, "/v1/workloads/shop", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			gcptest.Reply(w, map[string]any{"id": "shop", "state": "AWAKE", "backends": []any{map[string]any{"kind": "cloudsql", "name": "shop-db"}}})
+			return
+		}
+		cancel()
+		gcptest.Cut(w)
+	})
+	out := g.interrupted(t, ctx, WorkloadsOffboard, shopOffboard)
+	contains(t, out, "Interrupted", "workload shop may be offboarded", "run the same command again")
+	if len(g.bindings()) != 2 {
+		t.Fatalf("bindings %v", g.bindings())
+	}
+	if _, err := os.Stat(g.offboardFile()); err != nil {
+		t.Fatalf("a rerun finishes from the file: %v", err)
 	}
 }

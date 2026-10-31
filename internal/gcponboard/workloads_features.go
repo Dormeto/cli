@@ -159,6 +159,8 @@ func (x *run) readOwner(rb Rbac, service string) (kubernetes.Owner, error) {
 	owner, reason, err := kubernetes.ServiceOwner(x.ctx, kubeReader{x, endpoint}, rb.Namespace, service)
 	var e *kubernetes.Error
 	switch {
+	case err != nil && x.ctx.Err() != nil:
+		return kubernetes.Owner{}, err
 	case errors.As(err, &e) && e.Status == http.StatusForbidden && e.Reason != "Forbidden":
 		return kubernetes.Owner{}, &stop{1, endpointRefusal(rb.Cluster, e.Message) + "\n" + nothingChanged}
 	case errors.As(err, &e) && e.Status == http.StatusForbidden:
@@ -293,9 +295,9 @@ func (x *run) removeAccess(id string, backends []backend, force bool, out *offbo
 			err = nil
 		}
 		if err != nil {
-			why := strings.TrimSuffix(refusal(err), "\n"+nothingChanged)
+			why := strings.TrimSuffix(x.why(err), "\n"+nothingChanged)
 			if !force {
-				return fmt.Errorf("workload %s is offboarded, but its Kubernetes access is not removed: %s\n(run the same command again to finish, or remove it with: %s)", id, why, x.revokeCommand(e))
+				return x.ended(fmt.Sprintf("workload %s is offboarded, but its Kubernetes access is not removed: %s\n(run the same command again to finish, or remove it with: %s)", id, why, x.revokeCommand(e)))
 			}
 			out.accessLeft = append(out.accessLeft, x.rbacLeftLine(e)+" ("+why+")")
 			if x.rec != nil {
