@@ -29,12 +29,19 @@ const (
 	// The idle window's range is the router's: AWS's onboarding (router/lambda/src/lib/onboarding.mjs).
 	minIdleMinutes, maxIdleMinutes = 5, 1440
 
+	// The wake's fits the controller's request: its range is the router's too (router/gcp/src/onboarding.mjs).
+	minWakeTimeout, maxWakeTimeout = 60, 1700
+
 	// maxBackendServiceName is what Compute Engine allows of a backend service's name; the workload's waker backend service
 	// is dmtr-<region>-<workload>.
 	maxBackendServiceName = 63
 )
 
-var workloadIDPattern = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$`)
+var (
+	workloadIDPattern = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$`)
+	// databaseNamePattern is the name of a Cloud SQL instance, the router's INSTANCE_NAME (router/gcp/src/cloudsql.mjs).
+	databaseNamePattern = regexp.MustCompile(`^[a-z]([-a-z0-9]{0,96}[a-z0-9])?$`)
+)
 
 const workloadIDRule = "lowercase letters, digits and dashes, starting with a letter and ending with a letter or a digit, at most 40 characters"
 
@@ -70,6 +77,7 @@ type workload struct {
 	} `json:"lastWake"`
 	Failure json.RawMessage `json:"failure"`
 	Paused  *pausedOf       `json:"paused"`
+	LB      *lbRef          `json:"lb"`
 }
 
 // dryRun is the controller's answer to an onboarding dry run.
@@ -78,6 +86,20 @@ type dryRun struct {
 	Reasons  []string   `json:"reasons"`
 	VMs      []vmRef    `json:"vms"`
 	Groups   []groupRef `json:"groups"`
+	LB       *lbRef     `json:"lb"`
+}
+
+// lbRef is a workload's load balancer as the controller names it: global, regional in a region, or classic.
+type lbRef struct {
+	Kind   string `json:"kind"`
+	Region string `json:"region"`
+}
+
+func (l lbRef) String() string {
+	if l.Region != "" {
+		return l.Kind + " (" + l.Region + ")"
+	}
+	return l.Kind
 }
 
 type vmRef struct {
@@ -305,6 +327,9 @@ func (x *run) details(w workload) {
 			x.say("  %s: %s", name, value)
 		}
 	}
+	if w.LB != nil {
+		line("load balancer", w.LB.String())
+	}
 	line("URL map", w.URLMap)
 	line("backend service", w.BackendService)
 	line("waker backend service", w.WakerBackendService)
@@ -364,6 +389,7 @@ type onboardingIn struct {
 	BackendService string         `json:"backendService"`
 	ID             string         `json:"id"`
 	Settings       map[string]any `json:"settings,omitempty"`
+	LoadBalancer   string         `json:"loadBalancer,omitempty"`
 }
 
 // onboardingInput validates the flags, before any call: exit 2 for a bad one.
@@ -375,7 +401,27 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 	case r.BackendService == "":
 		return onboardingIn{}, &stop{2, "--backend-service: needed"}
 	}
-	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, Settings: map[string]any{}}
+	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, LoadBalancer: r.LoadBalancer, Settings: map[string]any{}}
+	if v := r.LoadBalancer; v != "" && !slices.Contains([]string{"global", "regional", "classic"}, v) {
+		return in, &stop{2, fmt.Sprintf("--load-balancer: %q is not global, regional or classic", v)}
+	}
+	if err := checkDatabaseNames(r.CloudSQL); err != nil {
+		return in, err
+	}
+	if r.GKECluster != "" {
+		if _, _, err := clusterOf(r.GKECluster); err != nil {
+			return in, err
+		}
+		if r.JSON && !r.Yes && !r.DryRun {
+			return in, &stop{2, "--yes: needed with --json"}
+		}
+	}
+	if v := r.WakeTimeout; v != nil {
+		if *v < minWakeTimeout || *v > maxWakeTimeout {
+			return in, &stop{2, fmt.Sprintf("--wake-timeout: %d is not from %d to %d", *v, minWakeTimeout, maxWakeTimeout)}
+		}
+		in.Settings["wakeTimeoutSeconds"] = *v
+	}
 	if v := r.IdleMinutes; v != nil {
 		if *v < minIdleMinutes || *v > maxIdleMinutes {
 			return in, &stop{2, fmt.Sprintf("--idle-minutes: %d is not from %d to %d", *v, minIdleMinutes, maxIdleMinutes)}
@@ -391,6 +437,19 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 	id, err := x.workloadID()
 	in.ID = id
 	return in, err
+}
+
+// checkDatabaseNames validates --cloud-sql: exit 2 for a name that is no Cloud SQL instance's, or one named twice.
+func checkDatabaseNames(names []string) error {
+	for i, name := range names {
+		if !databaseNamePattern.MatchString(name) {
+			return &stop{2, fmt.Sprintf("--cloud-sql: %q is not the name of a Cloud SQL instance", name)}
+		}
+		if slices.Contains(names[:i], name) {
+			return &stop{2, fmt.Sprintf("--cloud-sql: %s is named twice", name)}
+		}
+	}
+	return nil
 }
 
 // workloadID is --id, else the backend service's name when it is a valid ID, else asked on a terminal.
@@ -439,6 +498,9 @@ func (x *run) onboard() error {
 	if !dry.Eligible {
 		return &stop{1, fmt.Sprintf("Backend service %s is not eligible:\n  - %s\nNothing was changed.", in.BackendService, strings.Join(dry.Reasons, "\n  - "))}
 	}
+	if err := x.covers(dry); err != nil {
+		return err
+	}
 	targets := dry.targets()
 	if x.r.DryRun {
 		if x.r.JSON {
@@ -486,6 +548,20 @@ func (x *run) onboard() error {
 			x.say("  tagged: %s", t.label)
 		}
 	})
+}
+
+// covers stops an onboarding whose dry run does not answer what the flags ask: a router below 0.35.0 ignores those flags, and
+// would onboard something else.
+func (x *run) covers(dry dryRun) error {
+	if asked := x.r.LoadBalancer; asked != "" && (dry.LB == nil || dry.LB.Kind != asked) {
+		return x.ignoredFlag("--load-balancer " + asked)
+	}
+	return nil
+}
+
+// ignoredFlag is the end of a run whose router did not read a flag.
+func (x *run) ignoredFlag(flag string) error {
+	return &stop{1, fmt.Sprintf("The dry run of router %s does not answer %s: it is older than %s, which reads it. Install a newer image first, with dormeto gcp install --image.\nNothing was changed.", x.n.router, flag, minRouterVersion)}
 }
 
 // refused tells that the controller's call was answered with a refusal (4xx): nothing was done. A 5xx or no answer at all

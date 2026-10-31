@@ -91,19 +91,29 @@ func newGcpWorkloadsOneWith(verb, short, long string, run gcpRun, version string
 func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
 	var urlMap, backendService, id, hibernate string
-	var idle int
+	var idle, wakeTimeout int
 	var hibernating *bool
-	var idleGiven bool
+	var idleGiven, wakeGiven bool
+	var loadBalancer, cluster string
+	var databases []string
 	cmd := gcpCommand("onboard", "Onboard a backend service as a workload",
-		"Onboard a backend service of a global external Application Load Balancer as a workload. The controller checks the\n"+
-			"eligibility first and names the VMs and managed groups; the tag dormeto=managed is then bound to each of them as you\n"+
-			"(the router holds no permission to tag), and the workload is onboarded awake. --id defaults to the backend service's\n"+
-			"name when that is a valid ID (lowercase letters, digits and dashes, at most 40 characters), else it is asked on a\n"+
-			"terminal and needed otherwise. --dry-run stops after the eligibility check.",
+		"Onboard a backend service of a global, regional or classic external Application Load Balancer as a workload. The\n"+
+			"controller checks the eligibility first and names the VMs, managed groups and databases; the tag dormeto=managed is then\n"+
+			"bound to each of them as you (the router holds no permission to tag), and the workload is onboarded awake. --id defaults\n"+
+			"to the backend service's name when that is a valid ID (lowercase letters, digits and dashes, at most 40 characters), else\n"+
+			"it is asked on a terminal and needed otherwise. --dry-run stops after the eligibility check.\n"+
+			"--cloud-sql needs the feature cloud-sql of the router's install, and --gke-cluster its feature gke. With --gke-cluster the\n"+
+			"Service's owner is read in the cluster, as you, and the Role and RoleBinding dormeto-<workload> of its namespace are\n"+
+			"printed, asked and applied before the onboarding; a refused onboarding removes what this run added. No tag is bound for\n"+
+			"pods. On a Standard cluster, scaling pods saves money only with the node autoscaler freeing a node: it warns of that.",
 		&f, []string{"project", "region", "url-map", "backend-service"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.URLMap, r.BackendService, r.ID, r.Hibernate = urlMap, backendService, id, hibernating
+			r.LoadBalancer, r.CloudSQL, r.GKECluster = loadBalancer, databases, cluster
 			if idleGiven {
 				r.IdleMinutes = &idle
+			}
+			if wakeGiven {
+				r.WakeTimeout = &wakeTimeout
 			}
 			return run(ctx, d, r)
 		})
@@ -112,7 +122,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		idleGiven = c.Flags().Changed("idle-minutes")
+		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout")
 		if c.Flags().Changed("hibernate") {
 			var err error
 			if hibernating, err = parseHibernate(hibernate, false); err != nil {
@@ -129,6 +139,11 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
 	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the router's, 15)")
 	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
+	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional or classic (default: read from Google)")
+	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "how long a wake may take, 60 to 1700 seconds (default: the router's, by what the workload holds)")
+	fl.StringArrayVar(&databases, "cloud-sql", nil, "a Cloud SQL instance to nap with the workload: tagged as you, down after the application, up before it; repeatable")
+	fl.StringVar(&cluster, "gke-cluster", "", "the workload's pods are in this GKE cluster, as <location>/<name>: its Kubernetes RBAC is printed, asked and applied")
+	fl.BoolVar(&f.yes, "yes", false, "apply a GKE workload's Kubernetes RBAC without asking (needed without a terminal, and with --json)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
 	return cmd
 }

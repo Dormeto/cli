@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,6 +57,28 @@ func TestGcpWorkloadsOnboardReadsTheFlags(t *testing.T) {
 	// A zero is a value given, for the range check to refuse.
 	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", "--idle-minutes", "0")
 	if r := calls[0].r; r.IdleMinutes == nil || *r.IdleMinutes != 0 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestGcpWorkloadsOnboardReadsTheFeaturesFlags(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be",
+		"--load-balancer", "regional", "--wake-timeout", "900", "--cloud-sql", "db-1", "--cloud-sql", "db-2", "--gke-cluster", "europe-west1-b/c", "--yes")
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	r := calls[0].r
+	if r.LoadBalancer != "regional" || r.WakeTimeout == nil || *r.WakeTimeout != 900 || !slices.Equal(r.CloudSQL, []string{"db-1", "db-2"}) ||
+		r.GKECluster != "europe-west1-b/c" || !r.Yes {
+		t.Fatalf("%+v", r)
+	}
+	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be")
+	if r := calls[0].r; r.WakeTimeout != nil || r.LoadBalancer != "" || r.CloudSQL != nil || r.GKECluster != "" {
+		t.Fatalf("flags not given must stay empty: %+v", r)
+	}
+	// A zero is a value given, for the range check to refuse.
+	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", "--wake-timeout", "0")
+	if r := calls[0].r; r.WakeTimeout == nil || *r.WakeTimeout != 0 {
 		t.Fatalf("%+v", r)
 	}
 }

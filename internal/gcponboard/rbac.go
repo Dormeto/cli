@@ -649,15 +649,24 @@ func WorkloadsAccessRevoke(ctx context.Context, d Deps, r Request) int {
 	return x.workloadsEnd(x.accessRevoke())
 }
 
+// clusterOf reads --gke-cluster: exit 2 for a value that is not <location>/<name>.
+func clusterOf(cluster string) (location, name string, err error) {
+	location, name, found := strings.Cut(cluster, "/")
+	if !found || !clusterLocationPattern.MatchString(location) || !clusterNamePattern.MatchString(name) {
+		return "", "", &stop{2, fmt.Sprintf("--gke-cluster: %q is not <location>/<name>, such as europe-west1-b/my-cluster", cluster)}
+	}
+	return location, name, nil
+}
+
 // rbacRequest validates the flags, before any call. A write with --json is not asked: the answer is for a program.
 func (x *run) rbacRequest(writes bool) (Rbac, error) {
 	if err := x.validate(); err != nil {
 		return Rbac{}, err
 	}
-	location, name, found := strings.Cut(x.r.GKECluster, "/")
+	if _, _, err := clusterOf(x.r.GKECluster); err != nil {
+		return Rbac{}, err
+	}
 	switch {
-	case !found || !clusterLocationPattern.MatchString(location) || !clusterNamePattern.MatchString(name):
-		return Rbac{}, &stop{2, fmt.Sprintf("--gke-cluster: %q is not <location>/<name>, such as europe-west1-b/my-cluster", x.r.GKECluster)}
 	case !namespacePattern.MatchString(x.r.Namespace):
 		return Rbac{}, &stop{2, fmt.Sprintf("--namespace: %q is not a Kubernetes namespace", x.r.Namespace)}
 	case !workloadIDPattern.MatchString(x.r.ID):

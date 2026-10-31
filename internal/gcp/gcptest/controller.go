@@ -84,6 +84,7 @@ type workloadIn struct {
 	BackendService string         `json:"backendService"`
 	ID             string         `json:"id"`
 	Settings       map[string]any `json:"settings"`
+	LoadBalancer   string         `json:"loadBalancer"`
 }
 
 // workloads serves /v1/workloads…, as the router's controller does.
@@ -196,7 +197,15 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 		if reasons == nil {
 			reasons = []string{}
 		}
-		Reply(w, map[string]any{"eligible": len(reasons) == 0, "reasons": reasons, "vms": vms, "groups": groups})
+		answer := map[string]any{"eligible": len(reasons) == 0, "reasons": reasons, "vms": vms, "groups": groups}
+		if !s.ControllerBelow035 {
+			kind := in.LoadBalancer
+			if kind == "" {
+				kind = "global"
+			}
+			answer["lb"] = map[string]any{"kind": kind}
+		}
+		Reply(w, answer)
 		return
 	}
 	if _, ok := s.Workloads[id]; ok {

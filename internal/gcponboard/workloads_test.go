@@ -382,13 +382,22 @@ func TestWorkloadsOnboardRefusesBadIDsAndSettingsBeforeAnyCall(t *testing.T) {
 		change func(*Request)
 		want   []string
 	}{
-		"id with capitals":     {func(r *Request) { r.ID = "Shop" }, []string{"--id", "Shop"}},
-		"id ending in dash":    {func(r *Request) { r.ID = "shop-" }, []string{"--id"}},
-		"router name too long": {func(r *Request) { r.ID = strings.Repeat("a", 40); r.Region = "northamerica-northeast1" }, []string{"--id", "63"}},
-		"idle too short":       {func(r *Request) { r.IdleMinutes = ptr(4) }, []string{"--idle-minutes", "5 to 1440"}},
-		"idle too long":        {func(r *Request) { r.IdleMinutes = ptr(1441) }, []string{"--idle-minutes", "5 to 1440"}},
-		"no url map":           {func(r *Request) { r.URLMap = "" }, []string{"--url-map"}},
-		"no backend service":   {func(r *Request) { r.BackendService = "" }, []string{"--backend-service"}},
+		"id with capitals":          {func(r *Request) { r.ID = "Shop" }, []string{"--id", "Shop"}},
+		"id ending in dash":         {func(r *Request) { r.ID = "shop-" }, []string{"--id"}},
+		"router name too long":      {func(r *Request) { r.ID = strings.Repeat("a", 40); r.Region = "northamerica-northeast1" }, []string{"--id", "63"}},
+		"idle too short":            {func(r *Request) { r.IdleMinutes = ptr(4) }, []string{"--idle-minutes", "5 to 1440"}},
+		"idle too long":             {func(r *Request) { r.IdleMinutes = ptr(1441) }, []string{"--idle-minutes", "5 to 1440"}},
+		"no url map":                {func(r *Request) { r.URLMap = "" }, []string{"--url-map"}},
+		"no backend service":        {func(r *Request) { r.BackendService = "" }, []string{"--backend-service"}},
+		"wake too short":            {func(r *Request) { r.WakeTimeout = ptr(59) }, []string{"--wake-timeout", "60 to 1700"}},
+		"wake too long":             {func(r *Request) { r.WakeTimeout = ptr(1701) }, []string{"--wake-timeout", "60 to 1700"}},
+		"load balancer":             {func(r *Request) { r.LoadBalancer = "internal" }, []string{"--load-balancer", "internal", "global, regional or classic"}},
+		"cluster, no slash":         {func(r *Request) { r.GKECluster = "shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
+		"cluster, bad name":         {func(r *Request) { r.GKECluster = "europe-west1-b/Shop" }, []string{"--gke-cluster", "<location>/<name>"}},
+		"cluster, no location":      {func(r *Request) { r.GKECluster = "/shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
+		"cloud sql, bad name":       {func(r *Request) { r.CloudSQL = []string{"db", "Bad_Name"} }, []string{"--cloud-sql", "Bad_Name"}},
+		"cloud sql, twice":          {func(r *Request) { r.CloudSQL = []string{"db", "db"} }, []string{"--cloud-sql", "db", "twice"}},
+		"cluster with json, no yes": {func(r *Request) { r.GKECluster, r.JSON = "europe-west1-b/shop-cluster", true }, []string{"--yes"}},
 	} {
 		r := shopOnboarding
 		c.change(&r)
@@ -413,6 +422,53 @@ func TestWorkloadsOnboardAcceptsTheRangesEnds(t *testing.T) {
 		if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
 			t.Fatalf("%d: exit %d:\n%s", idle, code, out)
 		}
+	}
+}
+
+func TestWorkloadsOnboardSendsTheLoadBalancerAndTheWakeTimeoutToBothCalls(t *testing.T) {
+	for _, wake := range []int{60, 1700} {
+		g := newWorkloadsRig(t)
+		r := shopOnboarding
+		r.LoadBalancer, r.WakeTimeout = "regional", ptr(wake)
+		if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+			t.Fatalf("%d: exit %d:\n%s", wake, code, out)
+		}
+		for _, query := range []string{"/v1/workloads?dryRun=true", "/v1/workloads"} {
+			in := g.body(t, "POST", controllerHost, query)
+			if in["loadBalancer"] != "regional" || !jsonEqual(in["settings"], map[string]any{"wakeTimeoutSeconds": wake}) {
+				t.Errorf("%s: %v", query, in)
+			}
+		}
+	}
+}
+
+func TestWorkloadsOnboardSendsNoLoadBalancerWhenNoneIsGiven(t *testing.T) {
+	g := newWorkloadsRig(t)
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	in := g.body(t, "POST", controllerHost, "/v1/workloads")
+	for _, key := range []string{"loadBalancer", "cloudSql", "gke"} {
+		if _, there := in[key]; there {
+			t.Errorf("%s sent: %v", key, in)
+		}
+	}
+}
+
+// A controller that does not read the flag would go on with what it found by itself.
+func TestWorkloadsOnboardStopsWhenTheDryRunIgnoresTheLoadBalancer(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.ControllerBelow035 = true
+	r := shopOnboarding
+	r.LoadBalancer = "classic"
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "--load-balancer", "0.35.0", "Nothing was changed.")
+	if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 {
+		t.Fatalf("changes %v", m)
 	}
 }
 

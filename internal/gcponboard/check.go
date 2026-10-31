@@ -51,11 +51,18 @@ type Request struct {
 	IdleMinutes                *int
 	Hibernate                  *bool
 
+	// The onboard command's load balancer (--load-balancer: global, regional or classic), wake timeout (--wake-timeout, nil:
+	// not given) and Cloud SQL companions (--cloud-sql); its GKE cluster is GKECluster.
+	LoadBalancer string
+	WakeTimeout  *int
+	CloudSQL     []string
+
 	// The schedule and pause commands: the schedule's file (set), the pause's reason, --keep-asleep and --until (RFC 3339).
 	File, Reason, Until string
 	KeepAsleep          bool
 
-	// The access command: the cluster as <location>/<name> (--gke-cluster) and the workload's namespace; ID is --workload.
+	// The access and onboard commands: the cluster as <location>/<name> (--gke-cluster); access's: the workload's namespace,
+	// and ID is --workload.
 	GKECluster, Namespace string
 
 	// With are the optional features (--with): cloud-sql, gke.
