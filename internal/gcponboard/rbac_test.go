@@ -1201,3 +1201,277 @@ func TestRbacARecordThatCannotBeReadChangesNothing(t *testing.T) {
 		t.Errorf("calls: %v", c)
 	}
 }
+
+// I1: what Google names is checked before the operator's token goes there.
+func TestRbacAnEndpointThatIsNotUnderGkeGoogGetsNothing(t *testing.T) {
+	for _, endpoint := range []string{"evil.example/#", "user@evil.example", "evil.example", "gke.goog", "evil.example/.gke.goog", "evil.example#.gke.goog",
+		"evil.example?.gke.goog", "x.gke.goog:8443", "x.gke.goog.evil.example", "X.GKE.GOOG", "a..gke.goog", "a b.gke.goog"} {
+		for verb, f := range map[string]func(context.Context, Deps, Request) int{"show": WorkloadsAccessShow, "grant": WorkloadsAccessGrant, "revoke": WorkloadsAccessRevoke} {
+			t.Run(endpoint+"/"+verb, func(t *testing.T) {
+				g := newRbacRig(t)
+				g.cluster = dnsEndpoint(map[string]any{"endpoint": endpoint, "allowExternalTraffic": true})
+				var sent []string
+				transport := g.d.Google.HTTP.Transport
+				g.d.Google.HTTP.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
+					if strings.HasSuffix(r.URL.Hostname(), ".googleapis.com") || strings.HasSuffix(r.URL.Hostname(), ".run.app") {
+						return transport.RoundTrip(r)
+					}
+					sent = append(sent, r.URL.String())
+					return nil, http.ErrUseLastResponse
+				})
+				code, out := g.call(t, f, shopAccess)
+				if code != 1 || !strings.Contains(out, endpoint) || !strings.Contains(out, "gke.goog") || !strings.Contains(out, "Nothing was changed.") {
+					t.Fatalf("exit %d:\n%s", code, out)
+				}
+				if len(sent) != 0 || len(g.k.callList()) != 0 {
+					t.Errorf("sent: %v %v", sent, g.k.callList())
+				}
+				if got := g.rbacOf(t); len(got) != 0 {
+					t.Errorf("record: %v", got)
+				}
+			})
+		}
+	}
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// I2: a redirect is not followed, for a read or for a write: the token would go with it.
+func TestRbacACallIsNotRedirected(t *testing.T) {
+	cases := map[string]struct {
+		calls  string
+		status int
+	}{
+		"a read":  {"GET " + shopRole, http.StatusFound},
+		"a write": {createRole, http.StatusTemporaryRedirect},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newRbacRig(t)
+			var seen []string
+			other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				seen = append(seen, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization"))
+			}))
+			defer other.Close()
+			target, _ := url.Parse(other.URL)
+			transport := g.d.Google.HTTP.Transport
+			g.d.Google.HTTP.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Hostname() != "other.gke.goog" {
+					return transport.RoundTrip(r)
+				}
+				out := r.Clone(r.Context())
+				out.URL.Scheme, out.URL.Host = target.Scheme, target.Host
+				return http.DefaultTransport.RoundTrip(out)
+			})
+			g.k.raw = func(w http.ResponseWriter, r *http.Request) {
+				if r.Method+" "+r.URL.Path != c.calls {
+					if r.Method == http.MethodGet {
+						w.WriteHeader(404)
+						_, _ = w.Write([]byte(`{"kind":"Status","message":"not found","reason":"NotFound","code":404}`))
+					}
+					return
+				}
+				w.Header().Set("Location", "http://other.gke.goog"+r.URL.Path)
+				w.WriteHeader(c.status)
+			}
+			code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+			if code != 1 || !strings.Contains(out, "redirect") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if len(seen) != 0 {
+				t.Errorf("the second server saw: %v", seen)
+			}
+		})
+	}
+}
+
+func TestRbacGooglesOwnCallsKeepTheirRedirects(t *testing.T) {
+	g := newRbacRig(t)
+	if g.d.Google.HTTP.CheckRedirect != nil {
+		t.Fatal("the rig's client has a CheckRedirect")
+	}
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if g.d.Google.HTTP.CheckRedirect != nil {
+		t.Error("the shared client was changed")
+	}
+}
+
+// M1: an object of ours was there before: the entry stays when the first write is refused.
+func TestRbacAFirstWriteRefusedKeepsTheEntryWhenOursWasThere(t *testing.T) {
+	cases := map[string]struct {
+		plant func(k *fakeKube, t *testing.T)
+		call  string
+	}{
+		"the Role": {func(k *fakeKube, t *testing.T) {
+			k.put(t, shopRole, "Role", ourLabels, map[string]any{"rules": []any{map[string]any{"apiGroups": []any{""}, "resources": []any{"pods"}, "verbs": []any{"get"}}}})
+		}, "PUT " + shopRole},
+		"the RoleBinding": {func(k *fakeKube, t *testing.T) { k.put(t, shopBinding, "RoleBinding", ourLabels, nil) }, createRole},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newRbacRig(t)
+			c.plant(g.k, t)
+			g.k.deny = func(call string) *kubeStatus {
+				if call == c.call {
+					return &kubeStatus{403, "Forbidden", "forbidden"}
+				}
+				return nil
+			}
+			code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+			if code != 1 || strings.Contains(out, "Nothing was changed.") || !strings.Contains(out, "access revoke") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if got := g.rbacOf(t); !slices.Equal(got, []RecordRbac{shopEntry}) {
+				t.Errorf("record: %v", got)
+			}
+		})
+	}
+}
+
+// A first write refused on an entry listed earlier changes nothing, the record included.
+func TestRbacAFirstWriteRefusedKeepsAnEntryListedEarlier(t *testing.T) {
+	g := newRbacRig(t)
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.k.mu.Lock()
+	delete(g.k.objects, shopRole)
+	delete(g.k.objects, shopBinding)
+	g.k.mu.Unlock()
+	g.k.deny = func(call string) *kubeStatus {
+		if call == createRole {
+			return &kubeStatus{403, "Forbidden", "forbidden"}
+		}
+		return nil
+	}
+	code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+	if code != 1 || !strings.Contains(out, "Nothing was changed.") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.rbacOf(t); !slices.Equal(got, []RecordRbac{shopEntry}) {
+		t.Errorf("record: %v", got)
+	}
+}
+
+// M2: with --json the ✓ lines are not printed: the message says what was done.
+func TestRbacAPartialFailureUnderJSONSaysWhatWasDone(t *testing.T) {
+	refuse := func(g *rbacRig, call string, status *kubeStatus) {
+		g.k.deny = func(c string) *kubeStatus {
+			if c == call {
+				return status
+			}
+			return nil
+		}
+	}
+	r := shopAccess
+	r.JSON = true
+	for name, status := range map[string]*kubeStatus{"a refusal": {403, "Forbidden", "forbidden"}, "a 500": {500, "InternalError", "etcd is away"}} {
+		t.Run(name+" of a grant", func(t *testing.T) {
+			g := newRbacRig(t)
+			refuse(g, createBinding, status)
+			code, out := g.call(t, WorkloadsAccessGrant, r)
+			if code != 1 || !strings.Contains(out, "created Role dormeto-shop") || !strings.Contains(out, "access revoke") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+		})
+		t.Run(name+" of a revoke", func(t *testing.T) {
+			g := newRbacRig(t)
+			if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			refuse(g, "DELETE "+shopRole, status)
+			code, out := g.call(t, WorkloadsAccessRevoke, r)
+			if code != 1 || !strings.Contains(out, "removed RoleBinding dormeto-shop") || !strings.Contains(out, "Run the same command again") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if got := g.rbacOf(t); !slices.Equal(got, []RecordRbac{shopEntry}) {
+				t.Errorf("record: %v", got)
+			}
+		})
+	}
+}
+
+// M3: an update keeps what it does not own.
+func TestRbacAnUpdateKeepsOwnerReferencesAndFinalizers(t *testing.T) {
+	g := newRbacRig(t)
+	g.k.put(t, shopRole, "Role", ourLabels, map[string]any{"rules": []any{map[string]any{"apiGroups": []any{""}, "resources": []any{"pods"}, "verbs": []any{"get"}}}})
+	owners := []any{map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "name": "owner", "uid": "u-1", "controller": true}}
+	g.k.mu.Lock()
+	meta := g.k.objects[shopRole]["metadata"].(map[string]any)
+	meta["ownerReferences"], meta["finalizers"], meta["annotations"] = owners, []any{"example.com/hold"}, map[string]any{"note": "kept"}
+	g.k.mu.Unlock()
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	got := g.k.object(shopRole)["metadata"].(map[string]any)
+	if !reflect.DeepEqual(got["ownerReferences"], owners) || !reflect.DeepEqual(got["finalizers"], []any{"example.com/hold"}) || !reflect.DeepEqual(got["annotations"], map[string]any{"note": "kept"}) {
+		t.Errorf("metadata: %v", got)
+	}
+}
+
+// M4: what an update replaces is printed before asking.
+func TestRbacGrantPrintsWhatAnUpdateReplacesBeforeAsking(t *testing.T) {
+	g := newRbacRig(t)
+	g.k.put(t, shopRole, "Role", ourLabels, map[string]any{"rules": []any{map[string]any{"apiGroups": []any{""}, "resources": []any{"secrets"}, "resourceNames": []any{"token"}, "verbs": []any{"get"}}}})
+	g.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{"subjects": []any{map[string]any{"kind": "User", "name": "someone@example.com", "apiGroup": "rbac.authorization.k8s.io"}},
+		"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "dormeto-shop"}})
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+	r := shopAccess
+	r.Yes = false
+	code, out := g.call(t, WorkloadsAccessGrant, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	asked := strings.Index(out, "[y/N]")
+	for _, want := range []string{`"": secrets (named token): get`, "subject: User someone@example.com", "keda.sh: scaledobjects: get, list, watch, patch", "subject: User " + routerSA} {
+		if i := strings.Index(out, want); i < 0 || i > asked {
+			t.Errorf("%q not printed before asking:\n%s", want, out)
+		}
+	}
+}
+
+// M4: a binding also held by someone else is named before it goes.
+func TestRbacRevokeNamesAnotherSubjectBeforeAsking(t *testing.T) {
+	g := newRbacRig(t)
+	g.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{"subjects": []any{
+		map[string]any{"kind": "User", "name": routerSA, "apiGroup": "rbac.authorization.k8s.io"},
+		map[string]any{"kind": "Group", "name": "team@example.com", "apiGroup": "rbac.authorization.k8s.io"}},
+		"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "dormeto-shop"}})
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+	r := shopAccess
+	r.Yes = false
+	code, out := g.call(t, WorkloadsAccessRevoke, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if i := strings.Index(out, "Group team@example.com"); i < 0 || i > strings.Index(out, "[y/N]") {
+		t.Errorf("not named before asking:\n%s", out)
+	}
+	if strings.Contains(out, "User "+routerSA) {
+		t.Errorf("the router's own is named:\n%s", out)
+	}
+	if !g.k.has(shopBinding) {
+		t.Error("declined, removed")
+	}
+}
+
+// M6: a 5xx says which call.
+func TestRbacA5xxSaysWhichCall(t *testing.T) {
+	g := newRbacRig(t)
+	g.k.deny = func(call string) *kubeStatus {
+		if call == "GET "+shopRole {
+			return &kubeStatus{500, "InternalError", "etcd is away"}
+		}
+		return nil
+	}
+	code, out := g.call(t, WorkloadsAccessShow, shopAccess)
+	if code != 1 || !strings.Contains(out, "get Role dormeto-shop in namespace shop: etcd is away") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}

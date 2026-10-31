@@ -36,6 +36,8 @@ var (
 	clusterLocationPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 	clusterNamePattern     = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
 	namespacePattern       = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	// dnsEndpointPattern is a cluster's DNS endpoint: the operator's token goes there, so nothing else may.
+	dnsEndpointPattern = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)*\.gke\.goog$`)
 )
 
 // Rbac is the Kubernetes access of one workload: its cluster as <location>/<name>, its namespace, its ID, and the router's
@@ -76,6 +78,9 @@ type kubeMetadata struct {
 	Labels          map[string]string `json:"labels,omitempty"`
 	Annotations     map[string]string `json:"annotations,omitempty"`
 	ResourceVersion string            `json:"resourceVersion,omitempty"`
+	// Not Dormeto's: read so that an update keeps them.
+	OwnerReferences json.RawMessage `json:"ownerReferences,omitempty"`
+	Finalizers      []string        `json:"finalizers,omitempty"`
 }
 
 // kubeObject is a Role or a RoleBinding.
@@ -199,7 +204,23 @@ func (x *run) clusterEndpoint(cluster string) (string, error) {
 		}
 		return "", &stop{1, fmt.Sprintf("Cluster %s has no DNS endpoint open to traffic from outside its network, and that is how Dormeto reaches a cluster. Turn it on:\n  %s\nNothing was changed.", cluster, hint)}
 	}
+	if !dnsEndpointPattern.MatchString(dns.Endpoint) {
+		return "", &stop{1, fmt.Sprintf("Cluster %s: Google names %q as its DNS endpoint, which is not a host under gke.goog, so your access token is not sent there.\nNothing was changed.", cluster, dns.Endpoint)}
+	}
 	return dns.Endpoint, nil
+}
+
+// kubeDo is a call of the cluster's API. A redirect is not followed, as the operator's token would go with it: its answer
+// is an error.
+func (x *run) kubeDo(method, u string, in, out any) error {
+	c := *x.d.Google
+	h := http.Client{}
+	if c.HTTP != nil {
+		h = *c.HTTP
+	}
+	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	c.HTTP = &h
+	return c.Do(x.ctx, method, u, in, out)
 }
 
 func kubeCollectionURL(endpoint string, o kubeObject) string {
@@ -211,14 +232,17 @@ func kubeObjectURL(endpoint string, o kubeObject) string {
 }
 
 // kubeFailure says why Kubernetes answered no to a verb (get, create, update or delete) on an object: a 403 names what the
-// operator lacks. Any other refusal is said in Kubernetes's words. No answer (or a 5xx) stays the error it is, since it
-// says nothing of what was done: only a *stop means that Kubernetes refused.
+// operator lacks. Any other refusal is said in Kubernetes's words. No answer, a 5xx or a redirect says nothing of what was
+// done: only a *stop means that Kubernetes refused.
 func kubeFailure(cluster, verb string, o kubeObject, err error) error {
 	what := fmt.Sprintf("%s in namespace %s", o, o.Metadata.Namespace)
 	var e *gcp.Error
 	switch {
+	case errors.As(err, &e) && e.Code >= 300 && e.Code < 400:
+		return fmt.Errorf("%s %s: the cluster's endpoint answers %d, a redirect, which is not followed as your access token would go with it", verb, what, e.Code)
 	case !refused(err) || !errors.As(err, &e):
-		return fmt.Errorf("%s %s: %w", verb, what, err)
+		// As text: the error's own text would be the answer's alone, without the call.
+		return fmt.Errorf("%s %s: %s", verb, what, refusal(err))
 	case e.Code != http.StatusForbidden:
 		return &stop{1, fmt.Sprintf("Kubernetes refuses to %s %s: %s", verb, what, e.Message)}
 	case e.Reason != "Forbidden":
@@ -260,13 +284,13 @@ func recordFailure(what string, err error) error {
 	if refused(err) {
 		return &stop{1, what + ": " + refusal(err)}
 	}
-	return fmt.Errorf("%s: %w", what, err)
+	return fmt.Errorf("%s: %s", what, refusal(err))
 }
 
 // readChange reads an object and compares it with the wanted one.
 func (x *run) readChange(rb Rbac, endpoint string, wanted kubeObject) (rbacChange, error) {
 	var current kubeObject
-	err := x.d.Google.Do(x.ctx, http.MethodGet, kubeObjectURL(endpoint, wanted), nil, &current)
+	err := x.kubeDo(http.MethodGet, kubeObjectURL(endpoint, wanted), nil, &current)
 	switch {
 	case gcp.IsNotFound(err):
 		return rbacChange{Action: rbacCreate, Wanted: wanted}, nil
@@ -309,7 +333,7 @@ func (x *run) ApplyRbac(plan RbacPlan) ([]string, error) {
 	for _, c := range []rbacChange{plan.Role, plan.RoleBinding} {
 		switch c.Action {
 		case rbacCreate:
-			if err := x.d.Google.Do(x.ctx, http.MethodPost, kubeCollectionURL(plan.Endpoint, c.Wanted), c.Wanted, nil); err != nil {
+			if err := x.kubeDo(http.MethodPost, kubeCollectionURL(plan.Endpoint, c.Wanted), c.Wanted, nil); err != nil {
 				return done, kubeFailure(plan.Cluster, "create", c.Wanted, err)
 			}
 			done = append(done, "created "+c.Wanted.String())
@@ -317,7 +341,7 @@ func (x *run) ApplyRbac(plan RbacPlan) ([]string, error) {
 			// Its metadata stays, with the version read: someone's write since is a conflict, not lost.
 			o := c.Wanted
 			o.Metadata = c.Current.Metadata
-			if err := x.d.Google.Do(x.ctx, http.MethodPut, kubeObjectURL(plan.Endpoint, o), o, nil); err != nil {
+			if err := x.kubeDo(http.MethodPut, kubeObjectURL(plan.Endpoint, o), o, nil); err != nil {
 				return done, kubeFailure(plan.Cluster, "update", o, err)
 			}
 			done = append(done, "updated "+c.Wanted.String())
@@ -348,6 +372,19 @@ func (p RbacPlan) removal() (ours []kubeObject, left []string) {
 	return ours, left
 }
 
+// otherSubjects are the subjects of our binding other than the router's: someone added them by hand.
+func (p RbacPlan) otherSubjects() []string {
+	var out []string
+	if c := p.RoleBinding.Current; c != nil && p.RoleBinding.Action != rbacRefused {
+		for _, s := range c.Subjects {
+			if s.Kind != "User" || s.Name != p.ServiceAccount {
+				out = append(out, s.Kind+" "+s.Name)
+			}
+		}
+	}
+	return out
+}
+
 // RemoveRbac reads the workload's objects again and removes those that are Dormeto's. An object not there is no error, and
 // another of that name is left, and said. It returns what it did, also when it fails on the way. An error that is a *stop
 // is Kubernetes's refusal.
@@ -360,7 +397,7 @@ func (x *run) RemoveRbac(rb Rbac) (RbacRemoval, error) {
 	var ours []kubeObject
 	ours, out.Left = plan.removal()
 	for _, o := range ours {
-		if err := x.d.Google.Do(x.ctx, http.MethodDelete, kubeObjectURL(plan.Endpoint, o), nil, nil); err != nil && !gcp.IsNotFound(err) {
+		if err := x.kubeDo(http.MethodDelete, kubeObjectURL(plan.Endpoint, o), nil, nil); err != nil && !gcp.IsNotFound(err) {
 			return out, kubeFailure(rb.Cluster, "delete", o, err)
 		}
 		out.Removed = append(out.Removed, o.String())
@@ -495,7 +532,11 @@ func objectLines(o kubeObject) []string {
 				groups[i] = `""`
 			}
 		}
-		lines = append(lines, fmt.Sprintf("%s: %s: %s", strings.Join(groups, ", "), strings.Join(r.Resources, ", "), strings.Join(r.Verbs, ", ")))
+		named := ""
+		if len(r.ResourceNames) > 0 {
+			named = " (named " + strings.Join(r.ResourceNames, ", ") + ")"
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s%s: %s", strings.Join(groups, ", "), strings.Join(r.Resources, ", "), named, strings.Join(r.Verbs, ", ")))
 	}
 	for _, s := range o.Subjects {
 		lines = append(lines, "subject: "+s.Kind+" "+s.Name)
@@ -522,8 +563,8 @@ func (x *run) rbacHeader(p RbacPlan) {
 	x.tell("Kubernetes access of workload %s, namespace %s, cluster %s (%s):", p.Workload, p.Namespace, p.Cluster, p.Endpoint)
 }
 
-// printWrites prints what a grant would write, each object in full.
-func (x *run) printWrites(p RbacPlan) {
+// printWrites prints what a grant would write, each object in full; with replaced, what an update replaces too.
+func (x *run) printWrites(p RbacPlan, replaced bool) {
 	for _, c := range []rbacChange{p.Role, p.RoleBinding} {
 		switch c.Action {
 		case rbacNone:
@@ -533,6 +574,13 @@ func (x *run) printWrites(p RbacPlan) {
 			x.say("  ! %s is not Dormeto's: grant refuses it, and would write:", c.Wanted)
 		case rbacUpdate:
 			x.say("  ~ %s", c.Wanted)
+			if replaced {
+				x.say("      now:")
+				for _, l := range objectLines(*c.Current) {
+					x.say("      %s", l)
+				}
+				x.say("      to be:")
+			}
 		default:
 			x.say("  + %s", c.Wanted)
 		}
@@ -580,7 +628,7 @@ func (x *run) accessShow() error {
 		}
 	}
 	x.say("What grant would write, for the router's service account:")
-	x.printWrites(plan)
+	x.printWrites(plan, false)
 	return nil
 }
 
@@ -620,7 +668,7 @@ func (x *run) accessGrant() error {
 	}
 	x.rbacHeader(plan)
 	if !x.r.JSON {
-		x.printWrites(plan)
+		x.printWrites(plan, true)
 	}
 	if err := plan.Refused(); err != nil {
 		return err
@@ -666,23 +714,35 @@ func (x *run) applyGrant(rb Rbac, plan RbacPlan, added bool) ([]string, error) {
 		return done, nil
 	}
 	var s *stop
-	answered := errors.As(err, &s)
-	if answered && len(done) == 0 {
-		if added {
+	if errors.As(err, &s) && len(done) == 0 {
+		switch {
+		case !added:
+			return done, withNothingChanged(err)
+		case plan.Role.Current == nil && plan.RoleBinding.Current == nil:
 			if err := x.unrecordRbac(rb); err != nil {
 				fmt.Fprintf(x.d.Err, "  ! the install record still lists this access: %s\n", refusal(err))
 			}
+			return done, withNothingChanged(err)
 		}
-		return done, withNothingChanged(err)
 	}
+	return done, x.stopped(err, done, fmt.Sprintf("The install record lists this access. Run the same command again to finish, or remove it with: %s", x.revokeCommand(rb.entry())))
+}
+
+// stopped is the end of a run that stopped on err, after doing done: what happened, what it did and what to do. --json
+// prints no line of it otherwise.
+func (x *run) stopped(err error, done []string, next string) error {
 	code, msg := 1, refusal(err)
+	var s *stop
 	switch {
-	case answered:
+	case errors.As(err, &s):
 		code, msg = s.code, s.msg
 	case x.ctx.Err() != nil:
 		code, msg = exitInterrupted, "Interrupted."
 	}
-	return done, &stop{code, fmt.Sprintf("%s\nThe install record lists this access. Run the same command again to finish, or remove it with: %s", msg, x.revokeCommand(rb.entry()))}
+	if len(done) > 0 {
+		msg += "\nDone: " + strings.Join(done, ", ") + "."
+	}
+	return &stop{code, msg + "\n" + next}
 }
 
 func (x *run) accessRevoke() error {
@@ -707,6 +767,9 @@ func (x *run) accessRevoke() error {
 	for _, o := range ours {
 		x.tell("  - %s", o)
 	}
+	for _, other := range plan.otherSubjects() {
+		x.tell("  ! it also binds %s, who loses it too", other)
+	}
 	for _, l := range left {
 		x.tell("  = %s is not Dormeto's: left as it is", l)
 	}
@@ -721,16 +784,18 @@ func (x *run) accessRevoke() error {
 	for _, r := range out.Removed {
 		x.tell("  ✓ removed %s", r)
 	}
-	var s *stop
-	switch {
-	case err == nil:
+	if err == nil {
 		return x.endRevoke(rb, out)
-	case !errors.As(err, &s):
-		return err
-	case len(out.Removed) == 0:
+	}
+	var s *stop
+	if errors.As(err, &s) && len(out.Removed) == 0 {
 		return withNothingChanged(err)
 	}
-	return &stop{s.code, s.msg + "\nThe install record still lists this access. Run the same command again to finish."}
+	var removed []string
+	for _, r := range out.Removed {
+		removed = append(removed, "removed "+r)
+	}
+	return x.stopped(err, removed, "The install record still lists this access. Run the same command again to finish.")
 }
 
 // endRevoke takes the access out of the record, once nothing of it is left in the cluster, and says so.
