@@ -816,6 +816,25 @@ func TestWorkloadsWakeDuringAWakeSaysTheControllersRefusalAlone(t *testing.T) {
 	}
 }
 
+// A companion deleted is the router's to read, the operator's to act on.
+func TestWorkloadsShowSaysACompanionGone(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "cloudsql", "name": "shop-db"}}}
+	r := workloadsEurope
+	r.ID = "shop"
+	_, out := g.call(t, WorkloadsShow, r)
+	if strings.Contains(out, "no longer exists") {
+		t.Fatalf("none gone:\n%s", out)
+	}
+	g.s.WorkloadDocs["shop"]["companionsGone"] = []any{"shop-db"}
+	code, out := g.call(t, WorkloadsShow, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "! Cloud SQL instance shop-db no longer exists: its workload no longer naps; offboard and onboard it again")
+}
+
 func TestWorkloadsShowSaysTheControllersRefusalAlone(t *testing.T) {
 	g := newWorkloadsRig(t)
 	r := workloadsEurope

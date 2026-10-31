@@ -109,6 +109,8 @@ type workload struct {
 	Failure json.RawMessage `json:"failure"`
 	Paused  *pausedOf       `json:"paused"`
 	LB      *lbRef          `json:"lb"`
+	// The Cloud SQL instances named at its onboarding that no longer exist, as the router last read them.
+	CompanionsGone []string `json:"companionsGone"`
 }
 
 // dryRun is the controller's answer to an onboarding dry run.
@@ -406,6 +408,9 @@ func (x *run) details(w workload) {
 	line("settings", strings.Join(settings, ", "))
 	for _, b := range w.Backends {
 		x.say("  backend: %s", b)
+	}
+	for _, name := range w.CompanionsGone {
+		x.say("  ! Cloud SQL instance %s no longer exists: its workload no longer naps; offboard and onboard it again", name)
 	}
 }
 
