@@ -436,26 +436,41 @@ type rbacRemovalPlan struct {
 	deleted  []rbacChange // the objects it deletes, the binding first as the router then loses its rights before the Role goes
 	stripped *kubeObject  // our binding without the router's subject, when others remain
 	subject  string       // the router's subject, when stripped
-	kept     []string     // our objects that stay, for the subjects that remain
+	kept     []keptObject // our objects that stay, for those a binding may still give them to
 	foreign  []string     // the objects that are someone else's
 	others   []string     // the subjects that remain on our binding
 }
 
-func (r rbacRemovalPlan) left() []string { return append(slices.Clone(r.foreign), r.kept...) }
+// keptObject is one of our objects that a removal leaves, and why.
+type keptObject struct{ name, why string }
+
+func (r rbacRemovalPlan) left() []string {
+	out := slices.Clone(r.foreign)
+	for _, k := range r.kept {
+		out = append(out, k.name)
+	}
+	return out
+}
 
 // removal sorts the objects there. While a subject other than the router's holds our binding, the binding stays without the
-// router's subject, and the Role with it; both go only when the router is the sole subject. Asked once routerRefusal is
+// router's subject, and the Role with it; both go only when the router is the sole subject. A binding of that name that is
+// not ours may name our Role, and its subjects would be left with nothing: our Role stays too. Asked once routerRefusal is
 // nil: another router's subject leaves everything.
 func (p RbacPlan) removal() rbacRemovalPlan {
 	var out rbacRemovalPlan
 	out.others = p.otherSubjects()
+	bindingForeign := p.RoleBinding.Current != nil && p.RoleBinding.Action == rbacRefused
 	for _, c := range []rbacChange{p.RoleBinding, p.Role} {
 		switch {
 		case c.Current == nil:
 		case c.Action == rbacRefused:
 			out.foreign = append(out.foreign, c.Wanted.String())
+		case bindingForeign:
+			out.kept = append(out.kept, keptObject{c.Wanted.String(), p.RoleBinding.Wanted.String() + ", not Dormeto's, may name it"})
+		case len(out.others) > 0 && c.Wanted.Kind == "RoleBinding":
+			out.kept = append(out.kept, keptObject{c.Wanted.String(), "it also binds " + strings.Join(out.others, ", ")})
 		case len(out.others) > 0:
-			out.kept = append(out.kept, c.Wanted.String())
+			out.kept = append(out.kept, keptObject{c.Wanted.String(), "that binding names it"})
 		default:
 			out.deleted = append(out.deleted, c)
 		}
@@ -945,18 +960,14 @@ func (x *run) accessRevoke() error {
 	if removal.stripped != nil {
 		x.tell("  - %s", removal.subject)
 	}
-	for _, kept := range removal.kept {
-		what := "it also binds " + strings.Join(removal.others, ", ")
-		if !strings.HasPrefix(kept, "RoleBinding") {
-			what = "that binding names it"
-		}
-		x.tell("  = %s stays: %s", kept, what)
-	}
 	for _, l := range removal.foreign {
 		x.tell("  = %s is not Dormeto's: left as it is", l)
 	}
+	for _, k := range removal.kept {
+		x.tell("  = %s stays: %s", k.name, k.why)
+	}
 	if len(removal.deleted) == 0 && removal.stripped == nil {
-		x.tell("  nothing of Dormeto's to remove")
+		x.tell("  nothing to remove")
 		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: removal.left(), Subjects: removal.others})
 	}
 	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {

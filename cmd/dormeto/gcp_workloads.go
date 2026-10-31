@@ -212,7 +212,8 @@ func newGcpWorkloadsAccess(runs gcpWorkloadRuns, version string) *cobra.Command 
 			runs.accessGrant, version, true),
 		newGcpWorkloadsAccessVerb("revoke", "Remove a workload's Role and RoleBinding",
 			"Print what it removes, ask (--yes without a terminal), remove the RoleBinding and the Role dormeto-<workload> that are Dormeto's,\n"+
-				"and take them out of the install record. One of that name without the label is left and said. While another subject holds\n"+
+				"and take them out of the install record. One of that name without the label is left and said; such a RoleBinding leaves the\n"+
+				"Role too, as it may name it. While another subject holds\n"+
 				"the binding, only the router's subject goes, and both objects stay; another router's service account among them is refused,\n"+
 				"nothing changed. It works after dormeto gcp uninstall, which lists what it leaves in a cluster.",
 			runs.accessRevoke, version, true))

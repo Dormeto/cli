@@ -1883,3 +1883,45 @@ func TestRbacARoleRefThatDiffersAndAnotherRefusalIsThatRefusal(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// A binding of that name that is not ours may name our Role: removing it would leave its subjects with nothing.
+func TestRbacRevokeLeavesOurRoleWhenTheBindingIsNotOurs(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, rbacUser(routerSA))
+	g.k.put(t, shopBinding, "RoleBinding", nil, map[string]any{"subjects": []any{map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup}},
+		"roleRef": map[string]any{"apiGroup": rbacGroup, "kind": "Role", "name": subjectsOfShop}})
+	r := shopAccess
+	r.Yes = false // nothing to remove: nothing to ask
+	code, out := g.call(t, WorkloadsAccessRevoke, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if w := g.k.writes(0); len(w) != 0 {
+		t.Errorf("written: %v", w)
+	}
+	if !g.k.has(shopRole) || !g.k.has(shopBinding) {
+		t.Error("an object is gone")
+	}
+	for _, want := range []string{"= RoleBinding dormeto-shop is not Dormeto's: left as it is", "= Role dormeto-shop stays: RoleBinding dormeto-shop, not Dormeto's, may name it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q not said:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "nothing of Dormeto's") {
+		t.Errorf("it says there is nothing of Dormeto's:\n%s", out)
+	}
+}
+
+func TestRbacRemoveLeavesOurRoleWhenTheBindingIsNotOurs(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantBinding(t, rbacUser(routerSA))
+	g.k.put(t, shopBinding, "RoleBinding", nil, map[string]any{"subjects": []any{map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup}},
+		"roleRef": map[string]any{"apiGroup": rbacGroup, "kind": "Role", "name": subjectsOfShop}})
+	out, err := removeRbacOf(g)
+	if err != nil || len(out.Removed) != 0 || !slices.Equal(out.Left, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if !g.k.has(shopRole) {
+		t.Error("the Role is gone")
+	}
+}
