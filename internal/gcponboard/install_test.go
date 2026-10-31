@@ -156,7 +156,7 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + API iam.googleapis.com
   + API cloudresourcemanager.googleapis.com
   + API logging.googleapis.com
-  + role dormetoRouter "Dormeto router" (43 permissions)
+  + role dormetoRouter "Dormeto router" (38 permissions)
   + role dormetoRouterBackends "Dormeto router backends" (6 permissions)
   + service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
   + tag dormeto/managed
@@ -978,7 +978,7 @@ func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
 	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
 		"  … iam.googleapis.com is on but does not answer yet: waiting for Google to propagate it (up to 5 minutes)\n"+
 		"Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
-		"  + role dormetoRouter \"Dormeto router\" (43 permissions)\n", "  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n",
+		"  + role dormetoRouter \"Dormeto router\" (38 permissions)\n", "  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n",
 		"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
 	if !slices.Equal(*g.slept, []time.Duration{5 * time.Second, 5 * time.Second}) {
 		t.Fatalf("slept %v", *g.slept)
