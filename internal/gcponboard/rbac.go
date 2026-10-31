@@ -148,6 +148,22 @@ type rbacChange struct {
 	OtherRouters []string    `json:"otherRouters,omitempty"`
 }
 
+// roleRefDiffers tells that an update would change the binding's roleRef, which Kubernetes refuses.
+func (c rbacChange) roleRefDiffers() bool {
+	return c.Current != nil && !reflect.DeepEqual(c.Current.RoleRef, c.Wanted.RoleRef)
+}
+
+// roleRefFixed is Kubernetes's refusal of a roleRef changed: no retry of the update ever ends.
+type roleRefFixed struct{ error }
+
+func (e *roleRefFixed) Unwrap() error { return e.error }
+
+// isInvalid tells that Kubernetes answered 422.
+func isInvalid(err error) bool {
+	var e *gcp.Error
+	return errors.As(err, &e) && e.Code == http.StatusUnprocessableEntity
+}
+
 // routerRefusal is the refusal of a binding that names another router: nil when it names none.
 func (c rbacChange) routerRefusal() error {
 	if len(c.OtherRouters) == 0 {
@@ -395,6 +411,9 @@ func (x *run) ApplyRbac(plan RbacPlan) ([]string, error) {
 			o := c.Wanted
 			o.Metadata = c.Current.Metadata
 			if err := x.kubeDo(http.MethodPut, kubeObjectURL(plan.Endpoint, o), o, nil); err != nil {
+				if c.roleRefDiffers() && isInvalid(err) {
+					return done, &roleRefFixed{kubeFailure(plan.Cluster, "update", o, err)}
+				}
 				return done, kubeFailure(plan.Cluster, "update", o, err)
 			}
 			done = append(done, "updated "+c.Wanted.String())
@@ -856,6 +875,14 @@ func (x *run) applyGrant(rb Rbac, plan RbacPlan, added bool) ([]string, error) {
 	}
 	if err == nil {
 		return done, nil
+	}
+	var fixed *roleRefFixed
+	if errors.As(err, &fixed) {
+		next := "A RoleBinding's roleRef never changes: remove it first with: " + x.revokeCommand(rb.entry()) + ", then run this command again."
+		if others := plan.otherSubjects(); len(others) > 0 {
+			next = "A RoleBinding's roleRef never changes, and it also binds " + strings.Join(others, ", ") + ", so remove or rename it by hand, then run this command again."
+		}
+		return done, x.stopped(err, done, next)
 	}
 	var s *stop
 	if errors.As(err, &s) && len(done) == 0 {

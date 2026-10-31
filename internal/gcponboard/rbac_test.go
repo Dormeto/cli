@@ -127,6 +127,11 @@ func (k *fakeKube) serve(w http.ResponseWriter, r *http.Request) {
 			k.failure(w, 409, "Conflict", "the object has been modified")
 			return
 		}
+		// A RoleBinding's roleRef never changes, whatever else does.
+		if ref, there := old["roleRef"]; there && !reflect.DeepEqual(ref, o["roleRef"]) {
+			k.failure(w, 422, "Invalid", `RoleBinding.rbac.authorization.k8s.io "dormeto-shop" is invalid: roleRef: Invalid value: cannot change roleRef`)
+			return
+		}
 		k.store(r.URL.Path, o)
 		_ = json.NewEncoder(w).Encode(o)
 	case http.MethodDelete:
@@ -1802,5 +1807,79 @@ func TestRbacGrantWithJSONCarriesTheWarning(t *testing.T) {
 	}
 	if len(granted.Warnings) != 1 || !strings.Contains(granted.Warnings[0], "container.clusters.connect") {
 		t.Errorf("%+v", granted)
+	}
+}
+
+// plantOtherRoleRef places our RoleBinding naming another Role.
+func (g *rbacRig) plantOtherRoleRef(t *testing.T, subjects ...any) {
+	t.Helper()
+	g.plantBinding(t, subjects...)
+	g.k.put(t, shopBinding, "RoleBinding", ourLabels, map[string]any{"subjects": subjects,
+		"roleRef": map[string]any{"apiGroup": rbacGroup, "kind": "Role", "name": "someone-elses"}})
+}
+
+// Kubernetes never changes a roleRef: "run the same command again" would never finish. Revoking first does.
+func TestRbacARoleRefThatDiffersSaysToRevokeFirst(t *testing.T) {
+	for name, listed := range map[string]bool{"listed in the record": true, "not listed yet": false} {
+		t.Run(name, func(t *testing.T) {
+			g := newRbacRig(t)
+			if listed {
+				if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+					t.Fatalf("exit %d:\n%s", code, out)
+				}
+			}
+			g.plantOtherRoleRef(t, rbacUser(routerSA))
+			code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+			if code != 1 || !strings.Contains(out, "cannot change roleRef") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if strings.Contains(out, "Run the same command again") || !strings.Contains(out, "A RoleBinding's roleRef never changes: remove it first with: dormeto gcp workloads access revoke") {
+				t.Fatalf("what to do:\n%s", out)
+			}
+			if code, out := g.call(t, WorkloadsAccessRevoke, shopAccess); code != 0 {
+				t.Fatalf("revoke: exit %d:\n%s", code, out)
+			}
+			if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+				t.Fatalf("grant again: exit %d:\n%s", code, out)
+			}
+			if ref := g.k.object(shopBinding)["roleRef"].(map[string]any); ref["name"] != "dormeto-shop" {
+				t.Errorf("roleRef: %v", ref)
+			}
+			if !slices.Equal(g.rbacOf(t), []RecordRbac{shopEntry}) {
+				t.Errorf("record: %v", g.rbacOf(t))
+			}
+		})
+	}
+}
+
+// With another subject on it, revoke keeps the binding: revoking first would not end either.
+func TestRbacARoleRefThatDiffersWithAnotherSubjectSaysToDeleteItByHand(t *testing.T) {
+	g := newRbacRig(t)
+	g.plantOtherRoleRef(t, map[string]any{"kind": "Group", "name": subjectsTeam, "apiGroup": rbacGroup})
+	code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "revoke") || !strings.Contains(out, "it also binds Group "+subjectsTeam+", so remove or rename it by hand") {
+		t.Fatalf("what to do:\n%s", out)
+	}
+}
+
+// Another refusal of that update is said as before.
+func TestRbacARoleRefThatDiffersAndAnotherRefusalIsThatRefusal(t *testing.T) {
+	g := newRbacRig(t)
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.plantOtherRoleRef(t, rbacUser(routerSA))
+	g.k.deny = func(call string) *kubeStatus {
+		if call == "PUT "+shopBinding {
+			return &kubeStatus{403, "Forbidden", "rolebindings is forbidden"}
+		}
+		return nil
+	}
+	code, out := g.call(t, WorkloadsAccessGrant, shopAccess)
+	if code != 1 || !strings.Contains(out, "container.roleBindings.update") || strings.Contains(out, "roleRef never changes") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
