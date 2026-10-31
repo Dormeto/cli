@@ -206,3 +206,86 @@ func TestAnErrorOtherThan404FailsTheCaller(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// serviceAPI is a namespace holding Service web, its selector app=web, tier=front, and the objects given.
+func serviceAPI(objects map[string][]json.RawMessage) *fakeAPI {
+	all := map[string][]json.RawMessage{"/api/v1/namespaces/shop/services": {
+		obj(map[string]any{"metadata": map[string]any{"name": "web"}, "spec": map[string]any{"selector": map[string]string{"tier": "front", "app": "web"}}}),
+		obj(map[string]any{"metadata": map[string]any{"name": "bare"}, "spec": map[string]any{}}),
+	}, "/api/v1/namespaces/shop/pods": nil, "/apis/apps/v1/namespaces/shop/replicasets": nil}
+	for path, items := range objects {
+		all[path] = items
+	}
+	return &fakeAPI{objects: all}
+}
+
+func ownedPod(name, phase, kind, owner string) json.RawMessage {
+	meta := map[string]any{"name": name, "namespace": "shop"}
+	if owner != "" {
+		meta["ownerReferences"] = []any{map[string]any{"kind": kind, "name": owner, "controller": true}}
+	}
+	return obj(map[string]any{"metadata": meta, "status": map[string]any{"phase": phase}})
+}
+
+func replicaSet(name, deployment string) json.RawMessage {
+	return obj(map[string]any{"metadata": map[string]any{"name": name, "ownerReferences": []any{map[string]any{"kind": "Deployment", "name": deployment, "controller": true}}}})
+}
+
+func TestServiceOwnerFollowsTheSelectorToTheDeploymentThroughItsReplicaSet(t *testing.T) {
+	api := serviceAPI(map[string][]json.RawMessage{
+		"/api/v1/namespaces/shop/pods":              {ownedPod("web-1", "Running", "ReplicaSet", "web-abc"), ownedPod("web-0", "Succeeded", "Job", "old")},
+		"/apis/apps/v1/namespaces/shop/replicasets": {replicaSet("web-abc", "web")},
+	})
+	owner, reason, err := ServiceOwner(context.Background(), api, "shop", "web")
+	if err != nil || reason != "" || owner == nil || *owner != (Owner{"Deployment", "web"}) {
+		t.Fatalf("%v %q %v", owner, reason, err)
+	}
+	if got := api.queries[0]["labelSelector"]; got != "app=web,tier=front" {
+		t.Fatalf("selector %q: %v", got, api.calls)
+	}
+}
+
+func TestServiceOwnerReadsAStatefulSetDirectly(t *testing.T) {
+	api := serviceAPI(map[string][]json.RawMessage{"/api/v1/namespaces/shop/pods": {ownedPod("db-0", "Running", "StatefulSet", "db")}})
+	owner, reason, err := ServiceOwner(context.Background(), api, "shop", "web")
+	if err != nil || reason != "" || owner == nil || *owner != (Owner{"StatefulSet", "db"}) {
+		t.Fatalf("%v %q %v", owner, reason, err)
+	}
+}
+
+func TestServiceOwnerSaysWhyItCannotBeTold(t *testing.T) {
+	for name, c := range map[string]struct {
+		service string
+		pods    []json.RawMessage
+		sets    []json.RawMessage
+		want    string
+	}{
+		"no such service": {"ghost", nil, nil, "Service ghost is not in namespace shop"},
+		"no selector":     {"bare", nil, nil, "Service bare has no selector"},
+		"no pod":          {"web", []json.RawMessage{ownedPod("web-0", "Failed", "ReplicaSet", "web-abc")}, nil, "no pod behind Service web"},
+		"no owner":        {"web", []json.RawMessage{ownedPod("lone", "Running", "", "")}, nil, "pods without an owner (lone)"},
+		"a daemon":        {"web", []json.RawMessage{ownedPod("d-1", "Running", "DaemonSet", "d")}, nil, "pods owned by DaemonSet d"},
+		"two owners": {"web", []json.RawMessage{ownedPod("a-1", "Running", "ReplicaSet", "a-1"), ownedPod("b-0", "Running", "StatefulSet", "b")},
+			[]json.RawMessage{replicaSet("a-1", "a")}, "pods of several owners behind Service web: Deployment a, StatefulSet b"},
+	} {
+		api := serviceAPI(map[string][]json.RawMessage{"/api/v1/namespaces/shop/pods": c.pods, "/apis/apps/v1/namespaces/shop/replicasets": c.sets})
+		owner, reason, err := ServiceOwner(context.Background(), api, "shop", c.service)
+		if err != nil || owner != nil || !strings.Contains(reason, c.want) {
+			t.Errorf("%s: %v %q %v", name, owner, reason, err)
+		}
+	}
+}
+
+func TestServiceOwnerPassesARefusalOn(t *testing.T) {
+	denied := &Error{Status: 403, Reason: "Forbidden", Message: "pods is forbidden"}
+	api := serviceAPI(nil)
+	api.err = map[string]error{"/api/v1/namespaces/shop/pods": denied}
+	if _, _, err := ServiceOwner(context.Background(), api, "shop", "web"); err != denied {
+		t.Fatalf("%v", err)
+	}
+	api = serviceAPI(nil)
+	api.err = map[string]error{"/api/v1/namespaces/shop/services/web": denied}
+	if _, _, err := ServiceOwner(context.Background(), api, "shop", "web"); err != denied {
+		t.Fatalf("%v", err)
+	}
+}

@@ -499,54 +499,11 @@ func ownerBackend(ctx context.Context, c *Cluster, g Group) (*K8sBackend, string
 		return nil, "no pod behind the target group: its owner cannot be told (wake it, then discover again)", nil
 	}
 
-	// Their owners: a Deployment through its ReplicaSet, or a StatefulSet.
-	type found struct{ kind, name, namespace string }
-	var owners []found
-	seen := map[string]int{}
-	for _, p := range pods {
-		namespace := p.Metadata.Namespace
-		ref, ok := p.Metadata.Controller()
-		if !ok {
-			var names []string
-			for _, x := range pods {
-				if _, ok := x.Metadata.Controller(); !ok {
-					names = append(names, x.Metadata.Name)
-				}
-			}
-			return nil, fmt.Sprintf("pods without an owner (%s)", strings.Join(names, ", ")), nil
-		}
-		owner := ref
-		if ref.Kind == "ReplicaSet" {
-			sets, err := listFrom[Workload](ctx, c, fmt.Sprintf("/apis/apps/v1/namespaces/%s/replicasets", namespace))
-			if err != nil {
-				return nil, "", err
-			}
-			for _, set := range sets {
-				if set.Metadata.Name == ref.Name {
-					if up, ok := set.Metadata.Controller(); ok {
-						owner = up
-					}
-					break
-				}
-			}
-		}
-		if resources[owner.Kind] == "" {
-			return nil, fmt.Sprintf("pods owned by %s %s: Dormeto naps Deployments and StatefulSets", owner.Kind, owner.Name), nil
-		}
-		key := namespace + "/" + owner.Kind + "/" + owner.Name
-		if at, ok := seen[key]; ok {
-			owners[at] = found{owner.Kind, owner.Name, namespace}
-		} else {
-			seen[key] = len(owners)
-			owners = append(owners, found{owner.Kind, owner.Name, namespace})
-		}
-	}
-	if len(owners) > 1 {
-		var texts []string
-		for _, o := range owners {
-			texts = append(texts, o.kind+" "+o.name)
-		}
-		return nil, "pods of several owners behind the target group: " + strings.Join(texts, ", "), nil
+	owners, reason, err := ownersOfPods(pods, "the target group", func(namespace string) ([]Workload, error) {
+		return listFrom[Workload](ctx, c, fmt.Sprintf("/apis/apps/v1/namespaces/%s/replicasets", namespace))
+	})
+	if err != nil || reason != "" {
+		return nil, reason, err
 	}
 	kind, name, namespace := owners[0].kind, owners[0].name, owners[0].namespace
 	objects, err := listFrom[Workload](ctx, c, fmt.Sprintf("/apis/apps/v1/namespaces/%s/%s", namespace, resources[kind]))
