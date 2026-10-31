@@ -158,6 +158,18 @@ func (s runService) image() string {
 	return s.Template.Containers[0].Image
 }
 
+// env is the value of a variable: "" when it is not set.
+func (s runService) env(name string) string {
+	if len(s.Template.Containers) > 0 {
+		for _, e := range s.Template.Containers[0].Env {
+			if e.Name == name {
+				return e.Value
+			}
+		}
+	}
+	return ""
+}
+
 // serviceSettings are the settings of one of the router's two services.
 type serviceSettings struct {
 	role, name             string
@@ -402,7 +414,7 @@ func (x *run) planCloudRun() (*step, error) {
 		x.noteImage()
 		return nil, nil
 	}
-	lines = append(lines, x.listLines()...)
+	lines = append(lines, listLines(x.lists)...)
 	return &step{name: "cloudRun", lines: lines, apply: func() (string, error) {
 		if err := x.catchUp(); err != nil {
 			return "", err

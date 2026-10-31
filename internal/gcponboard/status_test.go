@@ -3,6 +3,7 @@ package gcponboard
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -238,4 +239,57 @@ func TestStatusOfAProjectNotVisibleOrABadRegion(t *testing.T) {
 	if code != 2 || !strings.Contains(out, "--region") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
+}
+
+// A stopped run's drift is visible: the lists on both services are compared with the record's, and printed.
+func TestStatusComparesTheIPListsOnBothServicesWithTheRecord(t *testing.T) {
+	g := listsRouter(t)
+	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.status(t, europeStatus)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  IP list scanners: "+blockList.URL+", every 24 hours, action ignore\n")
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		env := svc.Template.Containers[0].Env
+		kept := slices.DeleteFunc(slices.Clone(env), func(e gcptest.RunEnv) bool { return e.Name == "DMT_IP_LISTS" })
+		svc.Template.Containers[0].Env = kept
+		code, out := g.status(t, europeStatus)
+		if code != 1 {
+			t.Fatalf("%s: exit %d:\n%s", name, code, out)
+		}
+		contains(t, out, "  ✗ service "+name+": ready, image "+nextImage)
+		contains(t, out, "DMT_IP_LISTS is not set, not the recorded IP lists\n")
+		svc.Template.Containers[0].Env = env
+		if code, out := g.status(t, europeStatus); code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", name, code, out)
+		}
+	}
+}
+
+// Lists on a service the record does not list are drift too.
+func TestStatusSaysListsTheRecordDoesNotHave(t *testing.T) {
+	g := listsRouter(t)
+	svc := g.s.RunServices["europe-west1/"+wakerName]
+	svc.Template.Containers[0].Env = append(svc.Template.Containers[0].Env, gcptest.RunEnv{Name: "DMT_IP_LISTS", Value: blockListEnv})
+	code, out := g.status(t, europeStatus)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "DMT_IP_LISTS is "+blockListEnv+", not the recorded IP lists\n")
+}
+
+func TestStatusPrintsTheRecordedKubernetesAccess(t *testing.T) {
+	g := newRbacRig(t)
+	if code, out := g.call(t, WorkloadsAccessGrant, shopAccess); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.status(t, europeStatus)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  Kubernetes access: Role and RoleBinding dormeto-shop, namespace shop, cluster europe-west1-b/shop-cluster\n")
 }

@@ -2217,6 +2217,53 @@ func TestInstallIPListsOnAPreReleaseOfTheirVersionAreNotRefused(t *testing.T) {
 	}
 }
 
+// The recorded image is checked as --image is: gone, the run stops before the APIs, the roles and the bindings.
+func TestInstallIPListWithARecordedImageGoneStopsBeforeAnyChange(t *testing.T) {
+	g := listsRouter(t)
+	delete(g.s.Images, nextImage)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withLists(europe, blockList))
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ image: "+nextImage+" is not in Artifact Registry\nNothing was changed.\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+}
+
+func TestInstallIPListChecksTheRecordedImageOnce(t *testing.T) {
+	g := listsRouter(t)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withLists(europe, blockList))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Checked: image "+nextImage+" is in Artifact Registry.\n")
+	if heads := callsOf(g.s.Calls()[mark:], "HEAD"); len(heads) != 1 {
+		t.Fatalf("%+v", heads)
+	}
+}
+
+// The C2 line: the flags need install-router's permissions as --image does, on the recorded image too.
+func TestInstallIPListWithoutInstallRouterPermissionsStopsBeforeAnyChange(t *testing.T) {
+	g := listsRouter(t)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range append(access.Needs("install"), access.Needs("install-router")...) {
+		g.s.Held[p] = p != "run.services.update"
+	}
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withLists(europe, blockList))
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Using the recorded image "+nextImage+".\n", "  ✗ install-router: missing run.services.update\nNothing was changed.\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+}
+
 func TestInstallRefusesBadIPLists(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lists []IPList

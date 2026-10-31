@@ -213,7 +213,8 @@ func (x *run) useIPLists() error {
 	return nil
 }
 
-// useRecordedImage takes the recorded image for a flag that needs the router.
+// useRecordedImage takes the recorded image for a flag that needs the router: its version, its permissions and the image
+// itself checked, as --image's are, so that one deleted stops here rather than at cloudRun, after the access's steps.
 func (x *run) useRecordedImage(flag string) error {
 	if x.rec.Image == "" {
 		return &stop{2, fmt.Sprintf("%s: changes the router's two Cloud Run services, and no router is installed in %s: give --image, or install the router first.\nNothing was changed.", flag, x.n.region)}
@@ -234,13 +235,13 @@ func (x *run) useRecordedImage(flag string) error {
 			return &stop{1, fmt.Sprintf("  ✗ %s: missing %s\nNothing was changed.", c.Command, strings.Join(c.Missing, ", "))}
 		}
 	}
-	return nil
+	return x.checkImage()
 }
 
-// listLines are the plan's lines of the lists the router will download.
-func (x *run) listLines() []string {
+// listLines are the lines of the lists the router will download, or downloads.
+func listLines(lists []IPList) []string {
 	var out []string
-	for _, l := range x.lists {
+	for _, l := range lists {
 		out = append(out, fmt.Sprintf("IP list %s: %s, every %d hours, action %s", l.Name, l.URL, l.RefreshHours, ipListAction))
 	}
 	return out

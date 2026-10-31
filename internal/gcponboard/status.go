@@ -1,7 +1,7 @@
 package gcponboard
 
 // `dormeto gcp status`: a project's routers, one for --region, else one for each database named dmtr-<region>: what the
-// install record says, and what Google and the controller answer now. It reads; it never writes. Exit 0 when every
+// install record says (its IP lists and Kubernetes access too), and what Google and the controller answer now. It reads; it never writes. Exit 0 when every
 // router is as recorded; 1 when one is not, there is none, or Google refuses; 2 for a bad region.
 
 import (
@@ -174,6 +174,12 @@ func (x *run) routerStatus() RouterStatus {
 			detail += ": not the recorded image"
 			ok = false
 		}
+		if expected {
+			if drift := listsDrift(got, st.Record.IPLists); drift != "" {
+				detail += ": " + drift
+				ok = false
+			}
+		}
 		add("service", s.name, ok, state, detail)
 	}
 	if controllerFound {
@@ -225,6 +231,23 @@ func (x *run) routerStatus() RouterStatus {
 		st.OK = st.OK && g.Present
 	}
 	return st
+}
+
+// listsDrift says how a service's DMT_IP_LISTS differs from the record's lists: "" when it does not. A run that stopped
+// between the two services, or before the record, leaves one.
+func listsDrift(got runService, recorded []RecordIPList) string {
+	want := ""
+	if len(recorded) > 0 {
+		want = ipListsValue(listsOfRecord(recorded))
+	}
+	have := got.env(ipListsEnv)
+	switch {
+	case have == want:
+		return ""
+	case have == "":
+		return ipListsEnv + " is not set, not the recorded IP lists"
+	}
+	return ipListsEnv + " is " + have + ", not the recorded IP lists"
 }
 
 // grantStatuses read each policy the grants are on, once.
@@ -282,6 +305,12 @@ func PrintStatus(w io.Writer, rep StatusReport) error {
 			fmt.Fprintf(&b, "  installed %s, updated %s by %s with the CLI %s\n", r.Record.InstalledAt, r.Record.UpdatedAt, r.Record.By, r.Record.CLI)
 			if len(r.Record.Features) > 0 {
 				fmt.Fprintf(&b, "  features %s\n", strings.Join(r.Record.Features, ", "))
+			}
+			for _, l := range listLines(listsOfRecord(r.Record.IPLists)) {
+				fmt.Fprintf(&b, "  %s\n", l)
+			}
+			for _, e := range r.Record.Rbac {
+				fmt.Fprintf(&b, "  Kubernetes access: Role and RoleBinding dormeto-%s, namespace %s, cluster %s\n", e.Workload, e.Namespace, e.Cluster)
 			}
 		}
 		for _, res := range r.Resources {
