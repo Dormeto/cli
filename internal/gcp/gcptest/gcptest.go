@@ -116,6 +116,8 @@ type Server struct {
 	Schedules       map[string]map[string]any
 	NextEvents      []any
 	ScheduleProblem string
+	// ControllerBelow035 plays a controller older than 0.35.0: no route for a workload's schedule, pause and resume.
+	ControllerBelow035 bool
 	// WakeFails are the workloads whose wake fails: DELETE /v1/workloads/<id> answers 409 wake-failed, and only
 	// ?force=true offboards them (answering the backends left down).
 	WakeFails map[string]bool

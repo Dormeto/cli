@@ -144,7 +144,8 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"still wakes). The lists go in DMT_IP_LISTS on both Cloud Run services and in the install record, so the URL is\n"+
 			"printed in the plan, and one with credentials is refused. The set is replaced by each run with --ip-list, cleared by\n"+
 			"--no-ip-lists, and kept by a run with neither (a later --image included). Either flag changes the two services, so it\n"+
-			"needs the router: without --image the recorded image is reused. The waker runs at 512 MiB with a list, else 256 MiB.",
+			"needs the router: without --image the recorded image is reused. A router below 0.35.0 does not read the lists: it is\n"+
+			"refused, naming --image. The waker runs at 512 MiB with a list, else 256 MiB.",
 		&f, []string{"project", "region"}, version, run)
 	fl := cmd.Flags()
 	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")

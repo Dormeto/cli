@@ -233,7 +233,7 @@ func (x *run) validate() error {
 	case x.r.Image != "" && x.version == "":
 		return &stop{2, fmt.Sprintf("--image: %s has no tag: its tag is the router's version", x.r.Image)}
 	}
-	return nil
+	return x.imageTooOld()
 }
 
 // checks are `dormeto gcp check`'s verdict for install (with --image, install-router too), their permissions alone

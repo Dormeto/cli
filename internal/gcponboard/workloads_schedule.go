@@ -4,16 +4,20 @@ package gcponboard
 // /v1/workloads/<id>/schedule, and its POST .../pause and .../resume. The operator's gcloud account is the `by` of each
 // change. The router's checks (a schedule's problems, the 366 days of a pause) are the controller's, said as it says them;
 // what the CLI refuses before any call is a missing or unreadable file, a missing reason and an --until that is not a time.
+// A controller below 0.35.0 has no route for these calls, which is said as that.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Dormeto/cli/internal/gcp"
 
 	// A time zone is looked up by name wherever the CLI runs.
 	_ "time/tzdata"
@@ -97,6 +101,18 @@ func (x *run) scheduleFromFile() (any, error) {
 	return schedule, nil
 }
 
+// controllerSince035 is a call of the controller that a router below 0.35.0 does not route: its 404 "no route" says the
+// version it needs, unlike its 404 of a workload it does not know.
+func (x *run) controllerSince035(method, path string, in, out any) error {
+	err := x.controller(method, path, in, out)
+	var e *gcp.Error
+	if errors.As(err, &e) && e.Code == http.StatusNotFound && strings.HasPrefix(e.Message, "no route for ") {
+		return &stop{1, fmt.Sprintf("Router %s does not have this call: workloads schedule, pause and resume need a router of version %s or later. Upgrade it with: dormeto gcp install --project %s --region %s --image <the router's image, %s or later>",
+			x.n.router, minRouterVersion, x.n.project, x.n.region, minRouterVersion)}
+	}
+	return err
+}
+
 func (x *run) schedule(method string, body func() (any, error)) error {
 	if err := x.require("workloads"); err != nil {
 		return err
@@ -112,7 +128,7 @@ func (x *run) schedule(method string, body func() (any, error)) error {
 		}
 	}
 	var raw json.RawMessage
-	if err := x.controller(method, path+"/schedule", in, &raw); err != nil {
+	if err := x.controllerSince035(method, path+"/schedule", in, &raw); err != nil {
 		return err
 	}
 	if x.r.JSON {
@@ -228,7 +244,7 @@ func (x *run) pauseWorkload() error {
 		return err
 	}
 	var raw json.RawMessage
-	if err := x.controller(http.MethodPost, path+"/pause", in, &raw); err != nil {
+	if err := x.controllerSince035(http.MethodPost, path+"/pause", in, &raw); err != nil {
 		return err
 	}
 	return x.print(raw, func(w workload) {
@@ -255,7 +271,7 @@ func (x *run) resumeWorkload() error {
 		return err
 	}
 	var raw json.RawMessage
-	if err := x.controller(http.MethodPost, path+"/resume", map[string]any{"by": by}, &raw); err != nil {
+	if err := x.controllerSince035(http.MethodPost, path+"/resume", map[string]any{"by": by}, &raw); err != nil {
 		return err
 	}
 	return x.print(raw, func(w workload) {

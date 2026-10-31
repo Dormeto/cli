@@ -1113,3 +1113,33 @@ func TestWorkloadsACallOfTheControllerOutlastsItsRequest(t *testing.T) {
 		t.Fatalf("InvokeTimeout %s, the controller's request %s", gcp.InvokeTimeout, request)
 	}
 }
+
+// A controller below 0.35.0 has no route for these: that is what is said, not its "not found".
+func TestWorkloadsScheduleAndPauseOnAnOlderRouterSayItNeeds035(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.ControllerBelow035 = true
+	r := workloadsEurope
+	r.ID, r.Reason, r.File = "shop", "freeze", g.scheduleFile(t, parisSchedule)
+	for name, f := range map[string]func(context.Context, Deps, Request) int{"show": WorkloadsScheduleShow, "set": WorkloadsScheduleSet,
+		"clear": WorkloadsScheduleClear, "pause": WorkloadsPause, "resume": WorkloadsResume} {
+		code, out := g.call(t, f, r)
+		if code != 1 {
+			t.Errorf("%s: exit %d:\n%s", name, code, out)
+		}
+		if !strings.Contains(out, "0.35.0") || !strings.Contains(out, "--image") || strings.Contains(out, "no route") {
+			t.Errorf("%s:\n%s", name, out)
+		}
+	}
+}
+
+// A workload the router does not know stays that.
+func TestWorkloadsScheduleOfAnUnknownWorkloadSaysSo(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.ID = "nope"
+	code, out := g.call(t, WorkloadsScheduleShow, r)
+	if code != 1 || !strings.Contains(out, "no workload nope") || strings.Contains(out, "0.35.0") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}

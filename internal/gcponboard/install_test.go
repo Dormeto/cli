@@ -1944,6 +1944,21 @@ const (
 		`{"name":"bots","url":"http://example.com/bots.txt?token=abc","action":"ignore","refreshHours":6}]`
 )
 
+const laterImage = "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:0.36.0"
+
+// listsRouter is a rig with the router installed from nextImage: 0.35.0, the first that reads IP lists.
+func listsRouter(t *testing.T) *installRig {
+	t.Helper()
+	g := newRouterRig(t)
+	g.s.Images[laterImage] = true
+	r := withImage
+	r.Image = nextImage
+	if code, out := g.run(t, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	return g
+}
+
 func withLists(r Request, lists ...IPList) Request {
 	r.IPLists = lists
 	return r
@@ -1961,7 +1976,7 @@ func TestInstallIPListWithoutImageNorRecordedImageStopsBeforeAnyChange(t *testin
 }
 
 func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	mark := len(g.s.Calls())
 	code, out := g.run(t, withLists(europe, blockList, botsList))
 	if code != 0 {
@@ -1976,7 +1991,7 @@ func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T)
 	mask := "?updateMask=ingress,invokerIamDisabled,template"
 	var patches []string
 	for _, c := range g.changes(mark) {
-		if !strings.HasSuffix(c, "install/record") {
+		if !strings.Contains(c, "install/record") {
 			patches = append(patches, c)
 		}
 	}
@@ -1986,7 +2001,7 @@ func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T)
 	}
 	for _, name := range []string{controllerName, wakerName} {
 		svc := g.s.RunServices["europe-west1/"+name]
-		if svc.Template.Containers[0].Image != routerImage || svc.Env("DMT_IP_LISTS") != twoListsEnv || svc.Env("DMT_VERSION") != "0.34.0" {
+		if svc.Template.Containers[0].Image != nextImage || svc.Env("DMT_IP_LISTS") != twoListsEnv || svc.Env("DMT_VERSION") != "0.35.0" {
 			t.Errorf("%s: %+v", name, svc.Template.Containers[0])
 		}
 	}
@@ -1998,13 +2013,13 @@ func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T)
 	}
 	if rec := g.record(t); !reflect.DeepEqual(rec.IPLists, []RecordIPList{
 		{Name: "scanners", URL: blockList.URL, Action: "ignore", RefreshHours: 24},
-		{Name: "bots", URL: botsList.URL, Action: "ignore", RefreshHours: 6}}) || rec.Image != routerImage {
+		{Name: "bots", URL: botsList.URL, Action: "ignore", RefreshHours: 6}}) || rec.Image != nextImage {
 		t.Errorf("record %+v", rec)
 	}
 }
 
 func TestInstallIPListsAreVerifiedAndAgainIsUpToDate(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2016,7 +2031,7 @@ func TestInstallIPListsAreVerifiedAndAgainIsUpToDate(t *testing.T) {
 }
 
 func TestInstallIPListsOfAnotherSetReplaceTheRecordedOnes(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	g.run(t, withLists(europe, blockList))
 	if code, out := g.run(t, withLists(europe, botsList)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -2030,7 +2045,7 @@ func TestInstallIPListsOfAnotherSetReplaceTheRecordedOnes(t *testing.T) {
 }
 
 func TestInstallNoIPListsClearsThemAndGivesBackTheWakersMemory(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	g.run(t, withLists(europe, blockList))
 	r := europe
 	r.NoIPLists = true
@@ -2066,32 +2081,32 @@ func TestInstallNoIPListsWithoutRecordedImageStopsBeforeAnyChange(t *testing.T) 
 }
 
 func TestInstallALaterImageKeepsTheRecordedIPLists(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	g.run(t, withLists(europe, blockList))
 	r := withImage
-	r.Image = nextImage
+	r.Image = laterImage
 	code, out := g.run(t, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ~ service "+controllerName+": image "+nextImage+", environment DMT_VERSION\n",
-		"  ~ service "+wakerName+": image "+nextImage+", environment DMT_VERSION\n")
+	contains(t, out, "  ~ service "+controllerName+": image "+laterImage+", environment DMT_VERSION\n",
+		"  ~ service "+wakerName+": image "+laterImage+", environment DMT_VERSION\n")
 	for _, name := range []string{controllerName, wakerName} {
 		svc := g.s.RunServices["europe-west1/"+name]
-		if svc.Env("DMT_IP_LISTS") != blockListEnv || svc.Template.Containers[0].Image != nextImage {
+		if svc.Env("DMT_IP_LISTS") != blockListEnv || svc.Template.Containers[0].Image != laterImage {
 			t.Errorf("%s: %+v", name, svc.Template.Containers[0])
 		}
 	}
 	if m := g.s.RunServices["europe-west1/"+wakerName].Template.Containers[0].Resources.Limits["memory"]; m != "512Mi" {
 		t.Errorf("waker memory %q", m)
 	}
-	if rec := g.record(t); len(rec.IPLists) != 1 || rec.Image != nextImage {
+	if rec := g.record(t); len(rec.IPLists) != 1 || rec.Image != laterImage {
 		t.Errorf("record %+v", rec)
 	}
 }
 
 func TestInstallWithoutEitherFlagChangesNothingOfTheLists(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	g.run(t, withLists(europe, blockList))
 	mark := len(g.s.Calls())
 	code, out := g.run(t, europe)
@@ -2104,12 +2119,100 @@ func TestInstallWithoutEitherFlagChangesNothingOfTheLists(t *testing.T) {
 }
 
 func TestInstallNoIPListsOnARouterWithNoneChangesNothing(t *testing.T) {
-	g := routerInstalled(t)
+	g := listsRouter(t)
 	mark := len(g.s.Calls())
 	r := europe
 	r.NoIPLists = true
 	code, out := g.run(t, r)
 	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// A router below 0.35.0 does not read DMT_IP_LISTS: on the recorded version, the flags are refused and name --image.
+func TestInstallIPListFlagsOnARecordedRouterBelowTheirVersionAreRefused(t *testing.T) {
+	noLists := europe
+	noLists.NoIPLists = true
+	for name, r := range map[string]Request{"--ip-list": withLists(europe, blockList), "--no-ip-lists": noLists} {
+		t.Run(name, func(t *testing.T) {
+			g := routerInstalled(t)
+			mark := len(g.s.Calls())
+			code, out := g.run(t, r)
+			if code != 2 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, name+": ", "--image", "0.34.0", "0.35.0", "Nothing was changed.")
+			if c := g.changes(mark); len(c) != 0 {
+				t.Fatalf("changes: %v", c)
+			}
+		})
+	}
+}
+
+func TestInstallIPListFlagsWithAnImageBelowTheirVersionAreRefusedBeforeAnyCall(t *testing.T) {
+	noLists := withImage
+	noLists.NoIPLists = true
+	for name, r := range map[string]Request{"--ip-list": withLists(withImage, blockList), "--no-ip-lists": noLists} {
+		t.Run(name, func(t *testing.T) {
+			g := newRouterRig(t)
+			code, out := g.run(t, r)
+			if code != 2 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, name+": ", "--image", "0.34.0", "0.35.0", "Nothing was changed.")
+			if c := g.s.Calls(); len(c) != 0 {
+				t.Fatalf("calls: %v", c)
+			}
+		})
+	}
+}
+
+func TestInstallRecordedIPListsWithAnImageBelowTheirVersionAreRefused(t *testing.T) {
+	g := listsRouter(t)
+	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withImage)
+	if code != 2 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "--image: ", "0.34.0", "0.35.0", "scanners", "--no-ip-lists", "Nothing was changed.")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+}
+
+// A version that does not parse is not refused: what was read is said.
+func TestInstallIPListsOnATagThatIsNoVersionSayWhatWasRead(t *testing.T) {
+	const devImage = "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:dev-4ca90e1"
+	g := newRouterRig(t)
+	g.s.Images[devImage] = true
+	r := withLists(withImage, blockList)
+	r.Image = devImage
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, `  ! the router's version "dev-4ca90e1" is no release's: whether it reads IP lists (0.35.0 or later) is not checked`+"\n")
+	code, out = g.run(t, withLists(europe, botsList))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, `  ! the router's version "dev-4ca90e1" is no release's`)
+	if rec := g.record(t); len(rec.IPLists) != 1 || rec.IPLists[0].Name != "bots" {
+		t.Errorf("record %+v", rec.IPLists)
+	}
+}
+
+// A pre-release of 0.35.0 reads them: only a release's number below it is refused.
+func TestInstallIPListsOnAPreReleaseOfTheirVersionAreNotRefused(t *testing.T) {
+	const rcImage = "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:0.35.0-rc.1"
+	g := newRouterRig(t)
+	g.s.Images[rcImage] = true
+	r := withLists(withImage, blockList)
+	r.Image = rcImage
+	if code, out := g.run(t, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }

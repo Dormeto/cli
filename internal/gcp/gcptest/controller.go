@@ -89,6 +89,10 @@ type workloadIn struct {
 func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/v1/workloads"), "/")
 	id, verb, _ := strings.Cut(rest, "/")
+	if s.ControllerBelow035 && slices.Contains([]string{"schedule", "pause", "resume"}, verb) {
+		controllerFail(w, 404, "not-found", "no route for "+r.Method+" "+r.URL.Path)
+		return
+	}
 	switch {
 	case id == "" && r.Method == http.MethodGet:
 		ids := make([]string, 0, len(s.Workloads))

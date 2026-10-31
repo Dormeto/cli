@@ -7,6 +7,7 @@ package gcponboard
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/Dormeto/cli/internal/install"
 )
 
 const (
@@ -22,6 +25,8 @@ const (
 	ipListsEnv          = "DMT_IP_LISTS"
 	// withListsMemory is the waker's memory when a list is set: 200,000 entries are held in it.
 	withListsMemory = "512Mi"
+	// minRouterVersion is the first router that reads DMT_IP_LISTS, and has the controller's schedules and pauses.
+	minRouterVersion = "0.35.0"
 )
 
 var ipListName = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
@@ -101,6 +106,13 @@ func checkIPList(l IPList) error {
 	return nil
 }
 
+// belowMinRouter tells that a version is a release's number below minRouterVersion, its pre-releases being of that number. A
+// version that does not parse (a dev tag) is not below it.
+func belowMinRouter(version string) bool {
+	number, _, _ := strings.Cut(version, "-")
+	return install.IsVersion(version) && install.CompareVersions(number, minRouterVersion) < 0
+}
+
 // CheckIPLists refuses a bad set of lists, and --ip-list with --no-ip-lists.
 func CheckIPLists(lists []IPList, none bool) error {
 	if none && len(lists) > 0 {
@@ -144,9 +156,31 @@ func ipListsValue(lists []IPList) string {
 	return strings.TrimSpace(b.String())
 }
 
+// ipListsFlag is the flag that changes the lists: "" for neither.
+func (x *run) ipListsFlag() string {
+	switch {
+	case len(x.r.IPLists) > 0:
+		return "--ip-list"
+	case x.r.NoIPLists:
+		return "--no-ip-lists"
+	}
+	return ""
+}
+
+// imageTooOld is the refusal of the flag with an --image below minRouterVersion, before any call: nil when it is not.
+func (x *run) imageTooOld() error {
+	flag := x.ipListsFlag()
+	if flag == "" || x.r.Image == "" || !belowMinRouter(x.version) {
+		return nil
+	}
+	return &stop{2, fmt.Sprintf("%s: image %s is version %s, and IP lists need %s or later: give an --image of %s or later.\nNothing was changed.",
+		flag, x.r.Image, x.version, minRouterVersion, minRouterVersion)}
+}
+
 // useIPLists sets the run's lists: --ip-list's, none with --no-ip-lists, else the record's. Either flag changes the two
 // services, so it needs the router: without --image the recorded image is reused (and, as with --image, its permissions
-// tested); with neither, the run is refused, before any change. Follows loadRecord.
+// tested), and refused with its version below minRouterVersion; with neither, the run is refused, before any change. An --image
+// below it is refused with the record's lists too. Follows loadRecord.
 func (x *run) useIPLists() error {
 	switch {
 	case len(x.r.IPLists) > 0:
@@ -156,18 +190,40 @@ func (x *run) useIPLists() error {
 	default:
 		x.lists = listsOfRecord(x.rec.IPLists)
 	}
-	if (len(x.r.IPLists) == 0 && !x.r.NoIPLists) || x.r.Image != "" {
+	flag := x.ipListsFlag()
+	if flag != "" && x.r.Image == "" {
+		if err := x.useRecordedImage(flag); err != nil {
+			return err
+		}
+	}
+	if x.r.Image == "" || (flag == "" && len(x.lists) == 0) {
 		return nil
 	}
-	flag := "--ip-list"
-	if x.r.NoIPLists {
-		flag = "--no-ip-lists"
+	if belowMinRouter(x.version) {
+		names := make([]string, len(x.lists))
+		for i, l := range x.lists {
+			names[i] = l.Name
+		}
+		return &stop{2, fmt.Sprintf("--image: version %s does not read the router's IP lists (%s), which need %s or later: give an --image of %s or later, or clear them first with --no-ip-lists.\nNothing was changed.",
+			x.version, strings.Join(names, ", "), minRouterVersion, minRouterVersion)}
 	}
+	if !install.IsVersion(x.version) {
+		x.say("  ! the router's version %q is no release's: whether it reads IP lists (%s or later) is not checked", x.version, minRouterVersion)
+	}
+	return nil
+}
+
+// useRecordedImage takes the recorded image for a flag that needs the router.
+func (x *run) useRecordedImage(flag string) error {
 	if x.rec.Image == "" {
 		return &stop{2, fmt.Sprintf("%s: changes the router's two Cloud Run services, and no router is installed in %s: give --image, or install the router first.\nNothing was changed.", flag, x.n.region)}
 	}
-	x.r.Image = x.rec.Image
-	_, x.version, _ = splitImage(x.r.Image)
+	_, tag, _ := splitImage(x.rec.Image)
+	if version := cmp.Or(x.rec.RouterVersion, tag); belowMinRouter(version) {
+		return &stop{2, fmt.Sprintf("%s: router %s is at version %s, and IP lists need %s or later: give an --image of %s or later.\nNothing was changed.",
+			flag, x.n.router, version, minRouterVersion, minRouterVersion)}
+	}
+	x.r.Image, x.version = x.rec.Image, tag
 	x.say("Using the recorded image %s.", x.r.Image)
 	rep, err := check(x.ctx, x.d, x.r, []string{"install-router"})
 	if err != nil {
