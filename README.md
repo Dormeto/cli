@@ -1373,7 +1373,7 @@ refuses; 2 for a bad flag or a missing answer (an `--yes` without a terminal); 1
 
 ```sh
 dormeto gcp check --project my-project --region europe-west1
-dormeto gcp install --project my-project --region europe-west1 --image <registry>/router:0.34.0
+dormeto gcp install --project my-project --region europe-west1 --image <registry>/router:0.35.0
 dormeto gcp workloads onboard --project my-project --region europe-west1 \
   --url-map shop-map --backend-service shop --idle-minutes 30
 dormeto gcp workloads list --project my-project --region europe-west1
@@ -1426,6 +1426,20 @@ characters); it defaults to the backend service's name when that is a valid ID, 
 exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440) and `--hibernate
 true|false` (suspend the VMs that can be suspended instead of stopping them); a value out of its range exits 2 before
 any call. A binding of the `dormeto=managed` tag that was on a VM or group before the onboarding is treated as Dormeto's and removed at the offboarding. The permissions of `onboard` and `offboard` (the tag bindings of VMs and groups) are listed by `gcp check`.
+
+**How far Google Cloud has been tried.** There are three levels, and the flags below belong to the last two.
+- *Accepted on a real project* (2026-10-30): `gcp check`, `install`, `uninstall`, `status` and `workloads`, and Compute
+  Engine VMs (unmanaged and managed groups, suspended when possible) behind a global external Application Load Balancer.
+- *Built and reviewed, its acceptance not run yet*: regional and classic load balancers (`--load-balancer`), zonal network
+  endpoint groups, schedules and pauses (`workloads schedule`, `pause`, `resume`) and IP lists (`--ip-list`). Some of
+  their behavior was measured on Google; no more than that.
+- *Written, never run against Google*: Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and GKE (`--with gke`,
+  `--gke-cluster`, `workloads access`). Try them in a project you can lose: each command that takes one of these flags
+  prints one warning on stderr to say so, and goes on.
+
+There is no public router image: you build and push your own (`scripts/gcp-image.sh` in the router's repository; the
+website's [Google Cloud page](https://dormeto.com/google-cloud.html) has the steps). There is no dashboard or manager for
+Google Cloud yet, and the branded waiting page does not apply to it.
 
 ## Building from source
 

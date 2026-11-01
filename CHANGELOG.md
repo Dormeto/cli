@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - The branded waiting page (router 0.35.0): `dormeto workloads waiting-page`, `routers waiting-page` and `settings waiting-page`
   (the organization's) `show`, `set` and `clear`. `set` replaces the level's document: `--title`, `--description` and
@@ -10,10 +10,7 @@
   with the level each comes from, the cached favicon with its date or why there is none, and an icon or a page as its type
   and size, never its content; `--json` prints everything. A write prints the page's warnings; a custom page needs an
   administrator in the dashboard, but a caller of the manager's `/iam/` routes counts as one, so whoever may write these routes can set custom HTML; a router before 0.35.0 is refused with its upgrade sentence. The README has a Waiting page section.
-
-## 0.8.0
-
-- Google Cloud (router 0.34.0, the manager is unchanged): `dormeto gcp check`, `install`, `status` and `uninstall` for a
+- Google Cloud (router 0.35.0, the manager is unchanged): `dormeto gcp check`, `install`, `status` and `uninstall` for a
   router `dmtr-<region>` in a project, and `dormeto gcp workloads list|show|onboard|offboard|nap|wake` through its
   controller with your identity token. `check` is read-only and says, per command, which permissions you lack. `install`
   checks them, prints every IAM binding it adds, applies, prints the policy difference after each step and records it;
@@ -27,6 +24,17 @@
   (listed). `nap` and `wake` say the action was asked and how to follow it. `offboard` removes the tag bindings after the controller
   has restored the references, and `uninstall --force` does the same for each workload before it removes the tag.
   The README has a Google Cloud section.
+- How far Google Cloud has been tried, in three levels. Accepted on a real project (2026-10-30): `gcp check`, `install`,
+  `uninstall`, `status` and `workloads`, with Compute Engine VMs (unmanaged and managed groups, suspended when possible)
+  behind a global external Application Load Balancer. Built and reviewed, its acceptance not run yet: regional and classic
+  load balancers, zonal network endpoint groups, schedules and pauses, IP lists; some of their behavior was measured on
+  Google, no more. Written, never run against Google: Cloud SQL companions and GKE. There is no public router image (you
+  build and push yours with `scripts/gcp-image.sh` of the router), no dashboard or manager for Google Cloud yet, and the
+  branded waiting page does not apply to it. The README says so in its Google Cloud section.
+- `--with cloud-sql`, `--with gke`, `--cloud-sql` and `--gke-cluster` (`gcp check`, `install`, `uninstall`,
+  `workloads onboard` and `workloads access show|grant|revoke`) print one warning on stderr, once per command, that Cloud SQL
+  and GKE on Google Cloud have never run against Google and are to be tried in a project you can lose; the command goes on.
+- The embedded copy of the router's `gcp/access.json` is the router 0.35.0's again.
 
 ## 0.7.0
 
