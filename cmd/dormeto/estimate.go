@@ -1,6 +1,6 @@
 package main
 
-// `dormeto estimate`: the Node estimate's command, its arguments passed as they are to cli.Main (the command parses
+// `dormeto aws estimate`: the Node estimate's command, its arguments passed as they are to cli.Main (the command parses
 // its own options, as the Node one) with the real dependencies — the clock, the cache directory, stdout and stderr,
 // each profile's AWS over the AWS SDK for Go v2, the terminal's progress line when stdout is one, the build's version
 // for the JSON report — and its exit code returned: 0; 1 when AWS refuses; 2 on a bad option; 128 and the signal's
@@ -15,6 +15,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,8 +33,13 @@ type exitCode int
 
 func (e exitCode) Error() string { return fmt.Sprintf("exit code %d", int(e)) }
 
-// execute runs the command line and gives the process's exit code.
-func execute(root *cobra.Command) int {
+// execute runs the command line and gives the process's exit code. With args, they are the command line (cobra's own
+// default is the process's).
+func execute(root *cobra.Command, args ...string) int {
+	if len(args) > 0 {
+		args = runAsAws(root, args)
+		root.SetArgs(args)
+	}
 	err := root.Execute()
 	var code exitCode
 	switch {
@@ -42,6 +49,33 @@ func execute(root *cobra.Command) int {
 		return 1
 	}
 	return 0
+}
+
+// movedAnnotation marks the hidden top-level commands that moved under the command it names.
+const movedAnnotation = "moved-to"
+
+// runAsAws runs an old top-level name as the new one: when the command line (or `help` of it) starts with a hidden
+// top-level command that moved under aws, it says so once on stderr and gives the line with aws put before the name.
+// The new form's tree answers, so its output is the new form's, with the new names in its usage.
+func runAsAws(root *cobra.Command, args []string) []string {
+	at := slices.IndexFunc(args, func(a string) bool { return !strings.HasPrefix(a, "-") })
+	if at < 0 {
+		return args
+	}
+	if args[at] == "help" {
+		at++
+	}
+	if at >= len(args) {
+		return args
+	}
+	for _, c := range root.Commands() {
+		if c.Annotations[movedAnnotation] == "" || (c.Name() != args[at] && !slices.Contains(c.Aliases, args[at])) {
+			continue
+		}
+		fmt.Fprintf(root.ErrOrStderr(), "dormeto: %q is now %q; the old name goes in a later release.\n", "dormeto "+c.Name(), "dormeto "+c.Annotations[movedAnnotation]+" "+c.Name())
+		return slices.Insert(slices.Clone(args), at, c.Annotations[movedAnnotation])
+	}
+	return args
 }
 
 func newEstimate(b build) *cobra.Command {

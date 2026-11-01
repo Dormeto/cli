@@ -109,7 +109,7 @@ func TestStartRefusesWhileRunning(t *testing.T) {
 	if !errors.As(err, &re) || re.Build != "b9" {
 		t.Fatalf("err = %v", err)
 	}
-	if err.Error() != "build b9 is running: dormeto install status follows it" {
+	if err.Error() != "build b9 is running: dormeto aws install status follows it" {
 		t.Fatalf("message = %q", err)
 	}
 	if len(w.started) != 0 {

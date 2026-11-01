@@ -275,7 +275,7 @@ func TestInstallAdoptsAState(t *testing.T) {
 		"Adopted: module.manager of manager.tfstate is the install's state, s3://dmt-install-532105290256-eu-west-1/prod/manager.tfstate; "+
 			"the original is kept as s3://dmt-install-532105290256-eu-west-1/"+adBackup+"\n",
 		"Plan (build dmt-prod-install:b1)\n",
-		"Plan saved. Apply it: dormeto install apply "+rwArgs+"\n",
+		"Plan saved. Apply it: dormeto aws install apply "+rwArgs+"\n",
 	)
 	src := adSource(t)
 	if w.objects[adBackup] != string(src) {
@@ -501,7 +501,7 @@ func TestUninstallRefusesAnAdoptionNotApplied(t *testing.T) {
 	}
 	w.plan = unProtection
 	code, out, _ := w.run(Uninstall, unRequest, false)
-	if code != 0 || strings.Contains(out, "is adopted") || !strings.Contains(out, "Plan saved. Apply it: dormeto install apply") {
+	if code != 0 || strings.Contains(out, "is adopted") || !strings.Contains(out, "Plan saved. Apply it: dormeto aws install apply") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }

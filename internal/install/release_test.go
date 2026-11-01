@@ -127,7 +127,7 @@ func TestResolvePublished(t *testing.T) {
 
 	// published but too old
 	h.bodies[ReleasesURL+"/0.10.0/SHA256SUMS"] = sumsFor("0.10.0", releaseFiles("0.10.0")...)
-	if _, err := Resolve(context.Background(), h, "0.10.0", ""); err == nil || !strings.Contains(err.Error(), "dormeto install needs manager 0.11.0 or later (asked: 0.10.0)") {
+	if _, err := Resolve(context.Background(), h, "0.10.0", ""); err == nil || !strings.Contains(err.Error(), "dormeto aws install needs manager 0.11.0 or later (asked: 0.10.0)") {
 		t.Fatalf("got %v", err)
 	}
 }

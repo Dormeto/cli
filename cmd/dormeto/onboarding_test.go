@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads onboard|offboard|exclude` and `dormeto exclusions` against the fake manager API: the bodies they
+// `dormeto aws workloads onboard|offboard|exclude` and `dormeto aws exclusions` against the fake manager API: the bodies they
 // send, what they print, the refusals that send nothing.
 
 import (
@@ -214,7 +214,7 @@ func TestOnboardConflictNamesTheOtherOperation(t *testing.T) {
 	a := pendingAPI()
 	a.conflicts = map[string]string{tgARN("111111111111", tgAPI): "op-77"}
 	r := runOB(t, a, nil, "workloads", "onboard", tgAPI)
-	if r.exit != 1 || !strings.Contains(r.stderr, "op-77") || !strings.Contains(r.stderr, "dormeto operations watch op-77") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "op-77") || !strings.Contains(r.stderr, "dormeto aws operations watch op-77") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }

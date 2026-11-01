@@ -1,6 +1,6 @@
 package install
 
-// `dormeto install status` (status.go), through run_test.go's fakes.
+// `dormeto aws install status` (status.go), through run_test.go's fakes.
 
 import (
 	"slices"
@@ -28,12 +28,12 @@ func TestStatusVersionsTheLastBuildsAndTheChecks(t *testing.T) {
 	rwInOrder(t, out,
 		"Profile p: account 532105290256 (sandbox) in the organization o-vvk0115ixn (management 809706483662)\n",
 		"Dormeto prod in 532105290256 eu-west-1\n",
-		"  manager 0.11.0; latest release 0.12.0: an upgrade is available (dormeto install)\n",
+		"  manager 0.11.0; latest release 0.12.0: an upgrade is available (dormeto aws install)\n",
 		"  last plan dmt-prod-install:p0: succeeded "+rwLocal(rwT0.Add(-2*time.Hour))+"; last apply dmt-prod-install:a0: succeeded "+rwLocal(rwT0.Add(-time.Hour))+"\n",
 		"  ✓ dashboard: "+rwDashboard+" answers\n",
 		"  ✓ administrators: invitation sent to you@example.com (valid 7 days)\n",
 		"  - organization access: checked by the manager at each discovery run (dashboard: Discovery, Organization access); "+
-			"dormeto install check --management-profile <profile> "+rwArgs+" checks it here\n",
+			"dormeto aws install check --management-profile <profile> "+rwArgs+" checks it here\n",
 	)
 	if strings.Contains(out, "is running") {
 		t.Errorf("a build said running:\n%s", out)

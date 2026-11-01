@@ -404,7 +404,7 @@ func (u UpdateCheck) rows(loc *time.Location) [][2]string {
 // Text is the daily check's setting and last result, times in loc.
 func (u UpdateCheck) Text(loc *time.Location) string { return Labelled(u.rows(loc)) }
 
-// ManagerStatus is what `dormeto manager status` reads: the version /health gives, the update's state and the daily
+// ManagerStatus is what `dormeto aws manager status` reads: the version /health gives, the update's state and the daily
 // check (nil when the manager has none).
 type ManagerStatus struct {
 	Version string       `json:"version"`

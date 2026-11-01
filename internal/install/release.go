@@ -19,7 +19,7 @@ import (
 // ReleasesURL is where the manager's releases are published.
 const ReleasesURL = "https://releases.dormeto.com/manager"
 
-// MinVersion is the first manager release `dormeto install` can install.
+// MinVersion is the first manager release `dormeto aws install` can install.
 const MinVersion = "0.11.0"
 
 // SelfUpdateVersion is the first manager release with the module's install input (the dashboard's updates).
@@ -94,7 +94,7 @@ func Resolve(ctx context.Context, h HTTP, version, local string) (Release, error
 		return Release{}, err
 	}
 	if !AtLeast(r.Version, MinVersion) {
-		return Release{}, fmt.Errorf("dormeto install needs manager %s or later (asked: %s)", MinVersion, r.Version)
+		return Release{}, fmt.Errorf("dormeto aws install needs manager %s or later (asked: %s)", MinVersion, r.Version)
 	}
 	if missing := r.missing(); len(missing) > 0 {
 		return Release{}, fmt.Errorf("manager %s: SHA256SUMS does not list %s", r.Version, strings.Join(missing, ", "))

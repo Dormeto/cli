@@ -359,7 +359,7 @@ func TestFollowCredentialsExpired(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("err %v", err)
 	}
-	want := "the AWS credentials expired while following build " + trkID + "; the build goes on: sign in again (aws sso login --profile <your profile>), then run dormeto install status"
+	want := "the AWS credentials expired while following build " + trkID + "; the build goes on: sign in again (aws sso login --profile <your profile>), then run dormeto aws install status"
 	if err.Error() != want {
 		t.Errorf("message %q", err)
 	}
@@ -668,7 +668,7 @@ func TestVerifyAdministratorsCredentialsExpired(t *testing.T) {
 	w := newTrkWorld()
 	cog := &trkFailingCognito{errs: map[string]error{"a@x.com": trkAPIErr("ExpiredTokenException")}}
 	checks := Verify(context.Background(), Clients{Cognito: cog}, &trkHTTP{statuses: []int{200}}, trkOut, []string{"a@x.com", "b@x.com"}, trkVerifyOpts(w))
-	want := Check{"administrators", "not checked (the AWS credentials expired: sign in again, then dormeto install status)", Warn}
+	want := Check{"administrators", "not checked (the AWS credentials expired: sign in again, then dormeto aws install status)", Warn}
 	if checks[1] != want || len(cog.calls) != 1 {
 		t.Errorf("got %+v after %d calls", checks[1], len(cog.calls))
 	}

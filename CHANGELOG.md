@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Every command that was at the top level moves under `dormeto aws`, as the Google Cloud ones are under `dormeto gcp`:
+  `dormeto aws install`, `dormeto aws routers list`, `dormeto aws estimate`, and so on for alerts, api, audit,
+  discovery, estimate, exclusions, groups, install, ip-lists, manager, operations, overview, routers, savings,
+  settings, uninstall, users, whoami and workloads, with their subcommands, options, exit codes and output unchanged.
+  `dormeto --help` lists `aws`, `gcp`, `version` and the help and completion commands; every hint, `Next:` line, error
+  message and usage names the new form. The old names still work, hidden from the help and the completion, with the
+  same output and exit code, and each prints one line on stderr: `dormeto: "dormeto install" is now "dormeto aws
+  install"; the old name goes in a later release.` They go in a later release: change scripts and runbooks to the new
+  names now.
+
 ## 0.8.0
 
 - The branded waiting page (router 0.35.0): `dormeto workloads waiting-page`, `routers waiting-page` and `settings waiting-page`

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto operations list|show|watch` and the readings (`overview`, `alerts`, `ip-lists`, `savings`, `audit`) against
+// `dormeto aws operations list|show|watch` and the readings (`overview`, `alerts`, `ip-lists`, `savings`, `audit`) against
 // a fake manager: the requests they make, what they print, the exit codes, and that a refused argument sends nothing.
 
 import (
@@ -184,7 +184,7 @@ func TestOperationsWatchStopsAtTheTimeoutAndSaysTheOperationGoesOn(t *testing.T)
 		}
 	}
 	r := runReading(t, a, tune, "operations", "watch", "op-5", "--timeout", "1m")
-	if r.exit != 1 || !strings.Contains(r.stderr, "timeout of 1m0s reached") || !strings.Contains(r.stderr, "still running in the manager: dormeto operations watch op-5") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "timeout of 1m0s reached") || !strings.Contains(r.stderr, "still running in the manager: dormeto aws operations watch op-5") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 	b := &readAPI{}

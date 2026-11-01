@@ -27,7 +27,7 @@ func TestRunOperationsSIGINTExits130AndSaysWhatStillRuns(t *testing.T) {
 			return ctx.Err()
 		}
 	}, "a")
-	if r.exit != 130 || !strings.Contains(r.stderr, "a: still running in the manager: dormeto operations watch op-a\n") {
+	if r.exit != 130 || !strings.Contains(r.stderr, "a: still running in the manager: dormeto aws operations watch op-a\n") {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 	if strings.Contains(r.stdout+r.stderr, "✗") {

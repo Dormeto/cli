@@ -232,7 +232,7 @@ func (x *run) accessSteps(s Settings, rel Release, confirmed bool) error {
 		if err != nil {
 			return err
 		}
-		return &stop{1, "Organization access is running already (build " + running + "): dormeto install status " + x.args() + " follows it"}
+		return &stop{1, "Organization access is running already (build " + running + "): dormeto aws install status " + x.args() + " follows it"}
 	}
 	if len(a.Accounts()) == 0 && a.PolicyChange == "unchanged" {
 		x.say("Organization access: nothing to do.")
@@ -240,7 +240,7 @@ func (x *run) accessSteps(s Settings, rel Release, confirmed bool) error {
 	}
 	x.showAccessPlan(a)
 	if !confirmed {
-		notDeployed := &stop{0, "Organization access not deployed: dormeto install apply " + x.args() + " deploys it"}
+		notDeployed := &stop{0, "Organization access not deployed: dormeto aws install apply " + x.args() + " deploys it"}
 		if !x.d.Terminal {
 			return notDeployed
 		}
@@ -377,7 +377,7 @@ func (x *run) deployAccess(mgmt Clients, op Project, s Settings, rel Release, a 
 
 // accessGoesOn is what a detached organization build leaves, and the command that ends it.
 func (x *run) accessGoesOn() string {
-	return "organization access goes on in CodeBuild. dormeto install status " + x.args() + " follows it and then removes its build role and project."
+	return "organization access goes on in CodeBuild. dormeto aws install status " + x.args() + " follows it and then removes its build role and project."
 }
 
 // startAccess bootstraps the management account's project, writes the plan (its accounts among it), gives the release (a local one uploaded to

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads|routers|settings waiting-page show|set|clear`: the branded waiting page's setting of one workload,
+// `dormeto aws workloads|routers|settings waiting-page show|set|clear`: the branded waiting page's setting of one workload,
 // one router or the organization, through the manager's /iam routes. `set` replaces that level's document: a template
 // from --title, --description and --icon, or a custom page from --html. The icon and the page are checked before any
 // call (exit 2). Exit codes as the fleet commands.

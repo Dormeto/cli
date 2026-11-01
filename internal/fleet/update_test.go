@@ -13,7 +13,7 @@ const cliUpdateState = `{"installedWithCli":true,"version":"0.17.1","env":"prod"
  "applied":{"version":"0.17.1","build":"dmt-prod-install:aaaa","at":"2026-10-18T10:05:00Z"},"cli":"0.5.0",
  "versions":[{"version":"0.19.0-rc.1","router":null,"minCli":null,"published":null,"staged":true},
   {"version":"0.18.1","router":"0.30.0","minCli":null,"published":"2026-10-19"},
-  {"version":"0.18.0","router":null,"minCli":"0.6.0","published":"2026-10-10","disabled":"run ` + "`dormeto install`" + ` with the CLI 0.6.0 or later"}],
+  {"version":"0.18.0","router":null,"minCli":"0.6.0","published":"2026-10-10","disabled":"run ` + "`dormeto aws install`" + ` with the CLI 0.6.0 or later"}],
  "build":{"id":"dmt-prod-install:cccc","by":"dashboard","action":"plan","version":"0.18.0","status":"SUCCEEDED","phase":"COMPLETED",
   "startedAt":"2026-10-19T11:00:00Z","endedAt":"2026-10-19T11:04:00Z","steps":["plan"],"tail":[],"consoleUrl":"https://eu-west-1.console.aws.amazon.com/b"},
  "pending":{"key":"prod/requests/r.json","id":"20261019T115800Z-0123abcd","etag":"e","action":"plan","version":"0.18.1","at":"2026-10-19T11:58:00Z",
@@ -83,7 +83,7 @@ func TestManagerStatusTextOfACLIInstall(t *testing.T) {
 		"applied      0.17.1 (build dmt-prod-install:aaaa, 2026-10-18 10:05 UTC)\n" +
 		"newer        0.19.0-rc.1  —           staged\n" +
 		"             0.18.1       2026-10-19  router 0.30.0\n" +
-		"             0.18.0       2026-10-10  run `dormeto install` with the CLI 0.6.0 or later\n" +
+		"             0.18.0       2026-10-10  run `dormeto aws install` with the CLI 0.6.0 or later\n" +
 		"last build   plan 0.18.0: SUCCEEDED, 2026-10-19 11:04 UTC\n" +
 		"             https://eu-west-1.console.aws.amazon.com/b\n" +
 		"pending      plan 0.18.1, requested by Ci/run-42 2026-10-19 11:58 UTC (operation op-1)\n" +

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto settings show|set`, `routers settings` and `workloads settings`: the hibernation setting of the manager's
+// `dormeto aws settings show|set`, `routers settings` and `workloads settings`: the hibernation setting of the manager's
 // workloads, at the three levels (the manager's default for every router, one router, one workload), through the
 // manager's /iam routes. Exit codes as the fleet commands.
 

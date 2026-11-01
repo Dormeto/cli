@@ -1,6 +1,6 @@
 package main
 
-// `dormeto groups`: the manager's custom groups and their grants (list, show, create, update, delete). Deleting is
+// `dormeto aws groups`: the manager's custom groups and their grants (list, show, create, update, delete). Deleting is
 // always confirmed on a terminal (--yes without one).
 
 import (
@@ -143,7 +143,7 @@ func newGroupsUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "update <name> [--description <text>] [--grant <tags>:<permissions>]... [--no-grants]", Short: "Change a group's description or replace its grants",
 		Args: argCount(1, 1, "<name>"), SilenceErrors: true,
 		Long: "Change a custom group: give at least one of --description, --grant and --no-grants. The grants given replace the\n" +
-			"group's grants (take `dormeto groups show` first to keep some); --no-grants removes them all. " + grantHelp + "\n" +
+			"group's grants (take `dormeto aws groups show` first to keep some); --no-grants removes them all. " + grantHelp + "\n" +
 			"Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name := args[0]

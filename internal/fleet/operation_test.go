@@ -168,7 +168,7 @@ func TestConflictNamesTheOtherOperation(t *testing.T) {
 	if !errors.As(err, &ae) || ae.OperationID != "op-9" || ae.Code != "conflict" {
 		t.Fatalf("%#v", err)
 	}
-	if want := "another operation runs on this target (operation op-9: dormeto operations watch op-9)"; err.Error() != want {
+	if want := "another operation runs on this target (operation op-9: dormeto aws operations watch op-9)"; err.Error() != want {
 		t.Errorf("%q, want %q", err.Error(), want)
 	}
 }

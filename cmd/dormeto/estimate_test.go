@@ -1,6 +1,6 @@
 package main
 
-// `dormeto estimate`: its arguments passed as they are to the command, its exit codes (0, 1, 2, a signal's), its
+// `dormeto aws estimate`: its arguments passed as they are to the command, its exit codes (0, 1, 2, a signal's), its
 // usage; the real dependencies.
 
 import (
@@ -25,30 +25,29 @@ func executed(t *testing.T, b build, args ...string) (stdout, stderr string, cod
 	root := newRoot(b)
 	root.SetOut(&out)
 	root.SetErr(&errs)
-	root.SetArgs(args)
-	code = execute(root)
+	code = execute(root, args...)
 	return out.String(), errs.String(), code
 }
 
 func TestEstimateHelpPrintsTheUsageExitCode0(t *testing.T) {
-	for _, args := range [][]string{{"estimate", "--help"}, {"estimate", "-h"}, {"help", "estimate"}} {
+	for _, args := range [][]string{{"aws", "estimate", "--help"}, {"aws", "estimate", "-h"}, {"help", "aws", "estimate"}} {
 		out, errs, code := executed(t, build{}, args...)
 		if code != 0 || out != options.Usage+"\n" || errs != "" {
 			t.Errorf("%q: exit code %d, out %q, errors %q", args, code, out, errs)
 		}
 	}
-	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "estimate") {
-		t.Errorf("the commands listed without estimate:\n%s", out)
+	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "aws") {
+		t.Errorf("the commands listed without aws:\n%s", out)
 	}
 }
 
 func TestEstimateABadOptionItsMessageAndTheUsageExitCode2(t *testing.T) {
-	out, errs, code := executed(t, build{}, "estimate", "--profile", "p", "--window", "3")
+	out, errs, code := executed(t, build{}, "aws", "estimate", "--profile", "p", "--window", "3")
 	if code != 2 || out != "" || errs != "--window: whole minutes from 5 to 1440\n"+options.Usage+"\n" {
 		t.Fatalf("exit code %d, out %q, errors %q", code, out, errs)
 	}
 	// Flags are the command's, never cobra's.
-	if _, errs, code := executed(t, build{}, "estimate", "--profile=p"); code != 2 || !strings.HasPrefix(errs, "unknown option: --profile=p\n") {
+	if _, errs, code := executed(t, build{}, "aws", "estimate", "--profile=p"); code != 2 || !strings.HasPrefix(errs, "unknown option: --profile=p\n") {
 		t.Fatalf("exit code %d, errors %q", code, errs)
 	}
 }
@@ -71,7 +70,7 @@ func TestEstimateAProfileMissingFromTheConfigAWSsMessageExitCode1NothingSent(t *
 	if err := os.WriteFile(filepath.Join(home, "config"), []byte("[profile other]\nregion = eu-west-1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, errs, code := executed(t, build{}, "estimate", "--profile", "nope", "--out", t.TempDir())
+	out, errs, code := executed(t, build{}, "aws", "estimate", "--profile", "nope", "--out", t.TempDir())
 	// What it was reading, then AWS's message.
 	if code != 1 || out != "Reading the profile nope: its account and its organization\n" || errs != "Error: failed to get shared config profile, nope\n" {
 		t.Fatalf("exit code %d, out %q, errors %q", code, out, errs)

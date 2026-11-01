@@ -1,6 +1,6 @@
 package install
 
-// `dormeto install status` (spec §8): where the install stands. A running build is followed first; then the manager's
+// `dormeto aws install status` (spec §8): where the install stands. A running build is followed first; then the manager's
 // version and the latest release, the last plan and apply, the dashboard and the invitations, and organization access.
 // It writes nothing, but for a detached organization run's project and role in the management account, removed once
 // its build has ended (decision 17).
@@ -24,7 +24,7 @@ const maxLastBuilds = 100
 // buildLabels are the follow's label of each action of the manager's project.
 var buildLabels = map[string]string{"plan": "Plan", "apply": "Apply", "plan-destroy": "Destroy plan", "apply-destroy": "Destroy", "request": "Dashboard update"}
 
-// Status is `dormeto install status`. Exit codes: 0; 1 when a check fails, the last build failed or AWS refuses; 130
+// Status is `dormeto aws install status`. Exit codes: 0; 1 when a check fails, the last build failed or AWS refuses; 130
 // when ctx is cancelled (a followed build goes on).
 func Status(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
@@ -113,7 +113,7 @@ func (x *run) followRunning(s Settings) (failed, verified bool, err error) {
 	}
 	res, err := Follow(x.ctx, x.c, x.p, id, x.follow(label, total))
 	if err != nil {
-		return false, false, x.lost(err, "the build goes on in CodeBuild. dormeto install status "+x.args()+" follows it again.")
+		return false, false, x.lost(err, "the build goes on in CodeBuild. dormeto aws install status "+x.args()+" follows it again.")
 	}
 	if res.Failed {
 		x.failed(label, res, x.p.LogGroup) //nolint:errcheck // said; status goes on
@@ -167,7 +167,7 @@ func versionsLine(applied *Applied, latest string, latestErr error) string {
 	case latestErr != nil:
 		return line + "unknown (" + latestErr.Error() + ")"
 	case applied != nil && CompareVersions(latest, applied.Version) > 0:
-		return line + latest + ": an upgrade is available (dormeto install)"
+		return line + latest + ": an upgrade is available (dormeto aws install)"
 	}
 	return line + latest
 }
@@ -255,7 +255,7 @@ func (x *run) accessStatus(s Settings, saved *Settings, applied *Applied) (bool,
 	profile, ok := x.management(s)
 	if !ok {
 		x.say("%s", Check{"organization access", "checked by the manager at each discovery run (dashboard: Discovery, Organization access); " +
-			"dormeto install check --management-profile <profile> " + x.args() + " checks it here", Skip}.Line())
+			"dormeto aws install check --management-profile <profile> " + x.args() + " checks it here", Skip}.Line())
 		return false, nil
 	}
 	mgmt, err := x.managementClients(profile)

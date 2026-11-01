@@ -1,7 +1,7 @@
 package main
 
-// `dormeto routers list`, `dormeto routers upgrade` and `dormeto workloads list`: the manager's routers and workloads,
-// read through its IAM-authorized API (internal/fleet) with the AWS profile that `dormeto install` uses. The flags that
+// `dormeto aws routers list`, `dormeto aws routers upgrade` and `dormeto aws workloads list`: the manager's routers and workloads,
+// read through its IAM-authorized API (internal/fleet) with the AWS profile that `dormeto aws install` uses. The flags that
 // say where the manager is (--profile, --region, --env, --api-url) are shared by the fleet commands; the API is found
 // by its name unless --api-url gives it. Exit codes: 0; 1 when AWS or the manager refuses; 2 for a bad flag or
 // argument; 128 and the signal's number when SIGINT or SIGTERM stopped it.
@@ -257,7 +257,7 @@ func taggedRouters(ctx context.Context, api *fleet.Client, c *cobra.Command, war
 	return set, nil
 }
 
-// newRouters is `dormeto routers` and its subcommands (list and upgrade here, the others in routers.go).
+// newRouters is `dormeto aws routers` and its subcommands (list and upgrade here, the others in routers.go).
 func newRouters(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
 	cmd := fleetCommand("routers", "List, show, install, upgrade, pause and uninstall the manager's routers")
@@ -336,7 +336,7 @@ func printJSON(w io.Writer, v any) error {
 	return err
 }
 
-// newWorkloads is `dormeto workloads` and its subcommand list.
+// newWorkloads is `dormeto aws workloads` and its subcommand list.
 func newWorkloads(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
 	cmd := fleetCommand("workloads", "List and show workloads, keep them awake and schedule them")

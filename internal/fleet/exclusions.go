@@ -1,7 +1,7 @@
 package fleet
 
 // The manager's manual exclusions (GET, POST and DELETE /iam/exclusions): the shapes the CLI reads, kept raw for
-// --json, the rules of their targets, and the text `dormeto exclusions list` prints.
+// --json, the rules of their targets, and the text `dormeto aws exclusions list` prints.
 
 import (
 	"context"

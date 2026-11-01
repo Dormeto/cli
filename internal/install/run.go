@@ -141,7 +141,7 @@ func (x *run) args() string {
 
 // noInstall stops a command that needs the install: there is none of the env here.
 func (x *run) noInstall() error {
-	return &stop{1, fmt.Sprintf("no install of env %s in %s %s: run dormeto install", x.env, x.w.Account, x.region)}
+	return &stop{1, fmt.Sprintf("no install of env %s in %s %s: run dormeto aws install", x.env, x.w.Account, x.region)}
 }
 
 // Prompted is the prompter's answer, or the context's error as soon as the run is cancelled (a terminal's read does
@@ -500,7 +500,7 @@ func (x *run) summary(build string) (PlanSummary, error) {
 		return PlanSummary{}, err
 	}
 	if b == nil {
-		return PlanSummary{}, fmt.Errorf("no plan.json for build %s in s3://%s/%s: plan again (dormeto install)", build, x.p.Bucket, x.p.Key("plans", build))
+		return PlanSummary{}, fmt.Errorf("no plan.json for build %s in s3://%s/%s: plan again (dormeto aws install)", build, x.p.Bucket, x.p.Key("plans", build))
 	}
 	return Summarize(b)
 }
@@ -518,7 +518,7 @@ func (x *run) showPlan(build, version string, sum PlanSummary) {
 	}
 }
 
-// Install is `dormeto install`: where it runs, the answers (asked on a first install), the checks, the bootstrap, the
+// Install is `dormeto aws install`: where it runs, the answers (asked on a first install), the checks, the bootstrap, the
 // plan in CodeBuild, its summary, the person's confirmation in a terminal, the saved plan applied and followed, then
 // the dashboard and the invitations checked; with a management profile, organization access after the manager (also
 // when the plan changes nothing, and alone with --access). Exit codes: 0; 1 when AWS refuses, a check fails or a build
@@ -610,7 +610,7 @@ func (x *run) install() error {
 		}
 	}
 
-	x.interrupted = "Interrupted before the plan started: run dormeto install again."
+	x.interrupted = "Interrupted before the plan started: run dormeto aws install again."
 	if err := Bootstrap(x.ctx, x.c, x.p, s.BuildRole); err != nil {
 		return err
 	}
@@ -637,14 +637,14 @@ func (x *run) install() error {
 	if err != nil {
 		return err
 	}
-	kept := "Not applied; the plan is kept: dormeto install apply " + x.args()
+	kept := "Not applied; the plan is kept: dormeto aws install apply " + x.args()
 	if sum.Empty() {
 		x.say("Nothing to change: manager %s is installed.", s.Version)
 		return x.thenAccess(s, rel, false)
 	}
 	x.showPlan(id, s.Version, sum)
 	if !x.d.Terminal {
-		return &stop{0, "Plan saved. Apply it: dormeto install apply " + x.args()}
+		return &stop{0, "Plan saved. Apply it: dormeto aws install apply " + x.args()}
 	}
 	ok, err := x.confirm("Apply this plan?")
 	if err != nil {
@@ -668,7 +668,7 @@ func (x *run) plan(s *Settings, cfg []byte, then string) (string, PlanSummary, e
 	if err := PutConfig(x.ctx, x.c, x.p, cfg); err != nil {
 		return "", PlanSummary{}, err
 	}
-	return x.startPlan(s, ActionPlan, planApply, "Plan", "dormeto install apply "+x.args()+then)
+	return x.startPlan(s, ActionPlan, planApply, "Plan", "dormeto aws install apply "+x.args()+then)
 }
 
 // startPlan makes a plan of the settings s: its last plan forgotten in s and install.json (a plan of the settings
@@ -685,7 +685,7 @@ func (x *run) startPlan(s *Settings, a Action, kind, label, apply string) (strin
 		return "", PlanSummary{}, err
 	}
 	what := strings.ToLower(label)
-	following := "Follow it: dormeto install status " + x.args() + "; apply it once done: " + apply
+	following := "Follow it: dormeto aws install status " + x.args() + "; apply it once done: " + apply
 	x.interrupted = "Interrupted: the " + what + " started (build " + id + ") and goes on in CodeBuild. " + following
 	s.LastPlan, s.LastPlanKind = id, kind
 	// The plan runs: its id is kept even when Ctrl-C comes now.
@@ -727,8 +727,8 @@ func (x *run) applyPlan(s Settings, sum PlanSummary, a Action, label, goesOn str
 // applyInstall applies the saved install plan s.LastPlan (sum its summary) and follows it; then is what to run once it
 // is applied ("": nothing more), said with the commands that follow and apply it.
 func (x *run) applyInstall(s Settings, sum PlanSummary, then string) error {
-	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args() + then
-	done, err := x.applyPlan(s, sum, ActionApply, "Apply", "the apply goes on in CodeBuild. Follow it: dormeto install status "+x.args()+then)
+	x.interrupted = "Not applied; the plan is kept: dormeto aws install apply " + x.args() + then
+	done, err := x.applyPlan(s, sum, ActionApply, "Apply", "the apply goes on in CodeBuild. Follow it: dormeto aws install status "+x.args()+then)
 	if err != nil {
 		return err
 	}
@@ -747,7 +747,7 @@ func (x *run) apply(s Settings, sum PlanSummary, applied *Applied) error {
 		return err
 	}
 	x.detach(s, applied)
-	x.interrupted = "Interrupted: the manager is installed; dormeto install status checks it."
+	x.interrupted = "Interrupted: the manager is installed; dormeto aws install status checks it."
 	out, err := ReadOutputs(x.ctx, x.c, x.p)
 	if err != nil {
 		return err
@@ -766,7 +766,7 @@ func (x *run) apply(s Settings, sum PlanSummary, applied *Applied) error {
 	return nil
 }
 
-// InstallCheck is `dormeto install check` (Check is a check's row): the prerequisites, read-only, without asking
+// InstallCheck is `dormeto aws install check` (Check is a check's row): the prerequisites, read-only, without asking
 // anything but the region: the version the latest unless given, the mode the suggested one unless given, the
 // administrators a warning until given; with a management profile, organization access surveyed. Exit codes: 0; 1
 // when a check fails or AWS refuses; 2 for a bad flag; 130 when ctx is cancelled.
@@ -827,7 +827,7 @@ func (x *run) check() error {
 	return nil
 }
 
-// Apply is `dormeto install apply`: the explicit confirmation of the last plan (a plan made without a terminal, or
+// Apply is `dormeto aws install apply`: the explicit confirmation of the last plan (a plan made without a terminal, or
 // left at the question), shown, then applied, followed and verified as Install does; with a management profile,
 // organization access deployed after it, or alone when there is no plan to apply (ruling R16). Exit codes as Install's.
 func Apply(ctx context.Context, d Deps, r Request) int {
@@ -855,14 +855,14 @@ func (x *run) applyLast() error {
 	}
 	if saved.LastPlan == "" {
 		if !access || applied == nil { // nothing applied: no manager role for the member accounts' roles to trust
-			return &stop{1, "no plan to apply: run dormeto install"}
+			return &stop{1, "no plan to apply: run dormeto aws install"}
 		}
 		return x.accessInstalled(s, saved, applied, true)
 	}
 	if saved.LastPlanKind == planDestroy {
-		return &stop{1, "the last plan destroys the manager: dormeto uninstall apply applies it"}
+		return &stop{1, "the last plan destroys the manager: dormeto aws uninstall apply applies it"}
 	}
-	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args()
+	x.interrupted = "Not applied; the plan is kept: dormeto aws install apply " + x.args()
 	// A stale or failed plan is refused before it is shown; with a management profile, a plan applied already leaves
 	// organization access to deploy.
 	if err := CheckPlan(x.ctx, x.c, saved.LastPlan, applied); err != nil {

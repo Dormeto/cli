@@ -14,19 +14,25 @@
 
 </div>
 
-`dormeto` is the Dormeto command line. `dormeto estimate` reads an AWS account or a whole organization with read-only
+`dormeto` is the Dormeto command line. `dormeto aws estimate` reads an AWS account or a whole organization with read-only
 access and estimates what Dormeto would save on the web workloads behind your Application Load Balancers (EC2, Auto
 Scaling, ECS, EKS, and the RDS databases that nap with them): the workloads that could nap, how long each would sleep and
 wake, and the monthly saving net of Dormeto's own cost. It gives a summary in the terminal and a Markdown and a JSON
 report. It installs nothing in your accounts and sends nothing anywhere but to AWS.
 
-`dormeto install` then installs the Dormeto manager in your AWS account with CodeBuild, after its checks and your
+`dormeto aws install` then installs the Dormeto manager in your AWS account with CodeBuild, after its checks and your
 confirmation of the plan (see [Install the manager](#install-the-manager)). It is the only command that changes your
 accounts itself.
 
 Once the manager runs, every operation of its dashboard is a command too, with the same AWS profile: routers, workloads,
 discovery, operations, users, the audit, the manager's update (see [Routers and workloads](#routers-and-workloads) and
 the sections after it). These ask the manager, which acts as it does for the dashboard.
+
+Every command above, with all of its subcommands and options, is under `dormeto aws`, as the Google Cloud ones are under
+`dormeto gcp` (`dormeto --help` lists `aws`, `gcp` and `version`). Before the CLI that has `aws`, they were top-level
+(`dormeto install`, `dormeto routers list`); those names still work, hidden from the help and from the completion, with
+the same output and exit code, and each prints one line on stderr saying the new name: `dormeto: "dormeto install" is now
+"dormeto aws install"; the old name goes in a later release.` The old names go in a later release.
 
 ## Install
 
@@ -80,17 +86,17 @@ Log in with a profile that can read the accounts (see [Permissions](#permissions
 
 ```sh
 aws sso login --profile <profile>
-dormeto estimate --profile <profile> --uptime
+dormeto aws estimate --profile <profile> --uptime
 ```
 
 `--uptime` also measures when each EC2 instance, ECS service and database actually ran, so the estimate does not count
 the hours a schedule already stops them. The first run reads every account and region: minutes to an hour for a large
-organization. A second run reads the [cache](#cache). `dormeto estimate --help` prints the options.
+organization. A second run reads the [cache](#cache). `dormeto aws estimate --help` prints the options.
 
 ## Options
 
 ```
-Usage: dormeto estimate --profile <profile>[,<profile>...] [--accounts 111111111111,222222222222]
+Usage: dormeto aws estimate --profile <profile>[,<profile>...] [--accounts 111111111111,222222222222]
   [--regions eu-west-1,eu-west-3] [--exclude-tags 'env=dev|test,team=web' ...] [--uptime | --ec2-uptime | --ecs-uptime | --rds-uptime] [--role <name>]
   [--baseline always|business-hours] [--timezone Europe/Paris] [--discount-compute 0-90] [--discount-databases 0-90]
   [--refresh discovery|metrics] [--days 14] [--window <minutes>] [--max-wakes 3|none]
@@ -226,7 +232,7 @@ delete the directory.
 `dormeto` sends nothing but its calls to AWS and to your EKS clusters' APIs, with your credentials, from your machine.
 There is no telemetry and no update check. What it reads stays in the cache and the reports you choose to share.
 
-That is the estimate's promise, and it holds. `dormeto install` also downloads from `releases.dormeto.com`
+That is the estimate's promise, and it holds. `dormeto aws install` also downloads from `releases.dormeto.com`
 (`latest.json`, then the release's `SHA256SUMS` and the release, checked against it). Its builds, in your account,
 download Terraform from `releases.hashicorp.com` and the providers through the Terraform registry, with Terraform's
 checkpoint (its version check) off. The CLI and the builds use only your credentials and your account; still no
@@ -234,7 +240,7 @@ telemetry.
 
 ## Install the manager
 
-`dormeto install` installs the Dormeto manager in an AWS account, with CodeBuild: Terraform runs in your account, not
+`dormeto aws install` installs the Dormeto manager in an AWS account, with CodeBuild: Terraform runs in your account, not
 on your machine. It asks what it needs, checks what can fail before anything is created, shows the plan, applies it once
 you confirm, and follows the build. It needs a manager release 0.11.0 or later (an account outside any organization
 needs 0.11.0). In order:
@@ -245,7 +251,7 @@ needs 0.11.0). In order:
 2. **The questions.** The release (the latest by default), the region (the profile's, else `eu-west-1` is suggested),
    the environment (`prod`), the administrators' emails, the mode, the management account's profile, a custom domain
    and SES. Each has a flag; a question already answered by a flag or a previous run is not asked.
-3. **The checks**, read-only (`dormeto install check` runs them alone): credentials, administrator rights (simulated),
+3. **The checks**, read-only (`dormeto aws install check` runs them alone): credentials, administrator rights (simulated),
    the region and CodeBuild, the organization, an existing install of the same environment or another manager's
    resources and Dormeto roles, the release, the administrators' addresses, the domain's certificate and zone, the SES
    identity, and organization access. A failure stops the install before anything is created; a warning is shown and
@@ -258,7 +264,7 @@ needs 0.11.0). In order:
    a second build applies exactly that saved plan, never `-auto-approve`. An install is two builds, about 15 minutes.
 6. **The tracking.** In a terminal, one status line (the phase, the resources done out of the plan's total, the one in
    progress, the elapsed time); without one, or with `--verbose`, Terraform's lines. Ctrl-C detaches: the build goes on,
-   and `dormeto install status` follows it again. A failure prints the last lines of the log and where to read the rest.
+   and `dormeto aws install status` follows it again. A failure prints the last lines of the log and where to read the rest.
 7. **The result.** The dashboard's URL must answer over HTTPS (a new distribution can take some minutes), and each
    administrator's invitation is checked.
 
@@ -273,7 +279,7 @@ Log in with a profile that has administrator rights in the account to install in
 
 ```sh
 aws sso login --profile <profile>
-dormeto install --profile <profile>
+dormeto aws install --profile <profile>
 ```
 
 Without a terminal (a script, a pipeline), every answer comes from a flag. Answers that have a default take it: the
@@ -281,17 +287,17 @@ latest release, the suggested mode, no domain and no SES, the environment `prod`
 required. The run stops after the plan, prints what it would do and the command that applies it:
 
 ```sh
-dormeto install --profile <profile> --admin-emails you@example.com
-dormeto install apply --profile <profile>
+dormeto aws install --profile <profile> --admin-emails you@example.com
+dormeto aws install apply --profile <profile>
 ```
 
-`dormeto install apply` is the confirmation when you run it yourself: it shows the last saved plan, applies it and
+`dormeto aws install apply` is the confirmation when you run it yourself: it shows the last saved plan, applies it and
 follows the build. It refuses a plan made for an uninstall. `--yes` takes the suggested answers; it never confirms a plan.
 
 ### Flags
 
-`dormeto install check`, `apply` and `status` take the same flags, except `--adopt-state` and `--adopt-module`.
-`dormeto install --help` prints them.
+`dormeto aws install check`, `apply` and `status` take the same flags, except `--adopt-state` and `--adopt-module`.
+`dormeto aws install --help` prints them.
 
 - `--profile <profile>`: the AWS profile (the SDK's default, such as `AWS_PROFILE`, when absent).
 - `--region <region>`: the manager's region (the profile's, else asked, with `eu-west-1` suggested).
@@ -337,13 +343,13 @@ Organization mode needs the delegation policy in the management account and, in 
 credentials: `--management-profile <profile>`, or `--profile` when it is the management account's.
 
 ```sh
-dormeto install --profile <manager-account-profile> --management-profile <management-profile>
+dormeto aws install --profile <manager-account-profile> --management-profile <management-profile>
 ```
 
 - The CLI plans it read-only, shows it (the delegation policy as it would be, the accounts and the roles each gets),
   and after your confirmation one build in the management account applies it. That build's role and project
   (`dmt-<env>-organization`) are created by API calls for the run, and deleted when it ends; the bucket stays, with the
-  reports. Detached, `dormeto install status` deletes them once the build ends.
+  reports. Detached, `dormeto aws install status` deletes them once the build ends.
 - The member role is `--member-role` (`OrganizationAccountAccessRole` by default: the accounts that AWS Organizations
   created have it, the invited ones do not). An account where it cannot be assumed is left out and listed, with the
   procedure for it.
@@ -359,22 +365,22 @@ dormeto install --profile <manager-account-profile> --management-profile <manage
 Without the management account's credentials, organization access is disabled: the manager is installed all the same,
 but it cannot list the accounts until the delegation policy exists, nor read an account without its roles. Deploy them
 with the procedure, <https://dormeto.com/organization-access.html>, and check them with
-`dormeto install check --management-profile <profile>`.
+`dormeto aws install check --management-profile <profile>`.
 
-Without a terminal, `dormeto install apply --management-profile <profile>` deploys organization access: after the
+Without a terminal, `dormeto aws install apply --management-profile <profile>` deploys organization access: after the
 manager's plan when there is one to apply, alone when there is none.
 
 ### Status, upgrade, uninstall
 
-`dormeto install status` shows where the install stands: a running build, followed; the manager's version and the latest
+`dormeto aws install status` shows where the install stands: a running build, followed; the manager's version and the latest
 release; the last plan and apply; the dashboard and the invitations; organization access.
 
-An upgrade is `dormeto install` again (`--version <newer>` for a given release): the answers of the last run are reused,
+An upgrade is `dormeto aws install` again (`--version <newer>` for a given release): the answers of the last run are reused,
 nothing already answered is asked, then the plan is shown and confirmed as before. Organization access runs again when
 you give the management profile (its script is idempotent); without it, the release's notes may ask for the roles to
 be applied again.
 
-`dormeto uninstall` removes the manager, in this order:
+`dormeto aws uninstall` removes the manager, in this order:
 
 1. It refuses while routers are installed: offboard the workloads and uninstall the routers in the dashboard first. It
    asks you to confirm that event-driven refresh is off.
@@ -385,9 +391,9 @@ be applied again.
 Organization access is kept: its roles keep working for a reinstall. To remove them and Dormeto's statement of the
 delegation policy, see <https://dormeto.com/organization-access.html>.
 
-Without a terminal, `dormeto uninstall` stops after each plan: `dormeto install apply` applies the deletion protection's,
-`dormeto uninstall apply` the destroy plan, which keeps the bootstrap (a run with a terminal removes it on request).
-`dormeto install apply` refuses a destroy plan, and `dormeto uninstall apply` an install plan. `uninstall` takes
+Without a terminal, `dormeto aws uninstall` stops after each plan: `dormeto aws install apply` applies the deletion protection's,
+`dormeto aws uninstall apply` the destroy plan, which keeps the bootstrap (a run with a terminal removes it on request).
+`dormeto aws install apply` refuses a destroy plan, and `dormeto aws uninstall apply` an install plan. `uninstall` takes
 `--profile`, `--region`, `--env`, `--verbose` and `--yes`, which here answers that event-driven refresh is off and
 keeps the bootstrap; it never confirms a plan.
 
@@ -403,12 +409,12 @@ when the manager's API drops a request in the install bucket (`<env>/requests/`)
 its request itself and checks it. The dashboard can request a plan of a newer published version, or of a version staged
 by the CLI (`--release`), with the configuration last applied (`applied/`), then the apply of that plan. The build
 checks every request (its fields, its version, that the plan it applies is the current one) and refuses what does not
-pass; `dormeto install status` shows the dashboard's builds as the last dashboard update. The CLI records its version
+pass; `dormeto aws install status` shows the dashboard's builds as the last dashboard update. The CLI records its version
 in `<env>/cli.json`, which the dashboard reads to know the install can be updated.
 
 `--build-role` leaves it off: the rule, its role and the manager's access to the bucket are not created, and the
-dashboard says the install cannot be updated there. `dormeto uninstall` removes the rule and its role. An install made
-with an older CLI gets it by running `dormeto install` once more with this one.
+dashboard says the install cannot be updated there. `dormeto aws uninstall` removes the rule and its role. An install made
+with an older CLI gets it by running `dormeto aws install` once more with this one.
 
 ### Adopting a manager installed with Terraform
 
@@ -419,7 +425,7 @@ they are and the CLI's configuration.
 
 ```sh
 terraform -chdir=<the configuration that installed it> state pull > manager.tfstate
-dormeto install --profile <profile> --region <region> --env <env> --adopt-state manager.tfstate \
+dormeto aws install --profile <profile> --region <region> --env <env> --adopt-state manager.tfstate \
   --admin-emails you@example.com --domain <host> --certificate-arn <arn> --zone-id <id> --var name=<JSON>
 ```
 
@@ -440,7 +446,7 @@ dormeto install --profile <profile> --region <region> --env <env> --adopt-state 
 - The CLI never reads or writes the source's backend. After the first apply, it says how to detach the manager from the
   source: `terraform state rm module.<name>` there, then remove the module from that configuration. While both states
   name the resources, applying the source configuration again would fight the install.
-- Until the first apply, `dormeto uninstall` refuses: destroying would delete the adopted manager. To abandon the
+- Until the first apply, `dormeto aws uninstall` refuses: destroying would delete the adopted manager. To abandon the
   adoption instead, remove `<env>/install.json` and `<env>/manager.tfstate` from the install's bucket; the source state
   is untouched, and the bootstrap can stay or be removed by hand.
 
@@ -450,10 +456,10 @@ The install's profile needs administrator rights in the manager's account: the c
 bootstrap (the bucket, the role, the project, the log group, and the rule that starts the install build on a dashboard request with its own role) and `iam:PassRole`, and the install is refused when one is
 denied. The build role the install creates gets the `AdministratorAccess` managed policy in that account only, since the
 manager module creates IAM roles, Lambda functions, a user pool, a distribution and tables; it is trusted by CodeBuild
-for the install's project only. `--build-role` gives your own role instead, and `dormeto uninstall` removes the one the
+for the install's project only. `--build-role` gives your own role instead, and `dormeto aws uninstall` removes the one the
 install created.
 
-That role keeps `AdministratorAccess` until `dormeto uninstall` (it serves the upgrades). Anyone allowed
+That role keeps `AdministratorAccess` until `dormeto aws uninstall` (it serves the upgrades). Anyone allowed
 `codebuild:StartBuild` or `codebuild:UpdateProject` on the project `dmt-<env>-install` can therefore run commands as an
 administrator of that account: allow those actions to the install's operators only, or give your own role with
 `--build-role`.
@@ -474,7 +480,7 @@ administrator).
 
 ## Routers and workloads
 
-From CLI 0.4.0 and manager 0.15.0, `dormeto` calls the manager's API, with the AWS profile that `dormeto install` uses,
+From CLI 0.4.0 and manager 0.15.0, `dormeto` calls the manager's API, with the AWS profile that `dormeto aws install` uses,
 on its IAM-authorized `/iam/*` routes (see [Permission](#permission-to-call-the-manager)); nothing is installed. From
 CLI 0.6.0, every operation of the manager is a command, a verb per action of the dashboard: this section has the
 routers and the workloads, then come [Discovery and exclusions](#discovery-and-exclusions), [Operations](#operations),
@@ -483,12 +489,12 @@ routers and the workloads, then come [Discovery and exclusions](#discovery-and-e
 targets, confirmations, operations and output work, the exit codes and the permission.
 
 ```sh
-dormeto whoami
-dormeto routers list --env dev --outdated
-dormeto workloads list --tag team=payments --state ASLEEP
-dormeto workloads wake prod-eu/w-1 --wait
-dormeto routers upgrade --all --dry-run
-dormeto routers upgrade --all --yes --json > upgrade.json   # in CI
+dormeto aws whoami
+dormeto aws routers list --env dev --outdated
+dormeto aws workloads list --tag team=payments --state ASLEEP
+dormeto aws workloads wake prod-eu/w-1 --wait
+dormeto aws routers upgrade --all --dry-run
+dormeto aws routers upgrade --all --yes --json > upgrade.json   # in CI
 ```
 
 ### Where the manager is
@@ -500,7 +506,7 @@ that name, the message says which environment and region were searched. `--api-u
 (the module's `api_endpoint` output, `https://<api id>.execute-api.<region>.amazonaws.com`), not the dashboard's URL.
 
 ```sh
-dormeto whoami [--json]
+dormeto aws whoami [--json]
 ```
 
 `whoami` shows the caller as the manager names it (the profile's identity, by its ARN) and its role, then the manager
@@ -530,10 +536,10 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   `  ✓ verify router (12s)`), then `✓ <target>: <type> succeeded in 3m12s` or
   `✗ <target>: <type> failed at <step>: <detail> (operation <id>)`. A start the manager refuses is printed with its
   message; the others go on, and the exit is 1. An operation that another one holds is refused with that one's id:
-  `(operation <id>: dormeto operations watch <id>)`.
-- **Following.** `--no-wait` prints `follow it: dormeto operations watch <id>` instead of following. `--timeout` (60m
+  `(operation <id>: dormeto aws operations watch <id>)`.
+- **Following.** `--no-wait` prints `follow it: dormeto aws operations watch <id>` instead of following. `--timeout` (60m
   by default) and Ctrl-C stop following: the operations go on in the manager, and the CLI prints
-  `<target>: still running in the manager: dormeto operations watch <id>` for each one (exit 1; 130 on Ctrl-C). A wake,
+  `<target>: still running in the manager: dormeto aws operations watch <id>` for each one (exit 1; 130 on Ctrl-C). A wake,
   a keep-awake and a discovery run are not operations: `--wait` waits for them, with their own `--timeout`.
 - **Durations and times.** `--for` takes a duration: `90m`, `2h`, or whole days first, `3d`, `1d12h`. `--until` takes
   an RFC 3339 time or `HH:MM` today in the local time zone, refused when already past (it never means tomorrow). Each
@@ -559,7 +565,7 @@ it first to check the profile and the permission. `--json` prints `{me, version,
 
 - 0: success (and a declined confirmation, which sends nothing).
 - 1: AWS or the manager refused, an operation or an upgrade failed or did not start, a workload failed to wake, an
-  operation or a wait was not followed to its end (`--timeout`), a `--tag` selection was incomplete, or `dormeto api`
+  operation or a wait was not followed to its end (`--timeout`), a `--tag` selection was incomplete, or `dormeto aws api`
   got a status other than 2xx.
 - 2: a bad flag or argument, or no `--yes` without a terminal.
 - 128 plus the signal's number when SIGINT or SIGTERM stopped the command (130 for Ctrl-C).
@@ -676,7 +682,7 @@ person able to administer the manager.
 ### routers list
 
 ```sh
-dormeto routers list [--account <id>]... [--router-region <region>]... [--name <glob>] [--tag k=v]... [--outdated] [--json]
+dormeto aws routers list [--account <id>]... [--router-region <region>]... [--name <glob>] [--tag k=v]... [--outdated] [--json]
 ```
 
 Lists each router's name, account, region, source (`manager` or `terraform`), version (`0.29.0 → 0.30.0` when below the
@@ -699,12 +705,12 @@ cannot select it (a warning says so).
 ### routers upgrade
 
 ```sh
-dormeto routers upgrade [<router>...] [filters] [--all] [--concurrency <n>] [--timeout <d>] [--dry-run] [--yes] [--json]
+dormeto aws routers upgrade [<router>...] [filters] [--all] [--concurrency <n>] [--timeout <d>] [--dry-run] [--yes] [--json]
 ```
 
 ```sh
-dormeto routers upgrade --tag team=payments
-dormeto routers upgrade --all --dry-run
+dormeto aws routers upgrade --tag team=payments
+dormeto aws routers upgrade --all --dry-run
 ```
 
 Upgrades the routers named, narrowed by the filters, to the version available. Without a name or a filter, `--all` is
@@ -737,7 +743,7 @@ ends (the version change and the duration, or the step that failed, its detail a
 ### routers show
 
 ```sh
-dormeto routers show <router> [--json]
+dormeto aws routers show <router> [--json]
 ```
 
 Shows one router as it tells its details: its version and build, its health and problems, the idle check (its schedule
@@ -750,13 +756,13 @@ time zone. `--json` prints the manager's answer.
 ### routers install and uninstall
 
 ```sh
-dormeto routers install --account <12 digits> --router-region <region> [--no-wait] [--timeout <d>] [--json]
-dormeto routers uninstall <router>... [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
+dormeto aws routers install --account <12 digits> --router-region <region> [--no-wait] [--timeout <d>] [--json]
+dormeto aws routers uninstall <router>... [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
 ```
 
 ```sh
-dormeto routers install --account 111122223333 --router-region eu-west-3
-dormeto routers uninstall staging-eu --yes --no-wait
+dormeto aws routers install --account 111122223333 --router-region eu-west-3
+dormeto aws routers uninstall staging-eu --yes --no-wait
 ```
 
 - `install` starts the manager's install of a router in the account and region (an `install-router` operation) and
@@ -771,13 +777,13 @@ dormeto routers uninstall staging-eu --yes --no-wait
 ### routers pause and resume
 
 ```sh
-dormeto routers pause <router>... --reason <text> [--for <duration> | --until <time>] [--keep-asleep] [--dry-run] [--yes] [--json]
-dormeto routers resume <router>... [--dry-run] [--yes] [--json]
+dormeto aws routers pause <router>... --reason <text> [--for <duration> | --until <time>] [--keep-asleep] [--dry-run] [--yes] [--json]
+dormeto aws routers resume <router>... [--dry-run] [--yes] [--json]
 ```
 
 ```sh
-dormeto routers pause prod-eu --reason "database migration" --for 3h
-dormeto routers resume prod-eu
+dormeto aws routers pause prod-eu --reason "database migration" --for 3h
+dormeto aws routers resume prod-eu
 ```
 
 - `pause`: none of the routers' workloads is napped automatically, and the workloads asleep are woken unless
@@ -791,7 +797,7 @@ dormeto routers resume prod-eu
 ### workloads list
 
 ```sh
-dormeto workloads list [--state <state>]... [--router <name>] [--tag k=v]... [--search <text>] [--json]
+dormeto aws workloads list [--state <state>]... [--router <name>] [--tag k=v]... [--search <text>] [--json]
 ```
 
 Lists each workload's router, id, name, state, Dormeto tags (`key=value`, sorted by key) and the time since its last
@@ -806,9 +812,9 @@ change, then a last line with the total. A router that does not answer is report
 ### workloads show, history and idle-window
 
 ```sh
-dormeto workloads show        <router>/<workload> [--json]
-dormeto workloads history     <router>/<workload> [--days 1..31] [--json]
-dormeto workloads idle-window <router>/<workload> [--json]
+dormeto aws workloads show        <router>/<workload> [--json]
+dormeto aws workloads history     <router>/<workload> [--days 1..31] [--json]
+dormeto aws workloads idle-window <router>/<workload> [--json]
 ```
 
 - `show`: one workload as the manager's workload view shows it: its state and since when, name, URL, account and region,
@@ -825,19 +831,19 @@ dormeto workloads idle-window <router>/<workload> [--json]
 ### Waking, napping, pausing, renaming and tagging workloads
 
 ```sh
-dormeto workloads wake   <target>... | --tag k=v... [--wait] [--timeout <d>]
-dormeto workloads nap    <target>... | --tag k=v...
-dormeto workloads pause  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--keep-asleep]
-dormeto workloads rename <router>/<workload> <name>
-dormeto workloads tags   <target>... | --tag k=v... [--set k=v]... [--unset k]... [--clear]
+dormeto aws workloads wake   <target>... | --tag k=v... [--wait] [--timeout <d>]
+dormeto aws workloads nap    <target>... | --tag k=v...
+dormeto aws workloads pause  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--keep-asleep]
+dormeto aws workloads rename <router>/<workload> <name>
+dormeto aws workloads tags   <target>... | --tag k=v... [--set k=v]... [--unset k]... [--clear]
 ```
 
 ```sh
-dormeto workloads wake prod-eu/w-1 --wait
-dormeto workloads nap --tag env=dev --yes
-dormeto workloads pause --tag team=payments --reason "load test" --until 18:00 --yes
-dormeto workloads rename prod-eu/w-1 "checkout api"
-dormeto workloads tags prod-eu/w-1 --set team=payments --unset owner
+dormeto aws workloads wake prod-eu/w-1 --wait
+dormeto aws workloads nap --tag env=dev --yes
+dormeto aws workloads pause --tag team=payments --reason "load test" --until 18:00 --yes
+dormeto aws workloads rename prod-eu/w-1 "checkout api"
+dormeto aws workloads tags prod-eu/w-1 --set team=payments --unset owner
 ```
 
 - `wake` asks the routers to wake the workloads now. `--wait` reads each one every 5 seconds until `AWAKE`, as
@@ -870,20 +876,20 @@ and is needed without one, `--dry-run` lists the targets and sends nothing, and 
 refused (exit 1). From CLI 0.6.0, each of these commands has `--json`, as the other workload writes do.
 
 ```sh
-dormeto workloads keep-awake <target>... | --tag k=v... (--for <duration> | --until <time>) [--reason <text>] [--wait] [--timeout <d>]
-dormeto workloads resume     <target>... | --tag k=v...
-dormeto workloads schedule show  <router>/<workload> [--json]
-dormeto workloads schedule set   <target>... | --tag k=v... --file <path or ->
-dormeto workloads schedule clear <target>... | --tag k=v...
+dormeto aws workloads keep-awake <target>... | --tag k=v... (--for <duration> | --until <time>) [--reason <text>] [--wait] [--timeout <d>]
+dormeto aws workloads resume     <target>... | --tag k=v...
+dormeto aws workloads schedule show  <router>/<workload> [--json]
+dormeto aws workloads schedule set   <target>... | --tag k=v... --file <path or ->
+dormeto aws workloads schedule clear <target>... | --tag k=v...
 ```
 
 ```sh
-dormeto workloads keep-awake prod-eu/w-1 --for 2h --wait          # in CI: wake, then wait until awake
-dormeto workloads keep-awake --tag team=payments --until 18:30 --yes
-dormeto workloads resume prod-eu/w-1                              # at the end of the CI job
-dormeto workloads schedule set --tag team=payments --file schedule.json --yes
-dormeto workloads schedule show prod-eu/w-1
-dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule set prod-eu/w-2 --file -
+dormeto aws workloads keep-awake prod-eu/w-1 --for 2h --wait          # in CI: wake, then wait until awake
+dormeto aws workloads keep-awake --tag team=payments --until 18:30 --yes
+dormeto aws workloads resume prod-eu/w-1                              # at the end of the CI job
+dormeto aws workloads schedule set --tag team=payments --file schedule.json --yes
+dormeto aws workloads schedule show prod-eu/w-1
+dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads schedule set prod-eu/w-2 --file -
 ```
 
 - `keep-awake` posts a pause that leaves the workload awake (`keepAsleep: false`): it is woken when asleep and not put
@@ -913,17 +919,17 @@ dormeto workloads schedule show prod-eu/w-1 --json | dormeto workloads schedule 
 ### Hibernation
 
 ```sh
-dormeto settings show [--json]
-dormeto settings set --hibernate true|false [--json]
-dormeto routers settings <router>... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
-dormeto workloads settings <target>... | --tag k=v... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
+dormeto aws settings show [--json]
+dormeto aws settings set --hibernate true|false [--json]
+dormeto aws routers settings <router>... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
+dormeto aws workloads settings <target>... | --tag k=v... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
 ```
 
 ```sh
-dormeto settings show
-dormeto settings set --hibernate false
-dormeto routers settings prod-eu --hibernate inherit
-dormeto workloads settings --tag env=dev --hibernate true --yes
+dormeto aws settings show
+dormeto aws settings set --hibernate false
+dormeto aws routers settings prod-eu --hibernate inherit
+dormeto aws workloads settings --tag env=dev --hibernate true --yes
 ```
 
 From CLI 0.7.0, whether the EC2 instances that were launched with hibernation are hibernated, not stopped, when a
@@ -957,16 +963,16 @@ workload itself (a hibernated instance cannot change type).
 ### Descriptions
 
 ```sh
-dormeto workloads description <router>/<workload> [--set <text> | --file <path or -> | --clear] [--json]
-dormeto routers description <router> [--set <text> | --file <path or -> | --clear] [--json]
+dormeto aws workloads description <router>/<workload> [--set <text> | --file <path or -> | --clear] [--json]
+dormeto aws routers description <router> [--set <text> | --file <path or -> | --clear] [--json]
 ```
 
 ```sh
-dormeto workloads description prod-eu/w-1
-dormeto workloads description prod-eu/w-1 --set "Shop front, owned by payments"
-dormeto routers description prod-eu --file runbook.md
-cat notes.md | dormeto routers description prod-eu --file -
-dormeto workloads description prod-eu/w-1 --clear
+dormeto aws workloads description prod-eu/w-1
+dormeto aws workloads description prod-eu/w-1 --set "Shop front, owned by payments"
+dormeto aws routers description prod-eu --file runbook.md
+cat notes.md | dormeto aws routers description prod-eu --file -
+dormeto aws workloads description prod-eu/w-1 --clear
 ```
 
 From CLI 0.7.0 (manager 0.19.0), a workload or a router can carry a short description in Markdown: what it is, who owns
@@ -988,25 +994,25 @@ it, where its runbook is. The dashboard draws it; the CLI prints it as written.
 ### Waiting page
 
 ```sh
-dormeto workloads waiting-page show <router>/<workload> [--json]
-dormeto workloads waiting-page set <router>/<workload> [--icon auto|none|<file>] [--title <text>] [--description <text>]
-dormeto workloads waiting-page set <router>/<workload> --html <file or ->
-dormeto workloads waiting-page clear <router>/<workload>
-dormeto routers waiting-page show <router> [--json]
-dormeto routers waiting-page set <router> [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->
-dormeto routers waiting-page clear <router>
-dormeto settings waiting-page show [--json]
-dormeto settings waiting-page set [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->
-dormeto settings waiting-page clear
+dormeto aws workloads waiting-page show <router>/<workload> [--json]
+dormeto aws workloads waiting-page set <router>/<workload> [--icon auto|none|<file>] [--title <text>] [--description <text>]
+dormeto aws workloads waiting-page set <router>/<workload> --html <file or ->
+dormeto aws workloads waiting-page clear <router>/<workload>
+dormeto aws routers waiting-page show <router> [--json]
+dormeto aws routers waiting-page set <router> [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->
+dormeto aws routers waiting-page clear <router>
+dormeto aws settings waiting-page show [--json]
+dormeto aws settings waiting-page set [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->
+dormeto aws settings waiting-page clear
 ```
 
 ```sh
-dormeto settings waiting-page set --title "Acme portal" --icon ./logo.svg --description "Our test environments sleep at night."
-dormeto workloads waiting-page set prod-eu/w-1 --title "Shop (staging)"
-dormeto routers waiting-page set prod-eu --html ./waiting.html
-cat waiting.html | dormeto workloads waiting-page set prod-eu/w-1 --html -
-dormeto workloads waiting-page show prod-eu/w-1
-dormeto workloads waiting-page clear prod-eu/w-1
+dormeto aws settings waiting-page set --title "Acme portal" --icon ./logo.svg --description "Our test environments sleep at night."
+dormeto aws workloads waiting-page set prod-eu/w-1 --title "Shop (staging)"
+dormeto aws routers waiting-page set prod-eu --html ./waiting.html
+cat waiting.html | dormeto aws workloads waiting-page set prod-eu/w-1 --html -
+dormeto aws workloads waiting-page show prod-eu/w-1
+dormeto aws workloads waiting-page clear prod-eu/w-1
 ```
 
 The page a visitor sees while a workload wakes can carry your name, icon and words, or be your own HTML. One document is
@@ -1041,21 +1047,21 @@ exit 1) and a manager of 0.20.0 or later.
 ### Onboarding, offboarding and excluding workloads
 
 ```sh
-dormeto workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
+dormeto aws workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
                           [--database <id>|cluster:<id>]... [--fallback-type <type>]... [--set-tag k=v]...
                           [--hibernate true|false]
-dormeto workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry-run] [--yes]
-dormeto workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
+dormeto aws workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry-run] [--yes]
+dormeto aws workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
 ```
 
 All three take `--no-wait`, `--timeout <d>` and `--json`: the operations, as the manager last said them, `onboard`'s
 as an object, `offboard`'s and `exclude`'s as an array.
 
 ```sh
-dormeto discovery candidates
-dormeto workloads onboard shop-staging --idle-minutes 30 --database cluster:shop-aurora --set-tag team=shop
-dormeto workloads offboard prod-eu/w-1 --yes
-dormeto workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
+dormeto aws discovery candidates
+dormeto aws workloads onboard shop-staging --idle-minutes 30 --database cluster:shop-aurora --set-tag team=shop
+dormeto aws workloads offboard prod-eu/w-1 --yes
+dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
 ```
 
 - `onboard` starts the onboarding of a candidate pending onboarding, given by its id (the target group's ARN) or the
@@ -1077,7 +1083,7 @@ dormeto workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
   workload is woken, its application given back as it was, and it leaves Dormeto. It is always confirmed on a terminal.
 - `exclude` excludes each workload's target group from discovery, with a reason: the manager pauses its managed
   workloads (an `exclude` operation). `--reason` is 1 to 246 characters; `--for` is up to 366 days, `--until` within
-  366 days; without either, the exclusion lasts until `dormeto exclusions lift`. It is always confirmed on a terminal.
+  366 days; without either, the exclusion lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal.
 - A workload another operation holds is refused with that operation's id; the others go on (exit 1).
 
 ## Discovery and exclusions
@@ -1087,27 +1093,27 @@ replaces its configuration, and `exclusions` lists, adds and lifts the manual ex
 operations and output are as in [What every manager command shares](#what-every-manager-command-shares).
 
 ```sh
-dormeto discovery status [--json]
-dormeto discovery run [--wait] [--timeout <d>] [--json]
-dormeto discovery candidates [--status <status>] [--account <id> [--candidate-region <region>]] [--limit <n>] [--json]
-dormeto discovery dismiss <candidate>... [--note <text>] [--json]
-dormeto discovery restore <candidate>... [--json]
-dormeto discovery access [--limit <n>] [--json]
-dormeto discovery config show [--json]
-dormeto discovery config set --file <path>|- [--yes] [--json]
-dormeto exclusions list [--json]
-dormeto exclusions add (--target-group <arn> | --load-balancer <arn> | --account <id>) --reason <text> [--for <d> | --until <time>]
-dormeto exclusions lift <id>... [--no-wait] [--timeout <d>] [--json]
+dormeto aws discovery status [--json]
+dormeto aws discovery run [--wait] [--timeout <d>] [--json]
+dormeto aws discovery candidates [--status <status>] [--account <id> [--candidate-region <region>]] [--limit <n>] [--json]
+dormeto aws discovery dismiss <candidate>... [--note <text>] [--json]
+dormeto aws discovery restore <candidate>... [--json]
+dormeto aws discovery access [--limit <n>] [--json]
+dormeto aws discovery config show [--json]
+dormeto aws discovery config set --file <path>|- [--yes] [--json]
+dormeto aws exclusions list [--json]
+dormeto aws exclusions add (--target-group <arn> | --load-balancer <arn> | --account <id>) --reason <text> [--for <d> | --until <time>]
+dormeto aws exclusions lift <id>... [--no-wait] [--timeout <d>] [--json]
 ```
 
 ```sh
-dormeto discovery run --wait
-dormeto discovery candidates --account 111122223333 --candidate-region eu-west-1
-dormeto discovery dismiss legacy-admin --note "decommissioned in December"
-dormeto discovery config show > discovery.json
-dormeto discovery config set --file discovery.json
-dormeto exclusions add --account 444455556666 --reason "production account" --yes
-dormeto exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
+dormeto aws discovery run --wait
+dormeto aws discovery candidates --account 111122223333 --candidate-region eu-west-1
+dormeto aws discovery dismiss legacy-admin --note "decommissioned in December"
+dormeto aws discovery config show > discovery.json
+dormeto aws discovery config set --file discovery.json
+dormeto aws exclusions add --account 444455556666 --reason "production account" --yes
+dormeto aws exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 ```
 
 ### discovery status and run
@@ -1174,15 +1180,15 @@ From CLI 0.6.0, `operations` lists the manager's operations, shows one and follo
 dashboard.
 
 ```sh
-dormeto operations list [--running] [--type <type>]... [--limit <n>] [--json]
-dormeto operations show  <id> [--json]
-dormeto operations watch <id> [--timeout <d>] [--json]
+dormeto aws operations list [--running] [--type <type>]... [--limit <n>] [--json]
+dormeto aws operations show  <id> [--json]
+dormeto aws operations watch <id> [--timeout <d>] [--json]
 ```
 
 ```sh
-dormeto operations list --running
-dormeto operations list --type install-router,uninstall-router --limit 0
-dormeto operations watch 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
+dormeto aws operations list --running
+dormeto aws operations list --type install-router,uninstall-router --limit 0
+dormeto aws operations watch 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 ```
 
 - `list` lists the operations, newest first by creation: id, type, target, status, current step, who started it (an ARN
@@ -1203,26 +1209,26 @@ From CLI 0.6.0, `users` and `groups` manage the people of the manager's dashboar
 Cognito users: the CLI's own caller is an IAM principal, never one of them.
 
 ```sh
-dormeto users list [--json]
-dormeto users invite <email> --role <member|viewer|operator|admin> [--group <name>]... [--json]
-dormeto users role <email> <member|viewer|operator|admin> [--dry-run] [--yes] [--json]
-dormeto users groups <email> [<name>...] [--json]
-dormeto users disable <email> [--dry-run] [--yes] [--json]
-dormeto users enable <email> [--json]
-dormeto users resend <email> [--json]
-dormeto users reset-mfa <email> [--json]
-dormeto groups list [--json]
-dormeto groups show <name> [--json]
-dormeto groups create <name> [--description <text>] [--grant <tags>:<permissions>]... [--json]
-dormeto groups update <name> [--description <text>] [--grant <tags>:<permissions>]... [--no-grants] [--json]
-dormeto groups delete <name> [--dry-run] [--yes] [--json]
+dormeto aws users list [--json]
+dormeto aws users invite <email> --role <member|viewer|operator|admin> [--group <name>]... [--json]
+dormeto aws users role <email> <member|viewer|operator|admin> [--dry-run] [--yes] [--json]
+dormeto aws users groups <email> [<name>...] [--json]
+dormeto aws users disable <email> [--dry-run] [--yes] [--json]
+dormeto aws users enable <email> [--json]
+dormeto aws users resend <email> [--json]
+dormeto aws users reset-mfa <email> [--json]
+dormeto aws groups list [--json]
+dormeto aws groups show <name> [--json]
+dormeto aws groups create <name> [--description <text>] [--grant <tags>:<permissions>]... [--json]
+dormeto aws groups update <name> [--description <text>] [--grant <tags>:<permissions>]... [--no-grants] [--json]
+dormeto aws groups delete <name> [--dry-run] [--yes] [--json]
 ```
 
 ```sh
-dormeto groups create payments-dev --description "Payments, dev" --grant team=payments,env=dev:read,wake
-dormeto users invite ana@example.com --role member --group payments-dev
-dormeto users role ana@example.com operator
-dormeto users groups ana@example.com          # no group: clears them
+dormeto aws groups create payments-dev --description "Payments, dev" --grant team=payments,env=dev:read,wake
+dormeto aws users invite ana@example.com --role member --group payments-dev
+dormeto aws users role ana@example.com operator
+dormeto aws users groups ana@example.com          # no group: clears them
 ```
 
 ### users
@@ -1261,19 +1267,19 @@ From CLI 0.6.0, the dashboard's readings: the overview, the audit log, the savin
 the IP lists.
 
 ```sh
-dormeto overview [--json]
-dormeto audit [--since <duration|time|date>] [--action <action>]... [--who <text>] [--target <text>] [--limit <n>] [--json]
-dormeto savings show [--json]
-dormeto savings discounts --compute <0..90> --databases <0..90> [--json]
-dormeto alerts list [--json]
-dormeto ip-lists list [--json]
+dormeto aws overview [--json]
+dormeto aws audit [--since <duration|time|date>] [--action <action>]... [--who <text>] [--target <text>] [--limit <n>] [--json]
+dormeto aws savings show [--json]
+dormeto aws savings discounts --compute <0..90> --databases <0..90> [--json]
+dormeto aws alerts list [--json]
+dormeto aws ip-lists list [--json]
 ```
 
 ```sh
-dormeto overview
-dormeto audit --since 2d --action pause,resume
-dormeto audit --who ci-deploy --limit 0 --json > audit.json
-dormeto savings discounts --compute 20 --databases 15
+dormeto aws overview
+dormeto aws audit --since 2d --action pause,resume
+dormeto aws audit --who ci-deploy --limit 0 --json > audit.json
+dormeto aws savings discounts --compute 20 --databases 15
 ```
 
 - `overview` shows what the dashboard's Overview shows: the workloads by state, the share of the last 7 days in each
@@ -1307,17 +1313,17 @@ install build (see [Updating from the dashboard](#updating-from-the-dashboard));
 is updated by changing the module's `source`.
 
 ```sh
-dormeto manager status [--json]
-dormeto manager check (--enable [--alert | --no-alert] | --disable [--no-alert]) [--json]
-dormeto manager changes [--to <version>] [--json]
-dormeto manager update [--version <version>] [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
+dormeto aws manager status [--json]
+dormeto aws manager check (--enable [--alert | --no-alert] | --disable [--no-alert]) [--json]
+dormeto aws manager changes [--to <version>] [--json]
+dormeto aws manager update [--version <version>] [--dry-run] [--yes] [--no-wait] [--timeout <d>] [--json]
 ```
 
 ```sh
-dormeto manager status
-dormeto manager changes
-dormeto manager update --dry-run
-dormeto manager update --version 0.18.0
+dormeto aws manager status
+dormeto aws manager changes
+dormeto aws manager update --dry-run
+dormeto aws manager update --version 0.18.0
 ```
 
 - `status` shows the version the manager runs, how it was installed (with the CLI, whose install build updates it, or
@@ -1341,18 +1347,18 @@ dormeto manager update --version 0.18.0
 
 ## Raw calls
 
-From CLI 0.6.0, `dormeto api` calls any route of the manager's API, signed with the profile, and prints its answer: the
+From CLI 0.6.0, `dormeto aws api` calls any route of the manager's API, signed with the profile, and prints its answer: the
 escape hatch for what a later manager adds before the CLI has a command for it.
 
 ```sh
-dormeto api <method> <path> [--data <json> | --data @<file> | --data -] [-q key=value]...
+dormeto aws api <method> <path> [--data <json> | --data @<file> | --data -] [-q key=value]...
 ```
 
 ```sh
-dormeto api GET /workloads -q state=ASLEEP -q limit=10
-dormeto api GET /routers/prod-eu
-dormeto api POST /routers/prod-eu/pause --data '{"reason":"maintenance"}'
-dormeto api PUT /discovery/config --data @discovery.json
+dormeto aws api GET /workloads -q state=ASLEEP -q limit=10
+dormeto aws api GET /routers/prod-eu
+dormeto aws api POST /routers/prod-eu/pause --data '{"reason":"maintenance"}'
+dormeto aws api PUT /discovery/config --data @discovery.json
 ```
 
 - The method is `GET`, `POST`, `PUT` or `DELETE`; the path starts with `/` and is the route's under `/iam` (an `/iam`

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto users`: the manager's people (list, invite, role, groups, disable, enable, resend, reset-mfa). Changing a
+// `dormeto aws users`: the manager's people (list, invite, role, groups, disable, enable, resend, reset-mfa). Changing a
 // role and disabling are always confirmed on a terminal (--yes without one); the manager refuses to demote or disable
 // the last administrator.
 

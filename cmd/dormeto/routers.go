@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers show`, `install`, `uninstall`, `pause`, `resume` and `settings`: one router's details, and the operations on
+// `dormeto aws routers show`, `install`, `uninstall`, `pause`, `resume` and `settings`: one router's details, and the operations on
 // routers through the manager's /iam routes. Install and uninstall are operations, followed as `routers upgrade`'s are;
 // pause and resume are a call per router, one refused does not stop the others (exit 1 at the end). Several routers, and
 // always an uninstall, are confirmed on a terminal (--yes without one; --dry-run lists them). Exit codes as the fleet
@@ -98,7 +98,7 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Start the manager's install of a router in the account and region and follow it step by step. The account\n" +
 			"needs the command role the manager assumes: a refusal \"no_access\" says it has none. --region is the\n" +
 			"manager's, --router-region the router's. --no-wait only starts it; Ctrl-C and --timeout stop following,\n" +
-			"the operation goes on in the manager: `dormeto operations watch <id>` follows it again. Needs an\n" +
+			"the operation goes on in the manager: `dormeto aws operations watch <id>` follows it again. Needs an\n" +
 			"administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := wait.check()
@@ -141,7 +141,7 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Start the manager's uninstall of each router and follow them (3 at once at most). It is always confirmed on\n" +
 			"a terminal (--yes without one; --dry-run lists the routers and sends nothing). The operation's \"check\n" +
 			"empty\" step refuses a router that still has workloads. --no-wait only starts them; Ctrl-C and --timeout\n" +
-			"stop following, the operations go on in the manager: `dormeto operations watch <id>`. Needs an administrator.",
+			"stop following, the operations go on in the manager: `dormeto aws operations watch <id>`. Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
 			if err == nil {
@@ -235,7 +235,7 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Pause the routers: none of their workloads is napped automatically, and the workloads asleep are woken unless\n" +
 			"--keep-asleep (the woken ones are printed). --reason (1 to 256 characters) is shown in the manager. --for is a\n" +
 			"duration up to 366 days (90m, 2h, 3d); --until is an RFC 3339 time or HH:MM today in the local time zone, within\n" +
-			"366 days; without either the pause lasts until `dormeto routers resume`. Several routers are confirmed on a\n" +
+			"366 days; without either the pause lasts until `dormeto aws routers resume`. Several routers are confirmed on a\n" +
 			"terminal (--yes without one; --dry-run lists them). One refused does not stop the others (exit 1). Needs an\n" +
 			"operator.",
 		RunE: func(c *cobra.Command, args []string) error {
@@ -339,7 +339,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "settings <router>... --hibernate true|false|inherit", Short: "Set the hibernation of the workloads of routers",
 		SilenceErrors: true,
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the routers'\n" +
-			"workloads nap: true or false for the router, inherit to follow the manager's default (`dormeto settings set`). A\n" +
+			"workloads nap: true or false for the router, inherit to follow the manager's default (`dormeto aws settings set`). A\n" +
 			"workload's own setting wins over it. Routers 0.32.0 and later; an older one is refused with the version to\n" +
 			"upgrade it to.\n" +
 			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +

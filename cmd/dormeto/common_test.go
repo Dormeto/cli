@@ -185,7 +185,7 @@ func TestRunOperationsRefusedStartFailsAndTheOthersAreFollowed(t *testing.T) {
 	if r.exit != 1 || !sameSet(a.started, "a", "c") {
 		t.Fatalf("exit %d, started %v, stderr %q", r.exit, a.started, r.stderr)
 	}
-	if want := "✗ b: another operation runs on this target (operation op-other: dormeto operations watch op-other)\n"; !strings.Contains(r.stderr, want) {
+	if want := "✗ b: another operation runs on this target (operation op-other: dormeto aws operations watch op-other)\n"; !strings.Contains(r.stderr, want) {
 		t.Errorf("stderr %q lacks %q", r.stderr, want)
 	}
 	if !strings.Contains(r.stdout, "✓ a: upgrade-router succeeded") || !strings.Contains(r.stdout, "✓ c: upgrade-router succeeded") {
@@ -196,7 +196,7 @@ func TestRunOperationsRefusedStartFailsAndTheOthersAreFollowed(t *testing.T) {
 func TestRunOperationsStartThatMayHaveStartedIsAFailureNamingTheListing(t *testing.T) {
 	a := &opsAPI{broken: "a"}
 	r := runOps(t, a, nil, "a")
-	if r.exit != 1 || !strings.Contains(r.stderr, "✗ a: the manager may have started it: dormeto operations list --running (") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "✗ a: the manager may have started it: dormeto aws operations list --running (") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
@@ -207,7 +207,7 @@ func TestRunOperationsNoWaitPrintsTheWatchHintAndReadsNothing(t *testing.T) {
 	if r.exit != 0 || a.gets != 0 || len(a.started) != 1 {
 		t.Fatalf("exit %d, %d reads, started %v, stderr %q", r.exit, a.gets, a.started, r.stderr)
 	}
-	if want := "started upgrade-router op-a for a\nfollow it: dormeto operations watch op-a\n"; r.stdout != want {
+	if want := "started upgrade-router op-a for a\nfollow it: dormeto aws operations watch op-a\n"; r.stdout != want {
 		t.Errorf("stdout %q, want %q", r.stdout, want)
 	}
 }
@@ -229,7 +229,7 @@ func TestRunOperationsTimeoutSaysWhatStillRunsAndExits1(t *testing.T) {
 	if r.exit != 1 || len(a.started) != 1 {
 		t.Fatalf("exit %d, started %v, stderr %q", r.exit, a.started, r.stderr)
 	}
-	for _, want := range []string{"timeout of 50ms reached\n", "a: still running in the manager: dormeto operations watch op-a\n"} {
+	for _, want := range []string{"timeout of 50ms reached\n", "a: still running in the manager: dormeto aws operations watch op-a\n"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("stderr lacks %q: %q", want, r.stderr)
 		}

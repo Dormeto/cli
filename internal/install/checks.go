@@ -326,7 +326,7 @@ func checkAnotherInstall(ctx context.Context, c Clients, s Settings, f Found) Ch
 		}
 	}
 	if found {
-		return Check{name, prefix + " resources exist without dormeto install's record: installed by other means (keep it in its Terraform)", Fail}
+		return Check{name, prefix + " resources exist without dormeto aws install's record: installed by other means (keep it in its Terraform)", Fail}
 	}
 	return Check{name, "none", OK}
 }
@@ -381,7 +381,7 @@ func checkRoles(ctx context.Context, c Clients, s Settings, w Where, f Found) Ch
 		if f.adopting() && !slices.ContainsFunc(found, func(n string) bool { return !slices.Contains(f.Adoption.IAMNames, n) }) {
 			return Check{name, strings.Join(found, ", ") + ": the adopted manager's", OK}
 		}
-		return Check{name, d + ": env " + s.Env + "'s manager without dormeto install's record (installed by other means, or left by an earlier one); " +
+		return Check{name, d + ": env " + s.Env + "'s manager without dormeto aws install's record (installed by other means, or left by an earlier one); " +
 			"delete them before installing (decision 15)", Fail}
 	}
 	return Check{name, d + ": another manager's (decision 15)", Fail}

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads description` and `routers description`: read, set and clear the optional Markdown description of
+// `dormeto aws workloads description` and `routers description`: read, set and clear the optional Markdown description of
 // one workload or one router, through the manager's /iam routes. Exit codes as the fleet commands; more than one of
 // --set, --file and --clear is a usage error (2).
 

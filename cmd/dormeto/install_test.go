@@ -1,6 +1,6 @@
 package main
 
-// `dormeto install`, its subcommands and `dormeto uninstall`: the flags read into the run's request, the run each
+// `dormeto aws install`, its subcommands and `dormeto aws uninstall`: the flags read into the run's request, the run each
 // command calls, the exit codes, the usage; the real dependencies without a terminal.
 
 import (
@@ -39,15 +39,16 @@ func installed(t *testing.T, code int, args ...string) (calls []ran, stdout, std
 		}
 	}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
+	aws := &cobra.Command{Use: "aws"}
+	root.AddCommand(aws)
 	runs := installRuns{install: fake("install"), check: fake("check"), apply: fake("apply"), status: fake("status"),
 		uninstall: fake("uninstall"), uninstallApply: fake("uninstall apply")}
-	root.AddCommand(newInstall(runs, "0.2.0"), newUninstall(runs, "0.2.0"))
+	aws.AddCommand(newInstall(runs, "0.2.0"), newUninstall(runs, "0.2.0"))
 	var out, errs bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errs)
 	root.SetIn(strings.NewReader(""))
-	root.SetArgs(args)
-	exit = execute(root)
+	exit = execute(root, append([]string{"aws"}, args...)...)
 	return calls, out.String(), errs.String(), exit
 }
 
@@ -237,10 +238,10 @@ func TestInstallHelpListsTheFlags(t *testing.T) {
 			t.Errorf("the usage lacks %s:\n%s", f, out)
 		}
 	}
-	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "install     Install the Dormeto manager in an AWS account, with CodeBuild\n") {
+	if out, _, _ := executed(t, build{}, "aws", "--help"); !strings.Contains(out, "install     Install the Dormeto manager in an AWS account, with CodeBuild\n") {
 		t.Errorf("the commands listed without install:\n%s", out)
 	}
-	if _, out, _, exit := installed(t, 0, "install", "status", "--help"); exit != 0 || !strings.Contains(out, "dormeto install status [flags]") ||
+	if _, out, _, exit := installed(t, 0, "install", "status", "--help"); exit != 0 || !strings.Contains(out, "dormeto aws install status [flags]") ||
 		!strings.Contains(out, "--management-profile") {
 		t.Errorf("exit %d:\n%s", exit, out)
 	}
@@ -318,10 +319,10 @@ func TestUninstallBadFlagsExitCode2(t *testing.T) {
 
 func TestUninstallHelpListsTheFlags(t *testing.T) {
 	_, out, _, exit := installed(t, 0, "uninstall", "--help")
-	if exit != 0 || !strings.Contains(out, "Remove the Dormeto manager that dormeto install installed") {
+	if exit != 0 || !strings.Contains(out, "Remove the Dormeto manager that dormeto aws install installed") {
 		t.Fatalf("exit %d:\n%s", exit, out)
 	}
-	for _, f := range []string{"--profile", "--region", "--env", "--release", "--yes", "--verbose", "apply", "dormeto uninstall apply", "dormeto install apply",
+	for _, f := range []string{"--profile", "--region", "--env", "--release", "--yes", "--verbose", "apply", "dormeto aws uninstall apply", "dormeto aws install apply",
 		"https://dormeto.com/organization-access.html"} {
 		if !strings.Contains(out, f) {
 			t.Errorf("the usage lacks %s:\n%s", f, out)
@@ -330,11 +331,11 @@ func TestUninstallHelpListsTheFlags(t *testing.T) {
 	if strings.Contains(out, "--version") || strings.Contains(out, "--admin-emails") {
 		t.Errorf("install's flags in the usage:\n%s", out)
 	}
-	if _, out, _, exit := installed(t, 0, "uninstall", "apply", "--help"); exit != 0 || !strings.Contains(out, "dormeto uninstall apply [flags]") ||
+	if _, out, _, exit := installed(t, 0, "uninstall", "apply", "--help"); exit != 0 || !strings.Contains(out, "dormeto aws uninstall apply [flags]") ||
 		!strings.Contains(out, "Running this command is the confirmation.") {
 		t.Errorf("exit %d:\n%s", exit, out)
 	}
-	if out, _, _ := executed(t, build{}, "--help"); !strings.Contains(out, "uninstall   Remove the Dormeto manager that dormeto install installed\n") {
+	if out, _, _ := executed(t, build{}, "aws", "--help"); !strings.Contains(out, "uninstall   Remove the Dormeto manager that dormeto aws install installed\n") {
 		t.Errorf("the commands listed without uninstall:\n%s", out)
 	}
 }

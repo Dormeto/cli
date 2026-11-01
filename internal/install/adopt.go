@@ -326,7 +326,7 @@ func (x *run) adopt(s *Settings) error {
 	if err := WriteSettings(context.WithoutCancel(x.ctx), x.c, x.p, *s); err != nil {
 		return err
 	}
-	x.interrupted = "Interrupted before the plan started: the state is adopted; run dormeto install again without --adopt-state."
+	x.interrupted = "Interrupted before the plan started: the state is adopted; run dormeto aws install again without --adopt-state."
 	x.say("Adopted: module.%s of %s is the install's state, s3://%s/%s; the original is kept as s3://%s/%s", a.Module, a.File, x.p.Bucket, x.p.StateKey(),
 		x.p.Bucket, backup)
 	return nil

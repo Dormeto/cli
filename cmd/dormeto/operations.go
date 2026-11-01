@@ -1,6 +1,6 @@
 package main
 
-// `dormeto operations list`, `show` and `watch`: the manager's operations, newest first; one operation's record and
+// `dormeto aws operations list`, `show` and `watch`: the manager's operations, newest first; one operation's record and
 // steps; and the following of one to its end, as the commands that start operations follow theirs. Exit codes as the
 // fleet commands; `watch` exits 1 when the operation failed or was not followed to its end.
 
@@ -182,7 +182,7 @@ func watch(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Cli
 			if ctx.Err() != nil { // a signal or the caller's end, not --timeout
 				cause = "interrupted"
 			}
-			fmt.Fprintf(errs, "%s\n%s: still running in the manager: dormeto operations watch %s\n", cause, label, id)
+			fmt.Fprintf(errs, "%s\n%s: still running in the manager: dormeto aws operations watch %s\n", cause, label, id)
 			if asJSON {
 				_ = printJSON(c.OutOrStdout(), op)
 			}

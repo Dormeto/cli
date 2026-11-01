@@ -1,4 +1,4 @@
-// Package install is `dormeto install`: the manager installed in an AWS account (or an organization) by CodeBuild, from
+// Package install is `dormeto aws install`: the manager installed in an AWS account (or an organization) by CodeBuild, from
 // the CLI. This part holds the install's settings, kept as install.json, and its terminal prompts, as the design spec
 // describes them (vision docs/specs/2026-10-17-cli-install-design.md, sections 3 and 6).
 package install
@@ -68,8 +68,8 @@ type AdoptedFrom struct {
 
 // The kinds of the last plan (Settings.LastPlanKind): each explicit apply applies its own kind only (ruling R15).
 const (
-	planApply   = "apply"   // install's: dormeto install apply applies it
-	planDestroy = "destroy" // uninstall's: dormeto uninstall apply applies it
+	planApply   = "apply"   // install's: dormeto aws install apply applies it
+	planDestroy = "destroy" // uninstall's: dormeto aws uninstall apply applies it
 )
 
 var (

@@ -1,6 +1,6 @@
 package install
 
-// `dormeto uninstall` and `dormeto uninstall apply` (uninstall.go), and the plan's kind that keeps each explicit apply
+// `dormeto aws uninstall` and `dormeto aws uninstall apply` (uninstall.go), and the plan's kind that keeps each explicit apply
 // to its own kind of plan (ruling R15), through run_test.go's fakes.
 
 import (
@@ -19,7 +19,7 @@ func TestApplyRefusesADestroyPlan(t *testing.T) {
 	s.LastPlanKind = "destroy"
 	w.save(s)
 	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
-	if code != 1 || !strings.HasSuffix(out, "the last plan destroys the manager: dormeto uninstall apply applies it\n") || len(w.writes) != 0 {
+	if code != 1 || !strings.HasSuffix(out, "the last plan destroys the manager: dormeto aws uninstall apply applies it\n") || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 }
@@ -48,11 +48,11 @@ const (
 	unDestroy   = "Destroy the manager? This deletes its users, its table and its history. [y/N]"
 	unBootstrap = "Remove the install's bucket (its state and answers), role, log group and project too? [y/N]"
 	unWarning   = "! Event-driven refresh must be off (Discovery, Perimeter settings), with a discovery run since: its forwarders in member accounts are removed only by a run.\n"
-	unKept      = "Kept the bucket dmt-install-532105290256-eu-west-1 (its answers serve a reinstall) and the project; dormeto uninstall " + rwArgs + " again in a terminal removes them.\n"
+	unKept      = "Kept the bucket dmt-install-532105290256-eu-west-1 (its answers serve a reinstall) and the project; dormeto aws uninstall " + rwArgs + " again in a terminal removes them.\n"
 	unRemoved   = "Removed the bucket dmt-install-532105290256-eu-west-1, the role dmt-prod-install, the log group /aws/codebuild/dmt-prod-install, the project dmt-prod-install, the rule dmt-prod-install-requests and its role dmt-prod-install-events.\n"
 	unAccess    = "Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: https://dormeto.com/organization-access.html\n"
 	// unLeftover is said while the bucket is kept: install status needs install.json.
-	unLeftover = "A detached organization access run's build role and project in the management account: dormeto install status --management-profile <profile> " +
+	unLeftover = "A detached organization access run's build role and project in the management account: dormeto aws install status --management-profile <profile> " +
 		rwArgs + " removes them.\n"
 	unRefused = "offboard the workloads and uninstall the routers in the dashboard (Routers) first.\n"
 )
@@ -137,7 +137,7 @@ func TestUninstallARegionDenied(t *testing.T) {
 	w.lambdaDenied = map[string]bool{"eu-south-1": true, "us-east-1": true}
 	code, out, _ = w.run(Uninstall, unRequest, true, "n")
 	if code != 1 || !strings.HasSuffix(out, "Routers: none found (2 regions not checked: eu-south-1, us-east-1)\n"+
-		"Nothing was removed: look for dmtr- functions in eu-south-1, us-east-1, then run dormeto uninstall "+rwArgs+" again.\n") || len(w.writes) != 0 {
+		"Nothing was removed: look for dmtr- functions in eu-south-1, us-east-1, then run dormeto aws uninstall "+rwArgs+" again.\n") || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 
@@ -167,7 +167,7 @@ func TestUninstallEventDrivenRefreshNotOff(t *testing.T) {
 	code, out, asked := w.run(Uninstall, unRequest, true, "n")
 	rwEqual(t, "questions", asked, []string{unEvent})
 	if code != 1 || !strings.HasSuffix(out, "Nothing was removed: turn event-driven refresh off in the dashboard (Discovery, Perimeter settings), "+
-		"run discovery, then dormeto uninstall "+rwArgs+" again.\n") || len(w.writes) != 0 {
+		"run discovery, then dormeto aws uninstall "+rwArgs+" again.\n") || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 
@@ -263,7 +263,7 @@ func TestUninstallALocalInstalledVersionNeedsItsRelease(t *testing.T) {
 	w.save(s)
 	code, out, _ := w.run(Uninstall, unRequest, false)
 	if code != 1 || !strings.HasSuffix(out, "manager 0.11.0-dev is installed, install.json names 0.11.1-dev (a later plan's): manager 0.11.0-dev is not "+
-		"published on releases.dormeto.com; give its local release: dormeto uninstall "+rwArgs+" --release <the directory of release 0.11.0-dev>\n") ||
+		"published on releases.dormeto.com; give its local release: dormeto aws uninstall "+rwArgs+" --release <the directory of release 0.11.0-dev>\n") ||
 		len(w.writes) != 0 {
 		t.Fatalf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
@@ -354,7 +354,7 @@ func TestUninstallPlansTheProtectionAgainWhenNotApplied(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	code, out, _ = w.run(Uninstall, unRequest, false)
-	if code != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwArgs+", then run dormeto uninstall "+rwArgs+" again\n") {
+	if code != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto aws install apply "+rwArgs+", then run dormeto aws uninstall "+rwArgs+" again\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan", "plan"})
@@ -369,7 +369,7 @@ func TestUninstallWithoutATerminal(t *testing.T) {
 	}
 	rwInOrder(t, out, "Routers: none\n", unWarning, "\nDeletion protection is on: a plan lifts it first.\n",
 		"  manager 0.11.0: 0 to add, 2 to change, 0 to destroy\n")
-	if !strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwArgs+", then run dormeto uninstall "+rwArgs+" again\n") {
+	if !strings.HasSuffix(out, "Plan saved. Apply it: dormeto aws install apply "+rwArgs+", then run dormeto aws uninstall "+rwArgs+" again\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -386,8 +386,8 @@ func TestUninstallWithoutATerminal(t *testing.T) {
 		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
 	}
 	rwInOrder(t, out, unWarning, "Plan (build dmt-prod-install:b3)\n  manager 0.11.0: 0 to add, 0 to change, 3 to destroy\n",
-		"Plan saved. Apply it: dormeto uninstall apply "+rwArgs+"\n")
-	if !strings.HasSuffix(out, "Plan saved. Apply it: dormeto uninstall apply "+rwArgs+"\n") {
+		"Plan saved. Apply it: dormeto aws uninstall apply "+rwArgs+"\n")
+	if !strings.HasSuffix(out, "Plan saved. Apply it: dormeto aws uninstall apply "+rwArgs+"\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan", "apply", "plan-destroy"})
@@ -395,7 +395,7 @@ func TestUninstallWithoutATerminal(t *testing.T) {
 		t.Errorf("install.json: %+v", s)
 	}
 	// install apply does not apply it.
-	if code, out, _ = w.run(Apply, unRequest, false); code != 1 || !strings.HasSuffix(out, "the last plan destroys the manager: dormeto uninstall apply applies it\n") {
+	if code, out, _ = w.run(Apply, unRequest, false); code != 1 || !strings.HasSuffix(out, "the last plan destroys the manager: dormeto aws uninstall apply applies it\n") {
 		t.Errorf("install apply: exit code %d:\n%s", code, out)
 	}
 
@@ -422,19 +422,19 @@ func TestUninstallApplyRefusesAnotherPlan(t *testing.T) {
 		edit func(w *rwWorld)
 		want string
 	}{
-		{"an install plan", func(*rwWorld) {}, "the last plan is not a destroy plan: dormeto uninstall\n"},
+		{"an install plan", func(*rwWorld) {}, "the last plan is not a destroy plan: dormeto aws uninstall\n"},
 		{"no plan", func(w *rwWorld) {
 			s := w.saved()
 			s.LastPlan = ""
 			w.save(s)
-		}, "no destroy plan: run dormeto uninstall\n"},
+		}, "no destroy plan: run dormeto aws uninstall\n"},
 		{"no install", func(w *rwWorld) { delete(w.objects, "prod/install.json") }, "no install of env prod in 532105290256 eu-west-1\n"},
 		{"nothing applied", func(w *rwWorld) {
 			s := w.saved()
 			s.LastPlanKind = "destroy"
 			w.save(s)
 			w.objects["prod/manager.tfstate"] = rwNoneState
-		}, "nothing applied to destroy: dormeto uninstall " + rwArgs + " removes the bootstrap\n"},
+		}, "nothing applied to destroy: dormeto aws uninstall " + rwArgs + " removes the bootstrap\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := unNew(t)
@@ -504,7 +504,7 @@ func TestUninstallTheBucketRemovedNamesNoStatus(t *testing.T) {
 	w := unNew(t)
 	unProtectionOff(w)
 	code, out, _ := w.run(Uninstall, unRequest, true, "y", "y", "y")
-	if code != 0 || !strings.HasSuffix(out, unRemoved+unAccess) || strings.Contains(out, "dormeto install status --management-profile") {
+	if code != 0 || !strings.HasSuffix(out, unRemoved+unAccess) || strings.Contains(out, "dormeto aws install status --management-profile") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }
@@ -533,8 +533,8 @@ func TestUninstallNotConfirmedKeepsThePlans(t *testing.T) {
 	// No to the protection's plan: kept for install apply, nothing destroyed.
 	w := unNew(t)
 	code, out, _ := w.run(Uninstall, unRequest, true, "y", "n")
-	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+", then dormeto uninstall "+rwArgs+" again. "+
-		"install.json now has deletion_protection=false: dormeto install "+rwArgs+" --var deletion_protection=true puts it back.\n") {
+	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto aws install apply "+rwArgs+", then dormeto aws uninstall "+rwArgs+" again. "+
+		"install.json now has deletion_protection=false: dormeto aws install "+rwArgs+" --var deletion_protection=true puts it back.\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -547,7 +547,7 @@ func TestUninstallNotConfirmedKeepsThePlans(t *testing.T) {
 		w = unNew(t)
 		unProtectionOff(w)
 		code, out, _ = w.run(Uninstall, unRequest, true, "y", c.answer)
-		if code != c.code || !strings.HasSuffix(out, "(above)\n"+c.newline+"Not applied; the destroy plan is kept: dormeto uninstall apply "+rwArgs+"\n") {
+		if code != c.code || !strings.HasSuffix(out, "(above)\n"+c.newline+"Not applied; the destroy plan is kept: dormeto aws uninstall apply "+rwArgs+"\n") {
 			t.Errorf("%s: exit code %d:\n%s", c.answer, code, out)
 		}
 		rwEqual(t, "builds", w.actions(), []string{"plan-destroy"})
@@ -606,8 +606,8 @@ func TestUninstallDetachesFromTheDestroy(t *testing.T) {
 	w.ends["apply-destroy"] = cbtypes.StatusTypeInProgress
 	w.detach = true
 	code, out, _ := w.run(UninstallApply, unRequest, false)
-	if code != 130 || !strings.HasSuffix(out, "Detached: the destroy goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+
-		"; once done, dormeto uninstall "+rwArgs+" removes the bootstrap.\n") {
+	if code != 130 || !strings.HasSuffix(out, "Detached: the destroy goes on in CodeBuild. Follow it: dormeto aws install status "+rwArgs+
+		"; once done, dormeto aws uninstall "+rwArgs+" removes the bootstrap.\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }
@@ -677,7 +677,7 @@ func TestUninstallPlansTheProtectionAgainWhenItsPlanDidNotStart(t *testing.T) {
 	running := &rwBuild{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)}
 	w.builds = append(w.builds, running)
 	code, out, _ := w.run(Uninstall, unRequest, false)
-	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto aws install status follows it\n") {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	if s := w.saved(); string(s.Vars["deletion_protection"]) != "false" || s.LastPlan != "" {
@@ -724,7 +724,7 @@ func TestUninstallTheDestroyPlanForgetsTheLastPlan(t *testing.T) {
 	unProtectionOff(w)
 	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)})
 	code, out, _ := w.run(Uninstall, unRequest, false)
-	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto aws install status follows it\n") {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	if s := w.saved(); s.LastPlan != "" || s.LastPlanKind != "" {
@@ -766,7 +766,7 @@ func TestUninstallApplyAnUnusableDestroyPlan(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	code, out, _ := w.run(UninstallApply, unRequest, false)
-	if code != 1 || !strings.HasSuffix(out, "the destroy plan dmt-prod-install:b1 did not succeed (FAILED): run dormeto uninstall "+rwArgs+"\n") {
+	if code != 1 || !strings.HasSuffix(out, "the destroy plan dmt-prod-install:b1 did not succeed (FAILED): run dormeto aws uninstall "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan-destroy"})
@@ -779,7 +779,7 @@ func TestUninstallApplyAnUnusableDestroyPlan(t *testing.T) {
 	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:d0", env: map[string]string{"ACTION": "plan-destroy"}, status: cbtypes.StatusTypeSucceeded,
 		start: rwT0.Add(-3 * time.Hour)})
 	code, out, _ = w.run(UninstallApply, unRequest, false)
-	if code != 1 || !strings.HasSuffix(out, "the destroy plan dmt-prod-install:d0 predates the last apply dmt-prod-install:a0: run dormeto uninstall "+rwArgs+"\n") ||
+	if code != 1 || !strings.HasSuffix(out, "the destroy plan dmt-prod-install:d0 predates the last apply dmt-prod-install:a0: run dormeto aws uninstall "+rwArgs+"\n") ||
 		strings.Contains(out, "Plan (build") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto install`, `install check`, `install apply`, `install status`, `dormeto uninstall` and `uninstall apply`: the
+// `dormeto aws install`, `install check`, `install apply`, `install status`, `dormeto aws uninstall` and `uninstall apply`: the
 // flags read into an install.Request and the run of internal/install called with the real dependencies — the profile's
 // AWS over the AWS SDK for Go v2, HTTPS with a 30 s timeout, the terminal's prompts when stdin is one, its status line
 // when stdout is one (not with --verbose) — and its exit code returned: 0; 1 when AWS refuses, a check fails or a build
@@ -89,7 +89,7 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 	cmd := command("install", "Install the Dormeto manager in an AWS account, with CodeBuild",
 		"Install the Dormeto manager in an AWS account: the questions a first install needs (each has its flag), read-only\n"+
 			"checks, the install's bucket, role and CodeBuild project by API calls, a Terraform plan in CodeBuild, your\n"+
-			"confirmation, then that saved plan applied and followed. Without a terminal, it stops after the plan: dormeto install\n"+
+			"confirmation, then that saved plan applied and followed. Without a terminal, it stops after the plan: dormeto aws install\n"+
 			"apply applies it. --yes takes the suggested answers; it never confirms a plan.\n\n"+
 			"In organization mode, with the management account's profile (--management-profile, or --profile when it is the\n"+
 			"management account's), organization access follows the manager: the delegation policy and the member accounts'\n"+
@@ -135,22 +135,22 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 	return cmd
 }
 
-// newUninstall is `dormeto uninstall` and its subcommand apply, with the flags that name the install and --release (the
+// newUninstall is `dormeto aws uninstall` and its subcommand apply, with the flags that name the install and --release (the
 // manager installed from a local release).
 func newUninstall(runs installRuns, version string) *cobra.Command {
 	f := &installFlags{}
-	cmd := f.command("uninstall", "Remove the Dormeto manager that dormeto install installed",
-		"Remove the Dormeto manager that dormeto install installed, in this order: refused while routers are installed\n"+
+	cmd := f.command("uninstall", "Remove the Dormeto manager that dormeto aws install installed",
+		"Remove the Dormeto manager that dormeto aws install installed, in this order: refused while routers are installed\n"+
 			"(offboard the workloads and uninstall them in the dashboard first); event-driven refresh confirmed off; the\n"+
 			"deletion protection lifted by a plan applied first; the destroy plan in CodeBuild, your confirmation, then that\n"+
 			"saved plan applied and followed; then, if you say so, the install's bucket (its state and answers), role, log group\n"+
-			"and project. Without a terminal, it stops after each plan: dormeto install apply applies the deletion protection's,\n"+
-			"dormeto uninstall apply the destroy plan. --yes never confirms a plan.\n\n"+
+			"and project. Without a terminal, it stops after each plan: dormeto aws install apply applies the deletion protection's,\n"+
+			"dormeto aws uninstall apply the destroy plan. --yes never confirms a plan.\n\n"+
 			"Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement\n"+
 			"of the delegation policy: https://dormeto.com/organization-access.html", runs.uninstall)
 	cmd.AddCommand(f.command("apply", "Apply the last saved destroy plan of the uninstall",
 		"Apply the last saved destroy plan of the uninstall (made without a terminal, or not confirmed): it is shown, then\n"+
-			"applied and followed; the install's bucket, role, log group and project are kept (dormeto uninstall removes them).\n"+
+			"applied and followed; the install's bucket, role, log group and project are kept (dormeto aws uninstall removes them).\n"+
 			"Running this command is the confirmation.", runs.uninstallApply))
 	f.profileFlags(cmd, "answer that event-driven refresh is off and keep the bootstrap, without asking; never confirms a plan")
 	cmd.PersistentFlags().StringVar(&f.release, "release", "", "the local release directory of the manager installed, when it is not on releases.dormeto.com")

@@ -1015,7 +1015,7 @@ func TestInstallGuidedFirstInstall(t *testing.T) {
 		"  ! organization access: not deployed (no management profile)\n",
 		"    Organization access needs the management account 809706483662; without its profile (--management-profile) it is not deployed.\n",
 		"    The procedure: https://dormeto.com/organization-access.html\n",
-		"    Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
+		"    Check it later: dormeto aws install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
 		"\nBootstrap (API calls): bucket dmt-install-532105290256-eu-west-1, role dmt-prod-install, project dmt-prod-install\n",
 		"Plan (build dmt-prod-install:b1…)  succeeded",
 		"Plan (build dmt-prod-install:b1)\n",
@@ -1081,7 +1081,7 @@ func TestInstallWithoutATerminalStopsAfterThePlan(t *testing.T) {
 		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
 	}
 	if !strings.HasSuffix(out, "  manager 0.11.0: 3 to add, 0 to change, 0 to destroy\n      1 aws_cloudfront_distribution\n      1 aws_cognito_user_pool\n      1 aws_lambda_function\n"+
-		"Plan saved. Apply it: dormeto install apply "+rwArgs+"\n") {
+		"Plan saved. Apply it: dormeto aws install apply "+rwArgs+"\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -1127,7 +1127,7 @@ func TestInstallWithoutATerminalTakesTheDefaults(t *testing.T) {
 		"Profile p: account 532105290256",
 		"Mode: organization (the manager reads every account of o-vvk0115ixn)\n",
 		"  ✓ release: manager 0.11.0\n",
-		"Plan saved. Apply it: dormeto install apply "+rwArgs+"\n")
+		"Plan saved. Apply it: dormeto aws install apply "+rwArgs+"\n")
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
 	if s := w.saved(); s.Env != "prod" || s.Version != "0.11.0" || s.Mode != "organization" || s.Domain != nil || s.SESIdentity != "" || s.EmailFrom != "" {
 		t.Errorf("install.json: %+v", s)
@@ -1147,7 +1147,7 @@ func TestInstallYesTakesTheSuggestionsAndNeverConfirms(t *testing.T) {
 
 	w := rwNew(t)
 	code, out, asked := w.run(Install, r, false)
-	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwArgs+"\n") {
+	if code != 0 || len(asked) != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto aws install apply "+rwArgs+"\n") {
 		t.Fatalf("exit code %d, asked %q:\n%s", code, asked, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -1160,7 +1160,7 @@ func TestInstallYesTakesTheSuggestionsAndNeverConfirms(t *testing.T) {
 	w = rwNew(t)
 	code, out, asked = w.run(Install, r, true, "n")
 	rwEqual(t, "questions", asked, []string{"Apply this plan? [y/N]"})
-	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto aws install apply "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -1222,7 +1222,7 @@ func TestInstallNoAtTheConfirmationKeepsThePlan(t *testing.T) {
 	w := rwNew(t)
 	code, out, asked := w.run(Install, rwFlags(), true, "n")
 	rwEqual(t, "questions", asked, []string{"Apply this plan? [y/N]"})
-	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+	if code != 0 || !strings.HasSuffix(out, "Not applied; the plan is kept: dormeto aws install apply "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -1302,7 +1302,7 @@ func TestInstallARunningBuildStopsThePlan(t *testing.T) {
 	w := rwNew(t)
 	w.builds = []*rwBuild{{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)}}
 	code, out, _ := w.run(Install, rwFlags(), true)
-	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto aws install status follows it\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	if len(w.actions()) != 0 {
@@ -1324,7 +1324,7 @@ func TestInstallAFailedPlan(t *testing.T) {
 func TestInstallCtrlCAtTheConfirmationAppliesNothing(t *testing.T) {
 	w := rwNew(t)
 	code, out, _ := w.run(Install, rwFlags(), true, "^C")
-	if code != 130 || !strings.HasSuffix(out, "      1 aws_lambda_function\n\nNot applied; the plan is kept: dormeto install apply "+rwArgs+"\n") {
+	if code != 130 || !strings.HasSuffix(out, "      1 aws_lambda_function\n\nNot applied; the plan is kept: dormeto aws install apply "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan"})
@@ -1344,8 +1344,8 @@ func TestInstallCtrlCWhileABuildRunsDetaches(t *testing.T) {
 	w.ends["plan"] = cbtypes.StatusTypeInProgress
 	w.detach = true
 	code, out, _ := w.run(Install, rwFlags(), true)
-	if code != 130 || !strings.HasSuffix(out, "Detached: the plan goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+
-		"; apply it once done: dormeto install apply "+rwArgs+"\n") {
+	if code != 130 || !strings.HasSuffix(out, "Detached: the plan goes on in CodeBuild. Follow it: dormeto aws install status "+rwArgs+
+		"; apply it once done: dormeto aws install apply "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 
@@ -1353,7 +1353,7 @@ func TestInstallCtrlCWhileABuildRunsDetaches(t *testing.T) {
 	w.ends["apply"] = cbtypes.StatusTypeInProgress
 	w.detach = true
 	code, out, _ = w.run(Install, rwFlags(), true, "y")
-	if code != 130 || !strings.HasSuffix(out, "Detached: the apply goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+"\n") {
+	if code != 130 || !strings.HasSuffix(out, "Detached: the apply goes on in CodeBuild. Follow it: dormeto aws install status "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan", "apply"})
@@ -1436,7 +1436,7 @@ func rwPlanned(t *testing.T) *rwWorld {
 func TestApplyWithoutAnInstall(t *testing.T) {
 	w := rwNew(t)
 	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, true)
-	if code != 1 || !strings.HasSuffix(out, "no install of env prod in 532105290256 eu-west-1: run dormeto install\n") || len(w.writes) != 0 {
+	if code != 1 || !strings.HasSuffix(out, "no install of env prod in 532105290256 eu-west-1: run dormeto aws install\n") || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 }
@@ -1448,7 +1448,7 @@ func TestApplyWithoutAPlan(t *testing.T) {
 	s.LastPlan = ""
 	w.save(s)
 	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
-	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto install\n") || len(w.writes) != 0 {
+	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto aws install\n") || len(w.writes) != 0 {
 		t.Errorf("exit code %d, writes %v:\n%s", code, w.writes, out)
 	}
 }
@@ -1519,7 +1519,7 @@ func TestCheckIsReadOnly(t *testing.T) {
 		"  ✓ administrators: you@example.com\n",
 		"  ! organization access: not deployed (no management profile)\n",
 		"    Organization access needs the management account 809706483662; without its profile (--management-profile) it is not deployed.\n",
-		"    Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
+		"    Check it later: dormeto aws install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
 	)
 	if len(w.writes) != 0 {
 		t.Errorf("writes: %v", w.writes)
@@ -1594,14 +1594,14 @@ func TestInstallForgetsTheLastPlanBeforeANewOne(t *testing.T) {
 	w.release("0.13.0", true)
 	w.builds = append(w.builds, &rwBuild{id: "dmt-prod-install:r0", status: cbtypes.StatusTypeInProgress, start: rwT0.Add(-time.Minute)})
 	code, out, _ := w.run(Install, Request{Profile: "p", Region: "eu-west-1"}, true)
-	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto install status follows it\n") {
+	if code != 1 || !strings.HasSuffix(out, "build dmt-prod-install:r0 is running: dormeto aws install status follows it\n") {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	if s := w.saved(); s.LastPlan != "" || s.Version != "0.13.0" {
 		t.Errorf("install.json: %+v", s)
 	}
 	code, out, _ = w.run(Apply, Request{Profile: "p", Region: "eu-west-1"}, false)
-	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto install\n") || len(w.actions()) != 0 {
+	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto aws install\n") || len(w.actions()) != 0 {
 		t.Errorf("exit code %d, started %v:\n%s", code, w.actions(), out)
 	}
 }
@@ -1611,7 +1611,7 @@ func TestInstallKeepsTheStartedPlanOnCtrlC(t *testing.T) {
 	w := rwNew(t)
 	w.cancelOnStart = true
 	code, out, _ := w.run(Install, rwFlags(), true)
-	if code != 130 || !strings.HasSuffix(out, "dormeto install status "+rwArgs+"; apply it once done: dormeto install apply "+rwArgs+"\n") {
+	if code != 130 || !strings.HasSuffix(out, "dormeto aws install status "+rwArgs+"; apply it once done: dormeto aws install apply "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	if s := w.saved(); s.LastPlan != "dmt-prod-install:b1" {
@@ -1629,12 +1629,12 @@ func TestInstallAFollowErrorSaysTheBuildGoesOn(t *testing.T) {
 		t.Errorf("exit code %d", code)
 	}
 	rwInOrder(t, out, "follow build dmt-prod-install:b1: api error ThrottlingException: ThrottlingException message\n",
-		"The plan goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+"; apply it once done: dormeto install apply "+rwArgs+"\n")
+		"The plan goes on in CodeBuild. Follow it: dormeto aws install status "+rwArgs+"; apply it once done: dormeto aws install apply "+rwArgs+"\n")
 
 	w = rwNew(t)
 	w.followErr["apply"] = chkAPI("ThrottlingException")
 	code, out, _ = w.run(Install, rwFlags(), true, "y")
-	if code != 1 || !strings.HasSuffix(out, "The apply goes on in CodeBuild. Follow it: dormeto install status "+rwArgs+"\n") {
+	if code != 1 || !strings.HasSuffix(out, "The apply goes on in CodeBuild. Follow it: dormeto aws install status "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }
@@ -1651,7 +1651,7 @@ func TestInstallALocalRelease(t *testing.T) {
 	}
 	base := "s3://dmt-install-532105290256-eu-west-1/prod/release"
 	if !strings.Contains(out, "  ✓ release: manager 0.11.0-dev (local: "+dir+")\n") ||
-		!strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwArgs+" --release "+dir+"\n") {
+		!strings.HasSuffix(out, "Plan saved. Apply it: dormeto aws install apply "+rwArgs+" --release "+dir+"\n") {
 		t.Errorf("output:\n%s", out)
 	}
 	for _, f := range []string{"SHA256SUMS", "terraform-aws-dormeto-0.11.0-dev.zip", "dormeto-organization-policy.json"} {

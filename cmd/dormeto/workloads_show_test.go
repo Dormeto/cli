@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads show|history|idle-window` against the fake manager API: the requests they make, what they print,
+// `dormeto aws workloads show|history|idle-window` against the fake manager API: the requests they make, what they print,
 // the refusals that send nothing.
 
 import (

@@ -111,15 +111,15 @@ var managerCommands = []string{
 	"manager status", "manager check", "manager changes", "manager update",
 }
 
-// Every command of the manager is shown in the README with its usage: a line "dormeto <command> ..." in a code block.
+// Every command of the manager is shown in the README with its usage: a line "dormeto aws <command> ..." in a code block.
 func TestReadmeShowsEveryManagerCommand(t *testing.T) {
 	var code strings.Builder
 	for _, m := range regexp.MustCompile("(?s)```[a-z]*\n(.*?)```").FindAllStringSubmatch(readme(t), -1) {
 		code.WriteString(m[1])
 	}
 	for _, command := range managerCommands {
-		if !regexp.MustCompile(`(?m)^dormeto ` + regexp.QuoteMeta(command) + `( |$)`).MatchString(code.String()) {
-			t.Errorf("no code block of the README shows dormeto %s", command)
+		if !regexp.MustCompile(`(?m)^dormeto aws ` + regexp.QuoteMeta(command) + `( |$)`).MatchString(code.String()) {
+			t.Errorf("no code block of the README shows dormeto aws %s", command)
 		}
 	}
 }

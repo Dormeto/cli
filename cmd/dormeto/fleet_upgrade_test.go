@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers upgrade` against the fake manager API: the plan, the confirmation, what is started, what is printed
+// `dormeto aws routers upgrade` against the fake manager API: the plan, the confirmation, what is started, what is printed
 // and the exit codes.
 
 import (

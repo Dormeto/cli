@@ -30,7 +30,7 @@ type waitFlags struct {
 
 func (w *waitFlags) bind(cmd *cobra.Command) {
 	f := cmd.Flags()
-	f.BoolVar(&w.noWait, "no-wait", false, "print the operation's id instead of following it (dormeto operations watch <id> follows it)")
+	f.BoolVar(&w.noWait, "no-wait", false, "print the operation's id instead of following it (dormeto aws operations watch <id> follows it)")
 	f.DurationVar(&w.timeout, "timeout", 60*time.Minute, "stop following after this long (the operation goes on in the manager)")
 }
 
@@ -163,7 +163,7 @@ func runOperation(ctx context.Context, deps fleetDeps, it opItem, w waitFlags, o
 	res := opResult{op: op, started: true}
 	o.say(o.info, "started %s %s for %s\n", op.Type, op.ID, it.label)
 	if w.noWait {
-		o.say(o.info, "follow it: dormeto operations watch %s\n", op.ID)
+		o.say(o.info, "follow it: dormeto aws operations watch %s\n", op.ID)
 		return res
 	}
 	if op.Status != "succeeded" && op.Status != "failed" {
@@ -190,7 +190,7 @@ func runOperation(ctx context.Context, deps fleetDeps, it opItem, w waitFlags, o
 		}
 		if err != nil {
 			if ctx.Err() != nil { // the run stopped following: the operation goes on in the manager
-				res.unfinished = "still running in the manager: dormeto operations watch " + op.ID
+				res.unfinished = "still running in the manager: dormeto aws operations watch " + op.ID
 				return res
 			}
 			o.say(o.errs, "✗ %s: cannot read the operation: %s (operation %s)\n", it.label, err, op.ID)
@@ -214,7 +214,7 @@ func runOperation(ctx context.Context, deps fleetDeps, it opItem, w waitFlags, o
 
 // mayHaveStarted is how a start whose outcome is not known is reported.
 func mayHaveStarted(err error) string {
-	return "the manager may have started it: dormeto operations list --running (" + err.Error() + ")"
+	return "the manager may have started it: dormeto aws operations list --running (" + err.Error() + ")"
 }
 
 // stepLines are the lines of the steps whose status changed since printed (a step not printed yet counts as pending),

@@ -1,7 +1,7 @@
 package fleet
 
 // What the manager says of one workload (GET /iam/workloads/{router}/{id}, …/history, …/idle-window) and the text
-// `dormeto workloads show|history|idle-window` print, as the dashboard's workload view and its History and Idle window
+// `dormeto aws workloads show|history|idle-window` print, as the dashboard's workload view and its History and Idle window
 // cards show it. The commands print the answers as the API sent them under --json.
 
 import (

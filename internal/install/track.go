@@ -66,7 +66,7 @@ type CredentialsError struct {
 }
 
 func (e *CredentialsError) Error() string {
-	login, status := e.Login, "dormeto install status"
+	login, status := e.Login, "dormeto aws install status"
 	if login == "" {
 		login = "aws sso login --profile <your profile>"
 	}
@@ -395,7 +395,7 @@ func verifyAdministrators(ctx context.Context, c Clients, pool string, admins []
 		out, err := c.Cognito.ListUsers(ctx, &cognitoidentityprovider.ListUsersInput{UserPoolId: &pool, Filter: aws.String(fmt.Sprintf("email = %q", a))})
 		switch {
 		case err != nil && isCredentials(err):
-			return Check{"administrators", "not checked (the AWS credentials expired: sign in again, then dormeto install status)", Warn}
+			return Check{"administrators", "not checked (the AWS credentials expired: sign in again, then dormeto aws install status)", Warn}
 		case err != nil:
 			details = append(details, a+": "+err.Error())
 			verdict = Warn

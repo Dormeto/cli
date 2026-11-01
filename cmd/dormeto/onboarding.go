@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads onboard`, `offboard` and `exclude`: the manager's operations on workloads, started and followed as
+// `dormeto aws workloads onboard`, `offboard` and `exclude`: the manager's operations on workloads, started and followed as
 // the dashboard's Discovery and Workload views do (see runOperations). Onboard resolves its candidate among those pending
 // onboarding and sends what the onboarding dialog sends; offboard and exclude are always confirmed on a terminal
 // (--yes without one; --dry-run lists the targets). Every argument the manager refuses by a rule the CLI knows is
@@ -74,7 +74,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"--set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernate its instances launched\n" +
 			"with hibernation at a nap; routers 0.32.0 and later; without it the workload inherits the router's or the\n" +
 			"manager's). --no-wait only starts it; Ctrl-C and --timeout stop following, the operation goes on in the\n" +
-			"manager: `dormeto operations watch <id>`. Needs an operator.",
+			"manager: `dormeto aws operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
 			var tags map[string]string
@@ -207,7 +207,7 @@ func newWorkloadsOffboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"the workload is woken, its application given back as it was, and it leaves Dormeto. It is always confirmed on a\n" +
 			"terminal (--yes without one; --dry-run lists the workloads and sends nothing). A workload another operation\n" +
 			"holds is refused with that operation's id, the others go on (exit 1). --no-wait only starts them; Ctrl-C and\n" +
-			"--timeout stop following, the operations go on in the manager: `dormeto operations watch <id>`. Needs an operator.",
+			"--timeout stop following, the operations go on in the manager: `dormeto aws operations watch <id>`. Needs an operator.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			err := wait.check()
@@ -269,9 +269,9 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Exclude each workload's target group from discovery, with a reason: the manager pauses its managed workloads\n" +
 			"(an operation, followed). --reason is 1 to 246 characters; --for is a duration up to 366 days (90m, 2h, 3d) and\n" +
 			"--until an RFC 3339 time or HH:MM today in the local time zone, within 366 days; without either the exclusion\n" +
-			"lasts until `dormeto exclusions lift`. It is always confirmed on a terminal (--yes without one; --dry-run lists\n" +
+			"lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal (--yes without one; --dry-run lists\n" +
 			"the workloads). --no-wait only starts them; Ctrl-C and --timeout stop following, the operations go on in the\n" +
-			"manager: `dormeto operations watch <id>`. Needs an operator.",
+			"manager: `dormeto aws operations watch <id>`. Needs an operator.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			r, err := exclusionReason(reason)

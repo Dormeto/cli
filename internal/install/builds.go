@@ -29,7 +29,7 @@ const (
 type RunningError struct{ Build string }
 
 func (e *RunningError) Error() string {
-	return fmt.Sprintf("build %s is running: dormeto install status follows it", e.Build)
+	return fmt.Sprintf("build %s is running: dormeto aws install status follows it", e.Build)
 }
 
 // Running is the id of the project's build in progress, or "" when none.

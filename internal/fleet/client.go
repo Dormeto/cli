@@ -83,7 +83,7 @@ func (e *APIError) Error() string {
 	case e.Gateway && e.Status == http.StatusNotFound:
 		return "the manager's API has no /iam routes: the manager predates them, update it to 0.15.0 or later"
 	case e.Message != "" && e.OperationID != "":
-		return fmt.Sprintf("%s (operation %s: dormeto operations watch %s)", e.Message, e.OperationID, e.OperationID)
+		return fmt.Sprintf("%s (operation %s: dormeto aws operations watch %s)", e.Message, e.OperationID, e.OperationID)
 	case e.Message != "":
 		return e.Message
 	}

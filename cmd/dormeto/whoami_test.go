@@ -1,6 +1,6 @@
 package main
 
-// `dormeto whoami` against the fake manager API: the caller, its role and the manager it reached.
+// `dormeto aws whoami` against the fake manager API: the caller, its role and the manager it reached.
 
 import (
 	"encoding/json"

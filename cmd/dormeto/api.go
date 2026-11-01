@@ -1,6 +1,6 @@
 package main
 
-// `dormeto api <method> <path>`: a signed call to any route of the manager's /iam API, its answer's body on stdout
+// `dormeto aws api <method> <path>`: a signed call to any route of the manager's /iam API, its answer's body on stdout
 // (indented when JSON): what the commands do not cover, such as a route a later manager adds. Exit codes: 0 for a 2xx
 // answer; 1 for any other ("HTTP <status>" on stderr, the body still on stdout) or when AWS refuses; 2 for a bad
 // argument; 128 and the signal's number on a signal.
@@ -36,8 +36,8 @@ func newAPI(deps fleetDeps) *cobra.Command {
 		"is dropped), percent-encoded where a segment needs it. --data is the body: JSON, @<file>, or - for standard input.\n" +
 		"A GET answered 429 or 5xx is tried up to 3 times in all. Any status but 2xx prints HTTP <status> on stderr, exit 1.\n" +
 		"--json changes nothing (the body is the API's answer); it is accepted as every command accepts it.\n\n" +
-		"  dormeto api GET /workloads -q state=ASLEEP -q limit=10\n" +
-		"  dormeto api POST /routers/prod-eu/pause --data '{\"reason\":\"maintenance\"}'"
+		"  dormeto aws api GET /workloads -q state=ASLEEP -q limit=10\n" +
+		"  dormeto aws api POST /routers/prod-eu/pause --data '{\"reason\":\"maintenance\"}'"
 	f.bind(cmd)
 	cmd.Flags().StringVar(&data, "data", "", "the request's body: JSON, @<file>, or - for standard input")
 	cmd.Flags().StringArrayVarP(&params, "query", "q", nil, "a query parameter, key=value (repeatable)")
@@ -70,7 +70,7 @@ func newAPI(deps fleetDeps) *cobra.Command {
 // apiRequest checks the method and path and gives the path under /iam with its query, the -q parameters added.
 func apiRequest(args, params []string) (method, path string, query url.Values, err error) {
 	if len(args) != 2 {
-		return "", "", nil, usagef("give a method and a path: dormeto api <method> <path>")
+		return "", "", nil, usagef("give a method and a path: dormeto aws api <method> <path>")
 	}
 	method = strings.ToUpper(args[0])
 	if !slices.Contains(apiMethods, method) {

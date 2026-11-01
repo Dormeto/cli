@@ -1,6 +1,6 @@
 package main
 
-// `dormeto api` against the fake manager API: the request it signs and sends, the body printed, the exit codes.
+// `dormeto aws api` against the fake manager API: the request it signs and sends, the body printed, the exit codes.
 
 import (
 	"io"

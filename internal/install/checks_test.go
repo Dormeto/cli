@@ -409,7 +409,7 @@ func TestChecksAnotherInstall(t *testing.T) {
 	x := chkNew()
 	chkWant(t, x, "another install", OK, "none")
 	x.lam = chkLambda{found: map[string]bool{"dmt-dev-manager-api": true}}
-	chkWant(t, x, "another install", Fail, "dmt-dev-manager resources exist without dormeto install's record: installed by other means (keep it in its Terraform)")
+	chkWant(t, x, "another install", Fail, "dmt-dev-manager resources exist without dormeto aws install's record: installed by other means (keep it in its Terraform)")
 	x.f.Saved = &Settings{Installed: "0.10.0"}
 	chkWant(t, x, "another install", OK, "none")
 
@@ -559,7 +559,7 @@ func TestChecksDormetoRolesOfThisEnvironment(t *testing.T) {
 		return nil, chkNoEntity()
 	}
 	chkWant(t, x, "Dormeto roles", Fail, "DmtDiscoveryRole, DmtCommandRole exist, trusting arn:aws:iam::532105290256:role/dmt-dev-manager-discovery, "+
-		"arn:aws:iam::532105290256:role/dmt-dev-manager-operations: env dev's manager without dormeto install's record (installed by other means, or left "+
+		"arn:aws:iam::532105290256:role/dmt-dev-manager-operations: env dev's manager without dormeto aws install's record (installed by other means, or left "+
 		"by an earlier one); delete them before installing (decision 15)")
 	if c := chkRow(t, x.run(), "Dormeto roles"); strings.Contains(c.Detail, ":root") {
 		t.Errorf("roles = %q", c.Detail)
@@ -716,7 +716,7 @@ func TestChecksAnotherInstallAdopted(t *testing.T) {
 	x.f.Adoption = chkAdopted()
 	chkWant(t, x, "another install", OK, "dmt-dev-manager: the manager adopted")
 	x.f.Adoption.Err = errors.New("refused")
-	chkWant(t, x, "another install", Fail, "dmt-dev-manager resources exist without dormeto install's record")
+	chkWant(t, x, "another install", Fail, "dmt-dev-manager resources exist without dormeto aws install's record")
 }
 
 // Dormeto's roles trusting this env's manager alone are the adopted manager's; another manager's still fail.
@@ -734,16 +734,16 @@ func TestChecksDormetoRolesAdopted(t *testing.T) {
 	x.f.Adoption = chkAdopted()
 	chkWant(t, x, "Dormeto roles", OK, "DmtDiscoveryRole, DmtCommandRole: the adopted manager's")
 	x.f.Adoption.Err = errors.New("refused")
-	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
+	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto aws install's record")
 
 	// Each one found must be a role or a policy the adopted state moves: the boundary too, when it exists.
 	x.f.Adoption = chkAdopted()
 	x.iam.policy = func(string) (*iam.GetPolicyOutput, error) { return &iam.GetPolicyOutput{}, nil }
 	chkWant(t, x, "Dormeto roles", OK, "DmtDiscoveryRole, DmtCommandRole, DmtRouterBoundary: the adopted manager's")
 	x.f.Adoption.IAMNames = []string{"dmt-dev-manager-api", "DmtDiscoveryRole", "DmtCommandRole"}
-	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
+	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto aws install's record")
 	x.f.Adoption.IAMNames = []string{"DmtRouterBoundary", "DmtDiscoveryRole"}
-	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto install's record")
+	chkWant(t, x, "Dormeto roles", Fail, "env dev's manager without dormeto aws install's record")
 
 	x.f.Adoption = chkAdopted()
 	x.iam.getRole = func(name string) (*iam.GetRoleOutput, error) {

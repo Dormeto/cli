@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers list` and `dormeto workloads list` against a fake manager API and a fake locator: the requests they
+// `dormeto aws routers list` and `dormeto aws workloads list` against a fake manager API and a fake locator: the requests they
 // make (path, query, signature), the tables and JSON they print, the exit codes.
 
 import (
@@ -131,12 +131,25 @@ func runFleetWith(t *testing.T, api *fakeAPI, profileRegion string, tune func(*f
 	return runCommands(t, api, profileRegion, tune, managerCommands, args...)
 }
 
-// runCommands runs the command line on a root holding the commands built with fake dependencies, adjusted by tune.
+// runCommands runs the command line on a root holding the commands, built with fake dependencies adjusted by tune,
+// under `aws` (the args are the commands', without it).
 func runCommands(t *testing.T, api *fakeAPI, profileRegion string, tune func(*fleetDeps), commands func(fleetDeps) []*cobra.Command, args ...string) fleetRan {
 	t.Helper()
-	srv := httptest.NewServer(api)
-	t.Cleanup(srv.Close)
 	out := fleetRan{api: api}
+	deps := fakeFleetDeps(t, &out, profileRegion, tune)
+	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
+	aws := &cobra.Command{Use: "aws"}
+	aws.AddCommand(commands(deps)...)
+	root.AddCommand(aws)
+	return runOn(root, api, &out, append([]string{"aws"}, args...))
+}
+
+// fakeFleetDeps are the dependencies of the manager commands against out.api: a fake locator and a fake clock, and a
+// confirmation that fails the test; tune adjusts them.
+func fakeFleetDeps(t *testing.T, out *fleetRan, profileRegion string, tune func(*fleetDeps)) fleetDeps {
+	t.Helper()
+	srv := httptest.NewServer(out.api)
+	t.Cleanup(srv.Close)
 	deps := fleetDeps{
 		load: func(_ context.Context, profile string) (awssdk.Config, error) {
 			out.profile = profile
@@ -162,16 +175,18 @@ func runCommands(t *testing.T, api *fakeAPI, profileRegion string, tune func(*fl
 	if tune != nil {
 		tune(&deps)
 	}
-	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
-	root.AddCommand(commands(deps)...)
+	return deps
+}
+
+// runOn runs args on root, with the api's stdin, and records what it printed in out.
+func runOn(root *cobra.Command, api *fakeAPI, out *fleetRan, args []string) fleetRan {
 	var o, e bytes.Buffer
 	root.SetOut(&o)
 	root.SetErr(&e)
 	root.SetIn(strings.NewReader(api.stdin))
-	root.SetArgs(args)
-	out.exit = execute(root)
+	out.exit = execute(root, args...)
 	out.stdout, out.stderr = o.String(), e.String()
-	return out
+	return *out
 }
 
 func TestRoutersListTable(t *testing.T) {

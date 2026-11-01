@@ -1,6 +1,6 @@
 package main
 
-// `dormeto whoami`: the caller the manager sees (the profile's identity, by its ARN) and its role, and the manager that
+// `dormeto aws whoami`: the caller the manager sees (the profile's identity, by its ARN) and its role, and the manager that
 // answered: its version, its API's URL, environment and region.
 
 import (

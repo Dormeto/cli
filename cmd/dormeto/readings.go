@@ -1,6 +1,6 @@
 package main
 
-// The manager's readings: `dormeto overview`, `alerts list`, `ip-lists list`, `savings show` and `discounts`, and
+// The manager's readings: `dormeto aws overview`, `alerts list`, `ip-lists list`, `savings show` and `discounts`, and
 // `audit`. Each prints a table or labelled lines, or with --json the manager's answer (after the CLI's own filters).
 // `savings discounts` is the only one that writes.
 

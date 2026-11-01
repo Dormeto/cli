@@ -570,5 +570,5 @@ func Disabled(managementAccount string) string {
 	return "Organization access needs the management account " + managementAccount + "; without its profile (--management-profile) it is not deployed.\n" +
 		"Without it, the manager is installed in organization mode but cannot list the accounts until the delegation policy exists, nor read an account without its roles.\n" +
 		"The procedure: " + organizationProcedure + "\n" +
-		"Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too."
+		"Check it later: dormeto aws install check --management-profile <profile>; the dashboard's Organization access panel too."
 }

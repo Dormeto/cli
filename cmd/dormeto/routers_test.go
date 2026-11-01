@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers show|install|uninstall|pause|resume` against the fake manager API: the requests they make, what
+// `dormeto aws routers show|install|uninstall|pause|resume` against the fake manager API: the requests they make, what
 // they print, the refusals that send nothing.
 
 import (

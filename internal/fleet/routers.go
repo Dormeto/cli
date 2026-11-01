@@ -1,7 +1,7 @@
 package fleet
 
 // The details of one router (GET /iam/routers/{router}): the router's own `router` action answer spread with the
-// manager's fields, and the text `dormeto routers show` prints, as the dashboard's router view shows it.
+// manager's fields, and the text `dormeto aws routers show` prints, as the dashboard's router view shows it.
 
 import (
 	"encoding/json"

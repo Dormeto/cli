@@ -216,7 +216,7 @@ func TestHelp(t *testing.T) {
 			t.Errorf("%q: got %v", args, err)
 		}
 	}
-	if !strings.HasPrefix(Usage, "Usage: dormeto estimate --profile <profile>") || strings.Contains(Usage, "npm run") {
+	if !strings.HasPrefix(Usage, "Usage: dormeto aws estimate --profile <profile>") || strings.Contains(Usage, "npm run") {
 		t.Fatal(Usage)
 	}
 }

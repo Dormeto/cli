@@ -1,7 +1,7 @@
 package fleet
 
 // The manager's discovery (GET /iam/discovery, /discovery/access, /discovery/config): the shapes the CLI reads, kept raw
-// for --json, and the text `dormeto discovery` prints, as the dashboard's Discovery views show them.
+// for --json, and the text `dormeto aws discovery` prints, as the dashboard's Discovery views show them.
 
 import (
 	"context"

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto manager status`, `check`, `changes` and `update`: the dashboard's Update page. A manager installed with the
+// `dormeto aws manager status`, `check`, `changes` and `update`: the dashboard's Update page. A manager installed with the
 // CLI plans and applies its own update through its install build; each request is an update-manager operation, followed
 // through GET /operations, the only route that brings it up to date. A manager installed with Terraform is updated by
 // changing its module's source. Exit codes as the fleet commands.
@@ -192,7 +192,7 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"one), the build applies that plan, and the version the manager then runs is read. Both builds are followed\n" +
 			"step by step, each for up to --timeout; while the apply replaces the manager's API, every read that fails is\n" +
 			"tried again until then, each new error said once. --dry-run stops after the plan. --no-wait starts the apply\n" +
-			"without following it (the plan is always followed: its summary is what is confirmed); `dormeto operations\n" +
+			"without following it (the plan is always followed: its summary is what is confirmed); `dormeto aws operations\n" +
 			"watch <id>` follows it. A manager installed with Terraform is updated by changing its module's source. Needs\n" +
 			"an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -227,7 +227,7 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// managerUpdate is the request of `dormeto manager update`.
+// managerUpdate is the request of `dormeto aws manager update`.
 type managerUpdate struct {
 	version             string
 	dryRun, yes, asJSON bool
@@ -294,7 +294,7 @@ func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps
 	planOp := run.Operations[len(run.Operations)-1]
 	build := planOp.InstallBuild()
 	if build == "" {
-		return run, fmt.Errorf("the plan's operation names no build: nothing applied (dormeto operations show %s)", planOp.ID)
+		return run, fmt.Errorf("the plan's operation names no build: nothing applied (dormeto aws operations show %s)", planOp.ID)
 	}
 	shown, err := planOf(ctx, deps, api, version, build, began.Add(u.wait.timeout), u.wait.timeout)
 	if shown != nil {
@@ -319,7 +319,7 @@ func (u managerUpdate) run(ctx context.Context, c *cobra.Command, deps fleetDeps
 			return run, err
 		}
 		if !ok {
-			fmt.Fprintf(info, "not confirmed: nothing applied (the plan of %s stays ready in the manager: dormeto manager status)\n", version)
+			fmt.Fprintf(info, "not confirmed: nothing applied (the plan of %s stays ready in the manager: dormeto aws manager status)\n", version)
 			return run, nil
 		}
 	}
@@ -375,9 +375,9 @@ func planOf(ctx context.Context, deps fleetDeps, api *fleet.Client, version, bui
 		case ctx.Err() != nil: // a signal, not the deadline
 			return last, ctx.Err()
 		case last != nil && last.Plan != nil:
-			return last, fmt.Errorf("the manager's plan is of build %s, not this run's %s: nothing applied (dormeto manager status)", last.Plan.Build, build)
+			return last, fmt.Errorf("the manager's plan is of build %s, not this run's %s: nothing applied (dormeto aws manager status)", last.Plan.Build, build)
 		}
-		return last, fmt.Errorf("the plan of %s (build %s) did not show in the manager within %s: nothing applied (dormeto manager status)", version, build, timeout)
+		return last, fmt.Errorf("the plan of %s (build %s) did not show in the manager within %s: nothing applied (dormeto aws manager status)", version, build, timeout)
 	}
 }
 
@@ -394,6 +394,6 @@ func explainBuild(c *cobra.Command, b *fleet.UpdateBuild, action, version string
 	errs := c.ErrOrStderr()
 	fmt.Fprint(errs, text)
 	if action == "apply" {
-		fmt.Fprintln(errs, "the manager is as the failure left it: run dormeto manager update again, or dormeto install from a laptop")
+		fmt.Fprintln(errs, "the manager is as the failure left it: run dormeto aws manager update again, or dormeto aws install from a laptop")
 	}
 }

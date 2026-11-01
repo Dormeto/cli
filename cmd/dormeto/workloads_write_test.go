@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads wake|nap|pause|rename|tags` against a fake manager API: the requests they make, what they print,
+// `dormeto aws workloads wake|nap|pause|rename|tags` against a fake manager API: the requests they make, what they print,
 // the exit codes, and that a refused argument sends nothing.
 
 import (

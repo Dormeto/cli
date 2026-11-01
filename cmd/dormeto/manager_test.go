@@ -1,6 +1,6 @@
 package main
 
-// `dormeto manager` against a fake manager: the update's state and daily check, the release notes, and the update
+// `dormeto aws manager` against a fake manager: the update's state and daily check, the release notes, and the update
 // planned, confirmed, applied and followed (its records read through GET /operations), with what is sent and printed.
 
 import (
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// managerAPI is a fake manager for `dormeto manager`. A plan or apply request is recorded as an update-manager operation
+// managerAPI is a fake manager for `dormeto aws manager`. A plan or apply request is recorded as an update-manager operation
 // that GET /operations reports running, then ended; GET /update answers state, then planned once the plan has ended, then
 // applied once the apply has; /health answers 0.17.1 until the apply has ended, then runs.
 type managerAPI struct {
@@ -493,7 +493,7 @@ func TestManagerUpdateFailedApplySaysWhatItLeft(t *testing.T) {
 	}
 	want := "✗ apply 0.18.1: update-manager failed at Apply manager 0.18.1: terraform apply failed (operation op-apply)\n" +
 		"the step that failed: apply\n  Error: timeout\nthe build: https://eu-west-1.console.aws.amazon.com/a\n" +
-		"the manager is as the failure left it: run dormeto manager update again, or dormeto install from a laptop\n"
+		"the manager is as the failure left it: run dormeto aws manager update again, or dormeto aws install from a laptop\n"
 	if !strings.HasSuffix(r.stderr, want) {
 		t.Errorf("stderr %q", r.stderr)
 	}
@@ -557,7 +557,7 @@ func TestManagerUpdateNeverShowsNorSendsAnOlderPlanOfTheSameVersion(t *testing.T
 	if r.exit != 1 || m.has("POST /iam/update/apply") || strings.Contains(r.stdout, oldPlanBuild) || strings.Contains(r.stdout, "changes") {
 		t.Fatalf("exit %d, stdout %q, requests %q", r.exit, r.stdout, m.requests)
 	}
-	if want := "the manager's plan is of build " + oldPlanBuild + ", not this run's " + planBuild + ": nothing applied (dormeto manager status)\n"; !strings.HasSuffix(r.stderr, want) {
+	if want := "the manager's plan is of build " + oldPlanBuild + ", not this run's " + planBuild + ": nothing applied (dormeto aws manager status)\n"; !strings.HasSuffix(r.stderr, want) {
 		t.Errorf("stderr %q", r.stderr)
 	}
 }
@@ -569,7 +569,7 @@ func TestManagerUpdateTimesOutWhenThePlanNeverShows(t *testing.T) {
 	if r.exit != 1 || m.has("POST /iam/update/apply") {
 		t.Fatalf("exit %d, requests %q", r.exit, m.requests)
 	}
-	if want := "the plan of 0.18.1 (build " + planBuild + ") did not show in the manager within 10m0s: nothing applied (dormeto manager status)\n"; !strings.HasSuffix(r.stderr, want) {
+	if want := "the plan of 0.18.1 (build " + planBuild + ") did not show in the manager within 10m0s: nothing applied (dormeto aws manager status)\n"; !strings.HasSuffix(r.stderr, want) {
 		t.Errorf("stderr %q", r.stderr)
 	}
 }
@@ -580,7 +580,7 @@ func TestManagerUpdateNoWaitStartsTheApplyWithoutFollowingIt(t *testing.T) {
 	if r.exit != 0 || len(m.sent()) != 2 || m.has("GET /iam/health") || m.phase != "applying" || m.reads != 0 {
 		t.Fatalf("exit %d, phase %s, %d reads, requests %q, stderr %q", r.exit, m.phase, m.reads, m.requests, r.stderr)
 	}
-	if !strings.HasSuffix(r.stdout, "started update-manager op-apply for apply 0.18.1\nfollow it: dormeto operations watch op-apply\n") {
+	if !strings.HasSuffix(r.stdout, "started update-manager op-apply for apply 0.18.1\nfollow it: dormeto aws operations watch op-apply\n") {
 		t.Errorf("stdout %q", r.stdout)
 	}
 	m = updating()
@@ -626,7 +626,7 @@ func TestManagerUpdateConfirmsNamingTheVersionAndTheCounts(t *testing.T) {
 	}
 	m := updating()
 	r := runManager(t, m, declining, "update")
-	declined := "not confirmed: nothing applied (the plan of 0.18.1 stays ready in the manager: dormeto manager status)\n"
+	declined := "not confirmed: nothing applied (the plan of 0.18.1 stays ready in the manager: dormeto aws manager status)\n"
 	if r.exit != 0 || m.has("POST /iam/update/apply") || !strings.HasSuffix(r.stdout, declined) {
 		t.Errorf("exit %d, stdout %q, requests %q", r.exit, r.stdout, m.requests)
 	}

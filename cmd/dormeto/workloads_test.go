@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads keep-awake`, `resume` and `schedule show|set|clear` against a fake manager API: the requests they
+// `dormeto aws workloads keep-awake`, `resume` and `schedule show|set|clear` against a fake manager API: the requests they
 // make, what they print, the exit codes.
 
 import (

@@ -30,10 +30,15 @@ type build struct {
 func main() {
 	info, _ := debug.ReadBuildInfo()
 	b := build{version: version, commit: commit, date: date, info: info, versions: cli.Versions}
-	os.Exit(execute(newRoot(b)))
+	os.Exit(execute(newRoot(b), os.Args[1:]...))
 }
 
 func newRoot(b build) *cobra.Command {
+	return buildRoot(b, theFleetDeps(), theInstallRuns, theGcpRuns)
+}
+
+// buildRoot is the command tree with the given dependencies (a test's, or newRoot's real ones).
+func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *cobra.Command {
 	// --version (and -v) prints the first line of `dormeto version`.
 	first, _, _ := strings.Cut(b.describe(), "\n")
 	root := &cobra.Command{Use: "dormeto", Short: "Dormeto command line", SilenceUsage: true, Version: first}
@@ -46,12 +51,24 @@ func newRoot(b build) *cobra.Command {
 			fmt.Fprint(cmd.OutOrStdout(), b.describe())
 		},
 	})
-	root.AddCommand(newEstimate(b))
-	root.AddCommand(managerCommands(theFleetDeps())...)
 	v, _, _ := b.resolve()
-	root.AddCommand(newInstall(theInstallRuns, orDefault(v, "dev")), newUninstall(theInstallRuns, orDefault(v, "dev")))
-	root.AddCommand(newGcp(theGcpRuns, orDefault(v, "dev")))
+	// The AWS commands live under `dormeto aws`; the old top-level names are the same commands built a second time
+	// (a cobra command has one parent), hidden, and run through aws by execute with a notice.
+	aws := &cobra.Command{Use: "aws", Short: "Dormeto in AWS", Args: noArgs, SilenceErrors: true}
+	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
+	root.AddCommand(aws)
+	for _, old := range awsCommands(b, fleet, installs, orDefault(v, "dev")) {
+		old.Hidden = true
+		old.Annotations = map[string]string{movedAnnotation: "aws"}
+		root.AddCommand(old)
+	}
+	root.AddCommand(newGcp(gcps, orDefault(v, "dev")))
 	return root
+}
+
+// awsCommands are the commands of `dormeto aws`, built anew at each call.
+func awsCommands(b build, fleet fleetDeps, installs installRuns, version string) []*cobra.Command {
+	return append([]*cobra.Command{newEstimate(b), newInstall(installs, version), newUninstall(installs, version)}, managerCommands(fleet)...)
 }
 
 // managerCommands are the commands that call the manager's API, with deps.

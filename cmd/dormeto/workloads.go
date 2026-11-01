@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads keep-awake`, `resume` and `schedule show|set|clear`: pauses and schedules of workloads through the
+// `dormeto aws workloads keep-awake`, `resume` and `schedule show|set|clear`: pauses and schedules of workloads through the
 // manager's /iam routes. Targets are <router>/<workload> arguments or --tag (every workload that carries them); more
 // than one target is confirmed on a terminal (--yes without one; --dry-run lists them). Exit codes as the fleet commands:
 // 0; 1 when the manager refused or a workload failed or did not wake in time; 2 for a bad flag or argument, or no --yes
@@ -276,7 +276,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"not put to sleep before it ends. --for is a duration up to 168h (7 days; 90m, 2h, 2d); --until is an RFC 3339\n" +
 			"time or HH:MM today in the local time zone, refused when already past or more than 7 days away. --wait follows\n" +
 			"the workloads every 5 s until all are awake (FAILED ends it with the failure, exit 1; --timeout, exit 1; Ctrl-C,\n" +
-			"exit 130: the pause stays, `dormeto workloads resume` ends it). Several targets are confirmed on a terminal.",
+			"exit 130: the pause stays, `dormeto aws workloads resume` ends it). Several targets are confirmed on a terminal.",
 		RunE: func(c *cobra.Command, args []string) error {
 			now := deps.now()
 			end, _, err := endOf(now, dur, until, maxKeepAwake, true)
@@ -421,7 +421,7 @@ func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet
 	defer mu.Unlock()
 	if ctx.Err() != nil {
 		if paused {
-			fmt.Fprintf(c.ErrOrStderr(), "interrupted: the pause stays, `dormeto workloads resume` ends it; not awake: %s\n", targetNames(pending))
+			fmt.Fprintf(c.ErrOrStderr(), "interrupted: the pause stays, `dormeto aws workloads resume` ends it; not awake: %s\n", targetNames(pending))
 		} else {
 			fmt.Fprintf(c.ErrOrStderr(), "interrupted; not awake: %s\n", targetNames(pending))
 		}
@@ -430,13 +430,13 @@ func waitAwake(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet
 	if followed.Err() != nil && len(pending) > 0 {
 		fmt.Fprintf(c.ErrOrStderr(), "timeout of %s reached: not awake: %s\n", timeout, targetNames(pending))
 		if paused {
-			fmt.Fprintln(c.ErrOrStderr(), "the pause stays: `dormeto workloads resume` ends it")
+			fmt.Fprintln(c.ErrOrStderr(), "the pause stays: `dormeto aws workloads resume` ends it")
 		}
 		return exitCode(1)
 	}
 	if failures > 0 {
 		if paused {
-			fmt.Fprintln(c.ErrOrStderr(), "the pause stays on the failed workloads: `dormeto workloads resume` ends it")
+			fmt.Fprintln(c.ErrOrStderr(), "the pause stays on the failed workloads: `dormeto aws workloads resume` ends it")
 		}
 		return exitCode(1)
 	}
@@ -493,7 +493,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Show the schedule: the time zone, the windows, the exceptions, the maximum nap and the next events, in the\n" +
 			"schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none, and left\n" +
 			"out when the router, before 0.31.0, does not report schedules), which\n" +
-			"`dormeto workloads schedule set --file -` accepts back.",
+			"`dormeto aws workloads schedule set --file -` accepts back.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := (&targetFlags{}).check(args, true); err != nil {

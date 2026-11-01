@@ -1,6 +1,6 @@
 package main
 
-// `dormeto exclusions list`, `add` and `lift`: the manager's manual exclusions, which leave a target group, a load
+// `dormeto aws exclusions list`, `add` and `lift`: the manager's manual exclusions, which leave a target group, a load
 // balancer or an account out of discovery and pause its managed workloads. Adding and lifting are operations, followed
 // as the others are (see runOperations); adding is always confirmed on a terminal (--yes without one).
 
@@ -66,10 +66,10 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Exclude one target (an application target group or load balancer by ARN, or a whole account by its 12 digits)\n" +
 			"from discovery: the manager pauses its managed workloads (an operation, followed). --reason is 1 to 246\n" +
 			"characters; --for is a duration up to 366 days (90m, 2h, 3d) and --until an RFC 3339 time or HH:MM today in the\n" +
-			"local time zone, within 366 days; without either the exclusion lasts until `dormeto exclusions lift`. It is\n" +
+			"local time zone, within 366 days; without either the exclusion lasts until `dormeto aws exclusions lift`. It is\n" +
 			"always confirmed on a terminal (--yes without one; --dry-run names the target and sends nothing). --no-wait\n" +
 			"only starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
-			"`dormeto operations watch <id>`. Needs an operator.",
+			"`dormeto aws operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var target map[string]any
 			var text string
@@ -146,11 +146,11 @@ func newExclusionsLift(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "lift <id>...", Short: "Lift exclusions: their workloads are resumed and the exclusions removed",
-		Long: "Lift each exclusion (its id is in `dormeto exclusions list`) and follow the operations: the workloads it paused\n" +
+		Long: "Lift each exclusion (its id is in `dormeto aws exclusions list`) and follow the operations: the workloads it paused\n" +
 			"are resumed, then the exclusion is deleted. One that stays listed (a workload could not be resumed) is lifted\n" +
 			"again by running this again. An exclusion another operation holds is refused with that operation's id, the\n" +
 			"others go on (exit 1). --no-wait only starts them; Ctrl-C and --timeout stop following, the operations go on in\n" +
-			"the manager: `dormeto operations watch <id>`. Needs an operator.",
+			"the manager: `dormeto aws operations watch <id>`. Needs an operator.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			var ids []string

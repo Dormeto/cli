@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads wake`, `nap`, `pause`, `rename` and `tags`: the manager's other writes on workloads, on the same
+// `dormeto aws workloads wake`, `nap`, `pause`, `rename` and `tags`: the manager's other writes on workloads, on the same
 // targets, confirmation and exit codes as keep-awake and resume (see workloads.go). Every argument the manager refuses by
 // a rule the CLI knows is refused here first (exit 2), nothing sent.
 
@@ -113,7 +113,7 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "pause (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>] [--keep-asleep]", Short: "Pause workloads: no automatic nap",
 		Long: "Pause the workloads: the routers do not put them to sleep, and wake them first unless --keep-asleep. --for is a\n" +
 			"duration up to 366 days (90m, 2h, 3d); --until is an RFC 3339 time or HH:MM today in the local time zone;\n" +
-			"without either the pause lasts until `dormeto workloads resume`. --reason (1 to 256 characters) is shown in the\n" +
+			"without either the pause lasts until `dormeto aws workloads resume`. --reason (1 to 256 characters) is shown in the\n" +
 			"manager. Needs the nap permission, and the wake one unless --keep-asleep.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto discovery`: the manager's discovery of workloads (status, run, candidates, dismiss, restore, access and the
+// `dormeto aws discovery`: the manager's discovery of workloads (status, run, candidates, dismiss, restore, access and the
 // configuration), through its /iam routes. A run can be waited for; dismiss and restore take the candidates by id or by
 // their target group's name, the names resolved before anything is sent (an id is an ARN: it travels in bodies only;
 // dismiss sends it as given); the configuration is replaced as the file is, after a confirmation. Exit codes as the
@@ -34,7 +34,7 @@ const (
 	maxNote      = 256
 )
 
-// newDiscovery is `dormeto discovery` and its subcommands.
+// newDiscovery is `dormeto aws discovery` and its subcommands.
 func newDiscovery(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
 	cmd := fleetCommand("discovery", "See what discovery found, run it, dismiss candidates and set its configuration")
@@ -105,7 +105,7 @@ func newDiscoveryRun(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if asJSON {
 						return printJSON(c.OutOrStdout(), accepted)
 					}
-					fmt.Fprintln(c.OutOrStdout(), "discovery run requested: dormeto discovery status shows it")
+					fmt.Fprintln(c.OutOrStdout(), "discovery run requested: dormeto aws discovery status shows it")
 					return nil
 				}
 				fmt.Fprintln(textOut(c), "discovery run requested, waiting for it")
@@ -114,7 +114,7 @@ func newDiscoveryRun(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				st, err := waitForRun(followed, deps, api, before, refusedBefore)
 				if err != nil {
 					if followed.Err() != nil {
-						fmt.Fprintln(c.ErrOrStderr(), "still running in the manager: dormeto discovery status")
+						fmt.Fprintln(c.ErrOrStderr(), "still running in the manager: dormeto aws discovery status")
 						return exitCode(1)
 					}
 					return err

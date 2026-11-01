@@ -1,6 +1,6 @@
 package install
 
-// `dormeto uninstall` and `dormeto uninstall apply` (spec §10, in the website's order): the routers first (the
+// `dormeto aws uninstall` and `dormeto aws uninstall apply` (spec §10, in the website's order): the routers first (the
 // manager installed them by API calls, outside Terraform: refused while any), event-driven refresh off, the deletion
 // protection lifted by a plan applied first, the destroy plan confirmed then applied in CodeBuild, the bootstrap
 // removed when asked; organization access kept (its roles serve a reinstall), its procedure printed.
@@ -24,7 +24,7 @@ import (
 // routerPrefix begins the names of the routers' functions (dmtr-<env>).
 const routerPrefix = "dmtr-"
 
-// Uninstall is `dormeto uninstall`: where it runs; with the manager applied, the routers (refused while any),
+// Uninstall is `dormeto aws uninstall`: where it runs; with the manager applied, the routers (refused while any),
 // event-driven refresh off (asked in a terminal), the deletion protection lifted (a plan, confirmed in a terminal,
 // applied), the destroy plan, its summary, the person's confirmation in a terminal, then the plan applied and followed;
 // then the bootstrap removed when the person asks. Without a terminal it stops after a plan with the command that
@@ -58,7 +58,7 @@ func (x *run) uninstall() error {
 	return nil
 }
 
-// UninstallApply is `dormeto uninstall apply`: the explicit confirmation of the last plan when it is a destroy plan
+// UninstallApply is `dormeto aws uninstall apply`: the explicit confirmation of the last plan when it is a destroy plan
 // (made without a terminal, or left at the question), shown, then applied and followed; the bootstrap kept. Exit codes
 // as Uninstall's.
 func UninstallApply(ctx context.Context, d Deps, r Request) int {
@@ -78,11 +78,11 @@ func (x *run) uninstallApply() error {
 	}
 	switch {
 	case s.LastPlan == "":
-		return &stop{1, "no destroy plan: run dormeto uninstall"}
+		return &stop{1, "no destroy plan: run dormeto aws uninstall"}
 	case s.LastPlanKind != planDestroy:
-		return &stop{1, "the last plan is not a destroy plan: dormeto uninstall"}
+		return &stop{1, "the last plan is not a destroy plan: dormeto aws uninstall"}
 	case !resources: // destroyed already (by a run that detached from it)
-		return &stop{1, "nothing applied to destroy: dormeto uninstall " + x.args() + " removes the bootstrap"}
+		return &stop{1, "nothing applied to destroy: dormeto aws uninstall " + x.args() + " removes the bootstrap"}
 	}
 	if err := x.noRouters(false); err != nil {
 		return err
@@ -158,7 +158,7 @@ func (x *run) removeManager(s Settings, applied *Applied) error {
 		return err
 	}
 	if !x.d.Terminal {
-		return &stop{0, "Plan saved. Apply it: dormeto uninstall apply " + x.args()}
+		return &stop{0, "Plan saved. Apply it: dormeto aws uninstall apply " + x.args()}
 	}
 	ok, err := x.confirm("Destroy the manager? This deletes its users, its table and its history.")
 	if err != nil {
@@ -191,7 +191,7 @@ func (x *run) installedRelease(s *Settings, applied *Applied) error {
 			if errors.As(err, &np) {
 				why = np.Short()
 			}
-			return &stop{1, fmt.Sprintf("manager %s is installed, install.json names %s (a later plan's): %s; give its local release: dormeto uninstall %s --release <the directory of release %s>",
+			return &stop{1, fmt.Sprintf("manager %s is installed, install.json names %s (a later plan's): %s; give its local release: dormeto aws uninstall %s --release <the directory of release %s>",
 				installed, s.Version, why, x.args(), installed)}
 		}
 		s.Version, s.ReleaseBase = rel.Version, rel.Base
@@ -242,7 +242,7 @@ func (x *run) noRouters(ask bool) error {
 		return err
 	}
 	if !ok {
-		return &stop{1, "Nothing was removed: look for dmtr- functions in " + regions + ", then run dormeto uninstall " + x.args() + " again."}
+		return &stop{1, "Nothing was removed: look for dmtr- functions in " + regions + ", then run dormeto aws uninstall " + x.args() + " again."}
 	}
 	return nil
 }
@@ -332,7 +332,7 @@ func (x *run) eventDriven() error {
 		return err
 	}
 	if !ok {
-		return &stop{1, "Nothing was removed: turn event-driven refresh off in the dashboard (Discovery, Perimeter settings), run discovery, then dormeto uninstall " +
+		return &stop{1, "Nothing was removed: turn event-driven refresh off in the dashboard (Discovery, Perimeter settings), run discovery, then dormeto aws uninstall " +
 			x.args() + " again."}
 	}
 	return nil
@@ -380,8 +380,8 @@ func (x *run) liftProtection(s *Settings, applied *Applied) error {
 	if err != nil {
 		return err
 	}
-	then := ", then dormeto uninstall " + x.args() + " again"
-	x.interrupted = "Interrupted before the plan started: run dormeto uninstall " + x.args() + " again."
+	then := ", then dormeto aws uninstall " + x.args() + " again"
+	x.interrupted = "Interrupted before the plan started: run dormeto aws uninstall " + x.args() + " again."
 	id, sum, err := x.plan(s, cfg, then)
 	if err != nil {
 		return err
@@ -392,11 +392,11 @@ func (x *run) liftProtection(s *Settings, applied *Applied) error {
 	}
 	x.showPlan(id, s.Version, sum)
 	if !x.d.Terminal {
-		return &stop{0, "Plan saved. Apply it: dormeto install apply " + x.args() + ", then run dormeto uninstall " + x.args() + " again"}
+		return &stop{0, "Plan saved. Apply it: dormeto aws install apply " + x.args() + ", then run dormeto aws uninstall " + x.args() + " again"}
 	}
 	// The plan kept, as a Ctrl-C now leaves it, and install.json with the protection off.
-	x.interrupted = "Not applied; the plan is kept: dormeto install apply " + x.args() + then + ". install.json now has deletion_protection=false: " +
-		"dormeto install " + x.args() + " --var deletion_protection=true puts it back."
+	x.interrupted = "Not applied; the plan is kept: dormeto aws install apply " + x.args() + then + ". install.json now has deletion_protection=false: " +
+		"dormeto aws install " + x.args() + " --var deletion_protection=true puts it back."
 	ok, err := x.confirm("Lift the deletion protection?")
 	if err != nil {
 		return err
@@ -410,15 +410,15 @@ func (x *run) liftProtection(s *Settings, applied *Applied) error {
 	if err := x.applyInstall(*s, sum, then); err != nil {
 		return err
 	}
-	x.interrupted = "Interrupted: the deletion protection is lifted, nothing is destroyed: run dormeto uninstall " + x.args() + " again."
+	x.interrupted = "Interrupted: the deletion protection is lifted, nothing is destroyed: run dormeto aws uninstall " + x.args() + " again."
 	return nil
 }
 
 // planDestroy makes the destroy plan of the settings s (startPlan: a destroy plan, for uninstall apply), then shows its
 // summary.
 func (x *run) planDestroy(s *Settings) (PlanSummary, error) {
-	x.interrupted = "Interrupted before the destroy plan started: run dormeto uninstall " + x.args() + " again."
-	id, sum, err := x.startPlan(s, ActionPlanDestroy, planDestroy, "Destroy plan", "dormeto uninstall apply "+x.args())
+	x.interrupted = "Interrupted before the destroy plan started: run dormeto aws uninstall " + x.args() + " again."
+	id, sum, err := x.startPlan(s, ActionPlanDestroy, planDestroy, "Destroy plan", "dormeto aws uninstall apply "+x.args())
 	if err != nil {
 		return PlanSummary{}, err
 	}
@@ -429,9 +429,9 @@ func (x *run) planDestroy(s *Settings) (PlanSummary, error) {
 // checkDestroyPlan refuses the saved destroy plan s.LastPlan as CheckPlan does (applied the last apply, nil when none),
 // saying what to run.
 func (x *run) checkDestroyPlan(s Settings, applied *Applied) error {
-	x.interrupted = "Not applied; the destroy plan is kept: dormeto uninstall apply " + x.args()
+	x.interrupted = "Not applied; the destroy plan is kept: dormeto aws uninstall apply " + x.args()
 	err := CheckPlan(x.ctx, x.c, s.LastPlan, applied)
-	again := ": run dormeto uninstall " + x.args()
+	again := ": run dormeto aws uninstall " + x.args()
 	var unusable *UnusablePlanError
 	var stale *StalePlanError
 	switch {
@@ -448,13 +448,13 @@ func (x *run) checkDestroyPlan(s Settings, applied *Applied) error {
 // applyDestroy applies the saved destroy plan s.LastPlan (sum its summary; checkDestroyPlan accepted it) with s's
 // release and follows it; once it succeeded, install.json forgets the plan (the build removed applied.json).
 func (x *run) applyDestroy(s Settings, sum PlanSummary) error {
-	x.interrupted = "Not applied; the destroy plan is kept: dormeto uninstall apply " + x.args()
-	done, err := x.applyPlan(s, sum, ActionApplyDestroy, "Destroy", "the destroy goes on in CodeBuild. Follow it: dormeto install status "+x.args()+
-		"; once done, dormeto uninstall "+x.args()+" removes the bootstrap.")
+	x.interrupted = "Not applied; the destroy plan is kept: dormeto aws uninstall apply " + x.args()
+	done, err := x.applyPlan(s, sum, ActionApplyDestroy, "Destroy", "the destroy goes on in CodeBuild. Follow it: dormeto aws install status "+x.args()+
+		"; once done, dormeto aws uninstall "+x.args()+" removes the bootstrap.")
 	if err != nil {
 		return err
 	}
-	x.interrupted = "Interrupted: the manager is destroyed; dormeto uninstall " + x.args() + " removes the bootstrap."
+	x.interrupted = "Interrupted: the manager is destroyed; dormeto aws uninstall " + x.args() + " removes the bootstrap."
 	if done == nil { // the log lost or cut: only the plan is known
 		x.say("  ✓ destroyed the plan: %d to destroy", sum.Destroy)
 	} else {
@@ -487,7 +487,7 @@ func (x *run) removeBootstrap(s Settings, ask bool) (kept bool, err error) {
 			return false, nil
 		}
 	}
-	x.say("Kept the bucket %s (its answers serve a reinstall) and the project; dormeto uninstall %s again in a terminal removes them.", x.p.Bucket, x.args())
+	x.say("Kept the bucket %s (its answers serve a reinstall) and the project; dormeto aws uninstall %s again in a terminal removes them.", x.p.Bucket, x.args())
 	return true, nil
 }
 
@@ -501,7 +501,7 @@ func (x *run) accessKept(s Settings, bucketKept bool) {
 	x.say("Organization access is not removed: its roles keep working for a reinstall. To remove them and Dormeto's statement of the delegation policy: %s",
 		organizationProcedure)
 	if bucketKept {
-		x.say("A detached organization access run's build role and project in the management account: dormeto install status --management-profile <profile> %s removes them.",
+		x.say("A detached organization access run's build role and project in the management account: dormeto aws install status --management-profile <profile> %s removes them.",
 			x.args())
 	}
 }

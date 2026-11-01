@@ -1,6 +1,6 @@
 // Package options parses the estimate command's options, ported from the Node estimate
 // (manager packages/estimate/src/options.ts): the same options, values, defaults, checks and messages, in the same order
-// of checks, so a bad input gives the same first message. Only the usage names `dormeto estimate`.
+// of checks, so a bad input gives the same first message. Only the usage names `dormeto aws estimate`.
 package options
 
 import (
@@ -76,8 +76,8 @@ func usageErr(message string) error { return &UsageError{Message: message} }
 // ErrHelp is what Parse returns for --help or -h: the command prints Usage and exits 0.
 var ErrHelp = errors.New("help requested")
 
-// Usage is Node's USAGE with `npm run estimate --` replaced by `dormeto estimate`.
-const Usage = `Usage: dormeto estimate --profile <profile>[,<profile>...] [--accounts 111111111111,222222222222]
+// Usage is Node's USAGE with `npm run estimate --` replaced by `dormeto aws estimate`.
+const Usage = `Usage: dormeto aws estimate --profile <profile>[,<profile>...] [--accounts 111111111111,222222222222]
   [--regions eu-west-1,eu-west-3] [--exclude-tags 'env=dev|test,team=web' ...] [--uptime | --ec2-uptime | --ecs-uptime | --rds-uptime] [--role <name>]
   [--baseline always|business-hours] [--timezone Europe/Paris] [--discount-compute 0-90] [--discount-databases 0-90]
   [--refresh discovery|metrics] [--days 14] [--window <minutes>] [--max-wakes 3|none]

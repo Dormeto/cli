@@ -407,9 +407,9 @@ func estimateCases(t *testing.T) ([]parity.Case, []estimateCase, []estimateOutpu
 		if err := json.Unmarshal(c.Output, &outs[i]); err != nil {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
-		// The Go command's usage names `dormeto estimate` (the plan's global constraints).
+		// The Go command's usage names `dormeto aws estimate` (the plan's global constraints).
 		for j, e := range outs[i].Errors {
-			outs[i].Errors[j] = strings.Replace(e, "Usage: npm run estimate --", "Usage: dormeto estimate", 1)
+			outs[i].Errors[j] = strings.Replace(e, "Usage: npm run estimate --", "Usage: dormeto aws estimate", 1)
 		}
 	}
 	return topic.Cases, ins, outs
@@ -432,7 +432,12 @@ func sameReports(t *testing.T, want, got estimateOutput) {
 		n, lines := firstDifference(*want.Markdown, *got.Markdown)
 		t.Errorf("markdown differs from line %d:\n%s", n, lines)
 	}
-	if !slices.Equal(got.Errors, want.Errors) {
+	// Go only (the user, 2026-11-01): the usage names `dormeto aws estimate`; Node's frozen cases, `dormeto aws estimate`.
+	moved := make([]string, len(got.Errors))
+	for i, e := range got.Errors {
+		moved[i] = strings.ReplaceAll(e, "dormeto aws estimate", "dormeto aws estimate")
+	}
+	if !slices.Equal(moved, want.Errors) {
 		t.Errorf("errors %q, Node's %q", got.Errors, want.Errors)
 	}
 }

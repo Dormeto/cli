@@ -1,6 +1,6 @@
 package main
 
-// `dormeto users` and `dormeto groups` against a fake manager: the requests they send (escaped paths, bodies), what
+// `dormeto aws users` and `dormeto aws groups` against a fake manager: the requests they send (escaped paths, bodies), what
 // they print, the exit codes, and that a refused argument sends nothing.
 
 import (

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto discovery` against a fake manager: the requests each command makes, what it prints, the exit codes, and that
+// `dormeto aws discovery` against a fake manager: the requests each command makes, what it prints, the exit codes, and that
 // a refused argument or name sends nothing.
 
 import (
@@ -214,7 +214,7 @@ func TestDiscoveryRunWaitTimeoutLeavesItRunning(t *testing.T) {
 		}
 		d.sleep = func(ctx context.Context, _ time.Duration) error { stop(); return ctx.Err() }
 	}, "", "run", "--wait", "--timeout", "1m")
-	if r.exit != 1 || !strings.Contains(r.stderr, "still running in the manager: dormeto discovery status") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "still running in the manager: dormeto aws discovery status") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }

@@ -1,6 +1,6 @@
 package main
 
-// `dormeto routers upgrade`: the plan (routers upgraded, routers skipped and why), the confirmation, then one
+// `dormeto aws routers upgrade`: the plan (routers upgraded, routers skipped and why), the confirmation, then one
 // upgrade-router operation per router started in the manager and followed until it ends. Exit codes: 0 (also when the
 // confirmation is declined: nothing started); 1 when an upgrade failed or did not start, the manager refused or
 // --timeout stopped the following; 2 for a bad flag or argument, or no --yes without a terminal; 128 and the

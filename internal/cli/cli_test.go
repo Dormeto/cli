@@ -290,7 +290,7 @@ func TestABadOptionItsMessageAndTheUsageExitCode2(t *testing.T) {
 		t.Fatalf("exit code %d", code)
 	}
 	errs := r.errors()
-	if len(errs) != 2 || errs[0] != "--refresh: discovery or metrics" || !strings.Contains(errs[1], "Usage: dormeto estimate --profile <profile>") {
+	if len(errs) != 2 || errs[0] != "--refresh: discovery or metrics" || !strings.Contains(errs[1], "Usage: dormeto aws estimate --profile <profile>") {
 		t.Fatalf("errors %q", errs)
 	}
 }

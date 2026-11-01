@@ -169,7 +169,7 @@ func TestInstallOrganizationAccessNotConfirmed(t *testing.T) {
 	w.rwOrganization()
 	code, out, asked := w.run(Install, rwMgmtFlags(), true, "y", "y", "n")
 	rwEqual(t, "questions", asked, []string{rwWarned, "Apply this plan? [y/N]", "Deploy organization access? [y/N]"})
-	if code != 0 || !strings.HasSuffix(out, "Organization access not deployed: dormeto install apply "+rwMgmtArgs+" deploys it\n") {
+	if code != 0 || !strings.HasSuffix(out, "Organization access not deployed: dormeto aws install apply "+rwMgmtArgs+" deploys it\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	rwEqual(t, "builds", w.actions(), []string{"plan", "apply"})
@@ -184,7 +184,7 @@ func TestInstallWithoutATerminalLeavesOrganizationAccessToInstallApply(t *testin
 	w := rwNew(t)
 	w.rwOrganization()
 	code, out, _ := w.run(Install, rwMgmtFlags(), false)
-	if code != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto install apply "+rwMgmtArgs+"\n") || strings.Contains(out, "Plan (organization access)") {
+	if code != 0 || !strings.HasSuffix(out, "Plan saved. Apply it: dormeto aws install apply "+rwMgmtArgs+"\n") || strings.Contains(out, "Plan (organization access)") {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	rwInOrder(t, out, "\nChecks\n", "  ✓ management account: 809706483662\n", "\nBootstrap")
@@ -215,7 +215,7 @@ func TestInstallNothingToChangeOffersOrganizationAccess(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	rwInOrder(t, out, "  ✓ management account: 809706483662\n", "Nothing to change: manager 0.11.0 is installed.\n",
-		"  roles: 1 updated, 1 created in 2 accounts (0 discovery only)\n", "Organization access not deployed: dormeto install apply "+rwMgmtArgs+" deploys it\n")
+		"  roles: 1 updated, 1 created in 2 accounts (0 discovery only)\n", "Organization access not deployed: dormeto aws install apply "+rwMgmtArgs+" deploys it\n")
 	if m := w.mgmtWrites(); len(m) != 0 {
 		t.Errorf("wrote in the management account: %v", m)
 	}
@@ -284,7 +284,7 @@ func TestInstallFromTheManagementAccountOffersOrganizationAccess(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
-	rwInOrder(t, out, "\nChecks\n", "  ✓ management account: "+rwAccount+"\n", "Organization access not deployed: dormeto install apply "+rwArgs+" deploys it\n")
+	rwInOrder(t, out, "\nChecks\n", "  ✓ management account: "+rwAccount+"\n", "Organization access not deployed: dormeto aws install apply "+rwArgs+" deploys it\n")
 	if strings.Contains(out, "not deployed (no management profile)") {
 		t.Errorf("organization access said not deployed:\n%s", out)
 	}
@@ -334,7 +334,7 @@ func TestInstallDetachesFromOrganizationAccess(t *testing.T) {
 	w.mgmt.ends["apply"] = cbtypes.StatusTypeInProgress
 	w.detach = true
 	code, out, _ := w.run(Install, rwMgmtFlags(), true, "y", "y", "y")
-	if code != 130 || !strings.HasSuffix(out, "Detached: organization access goes on in CodeBuild. dormeto install status "+rwMgmtArgs+
+	if code != 130 || !strings.HasSuffix(out, "Detached: organization access goes on in CodeBuild. dormeto aws install status "+rwMgmtArgs+
 		" follows it and then removes its build role and project.\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
@@ -352,7 +352,7 @@ func TestInstallUpgradeRemindsOrganizationAccess(t *testing.T) {
 		t.Fatalf("exit code %d:\n%s", code, out)
 	}
 	rwInOrder(t, out, "  ! organization access: not deployed (no management profile)\n",
-		"    Check it later: dormeto install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
+		"    Check it later: dormeto aws install check --management-profile <profile>; the dashboard's Organization access panel too.\n",
 		"    Organization access is not applied again without --management-profile: each release's notes since 0.11.0 say whether the roles need it (https://dormeto.com/releases.html).\n",
 		"\nBootstrap")
 
@@ -476,7 +476,7 @@ func TestInstallOrganizationAccessAlreadyRunning(t *testing.T) {
 	if len(asked) != 0 {
 		t.Errorf("asked %q", asked)
 	}
-	if code != 1 || !strings.HasSuffix(out, "Organization access is running already (build dmt-prod-organization:b1): dormeto install status "+rwMgmtArgs+" follows it\n") {
+	if code != 1 || !strings.HasSuffix(out, "Organization access is running already (build dmt-prod-organization:b1): dormeto aws install status "+rwMgmtArgs+" follows it\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	if m := w.mgmtWrites(); len(m) != 0 {
@@ -494,11 +494,11 @@ func TestOrganizationAccessNeedsTheManagerApplied(t *testing.T) {
 	s.LastPlan = ""
 	w.save(s)
 	code, out, _ := w.run(Apply, Request{Profile: "p", Region: "eu-west-1", ManagementProfile: "m"}, false)
-	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto install\n") {
+	if code != 1 || !strings.HasSuffix(out, "no plan to apply: run dormeto aws install\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	code, out, _ = w.run(Install, Request{Profile: "p", Region: "eu-west-1", ManagementProfile: "m", Access: true}, true)
-	if code != 1 || !strings.HasSuffix(out, "no install of env prod in 532105290256 eu-west-1: run dormeto install\n") {
+	if code != 1 || !strings.HasSuffix(out, "no install of env prod in 532105290256 eu-west-1: run dormeto aws install\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 	if len(w.assumed) != 0 || len(w.writes) != 0 {
@@ -644,7 +644,7 @@ func TestCredentialsExpiringWhileFollowingNameTheRunsCommand(t *testing.T) {
 	w.followErr["apply"] = expired
 	code, out, _ := w.run(Install, rwFlags(), true, "y")
 	if code != 1 || !strings.HasSuffix(out, "the AWS credentials expired while following build dmt-prod-install:b2; the build goes on: "+
-		"sign in again (aws sso login --profile p), then run dormeto install status "+rwArgs+"\n") {
+		"sign in again (aws sso login --profile p), then run dormeto aws install status "+rwArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 
@@ -653,7 +653,7 @@ func TestCredentialsExpiringWhileFollowingNameTheRunsCommand(t *testing.T) {
 	w.mgmt.followErr["apply"] = expired
 	code, out, _ = w.run(Install, rwMgmtFlags(), true, "y", "y", "y")
 	if code != 1 || !strings.HasSuffix(out, "the AWS credentials expired while following build dmt-prod-organization:b1; the build goes on: "+
-		"sign in again (aws sso login --profile m), then run dormeto install status "+rwMgmtArgs+"\n") {
+		"sign in again (aws sso login --profile m), then run dormeto aws install status "+rwMgmtArgs+"\n") {
 		t.Errorf("exit code %d:\n%s", code, out)
 	}
 }

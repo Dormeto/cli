@@ -1,6 +1,6 @@
 package main
 
-// `dormeto workloads show`, `history` and `idle-window`: what the manager says of one workload, read from its
+// `dormeto aws workloads show`, `history` and `idle-window`: what the manager says of one workload, read from its
 // /iam/workloads/{router}/{id} routes. Exit codes as the fleet commands: 0; 1 when the manager refused (an unknown
 // workload included); 2 for a bad flag or argument.
 
