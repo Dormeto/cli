@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Releases Dormeto/cli from the Mac: scripts/release.sh <version> [--dry-run]
 #
-#   1. the checks (main, clean, up to date with origin, no such tag, the CHANGELOG section,
+#   1. the checks (main, clean, up to date with origin, no such tag, the CHANGELOG's notes,
 #      go vet and go test, the shared cases against the manager's latest release, the Keychain item github-dormeto)
-#   2. the annotated tag v<version>, pushed
-#   3. GoReleaser: archives, checksums, GitHub release, Homebrew tap (GITHUB_TOKEN from the Keychain)
-#   4. scripts/after-release.sh: the checks after
+#   2. a leading "## Unreleased" with notes becomes "## <version>": the release commit, pushed
+#   3. the annotated tag v<version>, pushed
+#   4. GoReleaser: archives, checksums, GitHub release, Homebrew tap (GITHUB_TOKEN from the Keychain)
+#   5. the next iteration: "## Unreleased" back at the top of the CHANGELOG, committed and pushed
+#   6. scripts/after-release.sh: the checks after
 # npm is not a channel (the user, 2026-10-13): the 0.1.0 packages are deprecated, no other is published.
 #
 # --dry-run runs the checks and a GoReleaser snapshot, and publishes nothing: no tag, no push, no token read.
@@ -39,17 +41,28 @@ done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "the version '$version' must be x.y.z, without a leading v"
 tag="v$version"
 
-# Temporary files, removed on every exit (the GitHub token's header file). After the tag is pushed,
+# Temporary files, removed on every exit (the GitHub token's header file). After the release commit,
 # a failure also prints what was done and the commands that finish the release.
 scratch=""
+commit_made=0
 tag_made=0
 tag_pushed=0
 goreleaser_done=0
+next_committed=0
+next_done=0
 cleanup() {
   local status=$?
   [ -z "$scratch" ] || rm -rf "$scratch"
-  if [ "$status" -ne 0 ] && [ "$tag_made" = 1 ]; then report_state "$status" >&2; fi
+  if [ "$status" -ne 0 ]; then
+    if [ "$tag_made" = 1 ]; then report_state "$status" >&2
+    elif [ "$commit_made" = 1 ]; then report_commit "$status" >&2; fi
+  fi
   return "$status"
+}
+report_commit() {
+  echo
+  echo "release: nothing is published, but the release commit of $version is only here (exit $1)."
+  echo "To go on: git push origin main, then this release again. To abandon it: git reset --keep HEAD~1"
 }
 report_state() {
   echo
@@ -60,6 +73,11 @@ report_state() {
   if [ "$tag_pushed" = 0 ]; then echo "  git push origin $tag"; fi
   if [ "$goreleaser_done" = 0 ]; then
     echo "  GITHUB_TOKEN=\"\$(security find-generic-password -a \"\$USER\" -s github-dormeto -w)\" goreleaser release --clean --release-notes .git/release-notes-$version.md"
+  fi
+  if [ "$next_committed" = 1 ]; then
+    if [ "$next_done" = 0 ]; then echo "  git push origin main"; fi
+  elif [ "$next_done" = 0 ]; then
+    echo "  the next iteration: \"## Unreleased\" back at the top of CHANGELOG.md, committed and pushed"
   fi
   echo "  scripts/after-release.sh $version"
 }
@@ -86,13 +104,31 @@ if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-
   fail "the tag $tag already exists"
 fi
 
+# section <title>: the notes under "## <title>" of the CHANGELOG, without the blank lines around them.
+section() {
+  awk -v header="## $1" '
+    $0 == header || index($0, header " ") == 1 { found = 1; next }
+    found && /^## / { exit }
+    found { print }
+  ' CHANGELOG.md | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
+}
+leading_unreleased() { [ "$(grep -m 1 '^## ' CHANGELOG.md || true)" = "## Unreleased" ]; }
+
+# A leading "## Unreleased" with notes is what this release publishes, as "## <version>" once the checks have passed.
 notes="$scratch/notes.md"
-awk -v header="## $version" '
-  $0 == header || index($0, header " ") == 1 { found = 1; next }
-  found && /^## / { exit }
-  found { print }
-' CHANGELOG.md | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' > "$notes"
-[ -s "$notes" ] || fail "CHANGELOG.md has no '## $version' section with notes"
+section "$version" > "$notes"
+name_section=0
+if leading_unreleased; then
+  section Unreleased > "$scratch/unreleased.md"
+  if [ -s "$scratch/unreleased.md" ]; then
+    if [ -s "$notes" ] || grep -q -e "^## $version\$" -e "^## $version " CHANGELOG.md; then
+      fail "CHANGELOG.md has both notes under '## Unreleased' and a '## $version' section: keep one"
+    fi
+    cp "$scratch/unreleased.md" "$notes"
+    name_section=1
+  fi
+fi
+[ -s "$notes" ] || fail "CHANGELOG.md has no notes for $version: neither under a leading '## Unreleased' nor under '## $version'"
 
 go vet ./... || fail "go vet fails"
 go test ./... || fail "go test fails"
@@ -123,6 +159,7 @@ echo "release: the checks pass"
 # --- dry run: a snapshot, nothing published -------------------------------------------------------
 if [ "$dry_run" = 1 ]; then
   "$goreleaser" release --snapshot --clean --release-notes "$notes"
+  if [ "$name_section" = 1 ]; then echo "release: CHANGELOG.md's ## Unreleased would become ## $version"; fi
   echo "release: dry run of $tag done: nothing tagged, pushed or published (dist/ holds the snapshot)"
   exit 0
 fi
@@ -147,17 +184,45 @@ done
 saved_notes="$(git rev-parse --git-dir)/release-notes-$version.md" # outside dist/, which --clean empties
 cp "$notes" "$saved_notes"
 
-# --- 2. the tag ---------------------------------------------------------------------------------
+# --- 2. the release commit ---------------------------------------------------------------------
+if [ "$name_section" = 1 ]; then
+  if ! { awk -v version="$version" 'done != 1 && $0 == "## Unreleased" { print "## " version; done = 1; next } { print }' CHANGELOG.md > "$scratch/changelog.md" \
+    && cp "$scratch/changelog.md" CHANGELOG.md \
+    && git add CHANGELOG.md \
+    && git commit -q -m "chore(release): cli $version"; }; then
+    git reset -q HEAD -- CHANGELOG.md
+    git checkout HEAD -- CHANGELOG.md
+    fail "the release commit failed: CHANGELOG.md is restored"
+  fi
+  commit_made=1
+  git push origin main
+fi
+
+# --- 3. the tag ---------------------------------------------------------------------------------
 tag_made=1
 git tag -a "$tag" -m "dormeto $version"
 git push origin "$tag"
 tag_pushed=1
 
-# --- 3. GoReleaser ------------------------------------------------------------------------------
+# --- 4. GoReleaser ------------------------------------------------------------------------------
 GITHUB_TOKEN="$github_token" "$goreleaser" release --clean --release-notes "$saved_notes"
 unset github_token
 goreleaser_done=1
 
-# --- 4. the checks after --------------------------------------------------------------------------
+# --- 5. the next iteration --------------------------------------------------------------------------
+# The version comes from the tag: all there is to prepare is the CHANGELOG's next section.
+if leading_unreleased; then
+  next_done=1
+else
+  awk 'done != 1 && /^## / { print "## Unreleased"; print ""; done = 1 } { print }' CHANGELOG.md > "$scratch/changelog.md"
+  cp "$scratch/changelog.md" CHANGELOG.md
+  git add CHANGELOG.md
+  git commit -q -m "chore: next iteration after cli $version"
+  next_committed=1
+  git push origin main
+  next_done=1
+fi
+
+# --- 6. the checks after --------------------------------------------------------------------------
 "$after" "$version"
 echo "release: $tag released"

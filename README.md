@@ -1470,10 +1470,16 @@ make brew-linux                                     # the Homebrew cask on Linux
 For maintainers. A release, from `main`:
 
 ```sh
-# 1. CHANGELOG.md: "## Unreleased" becomes "## 0.1.0". Commit it and push: a release needs main equal to origin/main.
-make dry-run VERSION=0.1.0    # 2. the checks and a snapshot in dist/, nothing published
-make release VERSION=0.1.0    # 3. the tag, the GitHub release, the Homebrew cask, then the checks after
+make dry-run VERSION=0.1.0    # the checks and a snapshot in dist/, nothing published
+make release VERSION=0.1.0    # the release commit, the tag, the GitHub release, the Homebrew cask, the next iteration
 ```
+
+The notes are what `CHANGELOG.md` has under a leading `## Unreleased`. Once the checks pass, the release turns that heading
+into `## 0.1.0` and commits and pushes it (`chore(release): cli 0.1.0`), then tags that commit. A section already written
+by hand as `## 0.1.0` is released from the commit it is in; notes in both places are refused. After the publication, the
+next iteration puts an empty `## Unreleased` back at the top, committed and pushed, unless one is already there. The
+version itself comes from the tag, so there is nothing else to bump. With that section empty, a release stops: nothing to
+release. Commits not yet on `origin` stop it too: only the release's own commits are pushed.
 
 When the manager is released too, the CLI comes after it, since the checks refuse shared cases older than the manager's
 latest release, and before the website, so that the website never describes a CLI that isn't out yet
@@ -1481,15 +1487,15 @@ latest release, and before the website, so that the website never describes a CL
 
 `make release` is `scripts/release.sh <version>` (for example `0.1.0`, without a `v`), which checks the repository, tags,
 publishes the GitHub release and the Homebrew tap with GoReleaser, and checks the result; `make dry-run` is the same with
-`--dry-run`, which checks and builds without publishing, tagging or reading the token. It stops with what was done and
-the commands that finish it if something fails after the tag. The checks are: on `main`, clean, equal to `origin/main`, no
-such tag, a `## <version>` section with notes in [CHANGELOG.md](CHANGELOG.md), `go vet` and `go test`, the shared cases
-not older than the manager's latest release, the Keychain item below, `go mod tidy` and `goreleaser check`. npm is not a
-channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other
-version is published there.
+`--dry-run`, which checks and builds without changing the changelog, publishing, tagging or reading the token. It stops
+with what was done and the commands that finish it if something fails after the release commit. The checks are: on
+`main`, clean, equal to `origin/main`, no such tag, the notes in [CHANGELOG.md](CHANGELOG.md), `go vet` and `go test`,
+the shared cases not older than the manager's latest release, the Keychain item below, `go mod tidy` and
+`goreleaser check`. npm is not a channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other version is
+published there.
 
-The checks after it, `make after-release VERSION=<version>` (`scripts/after-release.sh`, safe to run again), install the version through each channel
-and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is), the
+The checks after it, `make after-release VERSION=<version>` (`scripts/after-release.sh`, safe to run again), install the
+version through each channel and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is), the
 install script and `go install`. The install script is `https://dormeto.com/install.sh`, or, while that does not answer
 (the website not deployed yet), the website checkout's `site/install.sh`: `DORMETO_WEBSITE_DIR`, by default
 `../website` beside this repository.

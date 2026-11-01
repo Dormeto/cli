@@ -45,6 +45,8 @@ function fixture({ manager = '0.10.0', latest = '0.10.0' } = {}) {
   git(work, 'add', '-A');
   git(work, 'commit', '-m', 'fixture');
   git(work, 'push', '-u', 'origin', 'main');
+  // Not executable, so not run, until a test or the goreleaser stub (REFUSE_PUSHES_AFTER) makes origin refuse pushes.
+  write(join(origin, 'hooks', 'pre-receive'), '#!/bin/sh\necho "refused by the fixture" >&2\nexit 1\n');
   for (const r of ['cli', 'homebrew-tap']) write(join(root, 'api', 'repos', 'Dormeto', r), '{}');
   write(join(root, 'latest.json'), JSON.stringify({ version: latest, router: '0.29.0', published: '2026-10-12T00:00:00.000Z' }));
 
@@ -64,6 +66,7 @@ set +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set i
 echo "goreleaser $* GITHUB_TOKEN=\${GITHUB_TOKEN:-}" >> "${log}"
 [ "$1" = check ] && exit 0
 [ -n "$GORELEASER_FAIL" ] && { echo "goreleaser: simulated failure" >&2; exit 1; }
+[ -n "$REFUSE_PUSHES_AFTER" ] && chmod +x "${origin}/hooks/pre-receive"
 notes=""
 while [ $# -gt 0 ]; do case "$1" in --release-notes) notes="$2"; shift;; esac; shift; done
 cat "$notes" > "${root}/notes.copy"
@@ -85,6 +88,7 @@ printf ']' >> dist/artifacts.json
   const env = {
     ...process.env,
     HOME: join(root, 'home'),
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
     DORMETO_SECURITY: join(bin, 'security'),
     DORMETO_GORELEASER: join(bin, 'goreleaser'),
     DORMETO_NPM: join(bin, 'npm'),
@@ -263,6 +267,152 @@ test('release.sh tags, releases with GoReleaser (the archives, the GitHub releas
     assert.equal(readdirSync(f.env.TMPDIR).length, 0, 'temporary files removed');
     assert.equal(out.stdout.includes('token-'), false, 'no token in the output');
     assert.equal(out.stderr.includes('token-'), false);
+  } finally { f.cleanup(); }
+});
+
+// --- the changelog's leading ## Unreleased, and the next iteration -------------------------------------------------
+
+const UNRELEASED = '# Changelog\n\n## Unreleased\n\n- the unreleased notes\n- their second line\n\n## 0.1.0\n\n- the first\n';
+
+function withChangelog(f, text) {
+  write(join(f.work, 'CHANGELOG.md'), text);
+  git(f.work, 'add', '-A');
+  git(f.work, 'commit', '-m', 'the changelog');
+  git(f.work, 'push', 'origin', 'main');
+}
+const subjects = (cwd, n) => git(cwd, 'log', `-${n}`, '--format=%s').split('\n');
+
+test('a leading ## Unreleased is released as the version: its commit is pushed, tagged, and the next iteration follows', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.equal(git(f.origin, 'show', `v${VERSION}:CHANGELOG.md`), UNRELEASED.replace('## Unreleased', `## ${VERSION}`).trimEnd());
+    assert.equal(git(f.origin, 'log', '-1', '--format=%s', `v${VERSION}`), `chore(release): cli ${VERSION}`);
+    assert.equal(readFileSync(join(f.root, 'notes.copy'), 'utf8'), '- the unreleased notes\n- their second line\n');
+    assert.deepEqual(subjects(f.origin, 2), [`chore: next iteration after cli ${VERSION}`, `chore(release): cli ${VERSION}`]);
+    assert.equal(readFileSync(join(f.work, 'CHANGELOG.md'), 'utf8'), `# Changelog\n\n## Unreleased\n\n## ${VERSION}\n\n- the unreleased notes\n- their second line\n\n## 0.1.0\n\n- the first\n`);
+    assert.equal(git(f.work, 'rev-parse', 'HEAD'), git(f.origin, 'rev-parse', 'main'));
+    assert.equal(git(f.work, 'status', '--porcelain'), '');
+    assert.match(f.calls(), /^after 0\.2\.0$/m);
+  } finally { f.cleanup(); }
+});
+
+test('--dry-run with a leading ## Unreleased checks its notes and changes nothing', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    const head = git(f.work, 'rev-parse', 'HEAD');
+    const out = f.run(VERSION, '--dry-run');
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.equal(readFileSync(join(f.root, 'notes.copy'), 'utf8'), '- the unreleased notes\n- their second line\n');
+    assert.match(out.stdout, /## Unreleased would become ## 0\.2\.0/);
+    assert.equal(readFileSync(join(f.work, 'CHANGELOG.md'), 'utf8'), UNRELEASED);
+    assert.equal(git(f.work, 'rev-parse', 'HEAD'), head);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), head);
+    assert.equal(git(f.work, 'status', '--porcelain'), '');
+  } finally { f.cleanup(); }
+});
+
+test('a check that fails leaves a leading ## Unreleased as it was: no commit, nothing pushed', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    const head = git(f.work, 'rev-parse', 'HEAD');
+    rmSync(join(f.root, 'api', 'repos', 'Dormeto', 'homebrew-tap')); // the last check before the commit
+    refused(null, f, [VERSION], /token/);
+    assert.equal(readFileSync(join(f.work, 'CHANGELOG.md'), 'utf8'), UNRELEASED);
+    assert.equal(git(f.work, 'rev-parse', 'HEAD'), head);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), head);
+  } finally { f.cleanup(); }
+});
+
+test('notes under a leading ## Unreleased and a section for the version are refused: which one is meant is not clear', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, `# Changelog\n\n## Unreleased\n\n- new\n\n## ${VERSION}\n\n- hand-written\n`);
+    refused(null, f, [VERSION, '--dry-run'], /both.*## Unreleased.*## 0\.2\.0/);
+  } finally { f.cleanup(); }
+});
+
+test('an empty leading ## Unreleased and no section for the version: nothing to release', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, '# Changelog\n\n## Unreleased\n\n## 0.1.0\n\n- the first\n');
+    refused(null, f, [VERSION], /CHANGELOG\.md.*## 0\.2\.0/);
+    assert.equal(subjects(f.work, 1)[0], 'the changelog');
+  } finally { f.cleanup(); }
+});
+
+test('an empty leading ## Unreleased above the version\'s section: that section is released, and nothing is added', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, `# Changelog\n\n## Unreleased\n\n## ${VERSION}\n\n- hand-written\n`);
+    const head = git(f.work, 'rev-parse', 'HEAD');
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.equal(readFileSync(join(f.root, 'notes.copy'), 'utf8'), '- hand-written\n');
+    assert.equal(git(f.origin, 'rev-parse', `v${VERSION}^{commit}`), head);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), head, 'the next iteration is already there');
+  } finally { f.cleanup(); }
+});
+
+test('a section written by hand is released from its own commit, and the next iteration adds ## Unreleased', () => {
+  const f = fixture();
+  try {
+    const head = git(f.work, 'rev-parse', 'HEAD');
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.equal(git(f.origin, 'rev-parse', `v${VERSION}^{commit}`), head);
+    assert.equal(subjects(f.origin, 1)[0], `chore: next iteration after cli ${VERSION}`);
+    assert.match(readFileSync(join(f.work, 'CHANGELOG.md'), 'utf8'), /^# Changelog\n\n## Unreleased\n\n## 0\.2\.0\n/);
+  } finally { f.cleanup(); }
+});
+
+test('a release commit origin refuses stops before the tag, and says how to go on', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    chmodSync(join(f.origin, 'hooks', 'pre-receive'), 0o755);
+    const out = refused(null, f, [VERSION], /nothing is published/);
+    assert.match(out.stderr, /git push origin main/);
+    assert.match(out.stderr, /git reset --keep HEAD~1/);
+    assert.equal(subjects(f.work, 1)[0], `chore(release): cli ${VERSION}`);
+    assert.equal(git(f.work, 'status', '--porcelain'), '');
+
+    // Pushed by hand as it says, the same command finishes it, from the commit already made.
+    chmodSync(join(f.origin, 'hooks', 'pre-receive'), 0o644);
+    git(f.work, 'push', 'origin', 'main');
+    const again = f.run(VERSION);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.equal(git(f.origin, 'log', '-1', '--format=%s', `v${VERSION}`), `chore(release): cli ${VERSION}`);
+  } finally { f.cleanup(); }
+});
+
+test('a next iteration origin refuses is reported after a release that is published, with the push and the checks left', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    f.run.env = { REFUSE_PUSHES_AFTER: '1' };
+    const out = f.run(VERSION);
+    assert.notEqual(out.status, 0);
+    assert.equal(git(f.origin, 'tag'), `v${VERSION}`);
+    assert.match(out.stderr, /GoReleaser finished/);
+    assert.match(out.stderr, /git push origin main/);
+    assert.match(out.stderr, /scripts\/after-release\.sh 0\.2\.0/);
+    assert.equal(subjects(f.work, 1)[0], `chore: next iteration after cli ${VERSION}`);
+  } finally { f.cleanup(); }
+});
+
+test('a GoReleaser failure names the next iteration among what is left', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    f.run.env = { GORELEASER_FAIL: '1' };
+    const out = f.run(VERSION);
+    assert.notEqual(out.status, 0);
+    assert.match(out.stderr, /the next iteration: "## Unreleased" back at the top of CHANGELOG\.md/);
   } finally { f.cleanup(); }
 });
 

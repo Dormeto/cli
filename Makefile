@@ -62,7 +62,7 @@ dry-run: ## Check a release without publishing: make dry-run VERSION=0.1.0
 	$(need_version)
 	scripts/release.sh $(VERSION) --dry-run
 
-release: ## Publish: the tag, the GitHub release, the Homebrew cask, the checks after: make release VERSION=0.1.0
+release: ## Publish: the release commit, the tag, the GitHub release, the Homebrew cask, the next iteration: make release VERSION=0.1.0
 	$(need_version)
 	scripts/release.sh $(VERSION)
 
