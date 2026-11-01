@@ -160,7 +160,7 @@ func TestWaitingPageSetATemplate(t *testing.T) {
 		if !strings.HasPrefix(r.stdout, tg.label+": waiting page set (template)\n") {
 			t.Errorf("%s: stdout %q", tg.name, r.stdout)
 		}
-		if note := strings.Contains(r.stdout, "routers apply it at their next check, within 5 minutes\n"); note != (i == 2) {
+		if note := strings.Contains(r.stdout, "routers apply it within about a minute\n"); note != (i == 2) {
 			t.Errorf("%s: the organization's note is printed there alone: %q", tg.name, r.stdout)
 		}
 	}
@@ -271,7 +271,7 @@ func TestWaitingPageClear(t *testing.T) {
 		r := runWP(t, a, "", wpArgs(i, "clear")...)
 		want := tg.label + ": waiting page cleared\n"
 		if i == 2 {
-			want += "routers apply it at their next check, within 5 minutes\n"
+			want += "routers apply it within about a minute\n"
 		}
 		if r.exit != 0 || !reflect.DeepEqual(a.writes, []string{"DELETE " + tg.path + " "}) || r.stdout != want {
 			t.Errorf("%s: exit %d, writes %q, stdout %q, stderr %q", tg.name, r.exit, a.writes, r.stdout, r.stderr)

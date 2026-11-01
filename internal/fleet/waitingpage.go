@@ -187,12 +187,9 @@ type PageView struct {
 	Terraform bool     `json:"terraform"`
 	By        string   `json:"by"`
 	At        string   `json:"at"`
-	// The organization's page is stamped updatedBy and updatedAt; Error is said when settings.json cannot be read; Note
-	// is what a write adds (when routers apply it).
-	UpdatedBy string `json:"updatedBy"`
-	UpdatedAt string `json:"updatedAt"`
-	Error     string `json:"error"`
-	Note      string `json:"note"`
+	// Error is said when the organization's settings.json cannot be read; Note is what a write adds (when routers apply it).
+	Error string `json:"error"`
+	Note  string `json:"note"`
 }
 
 var iconURI = regexp.MustCompile(`^data:image/(png|jpeg|webp|svg\+xml|x-icon);base64,`)
@@ -320,7 +317,7 @@ func (v PageView) Text(label, level string, loc *time.Location) string {
 		}
 		line := "set on " + where
 		var by []string
-		for _, p := range []string{orElse(v.By, v.UpdatedBy), When(orElse(v.At, v.UpdatedAt), loc)} {
+		for _, p := range []string{v.By, When(v.At, loc)} {
 			if p != "" {
 				by = append(by, p)
 			}
