@@ -43,6 +43,14 @@ type Result struct {
 	Windows          []Row    `json:"windows"`
 	Actual           Actual   `json:"actual"`
 	WakerTargetGroup bool     `json:"wakerTargetGroup"`
+	Hours            Hours    `json:"hours"`
+}
+
+// Hours are the requests per hour of the replayed period, the Node RequestHours: Counts[i] in the UTC hour From + i
+// hours (the first and last hours only in part).
+type Hours struct {
+	From   string `json:"from"`
+	Counts []int  `json:"counts"`
 }
 
 // Input is idleWindowAdvice's argument. WakeMs, ActualFrom and Stopped are nil when Node's are null; Running nil is
@@ -165,8 +173,24 @@ func Advice(in Input) (Result, error) {
 		Recommended: Recommend(wakeRows), CheckMinutes: in.CheckMinutes, WakeSeconds: wakeSeconds, Priced: priced, Windows: windows,
 		Actual: Actual{Wakes: in.ActualWakes, ReplayedWakes: replayedWakes,
 			Noisy: in.ActualFrom != nil && float64(replayedWakes) > 1.5*actual && float64(replayedWakes) >= actual+3},
-		WakerTargetGroup: in.WakerTargetGroup,
+		WakerTargetGroup: in.WakerTargetGroup, Hours: requestHours(in.Requests.Minutes, fromMs, toMs),
 	}, nil
+}
+
+// requestHours: the request minutes added up per UTC hour, from the hour of the period's start to that of its end.
+func requestHours(minutes [][2]int, fromMs, toMs int64) Hours {
+	start := fromMs - fromMs%hourMs
+	n := int64(0)
+	if toMs > start {
+		n = (toMs - start + hourMs - 1) / hourMs
+	}
+	counts := make([]int, n)
+	for _, m := range minutes {
+		if i := (fromMs - start + int64(m[0])*60_000) / hourMs; i >= 0 && i < n {
+			counts[i] += m[1]
+		}
+	}
+	return Hours{From: isoOf(start), Counts: counts}
 }
 
 // intersect: two lists of periods, each sorted and disjoint: the time in both.
