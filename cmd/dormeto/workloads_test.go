@@ -419,7 +419,7 @@ func TestScheduleShowSaysRecurrencesInWords(t *testing.T) {
 		"  awake Every 3 days, 08:00–12:00, from 2027-01-04, until 2027-06-30\n",
 		"  awake Monthly on day 15, 08:00–18:00\n",
 		"  awake Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, no end date\n",
-		"  nap Yearly on day 25, all day (24 hours), from 2026-12-01, no end date, wake: never\n",
+		"  nap Yearly on 25 Dec, all day (24 hours), from 2026-12-01, no end date, wake: never\n",
 		"  awake Cron 30 8 * * 1-5, 10 h 30 min\n",
 		"  awake Weekly on Mon, Fri, 06:00–07:00, until 2027-06-30\n",
 		"  except 2026-12-25\n",

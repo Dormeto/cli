@@ -945,7 +945,7 @@ Each pattern, as a window of `windows`, and what `schedule show` prints for it (
 | Weekly | `{ "kind": "nap", "start": "20:00", "end": "07:00", "repeat": { "pattern": "weekly", "interval": 2, "days": ["mon", "thu"] }, "from": "2027-01-04", "until": "2027-06-30" }` | `Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, until 2027-06-30` |
 | Monthly, on a day | `{ "kind": "awake", "start": "08:00", "end": "18:00", "repeat": { "pattern": "monthly", "day": 15 } }` | `Monthly on day 15, 08:00–18:00` |
 | Monthly, on a weekday | `{ "kind": "awake", "start": "08:00", "end": "18:00", "repeat": { "pattern": "monthly", "interval": 3, "nth": 1, "weekday": "mon" }, "from": "2027-01-01" }` | `Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, no end date` |
-| Yearly | `{ "kind": "nap", "start": "00:00", "end": "00:00", "repeat": { "pattern": "monthly", "interval": 12, "day": 25 }, "from": "2026-12-01" }` | `Yearly on day 25, all day (24 hours), from 2026-12-01, no end date` |
+| Yearly | `{ "kind": "nap", "start": "00:00", "end": "00:00", "repeat": { "pattern": "monthly", "interval": 12, "day": 25 }, "from": "2026-12-01" }` | `Yearly on 25 Dec, all day (24 hours), from 2026-12-01, no end date` |
 | Cron | `{ "kind": "awake", "repeat": { "pattern": "cron", "cron": "30 8 * * 1-5", "minutes": 630 } }` | `Cron 30 8 * * 1-5, 10 h 30 min` |
 | Weekly days, a range | `{ "kind": "awake", "days": ["mon", "fri"], "start": "08:30", "end": "19:00", "until": "2027-06-30" }` | `Weekly on Mon, Fri, 08:30–19:00, until 2027-06-30` |
 
@@ -962,7 +962,8 @@ Each pattern, as a window of `windows`, and what `schedule show` prints for it (
 - **A cron expression** is crontab's five fields, `minute hour day-of-month month day-of-week`, at most 200 characters. Each
   field is `*`, a number, a range `a-b`, a step `*/s` or `a-b/s`, or a comma list of those. Months also take `JAN` to `DEC`,
   weekdays `SUN` to `SAT`, in any case; weekdays are 0 to 7, 0 and 7 both Sunday. `?` is `*`, as a whole day field. With both
-  day fields restricted (anything but `*` or `?`), either one matches.
+  day fields restricted (anything but `*` or `?`), either one matches. A day field starting with `*`, such as `*/2`, goes
+  alone: beside the other day field it is refused, because cron versions read that differently.
 - **Every minute must be a multiple of 5**, as schedule times are: `*` is refused in the minute field, `*/5` and `0,30` are
   accepted. An expression that never matches (`0 8 31 2 *`) is refused; `0 8 29 2 *` matches in leap years. `cron(...)`, six
   fields, `L`, `W` and `#` are refused: EventBridge's weekday 1 is Sunday, so its expressions do not read the same here.

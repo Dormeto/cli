@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // RecurrenceRouter is the first router that takes repeat, from and until.
@@ -62,7 +63,7 @@ func (w Window) Text() string {
 			return unreadable
 		}
 	}
-	how := r.text()
+	how := r.text(w.From)
 	if how == "" {
 		return unreadable
 	}
@@ -75,12 +76,17 @@ func (w Window) Text() string {
 const unreadable = "repeat unreadable, no occurrence"
 
 // text is the pattern in words, "" when it does not read.
-func (r repeat) text() string {
+func (r repeat) text(from string) string {
 	switch r.Pattern {
 	case "daily":
-		return r.every("Daily", "day")
+		return r.every("Every day", "day")
 	case "weekly":
-		if days := daysText(r.Days); days != "" {
+		if days := daysText(r.Days); days == "every day" {
+			if r.Interval <= 1 {
+				return "Every day"
+			}
+			return r.every("", "week") + ", every day"
+		} else if days != "" {
 			return r.every("Weekly", "week") + " on " + days
 		}
 	case "monthly":
@@ -88,10 +94,19 @@ func (r repeat) text() string {
 		if r.Interval == 12 { // yearly is not a pattern of its own: from gives its month
 			every = "Yearly"
 		}
+		month := ""
+		if t, err := time.Parse(time.DateOnly, from); err == nil && r.Interval == 12 {
+			month = t.Format("Jan")
+		}
+		if r.Day > 0 && month != "" {
+			return fmt.Sprintf("%s on %d %s", every, r.Day, month)
+		}
 		if r.Day > 0 {
 			return fmt.Sprintf("%s on day %d", every, r.Day)
 		}
-		if nth, day := nths[r.Nth], labels[r.Weekday]; nth != "" && day != "" {
+		if nth, day := nths[r.Nth], labels[r.Weekday]; nth != "" && day != "" && month != "" {
+			return fmt.Sprintf("%s on the %s %s of %s", every, nth, day, month)
+		} else if nth != "" && day != "" {
 			return fmt.Sprintf("%s on the %s %s", every, nth, day)
 		}
 	case "cron":
@@ -152,15 +167,22 @@ func (w Window) hours() string {
 
 // durationText is ", 10 h 30 min", ", 1 h" or ", 45 min", "" without a duration.
 func durationText(minutes int) string {
-	switch {
-	case minutes <= 0:
+	if minutes <= 0 {
 		return ""
-	case minutes < 60:
-		return fmt.Sprintf(", %d min", minutes)
-	case minutes%60 == 0:
-		return fmt.Sprintf(", %d h", minutes/60)
 	}
-	return fmt.Sprintf(", %d h %d min", minutes/60, minutes%60)
+	var parts []string
+	if days := minutes / 1440; days == 1 {
+		parts = append(parts, "1 day")
+	} else if days > 1 {
+		parts = append(parts, fmt.Sprintf("%d days", days))
+	}
+	if hours := minutes % 1440 / 60; hours > 0 {
+		parts = append(parts, fmt.Sprintf("%d h", hours))
+	}
+	if rest := minutes % 60; rest > 0 {
+		parts = append(parts, fmt.Sprintf("%d min", rest))
+	}
+	return ", " + strings.Join(parts, " ")
 }
 
 // dates is the range: both days included, nothing said when there is none.
