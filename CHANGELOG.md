@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - Every command that was at the top level moves under `dormeto aws`, as the Google Cloud ones are under `dormeto gcp`:
   `dormeto aws install`, `dormeto aws routers list`, `dormeto aws estimate`, and so on for alerts, api, audit,
