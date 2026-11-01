@@ -1,26 +1,23 @@
 package fleet
 
-// The weekly schedule of a workload as `workloads schedule show` and `workloads show` print it: windows, zone, next events.
+// The schedule of a workload as `workloads schedule show` and `workloads show` print it: windows, zone, next events.
 
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // ScheduleView is the part of a schedule the display reads (the rest is kept as the API sent it).
 type ScheduleView struct {
-	TimeZone string `json:"timeZone"`
-	Windows  []struct {
-		Kind  string   `json:"kind"`
-		Days  []string `json:"days"`
-		Start string   `json:"start"`
-		End   string   `json:"end"`
-		Wake  string   `json:"wake"`
-	} `json:"windows"`
-	Exceptions []string `json:"exceptions"`
-	MaxNapDays int      `json:"maxNapDays"`
+	TimeZone   string            `json:"timeZone"`
+	Windows    []schedule.Window `json:"windows"`
+	Exceptions []string          `json:"exceptions"`
+	MaxNapDays int               `json:"maxNapDays"`
 }
 
 type NextEvent struct {
@@ -69,6 +66,19 @@ func WindowText(kind, days, start, end, wake string) string {
 	return s
 }
 
+// ScheduleWindowText is a plain weekly window as WindowText writes it, any other as "nap Every 2 weeks on Mon, Thu,
+// 20:00–07:00 next day, from 2027-01-04, no end date, wake: header".
+func ScheduleWindowText(w schedule.Window) string {
+	if w.Plain() {
+		return WindowText(w.Kind, strings.Join(w.Days, ","), w.Start, w.End, w.Wake)
+	}
+	s := w.Kind + " " + w.Text()
+	if w.Kind == "nap" {
+		s += ", wake: " + orElse(w.Wake, "never")
+	}
+	return s
+}
+
 var eventTexts = map[string]string{
 	"awake-start": "awake window starts", "awake-end": "awake window ends",
 	"nap-start": "nap window starts", "nap-end": "nap window ends",
@@ -86,11 +96,20 @@ func ZoneOf(name string) (*time.Location, string) {
 	return loc, ""
 }
 
-// timeLayout labels every time with its zone (the abbreviation, UTC for no zone).
-const timeLayout = "Mon 2 Jan 15:04 MST"
+// timeLayout labels every time with its zone (the abbreviation, UTC for no zone); farLayout also says the year, for events
+// that may be more than a year away.
+const (
+	timeLayout = "Mon 2 Jan 15:04 MST"
+	farLayout  = "Mon 2 Jan 2006 15:04 MST"
+)
 
-// PrintNext prints the next events and the maintenance wake due, in the zone.
-func PrintNext(w io.Writer, loc *time.Location, next []NextEvent, due string) {
+// PrintNext prints the schedule's next events and the maintenance wake due, in the zone. The router reads up to 400 days
+// ahead for a window with a repeat or a from, so those events say their year; the others are within 8 days.
+func (s ScheduleView) PrintNext(w io.Writer, loc *time.Location, next []NextEvent, due string) {
+	layout := timeLayout
+	if slices.ContainsFunc(s.Windows, schedule.Window.FarReach) {
+		layout = farLayout
+	}
 	if len(next) > 0 {
 		fmt.Fprintln(w, "  next")
 	}
@@ -100,7 +119,7 @@ func PrintNext(w io.Writer, loc *time.Location, next []NextEvent, due string) {
 			fmt.Fprintf(w, "    %s %s\n", e.At, orElse(eventTexts[e.Kind], e.Kind))
 			continue
 		}
-		fmt.Fprintf(w, "    %s %s\n", at.In(loc).Format(timeLayout), orElse(eventTexts[e.Kind], e.Kind))
+		fmt.Fprintf(w, "    %s %s\n", at.In(loc).Format(layout), orElse(eventTexts[e.Kind], e.Kind))
 	}
 	if due != "" {
 		if at, err := time.Parse(time.RFC3339, due); err == nil {

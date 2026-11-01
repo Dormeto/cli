@@ -159,9 +159,9 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 
 func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "schedule", Short: "Show, set or clear a workload's schedule", Args: noArgs, SilenceErrors: true,
-		Long: "Show, set or clear the weekly nap and awake windows of a workload, in its time zone, through the router's controller."}
+		Long: "Show, set or clear the nap and awake windows of a workload, in its time zone, through the router's controller."}
 	show := newGcpWorkloadsOne("show", "Show a workload's schedule and its next events",
-		"Show the schedule of a workload and its next events, each with its local time and zone.", runs.scheduleShow, version, false)
+		"Show the schedule of a workload, a recurrence in words, and its next events, each with its local time and zone.", runs.scheduleShow, version, false)
 	clear := newGcpWorkloadsOne("clear", "Clear a workload's schedule", "Clear the schedule of a workload: it naps and wakes by its idle window alone.", runs.scheduleClear, version, false)
 
 	var f gcpFlags
@@ -169,7 +169,8 @@ func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Comman
 	set := newGcpWorkloadsOneWith("set", "Set a workload's schedule from a JSON file",
 		"Set the schedule of a workload from a JSON file: {\"timeZone\", \"windows\": [{\"kind\": \"nap\"|\"awake\", \"days\", \"start\", \"end\", \"wake\"}],\n"+
 			"\"exceptions\", \"maxNapDays\"}. The controller checks it and says what is wrong, if anything. The file is the one\n"+
-			"'schedule show --json' prints under \"schedule\".",
+			"'schedule show --json' prints under \"schedule\". From router 0.36.0, a window also takes \"repeat\" (in place of \"days\"),\n"+
+			"\"from\" and \"until\"; the README has the JSON.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.File = file
 			return runs.scheduleSet(ctx, d, r)

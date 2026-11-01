@@ -67,3 +67,29 @@ func TestHoursIsSingularForOneAlone(t *testing.T) {
 		}
 	}
 }
+
+// `workloads show` reads a window as `workloads schedule show` does, a recurrence in words, its dates with their year.
+func TestWorkloadDetailsScheduleSaysARecurrence(t *testing.T) {
+	var d WorkloadDetails
+	raw := `{"workloadId":"w-1","state":"AWAKE","schedule":{"timeZone":"Europe/Paris","windows":[
+		{"kind":"nap","start":"20:00","end":"07:00","repeat":{"pattern":"weekly","interval":2,"days":["mon","thu"]},"from":"2027-01-04","wake":"header"},
+		{"kind":"awake","repeat":{"pattern":"cron","cron":"30 8 * * 1-5","minutes":630}},
+		{"kind":"awake","start":"08:00","end":"18:00","repeat":{"pattern":"hourly"}},
+		{"kind":"awake","days":["sat"],"start":"08:30","end":"19:00"}]},
+		"next":[{"at":"2027-01-04T19:00:00.000Z","kind":"nap-start","window":0}]}`
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatal(err)
+	}
+	text := d.Text("prod", time.UTC)
+	for _, want := range []string{
+		"  nap Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake: header\n",
+		"  awake Cron 30 8 * * 1-5, 10 h 30 min\n",
+		"  awake repeat unreadable, no occurrence\n",
+		"  awake sat 08:30–19:00\n",
+		"Mon 4 Jan 2027 20:00 CET nap window starts",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text lacks %q:\n%s", want, text)
+		}
+	}
+}

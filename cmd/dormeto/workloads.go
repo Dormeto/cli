@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // maxKeepAwake is the longest a keep-awake lasts (the manager's pauses accept more; the CLI is for a CI's hours).
@@ -481,7 +482,7 @@ func newWorkloadsResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 }
 
 func newWorkloadsSchedule(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	cmd := fleetCommand("schedule", "Show, set or clear the weekly awake and nap windows of workloads")
+	cmd := fleetCommand("schedule", "Show, set or clear the awake and nap windows of workloads")
 	cmd.AddCommand(newScheduleShow(f, deps), newScheduleSet(f, deps), newScheduleClear(f, deps))
 	return cmd
 }
@@ -490,9 +491,9 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "show <router>/<workload>", Short: "Show a workload's schedule and its next events",
-		Long: "Show the schedule: the time zone, the windows, the exceptions, the maximum nap and the next events, in the\n" +
-			"schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none, and left\n" +
-			"out when the router, before 0.31.0, does not report schedules), which\n" +
+		Long: "Show the schedule: the time zone, the windows (a recurrence in words), the exceptions, the maximum nap and the\n" +
+			"next events, in the schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none,\n" +
+			"and left out when the router, before 0.31.0, does not report schedules), which\n" +
 			"`dormeto aws workloads schedule set --file -` accepts back.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -552,7 +553,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					fmt.Fprintf(out, "  %s\n", note)
 				}
 				for _, w := range s.Windows {
-					fmt.Fprintf(out, "  %s\n", fleet.WindowText(w.Kind, strings.Join(w.Days, ","), w.Start, w.End, w.Wake))
+					fmt.Fprintf(out, "  %s\n", fleet.ScheduleWindowText(w))
 				}
 				if len(s.Exceptions) > 0 {
 					fmt.Fprintf(out, "  except %s\n", strings.Join(s.Exceptions, ", "))
@@ -560,7 +561,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if s.MaxNapDays > 0 {
 					fmt.Fprintf(out, "  maximum nap %d %s\n", s.MaxNapDays, fleet.Plural(s.MaxNapDays, "day"))
 				}
-				fleet.PrintNext(out, loc, st.Next, st.MaintenanceDue)
+				s.PrintNext(out, loc, st.Next, st.MaintenanceDue)
 				return nil
 			})
 		},
@@ -584,7 +585,11 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"  {\"timeZone\": \"Europe/Paris\",\n" +
 			"   \"windows\": [{\"kind\": \"awake\", \"days\": [\"mon\",\"tue\",\"wed\",\"thu\",\"fri\"], \"start\": \"08:30\", \"end\": \"19:00\"},\n" +
 			"               {\"kind\": \"nap\", \"days\": [\"sat\"], \"start\": \"00:00\", \"end\": \"00:00\", \"wake\": \"header\"}],\n" +
-			"   \"exceptions\": [\"2026-12-25\"], \"maxNapDays\": 7}",
+			"   \"exceptions\": [\"2026-12-25\"], \"maxNapDays\": 7}\n\n" +
+			"From router 0.36.0, a window also takes repeat (daily, weekly, monthly or a cron expression, in place of days),\n" +
+			"from and until; the README has the JSON:\n\n" +
+			"  {\"kind\": \"nap\", \"start\": \"20:00\", \"end\": \"07:00\", \"from\": \"2027-01-04\",\n" +
+			"   \"repeat\": {\"pattern\": \"weekly\", \"interval\": 2, \"days\": [\"mon\", \"thu\"]}}",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			err := w.targets.check(args, false)
@@ -604,15 +609,14 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					var answer json.RawMessage
 					if err := api.Put(ctx, t.Path("/schedule"), raw, &answer); err != nil {
-						return "", nil, err
+						return "", nil, needsRecurrenceRouter(err)
 					}
 					_ = json.Unmarshal(answer, &res)
 					// The next events are read in the zone as stored (its canonical name), the file's when the answer has none.
 					var s fleet.ScheduleView
 					if json.Unmarshal(res.Schedule, &s) != nil || s.TimeZone == "" {
-						var sent fleet.ScheduleView
-						_ = json.Unmarshal(raw, &sent)
-						s.TimeZone = sent.TimeZone
+						s = fleet.ScheduleView{}
+						_ = json.Unmarshal(raw, &s)
 					}
 					loc, note := fleet.ZoneOf(s.TimeZone)
 					var b strings.Builder
@@ -620,7 +624,7 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if note != "" {
 						fmt.Fprintf(&b, "  %s\n", note)
 					}
-					fleet.PrintNext(&b, loc, res.Next, res.MaintenanceDue)
+					s.PrintNext(&b, loc, res.Next, res.MaintenanceDue)
 					return b.String(), answer, nil
 				})
 				return err
@@ -631,6 +635,15 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	bindJSON(cmd, &asJSON)
 	cmd.Flags().StringVar(&file, "file", "", "the schedule's JSON file, - for standard input")
 	return cmd
+}
+
+// needsRecurrenceRouter adds what a refusal means when it comes from a router too old for recurrences.
+func needsRecurrenceRouter(err error) error {
+	var ae *fleet.APIError
+	if errors.As(err, &ae) && schedule.RefusedAsUnknown(ae.Message) {
+		return fmt.Errorf("%w (recurrences need router %s: upgrade the router to %s or later)", err, schedule.RecurrenceRouter, schedule.RecurrenceRouter)
+	}
+	return err
 }
 
 // readScheduleFile reads the schedule's JSON from path or, for "-", the command's input; only its being a JSON object

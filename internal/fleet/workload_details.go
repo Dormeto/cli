@@ -184,7 +184,7 @@ func (d WorkloadDetails) scheduleText() string {
 		fmt.Fprintf(&b, "  %s\n", note)
 	}
 	for _, w := range s.Windows {
-		fmt.Fprintf(&b, "  %s\n", WindowText(w.Kind, strings.Join(w.Days, ","), w.Start, w.End, w.Wake))
+		fmt.Fprintf(&b, "  %s\n", ScheduleWindowText(w))
 	}
 	if len(s.Exceptions) > 0 {
 		fmt.Fprintf(&b, "  except %s\n", strings.Join(s.Exceptions, ", "))
@@ -192,7 +192,7 @@ func (d WorkloadDetails) scheduleText() string {
 	if s.MaxNapDays > 0 {
 		fmt.Fprintf(&b, "  maximum nap %d %s\n", s.MaxNapDays, Plural(s.MaxNapDays, "day"))
 	}
-	PrintNext(&b, loc, d.Next, d.MaintenanceDue)
+	s.PrintNext(&b, loc, d.Next, d.MaintenanceDue)
 	return b.String()
 }
 

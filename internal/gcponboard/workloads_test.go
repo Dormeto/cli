@@ -1078,6 +1078,96 @@ func TestWorkloadsScheduleSetSaysTheControllersRefusalAndExitsOne(t *testing.T) 
 	}
 }
 
+// A recurring schedule, as a router 0.36.0 takes it.
+const recurringSchedule = `{"timeZone":"Europe/Paris","windows":[` +
+	`{"kind":"nap","start":"20:00","end":"07:00","repeat":{"pattern":"weekly","interval":2,"days":["mon","thu"]},"from":"2027-01-04","wake":"header"},` +
+	`{"kind":"awake","start":"08:00","end":"18:00","repeat":{"pattern":"monthly","interval":3,"nth":1,"weekday":"mon"},"from":"2027-01-01","until":"2027-06-30"},` +
+	`{"kind":"awake","repeat":{"pattern":"cron","cron":"30 8 * * 1-5","minutes":630}},` +
+	`{"kind":"nap","days":["sat"],"start":"22:00","end":"23:00","wake":"header"}],"maxNapDays":14}`
+
+func TestWorkloadsScheduleSaysARecurrenceAndKeepsItThroughJSON(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.ID = "shop"
+	r.File = g.scheduleFile(t, recurringSchedule)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var want map[string]any
+	if err := json.Unmarshal([]byte(recurringSchedule), &want); err != nil {
+		t.Fatal(err)
+	}
+	body := g.body(t, "PUT", controllerHost, "/v1/workloads/shop/schedule")
+	if !reflect.DeepEqual(body["windows"], want["windows"]) {
+		t.Fatalf("sent %v", body["windows"])
+	}
+	contains(t, out,
+		"  nap window: Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake header\n",
+		"  awake window: Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, until 2027-06-30\n",
+		"  awake window: Cron 30 8 * * 1-5, 10 h 30 min\n",
+		"  nap window: sat 22:00-23:00, wake header\n")
+
+	// What show --json prints under "schedule" is the file set takes again.
+	r.File, r.JSON = "", true
+	_, out = g.call(t, WorkloadsScheduleShow, r)
+	var shown struct {
+		Schedule json.RawMessage `json:"schedule"`
+	}
+	if err := json.Unmarshal([]byte(out), &shown); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	var again map[string]any
+	if err := json.Unmarshal(shown.Schedule, &again); err != nil || !reflect.DeepEqual(again["windows"], want["windows"]) {
+		t.Fatalf("%v: shown %s", err, shown.Schedule)
+	}
+	r.JSON, r.File = false, g.scheduleFile(t, string(shown.Schedule))
+	if code, out := g.call(t, WorkloadsScheduleSet, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !reflect.DeepEqual(g.s.Schedules["shop"]["windows"], want["windows"]) {
+		t.Fatalf("stored %v", g.s.Schedules["shop"])
+	}
+}
+
+// A stored window with an unreadable pattern raises no error.
+func TestWorkloadsScheduleShowAnUnreadableRepeatRaisesNoError(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.Schedules["shop"] = map[string]any{"timeZone": "Europe/Paris", "by": "me", "at": "now", "maxNapDays": 14, "windows": []any{
+		map[string]any{"kind": "awake", "start": "08:00", "end": "18:00", "repeat": map[string]any{"pattern": "monthly", "day": "first"}},
+	}}
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsScheduleShow, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  awake window: repeat unreadable, no occurrence\n", "  maxNapDays: 14\n")
+}
+
+func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.ScheduleProblem = "windows[0].repeat: unknown field; windows[0].from: unknown field"
+	r := workloadsEurope
+	r.ID, r.File = "shop", g.scheduleFile(t, recurringSchedule)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "windows[0].repeat: unknown field; windows[0].from: unknown field\n",
+		"Recurrences need a router of version 0.36.0 or later. Upgrade it with: dormeto gcp install --project "+r.Project+" --region "+r.Region+" --image <the router's image, 0.36.0 or later>")
+	// This router's own refusal, in a recurrence: its words alone.
+	g.s.ScheduleProblem = "windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week"
+	code, out = g.call(t, WorkloadsScheduleSet, r)
+	if code != 1 || strings.Contains(out, "0.36.0") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "windows[0].repeat.cron: five fields")
+}
+
 func TestWorkloadsScheduleSetRefusesAMissingOrUnreadableFileBeforeAnyCall(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"

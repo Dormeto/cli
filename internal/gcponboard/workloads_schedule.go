@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/schedule"
 
 	// A time zone is looked up by name wherever the CLI runs.
 	_ "time/tzdata"
@@ -56,22 +57,14 @@ func WorkloadsResume(ctx context.Context, d Deps, r Request) int {
 	return x.workloadsEnd(x.resumeWorkload())
 }
 
-// scheduleWindow, scheduleOf and nextEvent are the controller's schedule and next events (lambda/src/lib/schedule.mjs).
-type scheduleWindow struct {
-	Kind  string   `json:"kind"`
-	Days  []string `json:"days"`
-	Start string   `json:"start"`
-	End   string   `json:"end"`
-	Wake  string   `json:"wake"`
-}
-
+// scheduleOf and nextEvent are the controller's schedule and next events (lambda/src/lib/schedule.mjs).
 type scheduleOf struct {
-	TimeZone   string           `json:"timeZone"`
-	Windows    []scheduleWindow `json:"windows"`
-	Exceptions []string         `json:"exceptions"`
-	MaxNapDays *int             `json:"maxNapDays"`
-	By         string           `json:"by"`
-	At         string           `json:"at"`
+	TimeZone   string            `json:"timeZone"`
+	Windows    []schedule.Window `json:"windows"`
+	Exceptions []string          `json:"exceptions"`
+	MaxNapDays *int              `json:"maxNapDays"`
+	By         string            `json:"by"`
+	At         string            `json:"at"`
 }
 
 type nextEvent struct {
@@ -124,6 +117,16 @@ func (x *run) controllerSince035(method, path string, in, out any) error {
 	return err
 }
 
+// needsRecurrenceRouter says what a refusal means when it comes from a router too old for recurrences.
+func (x *run) needsRecurrenceRouter(err error) error {
+	var e *gcp.Error
+	if !errors.As(err, &e) || !schedule.RefusedAsUnknown(e.Message) {
+		return err
+	}
+	return &stop{1, fmt.Sprintf("%s\nRecurrences need a router of version %s or later. Upgrade it with: dormeto gcp install --project %s --region %s --image <the router's image, %s or later>",
+		refusal(err), schedule.RecurrenceRouter, x.n.project, x.n.region, schedule.RecurrenceRouter)}
+}
+
 func (x *run) schedule(method string, body func() (any, error)) error {
 	if err := x.require("workloads"); err != nil {
 		return err
@@ -140,7 +143,7 @@ func (x *run) schedule(method string, body func() (any, error)) error {
 	}
 	var raw json.RawMessage
 	if err := x.controllerSince035(method, path+"/schedule", in, &raw); err != nil {
-		return err
+		return x.needsRecurrenceRouter(err)
 	}
 	if x.r.JSON {
 		fmt.Fprintf(x.d.Out, "%s\n", raw)
@@ -172,6 +175,9 @@ func (x *run) printSchedule(s scheduleOf, events []nextEvent) {
 	x.say("  time zone: %s", s.TimeZone)
 	for _, w := range s.Windows {
 		line := fmt.Sprintf("  %s window: %s %s-%s", w.Kind, strings.Join(w.Days, ","), w.Start, w.End)
+		if !w.Plain() {
+			line = fmt.Sprintf("  %s window: %s", w.Kind, w.Text())
+		}
 		if w.Wake != "" {
 			line += ", wake " + w.Wake
 		}

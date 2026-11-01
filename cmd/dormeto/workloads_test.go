@@ -398,6 +398,143 @@ func TestScheduleShowPrintsWindowsExceptionsAndNextEventsInTheZone(t *testing.T)
 	}
 }
 
+// recurringSchedule has a window of each pattern, a range, null on the new fields, and is what a router 0.36.0 stores.
+const recurringSchedule = `{"timeZone":"Europe/Paris","windows":[` +
+	`{"kind":"nap","start":"20:00","end":"07:00","repeat":{"pattern":"weekly","interval":2,"days":["mon","thu"]},"from":"2027-01-04","wake":"header"},` +
+	`{"kind":"awake","start":"08:00","end":"12:00","repeat":{"pattern":"daily","interval":3},"from":"2027-01-04","until":"2027-06-30"},` +
+	`{"kind":"awake","start":"08:00","end":"18:00","repeat":{"pattern":"monthly","day":15}},` +
+	`{"kind":"awake","start":"08:00","end":"18:00","repeat":{"pattern":"monthly","interval":3,"nth":1,"weekday":"mon"},"from":"2027-01-01"},` +
+	`{"kind":"nap","start":"00:00","end":"00:00","repeat":{"pattern":"monthly","interval":12,"day":25},"from":"2026-12-01"},` +
+	`{"kind":"awake","repeat":{"pattern":"cron","cron":"30 8 * * 1-5","minutes":630}},` +
+	`{"kind":"awake","days":["mon","fri"],"start":"06:00","end":"07:00","until":"2027-06-30"}` +
+	`],"exceptions":["2026-12-25"],"maxNapDays":7,"by":"me","at":"2026-10-01T00:00:00Z"}`
+
+func TestScheduleShowSaysRecurrencesInWords(t *testing.T) {
+	r := runWL(t, &wlAPI{schedule: recurringSchedule}, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 {
+		t.Fatalf("exit %d: %s", r.exit, r.stderr)
+	}
+	for _, want := range []string{
+		"  nap Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake: header\n",
+		"  awake Every 3 days, 08:00–12:00, from 2027-01-04, until 2027-06-30\n",
+		"  awake Monthly on day 15, 08:00–18:00\n",
+		"  awake Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, no end date\n",
+		"  nap Yearly on day 25, all day (24 hours), from 2026-12-01, no end date, wake: never\n",
+		"  awake Cron 30 8 * * 1-5, 10 h 30 min\n",
+		"  awake Weekly on Mon, Fri, 06:00–07:00, until 2027-06-30\n",
+		"  except 2026-12-25\n",
+		"  maximum nap 7 days\n",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, r.stdout)
+		}
+	}
+}
+
+// The router reads as far as 400 days with a repeat or a from: past a week, the date needs its year. A plain weekly
+// schedule, or one with only an until (the router's 8 days), reads as before.
+func TestScheduleNextEventsSayTheYearOnlyWithALongHorizon(t *testing.T) {
+	r := runWL(t, &wlAPI{schedule: recurringSchedule}, nil, "schedule", "show", "prod-eu/w-1")
+	if !strings.Contains(r.stdout, "    Mon 19 Oct 2026 19:00 CEST awake window ends\n") || !strings.Contains(r.stdout, "maintenance wake due Mon 26 Oct 08:00 CET") {
+		t.Errorf("stdout %q", r.stdout)
+	}
+	until := `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00","until":"2027-06-30"}]}`
+	r = runWL(t, &wlAPI{schedule: until}, nil, "schedule", "show", "prod-eu/w-1")
+	if !strings.Contains(r.stdout, "    Mon 19 Oct 19:00 CEST awake window ends\n") {
+		t.Errorf("stdout %q", r.stdout)
+	}
+	a := &wlAPI{putSched: recurringSchedule}
+	r = runWLStdin(t, a, nil, recurringSchedule, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if !strings.Contains(r.stdout, "    Mon 19 Oct 2026 19:00 CEST awake window ends\n") {
+		t.Errorf("stdout %q", r.stdout)
+	}
+	// An answer without its schedule: the file says it.
+	r = runWLStdin(t, &wlAPI{}, nil, recurringSchedule, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if !strings.Contains(r.stdout, "    Mon 19 Oct 2026 19:00 CEST awake window ends\n") {
+		t.Errorf("stdout %q", r.stdout)
+	}
+}
+
+func TestScheduleShowNullOnANewFieldIsAPlainWindow(t *testing.T) {
+	a := &wlAPI{schedule: `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon","tue","wed"],"start":"08:30","end":"19:00","repeat":null,"from":null,"until":null}]}`}
+	r := runWL(t, a, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || !strings.Contains(r.stdout, "  awake mon–wed 08:30–19:00\n") || !strings.Contains(r.stdout, "Mon 19 Oct 19:00 CEST") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+}
+
+// A stored window with an unreadable pattern raises no error: the rest of the schedule still reads.
+func TestScheduleShowAnUnreadableRepeatRaisesNoError(t *testing.T) {
+	a := &wlAPI{schedule: `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","start":"08:00","end":"18:00","repeat":{"pattern":"hourly","interval":"often"}},{"kind":"nap","days":["sat"],"start":"00:00","end":"00:00"}],"maxNapDays":7}`}
+	r := runWL(t, a, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || !strings.Contains(r.stdout, "  awake repeat unreadable, no occurrence\n") || !strings.Contains(r.stdout, "  nap sat 00:00–00:00 (next day), wake: never\n") || !strings.Contains(r.stdout, "maximum nap 7 days") {
+		t.Errorf("exit %d stdout %q stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+// What --json prints is the router's schedule, field for field, and what set sends from it is that again.
+func TestScheduleShowJSONKeepsARecurrenceAndSetSendsItBack(t *testing.T) {
+	r := runWL(t, &wlAPI{schedule: recurringSchedule}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	if r.exit != 0 {
+		t.Fatalf("exit %d: %s", r.exit, r.stderr)
+	}
+	var shown struct {
+		Schedule any `json:"schedule"`
+	}
+	var want any
+	if err := json.Unmarshal([]byte(r.stdout), &shown); err != nil {
+		t.Fatalf("%v: %s", err, r.stdout)
+	}
+	json.Unmarshal([]byte(recurringSchedule), &want)
+	if !reflect.DeepEqual(shown.Schedule, want) {
+		t.Errorf("shown %s", r.stdout)
+	}
+	for name, args := range map[string][]string{
+		"one target": {"schedule", "set", "prod-eu/w-2", "--file", "-"},
+		"by tag":     {"schedule", "set", "--tag", "team=payments", "--file", "-", "--yes"},
+	} {
+		a := &wlAPI{}
+		back := runWLStdin(t, a, nil, r.stdout, args...)
+		if back.exit != 0 || len(a.writes) == 0 {
+			t.Fatalf("%s: exit %d writes %q stderr %q", name, back.exit, a.writes, back.stderr)
+		}
+		for _, write := range a.writes {
+			_, body, _ := strings.Cut(strings.TrimPrefix(write, "PUT "), " ")
+			var got any
+			if err := json.Unmarshal([]byte(body), &got); err != nil || !reflect.DeepEqual(got, want) {
+				t.Errorf("%s: sent %s", name, write)
+			}
+		}
+	}
+}
+
+// Nothing in the CLI checks a recurrence: a bad one reaches the router, whose refusal names its field.
+func TestScheduleSetSendsARecurrenceTheRouterWillRefuse(t *testing.T) {
+	bad := `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","repeat":{"pattern":"cron","cron":"cron(0 8 * * ? *)","minutes":7}}]}`
+	a := &wlAPI{putCode: 400, putBody: `{"error":"bad_request","message":"windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week; windows[0].repeat.minutes: a multiple of 5 from 5 to 10080"}`}
+	r := runWLStdin(t, a, nil, bad, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if len(a.writes) != 1 || !strings.Contains(a.writes[0], `"cron(0 8 * * ? *)"`) {
+		t.Errorf("writes %q", a.writes)
+	}
+	if want := "prod-eu/w-1: windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week; windows[0].repeat.minutes: a multiple of 5 from 5 to 10080\n"; r.exit != 1 || !strings.Contains(r.stderr, want) {
+		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
+	}
+}
+
+func TestScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
+	a := &wlAPI{putCode: 400, putBody: `{"error":"bad_request","message":"windows[0].days: one or more of mon, tue, wed, thu, fri, sat, sun, each once; windows[0].repeat: unknown field; windows[0].from: unknown field"}`}
+	r := runWLStdin(t, a, nil, recurringSchedule, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if r.exit != 1 || !strings.Contains(r.stderr, "windows[0].repeat: unknown field; windows[0].from: unknown field (recurrences need router 0.36.0: upgrade the router to 0.36.0 or later)\n") {
+		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
+	}
+	// This router's own refusal of a field in a repeat is not its age.
+	a = &wlAPI{putCode: 400, putBody: `{"error":"bad_request","message":"windows[0].repeat.frequency: unknown field"}`}
+	r = runWLStdin(t, a, nil, recurringSchedule, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if r.exit != 1 || strings.Contains(r.stderr, "0.36.0") {
+		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
+	}
+}
+
 func TestScheduleShowUnknownZoneFallsBackToUTC(t *testing.T) {
 	a := &wlAPI{schedule: `{"timeZone":"Mars/Olympus","windows":[]}`}
 	r := runWL(t, a, nil, "schedule", "show", "prod-eu/w-1")
