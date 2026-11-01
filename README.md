@@ -1022,7 +1022,9 @@ specific template that has it. Needs routers 0.35.0 or later (an older router an
 exit 1) and a manager of 0.20.0 or later.
 
 - `set` replaces that level's document. `--title` (at most 80 characters, one line), `--description` (at most 500
-  characters) and `--icon` write a template; a field left out is inherited. `--icon auto` is the favicon the router reads
+  characters) and `--icon` write a template. From router 0.36.0 both texts take Markdown: `**bold**`, `*italic*`, `` `code` ``
+  and `[links](https://example.com)`, and in the description also headings, lists, quotes and code blocks, with line
+  breaks kept; raw HTML shows as text. In a template, a field left out is inherited. `--icon auto` is the favicon the router reads
   from the application, `none` shows no icon, and a file is a PNG, JPEG, WebP, SVG or ICO of at most 64 KiB, its type
   taken from its bytes (a file named `auto` or `none` is given as `./auto`; `-` is not read for an icon). `--html` writes a custom page instead: a
   file or `-` for standard input, UTF-8, not blank, at most 256 KiB. `--html` with any of the template's flags, or `set`

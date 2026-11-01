@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `waiting-page set`: the title and the description take Markdown from router 0.36.0, as the README says. The CLI sends them
+  as it did.
+
 ## 0.9.0
 
 - Every command that was at the top level moves under `dormeto aws`, as the Google Cloud ones are under `dormeto gcp`:
