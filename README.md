@@ -674,7 +674,7 @@ To find the API by name, the caller also needs `apigateway:GET`; `--api-url` doe
 Versions: every command needs manager 0.15.0 or later (the `/iam/` routes): an older one answers `Not Found`, and the
 CLI says to update it. A command a router is too old for is refused with the version to upgrade it to, printed as the
 manager words it: `routers show` and the pauses need routers 0.16.0, `workloads rename` 0.20.0, `workloads tags` 0.30.0,
-schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0), schedule recurrences 0.36.0. The manager refuses to demote or disable its last
+schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0), schedule recurrences and joined windows 0.36.0. The manager refuses to demote or disable its last
 enabled administrator from manager 0.18.0 (409, "the last administrator: give the admin role to another user first");
 an older manager does not, and the CLI does not check it itself, so there `users role` and `users disable` can leave no
 person able to administer the manager.
@@ -909,7 +909,8 @@ dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads s
   or later"). Beyond weekly days, see [Schedule recurrences](#schedule-recurrences).
 - `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`, a recurrence in words), the
   exceptions, the maximum nap and the next events in the schedule's time zone, every time labelled with its zone
-  (`Mon 26 Oct 08:00 CET`; UTC, with a note, when the zone is unknown to the CLI). `--json` prints `{schedule, next, maintenanceDue}`: `schedule`
+  (`Mon 26 Oct 08:00 CET`; UTC, with a note, when the zone is unknown to the CLI). From router 0.36.0 it also says how
+  windows join (see [Joined windows](#joined-windows)). `--json` prints `{schedule, next, maintenanceDue}`: `schedule`
   is left out for a router before 0.31.0 (the text output then says "the router does not report schedules (upgrade
   it to 0.31.0 or later)") and is `null` when none. `schedule set --file -` takes that shape back (or a bare
   schedule) and sends its `schedule` member (`by` and `at` in it are accepted by the router); a file with no
@@ -976,15 +977,48 @@ Each pattern, as a window of `windows`, and what `schedule show` prints for it (
 
 **It needs router 0.36.0.** The CLI checks none of this: the router does, and its refusal names the field
 (`windows[1].repeat.cron: ...`). A router before 0.36.0 refuses the new fields as `unknown field`, and `schedule set` adds that
-recurrences need router 0.36.0. `dormeto gcp workloads schedule` takes the same JSON and prints the same words, and its `--file`
+they need router 0.36.0. `dormeto gcp workloads schedule` takes the same JSON and prints the same words, and its `--file`
 is the file `schedule show --json` prints under `schedule`.
+
+### Joined windows
+
+```sh
+dormeto aws settings set --join-minutes 30
+dormeto aws routers settings prod-eu --join-minutes 0
+dormeto aws routers settings prod-eu --join-minutes inherit
+dormeto aws workloads schedule set prod-eu/w-1 --file schedule.json   # with "joinMinutes": 0 in the file
+```
+
+From router 0.36.0, two occurrences of one kind separated by a short gap count as one, so a workload is not woken or napped
+for the gap. This applies to existing schedules too: set 0 to keep a gap. `joinMinutes` is the largest gap that joins, both ends
+included: a whole number from 0 to 120, a multiple of 5. 0 never joins. Two kinds never join, nor does a gap where the other kind
+starts, or a start an exception date or a range removes.
+
+The most specific level that sets it wins:
+
+- **The workload:** `joinMinutes` at the top of its schedule's JSON, beside `maxNapDays`, in the file of `schedule set`, with
+  `--tag` too. There is no flag and no `workloads settings`: leave it out of the file to inherit.
+- **The router:** `routers settings --join-minutes <minutes>`, `inherit` to unset it (administrators; routers 0.36.0).
+  `routers show` prints a `join windows` line.
+- **The organization:** `settings set --join-minutes <minutes>`, `inherit` to unset it (administrators; a manager after 0.20.0).
+  `settings show` prints it. Routers apply it at their next check, within 5 minutes.
+- **The default:** 15, also when a level cannot be read. On Google Cloud there is only the workload's, then the default.
+
+`--hibernate` and `--join-minutes` go together or alone on `settings set` and `routers settings`; what is not given stays as it
+was, and giving neither is refused (exit 2). A value out of range is refused before any call (exit 2).
+
+`schedule show` and `workloads show` print the value in force and its level: `join windows up to 15 min apart (organization)`,
+`windows never join (workload)`. An older router prints nothing new. `schedule show --json` adds `joinMinutes`, `joinFrom`
+(`workload`, `router`, `organization` or `default`) and `joinInherited` (`{joinMinutes, joinFrom}`, what removing the workload's
+own would give). `schedule set --file -` sends only the `schedule` member of that JSON, so the value in force beside it does
+not become the workload's. A router before 0.36.0 refuses `joinMinutes` as unknown, and the CLI adds that it needs router 0.36.0.
 
 ### Hibernation
 
 ```sh
 dormeto aws settings show [--json]
-dormeto aws settings set --hibernate true|false [--json]
-dormeto aws routers settings <router>... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
+dormeto aws settings set [--hibernate true|false] [--join-minutes <minutes>|inherit] [--json]
+dormeto aws routers settings <router>... [--hibernate true|false|inherit] [--join-minutes <minutes>|inherit] [--dry-run] [--yes] [--json]
 dormeto aws workloads settings <target>... | --tag k=v... --hibernate true|false|inherit [--dry-run] [--yes] [--json]
 ```
 

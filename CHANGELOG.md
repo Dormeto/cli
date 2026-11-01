@@ -10,6 +10,15 @@
 - `schedule set --file`, with `--tag` too, and `schedule show --json` carry `repeat`, `from` and `until`. It needs router 0.36.0:
   an older one's `unknown field` now says so. The README has a Schedule recurrences section.
 - Next events of a schedule with a `repeat` or a `from` say their year: they can be up to 400 days away.
+- Joined windows (router 0.36.0): `joinMinutes`, the largest gap that joins two windows of one kind, 0 to 120, a multiple of 5,
+  15 by default. `schedule set --file` carries it, with `--tag` too.
+- `settings set` and `routers settings` take `--join-minutes <minutes>|inherit`, alone or with `--hibernate`; what is not given
+  stays as it was, and `--hibernate` is no longer required when `--join-minutes` is given. The organization's needs a manager
+  after 0.20.0, which the CLI says.
+- `schedule show` and `workloads show` print `join windows up to 15 min apart (organization)` or `windows never join (workload)`,
+  `settings show` and `routers show` a line of their own, and `schedule show --json` adds `joinMinutes`, `joinFrom` and
+  `joinInherited`. So does `gcp workloads schedule show`. An older router prints nothing new.
+- A router's `unknown field` or `unknown setting` for `joinMinutes` says it needs router 0.36.0, as for the recurrences.
 
 ## 0.9.0
 
