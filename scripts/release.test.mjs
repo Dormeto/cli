@@ -143,21 +143,100 @@ test('release.sh refuses a dirty tree (modified and untracked files)', () => {
   } finally { f.cleanup(); }
 });
 
-test('release.sh refuses a main that is not origin\'s (ahead and behind)', () => {
+// A commit on origin that this checkout does not have.
+function originMoves(f) {
+  const other = join(f.root, 'other');
+  git(f.root, 'clone', f.origin, other);
+  write(join(other, 'behind.txt'), 'x');
+  git(other, 'add', '-A');
+  git(other, 'commit', '-m', 'behind');
+  git(other, 'push', 'origin', 'main');
+}
+function localCommit(f) {
+  write(join(f.work, 'ahead.txt'), 'x');
+  git(f.work, 'add', '-A');
+  git(f.work, 'commit', '-m', 'ahead');
+}
+
+test('release.sh refuses a main behind origin\'s, and one that has diverged from it, pushing nothing', () => {
   const f = fixture();
   try {
-    write(join(f.work, 'ahead.txt'), 'x');
-    git(f.work, 'add', '-A');
-    git(f.work, 'commit', '-m', 'ahead');
-    refused(null, f, [VERSION, '--dry-run'], /origin/);
-    git(f.work, 'reset', '--hard', 'HEAD~1');
-    const other = join(f.root, 'other');
-    git(f.root, 'clone', f.origin, other);
-    write(join(other, 'behind.txt'), 'x');
-    git(other, 'add', '-A');
-    git(other, 'commit', '-m', 'behind');
-    git(other, 'push', 'origin', 'main');
-    refused(null, f, [VERSION, '--dry-run'], /origin/);
+    originMoves(f);
+    const moved = git(f.origin, 'rev-parse', 'main');
+    refused(null, f, [VERSION], /behind origin\/main or diverged.*pull/);
+    localCommit(f);
+    refused(null, f, [VERSION], /behind origin\/main or diverged.*pull/);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), moved);
+  } finally { f.cleanup(); }
+});
+
+test('release.sh refuses local commits with a dirty tree, modified or untracked, and pushes nothing', () => {
+  const f = fixture();
+  try {
+    const pushed = git(f.origin, 'rev-parse', 'main');
+    localCommit(f);
+    write(join(f.work, 'untracked.txt'), 'x');
+    refused(null, f, [VERSION], /not clean/);
+    rmSync(join(f.work, 'untracked.txt'));
+    write(join(f.work, 'ahead.txt'), 'changed');
+    refused(null, f, [VERSION], /not clean/);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), pushed);
+  } finally { f.cleanup(); }
+});
+
+test('release.sh pushes local commits with the release, after the checks, and the tag is on origin\'s main', () => {
+  const f = fixture();
+  try {
+    localCommit(f);
+    const local = git(f.work, 'rev-parse', 'HEAD');
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.equal(git(f.origin, 'rev-parse', `v${VERSION}^{commit}`), local);
+    assert.equal(git(f.origin, 'merge-base', '--is-ancestor', local, 'main'), '');
+    assert.equal(git(f.work, 'rev-parse', 'HEAD'), git(f.origin, 'rev-parse', 'main'));
+  } finally { f.cleanup(); }
+});
+
+test('release.sh pushes local commits together with the release commit of a leading ## Unreleased', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    localCommit(f);
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.deepEqual(subjects(f.origin, 3), [`chore: next iteration after cli ${VERSION}`, `chore(release): cli ${VERSION}`, 'ahead']);
+  } finally { f.cleanup(); }
+});
+
+test('local commits are not pushed by a dry run, which says how many there are', () => {
+  const f = fixture();
+  try {
+    const pushed = git(f.origin, 'rev-parse', 'main');
+    localCommit(f);
+    const out = f.run(VERSION, '--dry-run');
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.match(out.stdout, /1 local commit would be pushed/);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), pushed);
+  } finally { f.cleanup(); }
+});
+
+test('local commits are not pushed when a check fails', () => {
+  const f = fixture();
+  try {
+    const pushed = git(f.origin, 'rev-parse', 'main');
+    localCommit(f);
+    rmSync(join(f.root, 'api', 'repos', 'Dormeto', 'homebrew-tap')); // the last check before the push
+    refused(null, f, [VERSION], /token/);
+    assert.equal(git(f.origin, 'rev-parse', 'main'), pushed);
+  } finally { f.cleanup(); }
+});
+
+test('local commits origin refuses stop the release before the tag', () => {
+  const f = fixture();
+  try {
+    localCommit(f);
+    chmodSync(join(f.origin, 'hooks', 'pre-receive'), 0o755);
+    refused(null, f, [VERSION], /cannot push main.*nothing is published/);
   } finally { f.cleanup(); }
 });
 
@@ -376,14 +455,13 @@ test('a release commit origin refuses stops before the tag, and says how to go o
     withChangelog(f, UNRELEASED);
     chmodSync(join(f.origin, 'hooks', 'pre-receive'), 0o755);
     const out = refused(null, f, [VERSION], /nothing is published/);
-    assert.match(out.stderr, /git push origin main/);
+    assert.match(out.stderr, /this release again/);
     assert.match(out.stderr, /git reset --keep HEAD~1/);
     assert.equal(subjects(f.work, 1)[0], `chore(release): cli ${VERSION}`);
     assert.equal(git(f.work, 'status', '--porcelain'), '');
 
-    // Pushed by hand as it says, the same command finishes it, from the commit already made.
+    // Once origin takes pushes, the same command finishes it, from the commit already made.
     chmodSync(join(f.origin, 'hooks', 'pre-receive'), 0o644);
-    git(f.work, 'push', 'origin', 'main');
     const again = f.run(VERSION);
     assert.equal(again.status, 0, again.stdout + again.stderr);
     assert.equal(git(f.origin, 'log', '-1', '--format=%s', `v${VERSION}`), `chore(release): cli ${VERSION}`);

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Releases Dormeto/cli from the Mac: scripts/release.sh <version> [--dry-run]
 #
-#   1. the checks (main, clean, up to date with origin, no such tag, the CHANGELOG's notes,
+#   1. the checks (main, clean, not behind origin, no such tag, the CHANGELOG's notes,
 #      go vet and go test, the shared cases against the manager's latest release, the Keychain item github-dormeto)
-#   2. a leading "## Unreleased" with notes becomes "## <version>": the release commit, pushed
+#   2. a leading "## Unreleased" with notes becomes "## <version>": the release commit; main pushed, with any local commits
 #   3. the annotated tag v<version>, pushed
 #   4. GoReleaser: archives, checksums, GitHub release, Homebrew tap (GITHUB_TOKEN from the Keychain)
 #   5. the next iteration: "## Unreleased" back at the top of the CHANGELOG, committed and pushed
@@ -62,7 +62,7 @@ cleanup() {
 report_commit() {
   echo
   echo "release: nothing is published, but the release commit of $version is only here (exit $1)."
-  echo "To go on: git push origin main, then this release again. To abandon it: git reset --keep HEAD~1"
+  echo "To go on, once origin takes the push: this release again. To abandon it: git reset --keep HEAD~1"
 }
 report_state() {
   echo
@@ -98,7 +98,7 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 [ -z "$(git status --porcelain)" ] || fail "the working tree is not clean (uncommitted or untracked files): commit or remove them"
 
 git fetch --quiet origin main || fail "cannot fetch origin"
-[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || fail "main is not up to date with origin/main: pull or push first"
+git merge-base --is-ancestor origin/main HEAD || fail "main is behind origin/main or diverged from it: pull first"
 
 if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
   fail "the tag $tag already exists"
@@ -160,6 +160,9 @@ echo "release: the checks pass"
 if [ "$dry_run" = 1 ]; then
   "$goreleaser" release --snapshot --clean --release-notes "$notes"
   if [ "$name_section" = 1 ]; then echo "release: CHANGELOG.md's ## Unreleased would become ## $version"; fi
+  local_commits="$(git rev-list --count origin/main..HEAD)"
+  if [ "$local_commits" = 1 ]; then echo "release: 1 local commit would be pushed"
+  elif [ "$local_commits" != 0 ]; then echo "release: $local_commits local commits would be pushed"; fi
   echo "release: dry run of $tag done: nothing tagged, pushed or published (dist/ holds the snapshot)"
   exit 0
 fi
@@ -184,7 +187,7 @@ done
 saved_notes="$(git rev-parse --git-dir)/release-notes-$version.md" # outside dist/, which --clean empties
 cp "$notes" "$saved_notes"
 
-# --- 2. the release commit ---------------------------------------------------------------------
+# --- 2. the release commit, and main pushed ------------------------------------------------------
 if [ "$name_section" = 1 ]; then
   if ! { awk -v version="$version" 'done != 1 && $0 == "## Unreleased" { print "## " version; done = 1; next } { print }' CHANGELOG.md > "$scratch/changelog.md" \
     && cp "$scratch/changelog.md" CHANGELOG.md \
@@ -195,7 +198,10 @@ if [ "$name_section" = 1 ]; then
     fail "the release commit failed: CHANGELOG.md is restored"
   fi
   commit_made=1
-  git push origin main
+fi
+# The tree is clean and every check passed on this commit: all of main goes, local commits included.
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+  git push origin main || fail "cannot push main to origin: nothing is published"
 fi
 
 # --- 3. the tag ---------------------------------------------------------------------------------

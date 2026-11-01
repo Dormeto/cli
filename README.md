@@ -1479,7 +1479,11 @@ into `## 0.1.0` and commits and pushes it (`chore(release): cli 0.1.0`), then ta
 by hand as `## 0.1.0` is released from the commit it is in; notes in both places are refused. After the publication, the
 next iteration puts an empty `## Unreleased` back at the top, committed and pushed, unless one is already there. The
 version itself comes from the tag, so there is nothing else to bump. With that section empty, a release stops: nothing to
-release. Commits not yet on `origin` stop it too: only the release's own commits are pushed.
+release.
+
+The release pushes `main` itself, once the checks pass: commits not yet on `origin` go with it, and are published in the
+release. A working tree that isn't clean (modified or untracked files) stops it, and so does a `main` behind `origin/main`
+or diverged from it, with nothing pushed. A dry run pushes nothing and says how many commits it would.
 
 When the manager is released too, the CLI comes after it, since the checks refuse shared cases older than the manager's
 latest release, and before the website, so that the website never describes a CLI that isn't out yet
@@ -1489,7 +1493,7 @@ latest release, and before the website, so that the website never describes a CL
 publishes the GitHub release and the Homebrew tap with GoReleaser, and checks the result; `make dry-run` is the same with
 `--dry-run`, which checks and builds without changing the changelog, publishing, tagging or reading the token. It stops
 with what was done and the commands that finish it if something fails after the release commit. The checks are: on
-`main`, clean, equal to `origin/main`, no such tag, the notes in [CHANGELOG.md](CHANGELOG.md), `go vet` and `go test`,
+`main`, clean, not behind `origin/main`, no such tag, the notes in [CHANGELOG.md](CHANGELOG.md), `go vet` and `go test`,
 the shared cases not older than the manager's latest release, the Keychain item below, `go mod tidy` and
 `goreleaser check`. npm is not a channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other version is
 published there.
