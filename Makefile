@@ -1,4 +1,4 @@
-# Local builds of dormeto. `make` lists the targets. The release itself is scripts/release.sh (README, Releasing).
+# Local builds and releases of dormeto. `make` lists the targets. The release's steps are in the README, Releasing.
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null)
@@ -8,12 +8,19 @@ BIN     := bin/dormeto
 MANAGER ?= ../manager
 # Where make install puts dormeto: the install script's default, before Homebrew's bin in a usual PATH.
 INSTALL_DIR ?= $(HOME)/.local/bin
+# The architectures make brew-linux tries: by default the machine's own.
+ARCHS ?=
+
+# A release target needs the version given, not the one the top of this file works out from git.
+define need_version
+@if [ -z "$(VERSION)" ] || [ "$(origin VERSION)" = file ]; then echo "VERSION is required: make $@ VERSION=x.y.z" >&2; exit 2; fi
+endef
 
 .DEFAULT_GOAL := help
-.PHONY: help build install uninstall run test fmt snapshot parity dry-run clean
+.PHONY: help build install uninstall run test fmt snapshot parity dry-run release after-release brew-linux clean
 
 help: ## List the targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build: ## Build bin/dormeto for this machine, as a release builds it
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/dormeto
@@ -34,7 +41,7 @@ install: ## Install this checkout's dormeto into INSTALL_DIR (~/.local/bin), and
 uninstall: ## Remove the dormeto make install put in INSTALL_DIR
 	rm -f "$(INSTALL_DIR)/dormeto"
 
-run: build ## Run it: make run ARGS="estimate --profile <profile> --uptime"
+run: build ## Run it: make run ARGS="aws estimate --profile <profile> --uptime"
 	$(BIN) $(ARGS)
 
 test: ## go vet, the Go tests (shared cases and end-to-end included), the release scripts' tests
@@ -52,8 +59,19 @@ parity: ## Export the shared cases again from the manager checkout (MANAGER=../m
 	cd $(MANAGER) && node scripts/parity/export.mjs --out $(CURDIR)/testdata/parity
 
 dry-run: ## Check a release without publishing: make dry-run VERSION=0.1.0
-	@if [ -z "$(VERSION)" ] || [ "$(origin VERSION)" = file ]; then echo "VERSION is required: make dry-run VERSION=x.y.z" >&2; exit 2; fi
+	$(need_version)
 	scripts/release.sh $(VERSION) --dry-run
+
+release: ## Publish: the tag, the GitHub release, the Homebrew cask, the checks after: make release VERSION=0.1.0
+	$(need_version)
+	scripts/release.sh $(VERSION)
+
+after-release: ## Check a published version through each channel, safe to run again: make after-release VERSION=0.1.0
+	$(need_version)
+	scripts/after-release.sh $(VERSION)
+
+brew-linux: ## Check the Homebrew cask on Linux with podman: make brew-linux [ARCHS="arm64 amd64"]
+	scripts/test-brew-linux.sh $(ARCHS)
 
 clean: ## Remove bin/ and dist/
 	rm -rf bin dist

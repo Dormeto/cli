@@ -1449,34 +1449,52 @@ Google Cloud yet, and the branded waiting page does not apply to it.
 
 ## Building from source
 
-Go 1.26 or later; Node.js for the release scripts' tests; GoReleaser 2 for `make snapshot`. `make` lists the targets:
+Go 1.26 or later; Node.js for the release scripts' tests; GoReleaser 2 for `make snapshot` and a release. `make` lists the targets:
 
 ```
 make build                                          # bin/dormeto, as a release builds it
-make run ARGS="estimate --profile <profile> --uptime"
+make run ARGS="aws estimate --profile <profile> --uptime"
 make test                                           # go vet, the Go tests (shared cases, end to end), the scripts' tests
 make install                                        # into ~/.local/bin (INSTALL_DIR), then which dormeto runs
 make uninstall                                      # removes it
 make snapshot                                       # dist/: the release's archives, checksums and cask
 make parity                                         # the shared cases exported again from ../manager
 make dry-run VERSION=0.1.0                          # a release's checks, nothing published
+make release VERSION=0.1.0                          # publishes it (Releasing)
+make after-release VERSION=0.1.0                    # the checks after, safe to run again
+make brew-linux                                     # the Homebrew cask on Linux, with podman
 ```
 
 ## Releasing
 
-For maintainers. `scripts/release.sh <version>` (for example `0.1.0`, without a `v`) checks the repository, tags,
-publishes the GitHub release and the Homebrew tap with GoReleaser, and checks the result; `--dry-run` checks and builds
-without publishing, tagging or reading the token. The version needs a `## <version>` section in
-[CHANGELOG.md](CHANGELOG.md). npm is not a channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other
+For maintainers. A release, from `main`:
+
+```sh
+# 1. CHANGELOG.md: "## Unreleased" becomes "## 0.1.0". Commit it and push: a release needs main equal to origin/main.
+make dry-run VERSION=0.1.0    # 2. the checks and a snapshot in dist/, nothing published
+make release VERSION=0.1.0    # 3. the tag, the GitHub release, the Homebrew cask, then the checks after
+```
+
+When the manager is released too, the CLI comes after it, since the checks refuse shared cases older than the manager's
+latest release, and before the website, so that the website never describes a CLI that isn't out yet
+(`tools/release/dormeto-release` in the vision repository drives the three; its `cli` command is this same release).
+
+`make release` is `scripts/release.sh <version>` (for example `0.1.0`, without a `v`), which checks the repository, tags,
+publishes the GitHub release and the Homebrew tap with GoReleaser, and checks the result; `make dry-run` is the same with
+`--dry-run`, which checks and builds without publishing, tagging or reading the token. It stops with what was done and
+the commands that finish it if something fails after the tag. The checks are: on `main`, clean, equal to `origin/main`, no
+such tag, a `## <version>` section with notes in [CHANGELOG.md](CHANGELOG.md), `go vet` and `go test`, the shared cases
+not older than the manager's latest release, the Keychain item below, `go mod tidy` and `goreleaser check`. npm is not a
+channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other
 version is published there.
 
-The checks after it, `scripts/after-release.sh <version>` (safe to run again), install the version through each channel
+The checks after it, `make after-release VERSION=<version>` (`scripts/after-release.sh`, safe to run again), install the version through each channel
 and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is), the
 install script and `go install`. The install script is `https://dormeto.com/install.sh`, or, while that does not answer
 (the website not deployed yet), the website checkout's `site/install.sh`: `DORMETO_WEBSITE_DIR`, by default
 `../website` beside this repository.
 
-`scripts/test-brew-linux.sh [arm64] [amd64]` is an opt-in check of the Homebrew cask on Linux, with podman: it builds a
+`make brew-linux [ARCHS="arm64 amd64"]` (`scripts/test-brew-linux.sh`) is an opt-in check of the Homebrew cask on Linux, with podman: it builds a
 snapshot, checks the cask's Linux entries against `checksums.txt`, serves `dist/` locally, and in a `homebrew/brew`
 container per architecture (by default the machine's own; Homebrew hangs under amd64 emulation on an ARM Mac) installs
 the generated cask from a local tap and runs `dormeto version`. It removes its containers and server on every exit.
