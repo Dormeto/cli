@@ -4,6 +4,12 @@
 
 - `waiting-page set`: the title and the description take Markdown from router 0.36.0, as the README says. The CLI sends them
   as it did.
+- `workloads schedule show` and `workloads show` print a recurrence in words: `Every 2 weeks on Mon, Thu, 20:00–07:00 next day,
+  from 2027-01-04, no end date`, `Monthly on day 15`, `Yearly on day 25`, `Cron 30 8 * * 1-5, 10 h 30 min`. A plain weekly window
+  prints as it did. So does `gcp workloads schedule show`.
+- `schedule set --file`, with `--tag` too, and `schedule show --json` carry `repeat`, `from` and `until`. It needs router 0.36.0:
+  an older one's `unknown field` now says so. The README has a Schedule recurrences section.
+- Next events of a schedule with a `repeat` or a `from` say their year: they can be up to 400 days away.
 
 ## 0.9.0
 

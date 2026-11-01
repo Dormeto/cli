@@ -11,6 +11,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/aws"
 	"github.com/Dormeto/cli/internal/options"
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 func readme(t *testing.T) string {
@@ -245,6 +246,44 @@ func TestReadmeWarnsThatWaitingPageWritesGiveCustomHTML(t *testing.T) {
 	for _, row := range regexp.MustCompile("(?m)^\\| `[a-z]+ waiting-page set`.*$").FindAllString(text, -1) {
 		if !strings.Contains(row, "custom HTML") {
 			t.Errorf("a permission row does not warn of custom HTML: %s", row)
+		}
+	}
+}
+
+// The recurrences' table shows a window of each pattern and the words `schedule show` prints for it, and says the rules a
+// reader needs before the router refuses a file.
+func TestReadmeRecurrencesShowEachPatternInTheCLIsWords(t *testing.T) {
+	_, sub, ok := strings.Cut(section(t, readme(t), "Routers and workloads"), "\n### Schedule recurrences\n")
+	if !ok {
+		t.Fatal("no '### Schedule recurrences' subsection")
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	patterns := map[string]bool{}
+	rows := regexp.MustCompile("(?m)^\\| [^|]+ \\| `(\\{.*\\})` \\| `([^`]+)` \\|$").FindAllStringSubmatch(sub, -1)
+	for _, row := range rows {
+		var w schedule.Window
+		if err := json.Unmarshal([]byte(row[1]), &w); err != nil {
+			t.Fatalf("%s: %v", row[1], err)
+		}
+		if got := w.Text(); got != row[2] {
+			t.Errorf("%s reads %q, the README says %q", row[1], got, row[2])
+		}
+		var r struct {
+			Pattern string `json:"pattern"`
+		}
+		if json.Unmarshal(w.Repeat, &r) == nil {
+			patterns[r.Pattern] = true
+		}
+	}
+	for _, p := range []string{"daily", "weekly", "monthly", "cron"} {
+		if !patterns[p] {
+			t.Errorf("no row of the %s pattern in %d rows", p, len(rows))
+		}
+	}
+	for _, want := range []string{"router 0.36.0", "five fields", "multiple of 5", "`cron(...)`", "`from`", "`until`", "no end date", "last day",
+		"dormeto aws workloads schedule set", "--tag"} {
+		if !strings.Contains(sub, want) {
+			t.Errorf("the recurrences lack %q", want)
 		}
 	}
 }

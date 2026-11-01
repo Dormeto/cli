@@ -674,7 +674,7 @@ To find the API by name, the caller also needs `apigateway:GET`; `--api-url` doe
 Versions: every command needs manager 0.15.0 or later (the `/iam/` routes): an older one answers `Not Found`, and the
 CLI says to update it. A command a router is too old for is refused with the version to upgrade it to, printed as the
 manager words it: `routers show` and the pauses need routers 0.16.0, `workloads rename` 0.20.0, `workloads tags` 0.30.0,
-schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0). The manager refuses to demote or disable its last
+schedules 0.31.0, hibernation settings 0.32.0 (and manager 0.19.0), schedule recurrences 0.36.0. The manager refuses to demote or disable its last
 enabled administrator from manager 0.18.0 (409, "the last administrator: give the admin role to another user first");
 an older manager does not, and the CLI does not check it itself, so there `users role` and `users disable` can leave no
 person able to administer the manager.
@@ -906,15 +906,76 @@ dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads s
   `days` from `mon` to `sun`, `start` and `end` as `HH:MM` in steps of 5 minutes, an `end` not after the `start` ends
   the next day, `wake` `never` or `header` for a nap), `exceptions` (local dates) and `maxNapDays` (1 to 60). It
   prints the next events. It needs manager 0.16.0 and routers 0.31.0 (older ones answer "upgrade the router to 0.31.0
-  or later").
-- `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`), the exceptions, the maximum nap
-  and the next events in the schedule's time zone, every time labelled with its zone (`Mon 26 Oct 08:00 CET`; UTC,
-  with a note, when the zone is unknown to the CLI). `--json` prints `{schedule, next, maintenanceDue}`: `schedule`
+  or later"). Beyond weekly days, see [Schedule recurrences](#schedule-recurrences).
+- `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`, a recurrence in words), the
+  exceptions, the maximum nap and the next events in the schedule's time zone, every time labelled with its zone
+  (`Mon 26 Oct 08:00 CET`; UTC, with a note, when the zone is unknown to the CLI). `--json` prints `{schedule, next, maintenanceDue}`: `schedule`
   is left out for a router before 0.31.0 (the text output then says "the router does not report schedules (upgrade
   it to 0.31.0 or later)") and is `null` when none. `schedule set --file -` takes that shape back (or a bare
   schedule) and sends its `schedule` member (`by` and `at` in it are accepted by the router); a file with no
   schedule (`null`, `{"schedule": null}`, or the output of a router before 0.31.0) is refused with exit 2.
 - `schedule clear` removes the schedule.
+
+### Schedule recurrences
+
+From router 0.36.0, a window repeats on more than chosen weekdays, within a range of dates. There is no flag for it: write the
+JSON and send it as any schedule, to one workload or by `--tag`. A window without the new fields reads as before.
+
+```sh
+dormeto aws workloads schedule set prod-eu/w-1 --file schedule.json
+dormeto aws workloads schedule set --tag team=payments --file schedule.json --yes
+dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads schedule set prod-eu/w-2 --file -
+```
+
+```json
+{
+  "timeZone": "Europe/Paris",
+  "windows": [
+    { "kind": "awake", "start": "08:00", "end": "18:00", "repeat": { "pattern": "monthly", "day": 15 } },
+    { "kind": "nap", "start": "20:00", "end": "07:00", "repeat": { "pattern": "weekly", "interval": 2, "days": ["mon", "thu"] }, "from": "2027-01-04", "until": "2027-06-30", "wake": "header" }
+  ]
+}
+```
+
+Each pattern, as a window of `windows`, and what `schedule show` prints for it (after its kind, with its wake mode after a nap):
+
+| Pattern | Window | `schedule show` |
+|---|---|---|
+| Daily | `{ "kind": "awake", "start": "08:00", "end": "12:00", "repeat": { "pattern": "daily", "interval": 3 }, "from": "2027-01-04" }` | `Every 3 days, 08:00–12:00, from 2027-01-04, no end date` |
+| Weekly | `{ "kind": "nap", "start": "20:00", "end": "07:00", "repeat": { "pattern": "weekly", "interval": 2, "days": ["mon", "thu"] }, "from": "2027-01-04", "until": "2027-06-30" }` | `Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, until 2027-06-30` |
+| Monthly, on a day | `{ "kind": "awake", "start": "08:00", "end": "18:00", "repeat": { "pattern": "monthly", "day": 15 } }` | `Monthly on day 15, 08:00–18:00` |
+| Monthly, on a weekday | `{ "kind": "awake", "start": "08:00", "end": "18:00", "repeat": { "pattern": "monthly", "interval": 3, "nth": 1, "weekday": "mon" }, "from": "2027-01-01" }` | `Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, no end date` |
+| Yearly | `{ "kind": "nap", "start": "00:00", "end": "00:00", "repeat": { "pattern": "monthly", "interval": 12, "day": 25 }, "from": "2026-12-01" }` | `Yearly on day 25, all day (24 hours), from 2026-12-01, no end date` |
+| Cron | `{ "kind": "awake", "repeat": { "pattern": "cron", "cron": "30 8 * * 1-5", "minutes": 630 } }` | `Cron 30 8 * * 1-5, 10 h 30 min` |
+| Weekly days, a range | `{ "kind": "awake", "days": ["mon", "fri"], "start": "08:30", "end": "19:00", "until": "2027-06-30" }` | `Weekly on Mon, Fri, 08:30–19:00, until 2027-06-30` |
+
+- **`from` and `until`** are local dates `YYYY-MM-DD` in the schedule's zone, both days included, each optional: with no
+  `until` there is no end date. No occurrence starts outside them; one started on `until` runs to its end. `until` before
+  `from` is refused.
+- **`repeat`** replaces `days`: a window has one or the other. `interval` is 1 to 99, 1 by default. Above 1, `from` is
+  required: daily counts days from it, weekly counts weeks (Monday to Sunday) from its week, monthly counts months from its
+  month.
+- **Monthly** takes `day` (1 to 31), or `nth` (1, 2, 3, 4, or -1 for the last) with `weekday`. A `day` past a month's end falls
+  on that month's last day. **Yearly** is monthly with `interval` 12: `from` gives its month.
+- **Cron** takes `cron` and `minutes`, and no `start`, `end` or `interval`. `minutes` is how long each occurrence lasts in wall
+  time, a multiple of 5 from 5 to 10080 (7 days).
+- **A cron expression** is crontab's five fields, `minute hour day-of-month month day-of-week`, at most 200 characters. Each
+  field is `*`, a number, a range `a-b`, a step `*/s` or `a-b/s`, or a comma list of those. Months also take `JAN` to `DEC`,
+  weekdays `SUN` to `SAT`, in any case; weekdays are 0 to 7, 0 and 7 both Sunday. `?` is `*`, as a whole day field. With both
+  day fields restricted (anything but `*` or `?`), either one matches.
+- **Every minute must be a multiple of 5**, as schedule times are: `*` is refused in the minute field, `*/5` and `0,30` are
+  accepted. An expression that never matches (`0 8 31 2 *`) is refused; `0 8 29 2 *` matches in leap years. `cron(...)`, six
+  fields, `L`, `W` and `#` are refused: EventBridge's weekday 1 is Sunday, so its expressions do not read the same here.
+- **A start every 5 minutes is not refused**, but each one applies anew at each check: a manager's Nap or Wake then lasts 5
+  minutes at most, and an awake one blocks naps.
+- **The next events** reach 400 days with a `repeat` or a `from`, so they say their year; a rarer window can have none. Awake
+  and nap windows may not overlap in those 400 days: the refusal gives the first date. Exception dates and the maximum nap
+  apply as they do to weekly windows.
+
+**It needs router 0.36.0.** The CLI checks none of this: the router does, and its refusal names the field
+(`windows[1].repeat.cron: ...`). A router before 0.36.0 refuses the new fields as `unknown field`, and `schedule set` adds that
+recurrences need router 0.36.0. `dormeto gcp workloads schedule` takes the same JSON and prints the same words, and its `--file`
+is the file `schedule show --json` prints under `schedule`.
 
 ### Hibernation
 
