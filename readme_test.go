@@ -227,3 +227,24 @@ func TestReadmeGoogleCloudSaysWhoHoldsTheInvokerRoleAndHowLongGoogleHoldsDeleted
 		}
 	}
 }
+
+// A caller of the manager's /iam routes counts as an administrator, so the permission to write a waiting page is the
+// permission to set custom HTML on the application's address: the README says it in the section and at the table's rows.
+func TestReadmeWarnsThatWaitingPageWritesGiveCustomHTML(t *testing.T) {
+	text := readme(t)
+	_, sub, ok := strings.Cut(text, "### Waiting page\n")
+	if !ok {
+		t.Fatal("no '### Waiting page' subsection")
+	}
+	sub, _, _ = strings.Cut(sub, "\n### ")
+	for _, want := range []string{"administrator", "/iam/", "custom HTML"} {
+		if !strings.Contains(sub, want) {
+			t.Errorf("the Waiting page section does not say %q", want)
+		}
+	}
+	for _, row := range regexp.MustCompile("(?m)^\\| `[a-z]+ waiting-page set`.*$").FindAllString(text, -1) {
+		if !strings.Contains(row, "custom HTML") {
+			t.Errorf("a permission row does not warn of custom HTML: %s", row)
+		}
+	}
+}

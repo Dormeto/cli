@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,12 @@ func TestIconTypeFromTheBytesSignature(t *testing.T) {
 		{"gif", []byte("GIF89a"), ""},
 		{"riff that is not webp", []byte("RIFF\x00\x00\x00\x00WAVE"), ""},
 		{"empty", nil, ""},
+		{"doctype's quoted > does not end it", []byte(`<!DOCTYPE svg PUBLIC "a>b"><svg/>`), "svg+xml"},
+		{"a quoted > then no svg", []byte(`<!DOCTYPE svg PUBLIC "a>b"><p/>`), ""},
+		{"xml-foo is no declaration", []byte(`<?xml-foo?><svg/>`), ""},
+		{"unclosed comment", []byte(`<!-- <svg/>`), ""},
+		{"unclosed declaration", []byte(`<?xml version="1.0" <svg/>`), ""},
+		{"unclosed doctype", []byte(`<!DOCTYPE svg <svg/>`), ""},
 	} {
 		if got := IconType(c.data); got != c.want {
 			t.Errorf("%s: type %q, want %q", c.name, got, c.want)
@@ -76,15 +83,24 @@ func TestCheckHTML(t *testing.T) {
 		data []byte
 		want string
 	}{
-		"blank":      {[]byte(" \n\t "), "blank"},
-		"only a BOM": {[]byte("\ufeff"), "blank"},
-		"empty":      {nil, "blank"},
-		"not UTF-8":  {[]byte{0xff, 0xfe, 'a'}, "UTF-8"},
-		"too large":  {bytes.Repeat([]byte("a"), MaxHTMLBytes+1), "256 KiB"},
+		"blank":          {[]byte(" \n\t "), "blank"},
+		"only a BOM":     {[]byte("\ufeff"), "blank"},
+		"empty":          {nil, "blank"},
+		"BOM and spaces": {[]byte("\n\ufeff \ufeff"), "blank"},
+		"BOM twice":      {[]byte("\ufeff\ufeff"), "blank"},
+		"not UTF-8":      {[]byte{0xff, 0xfe, 'a'}, "UTF-8"},
+		"too large":      {bytes.Repeat([]byte("a"), MaxHTMLBytes+1), "256 KiB"},
 	} {
 		if _, err := CheckHTML(c.data); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want a sentence with %q", name, err, c.want)
 		}
+	}
+	// U+0085 is not white space to the router (JavaScript's trim), so it is a page; a BOM before a page is kept.
+	if _, err := CheckHTML([]byte("\u0085")); err != nil {
+		t.Errorf("U+0085 alone is a page for the router: %v", err)
+	}
+	if s, err := CheckHTML([]byte("\ufeff<p>")); err != nil || s != "\ufeff<p>" {
+		t.Errorf("a BOM is kept: %q, %v", s, err)
 	}
 	if _, err := CheckHTML(bytes.Repeat([]byte("a"), MaxHTMLBytes)); err != nil {
 		t.Errorf("256 KiB exactly: %v", err)
@@ -103,10 +119,14 @@ func TestPageDocMarshalsOnlyWhatIsSet(t *testing.T) {
 	}
 }
 
-func view(t *testing.T, raw string) PageView {
+func fixture(t *testing.T, name string) PageView {
 	t.Helper()
+	data, err := os.ReadFile("../../testdata/waitingpage/" + name + ".json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var v PageView
-	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+	if err := json.Unmarshal(data, &v); err != nil {
 		t.Fatal(err)
 	}
 	return v
@@ -114,79 +134,134 @@ func view(t *testing.T, raw string) PageView {
 
 var utc = time.UTC
 
+// An answer of the manager's API, as it sends it (testdata/waitingpage).
 func TestPageViewOfATemplateWorkload(t *testing.T) {
-	icon := "data:image/png;base64," + base64.StdEncoding.EncodeToString(append(pngBytes, make([]byte, 2000)...))
-	v := view(t, `{"own":{"mode":"template","title":"Acme portal"},"inherited":{"mode":"template","icon":"auto","from":{"mode":"organization","icon":"default"}},
-"effective":{"mode":"template","icon":"`+icon+`","title":"Acme portal","description":"Sleeps at night.\nBack at 8.","from":{"mode":"workload","icon":"router","title":"workload","description":"organization"}},
-"favicon":{"icon":"`+icon+`","fetchedAt":"2026-11-01T08:00:00.000Z","error":null},"warnings":[],"terraform":false,"by":"ann@x.io","at":"2026-11-01T09:30:00.000Z"}`)
-	got := v.Text("prod-eu/w-1", "workload", utc)
+	got := fixture(t, "wl-template").Text("prod-eu/w-1", "workload", utc)
 	for _, want := range []string{
 		"prod-eu/w-1: waiting page, template (from the workload)",
-		"icon         PNG, 2.0 KiB (from the router)",
-		"title        Acme portal (from the workload)",
-		"description  Sleeps at night.\n", "Back at 8. (from the organization)",
-		"favicon      PNG, 2.0 KiB, read 2026-11-01 08:00 UTC",
-		"set on this workload by ann@x.io, 2026-11-01 09:30 UTC",
+		"icon         PNG, ",
+		"title        Acme (from the workload)",
+		"description  Router words (from the router)",
+		"favicon      ",
+		"set on this workload by arn:aws:iam::121014831971:user/cli, 2023-11-14 22:13 UTC",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "base64") || strings.Contains(got, "iVBOR") {
+	if strings.Contains(got, "base64") || strings.Contains(got, "iVBOR") || strings.Contains(got, "data:") {
 		t.Errorf("an icon is printed:\n%s", got)
 	}
 }
 
-func TestPageViewOfACustomPageNeverPrintsIt(t *testing.T) {
-	html := "<!doctype html><h1>SECRET-MARKER</h1>" + strings.Repeat("x", 2000)
-	raw, _ := json.Marshal(map[string]any{
-		"own": map[string]any{"mode": "custom", "html": html}, "effective": map[string]any{"mode": "custom", "html": html, "from": map[string]string{"mode": "router", "html": "router"}},
-		"warnings": []string{"the page has no element with data-dormeto=\"status\""}, "terraform": false, "by": "root", "at": "2026-11-01T09:30:00Z"})
-	got := view(t, string(raw)).Text("prod-eu", "router", utc)
-	for _, want := range []string{"prod-eu: waiting page, custom (from the router)", "html", "custom page, 2.0 KiB (from the router)", "warning", "data-dormeto", "set on this router by root"} {
+func TestPageViewNeverPrintsAPageOrAnIconAtAnyLevel(t *testing.T) {
+	icon := "data:image/png;base64,iVBORw0KGgo="
+	for name, v := range map[string]PageView{
+		"workload custom":     fixture(t, "wl-custom"),
+		"organization custom": fixture(t, "org-custom"),
+		"organization icon":   fixture(t, "org-template-put"),
+		"router":              fixture(t, "rt-template"),
+		"own only, icon":      {Own: &PageDoc{Mode: "template", Icon: &icon}},
+	} {
+		got := v.Text("x", "organization", utc) + v.Text("x", "workload", utc) + v.Text("x", "router", utc)
+		for _, bad := range []string{"SECRET-HTML", "<p>", "base64", "iVBOR", "data:image"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("%s: prints %q:\n%s", name, bad, got)
+			}
+		}
+	}
+	html := "<p>SECRET-HTML</p>"
+	got := PageView{Page: &PageDoc{Mode: "custom", HTML: &html}}.Text("the organization", "organization", utc)
+	if !strings.Contains(got, "custom page, 18 bytes") || strings.Contains(got, "SECRET") {
+		t.Errorf("an organization's page:\n%s", got)
+	}
+}
+
+func TestPageViewOfACustomWorkload(t *testing.T) {
+	got := fixture(t, "wl-custom").Text("prod-eu/w-1", "workload", utc)
+	for _, want := range []string{"waiting page, custom (from the workload)", "custom page, 18 bytes (from the workload)", "warning: the page has no element data-dormeto", "favicon  none: no host name (tried 2027-01-15 08:00 UTC)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "SECRET-MARKER") {
-		t.Errorf("the page is printed:\n%s", got)
-	}
 }
 
-func TestPageViewFaviconStates(t *testing.T) {
-	base := `{"own":null,"effective":{"mode":"template","icon":"auto","from":{"mode":"default","icon":"default"}},"warnings":[],"terraform":false,"by":null,"at":null,"favicon":`
-	for name, c := range map[string]struct{ favicon, want string }{
-		"never read":   {`null`, "favicon  not read yet"},
-		"failed":       {`{"icon":null,"fetchedAt":"2026-11-01T08:00:00Z","error":"no host name"}`, "favicon  none: no host name (tried 2026-11-01 08:00 UTC)"},
-		"kept and old": {`{"icon":"data:image/png;base64,iVBORw0KGgo=","fetchedAt":"2026-11-01T08:00:00Z","error":"timeout"}`, "last read failed: timeout"},
-	} {
-		got := view(t, base+c.favicon+`}`).Text("prod-eu/w-1", "workload", utc)
-		if !strings.Contains(got, c.want) {
-			t.Errorf("%s: missing %q in\n%s", name, c.want, got)
-		}
-		if !strings.Contains(got, "no document at this level") {
-			t.Errorf("%s: says nothing of the level:\n%s", name, got)
-		}
+func TestPageViewFavicon(t *testing.T) {
+	if got := fixture(t, "wl-none").Text("w", "workload", utc); !strings.Contains(got, "favicon  not read yet") || !strings.Contains(got, "no document at this level") {
+		t.Errorf("never read:\n%s", got)
+	}
+	if got := fixture(t, "wl-favicon-failed").Text("w", "workload", utc); !strings.Contains(got, "favicon  none: no host name (tried 2027-01-15 08:00 UTC)") {
+		t.Errorf("failed:\n%s", got)
+	}
+	v := fixture(t, "wl-none")
+	icon := "data:image/png;base64,iVBORw0KGgo="
+	err := "timeout"
+	v.Favicon = &struct {
+		Icon      *string `json:"icon"`
+		FetchedAt string  `json:"fetchedAt"`
+		Error     *string `json:"error"`
+	}{&icon, "2026-11-01T08:00:00Z", &err}
+	if got := v.Text("w", "workload", utc); !strings.Contains(got, "favicon  PNG, 8 bytes, read 2026-11-01 08:00 UTC; last read failed: timeout") {
+		t.Errorf("kept and failed since:\n%s", got)
 	}
 	// A router has no favicon line.
-	if got := view(t, base+`null}`).Text("prod-eu", "router", utc); strings.Contains(got, "favicon") {
+	if got := fixture(t, "rt-template").Text("prod-eu", "router", utc); strings.Contains(got, "favicon") {
 		t.Errorf("a router has no favicon:\n%s", got)
 	}
 }
 
-func TestPageViewTerraformAndOrganization(t *testing.T) {
-	got := view(t, `{"own":{"mode":"template","title":"T"},"effective":{"mode":"template","icon":"auto","title":"T","from":{"mode":"workload","icon":"default","title":"workload"}},"terraform":true,"warnings":[]}`).Text("prod-eu/w-1", "workload", utc)
-	if !strings.Contains(got, "written by Terraform: set waiting_page in its workload module") {
+func TestPageViewTerraformOnlyAtAWorkload(t *testing.T) {
+	v := fixture(t, "wl-none")
+	v.Terraform = true
+	if got := v.Text("w", "workload", utc); !strings.Contains(got, "written by Terraform: set waiting_page in its workload module") {
 		t.Errorf("no word of Terraform:\n%s", got)
 	}
-	// The organization's answer carries its document as page, and no effective page.
-	got = view(t, `{"page":{"mode":"template","icon":"none","description":"Hi"},"by":"ann@x.io","at":"2026-11-01T09:30:00Z","warnings":[]}`).Text("the organization", "organization", utc)
-	for _, want := range []string{"the organization: waiting page, template", "icon         none", "description  Hi", "set on the organization by ann@x.io"} {
+	if got := v.Text("r", "router", utc); strings.Contains(got, "Terraform") {
+		t.Errorf("Terraform at a router:\n%s", got)
+	}
+}
+
+func TestPageViewOfTheOrganization(t *testing.T) {
+	got := fixture(t, "org-template").Text("the organization", "organization", utc)
+	for _, want := range []string{"the organization: waiting page, template (from the organization)", "icon   PNG, 108 bytes (from the organization)", "title  Org (from the organization)",
+		"set on the organization by arn:aws:iam::121014831971:user/cli, 2027-01-15 08:00 UTC"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
-	if got := view(t, `{"page":null}`).Text("the organization", "organization", utc); !strings.Contains(got, "no waiting page set") {
-		t.Errorf("nothing set:\n%s", got)
+	title := "Org"
+	got = PageView{Page: &PageDoc{Mode: "template", Title: &title}}.Text("the organization", "organization", utc)
+	if !strings.Contains(got, "icon   auto (from built-in default)") || !strings.Contains(got, "title  Org (from the organization)") {
+		t.Errorf("no icon of its own: the effective one is auto:\n%s", got)
+	}
+	got = fixture(t, "org-custom").Text("the organization", "organization", utc)
+	for _, want := range []string{"waiting page, custom", "custom page, 18 bytes", "warning: "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("custom: missing %q in\n%s", want, got)
+		}
+	}
+	got = fixture(t, "org-none").Text("the organization", "organization", utc)
+	if !strings.HasPrefix(got, "the organization: no waiting page set\n") || !strings.Contains(got, "auto (from built-in default)") || strings.Contains(got, "set on") {
+		t.Errorf("none set:\n%s", got)
+	}
+}
+
+func TestPageViewTellsUnreadableFromNoneSet(t *testing.T) {
+	got := fixture(t, "org-unreadable").Text("the organization", "organization", utc)
+	if !strings.Contains(got, "settings.json is unreadable") || strings.Contains(got, "no waiting page set") || strings.Contains(got, "keep") {
+		t.Errorf("unreadable:\n%s", got)
+	}
+}
+
+func TestIconTextNeverPrintsWhatItDoesNotKnow(t *testing.T) {
+	for in, want := range map[string]string{
+		"auto": "auto", "none": "none", "": "",
+		"data:image/svg+xml,%3Csvg%3E%3C/svg%3E":   "other, 38 bytes",
+		"https://x.io/" + strings.Repeat("a", 500): "other, 513 bytes",
+		"data:image/png;base64,iVBORw0KGgo=":       "PNG, 8 bytes",
+	} {
+		if got := IconText(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }

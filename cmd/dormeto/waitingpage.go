@@ -65,25 +65,14 @@ func newSettingsWaitingPage(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return newWaitingPage(f, deps, organizationPage)
 }
 
-// pageError words a refusal of the waiting-page routes: the manager's sentence, the problems a 400 lists, and for a 403
-// and a 409 the sentence when the manager sent none. label prefixes it, "" for none.
+// pageError words a refusal of the waiting-page routes: the manager's sentence, prefixed by label; a 400 sends its
+// problems as one sentence joined by "; ", printed one to a line.
 func pageError(label string, err error) error {
 	var ae *fleet.APIError
-	if !errors.As(err, &ae) || ae.Gateway {
-		return prefixed(label, err)
+	if errors.As(err, &ae) && !ae.Gateway && ae.Status == http.StatusBadRequest && ae.Message != "" {
+		return prefixed(label, errors.New(strings.ReplaceAll(ae.Message, "; ", "\n")))
 	}
-	text := ae.Message
-	switch {
-	case len(ae.Errors) > 0:
-		text = strings.Join(ae.Errors, "\n")
-	case text == "" && ae.Status == http.StatusForbidden:
-		text = "a custom waiting page needs an administrator"
-	case text == "" && ae.Status == http.StatusConflict:
-		text = "upgrade the router to 0.35.0"
-	default:
-		return prefixed(label, err)
-	}
-	return prefixed(label, errors.New(text))
+	return prefixed(label, err)
 }
 
 func prefixed(label string, err error) error {
@@ -161,6 +150,8 @@ func pageDocument(c *cobra.Command, icon, title, description, html string) (flee
 		switch icon {
 		case "":
 			return doc, usagef("--icon: give auto, none or an image file")
+		case "-":
+			return doc, usagef("--icon: standard input is not read for an icon; give a file")
 		case "auto", "none":
 			doc.Icon = &icon
 		default:
@@ -219,11 +210,11 @@ func newWaitingPageSet(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Comman
 				}
 				var v fleet.PageView
 				_ = json.Unmarshal(raw, &v)
-				word := doc.Mode
-				fmt.Fprintf(c.OutOrStdout(), "%s: waiting page set (%s)\n", label, word)
+				fmt.Fprintf(c.OutOrStdout(), "%s: waiting page set (%s)\n", label, doc.Mode)
 				for _, w := range v.Warnings {
 					fmt.Fprintf(c.OutOrStdout(), "warning: %s\n", w)
 				}
+				printNote(c, v.Note)
 				return nil
 			})
 		},
@@ -257,14 +248,20 @@ func newWaitingPageClear(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Comm
 					return printJSON(c.OutOrStdout(), orRaw(raw))
 				}
 				fmt.Fprintf(c.OutOrStdout(), "%s: waiting page cleared\n", label)
+				var v fleet.PageView
+				_ = json.Unmarshal(raw, &v)
+				printNote(c, v.Note)
 				return nil
 			})
 		},
 	}
-	bindJSONAnswer(cmd, &asJSON)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }
 
-func bindJSONAnswer(cmd *cobra.Command, asJSON *bool) {
-	cmd.Flags().BoolVar(asJSON, "json", false, "print the manager's answer")
+// printNote says what the manager adds to a write: at the organization, when routers apply it.
+func printNote(c *cobra.Command, note string) {
+	if note != "" {
+		fmt.Fprintln(c.OutOrStdout(), note)
+	}
 }

@@ -640,9 +640,9 @@ needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pau
 | `workloads settings` | `PUT /workloads/{router}/{id}/settings` |
 | `routers description` | `PUT /routers/{router}/description`, `DELETE` on the same path |
 | `workloads description` | `PUT /workloads/{router}/{id}/description`, `DELETE` on the same path |
-| `workloads waiting-page set`, `clear` | `PUT /workloads/{router}/{id}/waiting-page`, `DELETE` on the same path |
-| `routers waiting-page set`, `clear` | `PUT /routers/{router}/waiting-page`, `DELETE` on the same path |
-| `settings waiting-page set`, `clear` | `PUT /settings/waiting-page`, `DELETE` on the same path |
+| `workloads waiting-page set`, `clear` | `PUT /workloads/{router}/{id}/waiting-page`, `DELETE` on the same path (**these give custom HTML on the application's address, see Waiting page**) |
+| `routers waiting-page set`, `clear` | `PUT /routers/{router}/waiting-page`, `DELETE` on the same path (**gives custom HTML on the application's address too**) |
+| `settings waiting-page set`, `clear` | `PUT /settings/waiting-page`, `DELETE` on the same path (**gives custom HTML on the application's address too**) |
 | `workloads schedule set`, `clear` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
 | `workloads exclude`, `exclusions add` | `POST /exclusions` |
 | `exclusions lift` | `DELETE /exclusions/{id}` |
@@ -1013,22 +1013,29 @@ The page a visitor sees while a workload wakes can carry your name, icon and wor
 kept per level: the workload, its router and the organization (`settings waiting-page`, for every router). The most
 specific level with a document decides the mode; a template takes each of its icon, title and description from the most
 specific template that has it. Needs routers 0.35.0 or later (an older router answers `upgrade the router to 0.35.0`,
-exit 1) and a manager that serves the waiting-page routes.
+exit 1) and a manager of 0.20.0 or later.
 
 - `set` replaces that level's document. `--title` (at most 80 characters, one line), `--description` (at most 500
   characters) and `--icon` write a template; a field left out is inherited. `--icon auto` is the favicon the router reads
   from the application, `none` shows no icon, and a file is a PNG, JPEG, WebP, SVG or ICO of at most 64 KiB, its type
-  taken from its bytes (a file named `auto` or `none` is given as `./auto`). `--html` writes a custom page instead: a
+  taken from its bytes (a file named `auto` or `none` is given as `./auto`; `-` is not read for an icon). `--html` writes a custom page instead: a
   file or `-` for standard input, UTF-8, not blank, at most 256 KiB. `--html` with any of the template's flags, or `set`
   with none of them, is a usage error. The icon and the page are checked before any call (exit 2).
-- A custom page runs scripts on the application's own address, so setting, replacing or clearing one needs an
-  administrator at every level; templates need an administrator for a router or the organization and an operator for a
-  workload. The refusal is printed (exit 1). A workload written by Terraform is refused: set `waiting_page` in its
-  workload module. The page's warnings (no `data-dormeto="status"` element, a Content-Security-Policy meta tag) are
-  printed after the write, which goes through.
-- `show` prints the effective mode, icon, title and description with the level each comes from, for a workload the cached
+- A custom page runs scripts on the application's own address: it can read that site's cookies and call its API as the
+  visitor. In the dashboard, setting, replacing or clearing one needs an administrator. **The CLI does not have that
+  check: the manager's `/iam/` routes treat any principal of the manager's account that IAM allows to call them as an
+  administrator, and IAM cannot tell a template from a custom page. Whoever may `PUT` or `DELETE` a `waiting-page` route
+  can therefore set custom HTML that runs on that application's address.** Give the `waiting-page` write routes only to
+  those you would trust with the application's users' sessions. Templates need an administrator for a router or the
+  organization and an operator for a workload, in the dashboard. A workload written by Terraform is refused (exit 1):
+  set `waiting_page` in its workload module. The page's warnings (no `data-dormeto="status"` element, a
+  Content-Security-Policy meta tag) are printed after the write, which goes through. A write at the organization also
+  prints when routers apply it (within about a minute).
+- `show` prints the effective mode, icon, title and description with the level each comes from (at the organization, the
+  `auto` icon when it sets none), for a workload the cached
   favicon (its type, size and date, or why there is none), who set the level and when, and the warnings. An icon or a
-  page is printed as its type and size, never its content; `--json` prints the manager's whole answer.
+  page is printed as its type and size, never its content; `--json` prints the manager's whole answer. At the
+  organization, `show` says `no waiting page set` apart from `the waiting page is not known: settings.json is unreadable`.
 - `clear` removes the level's document, which then inherits.
 
 ### Onboarding, offboarding and excluding workloads

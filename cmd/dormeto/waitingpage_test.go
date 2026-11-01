@@ -18,18 +18,25 @@ import (
 
 var wpPNG = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3}
 
-const wpViewJSON = `{"own":{"mode":"template","title":"Acme portal","icon":"none"},"inherited":{"mode":"template","icon":"auto","from":{"mode":"default","icon":"default"}},` +
-	`"effective":{"mode":"template","icon":"none","title":"Acme portal","from":{"mode":"workload","icon":"workload","title":"workload"}},` +
-	`"from":{"mode":"workload","icon":"workload","title":"workload"},"favicon":null,"warnings":[],"terraform":false,"by":"ann@x.io","at":"2026-10-19T10:00:00.000Z"}`
+// fixture is an answer of the manager's API as it sends it (testdata/waitingpage).
+func fixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile("../../testdata/waitingpage/" + name + ".json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(data))
+}
 
 // wpAPI is a fake manager's waiting-page routes at the three levels.
 type wpAPI struct {
-	mu     sync.Mutex
-	writes []string // "METHOD path body"
-	reads  []string
-	view   string // what every route answers; wpViewJSON by default
-	refuse int    // the status the writes answer with, with refusal as the body
-	body   string
+	mu       sync.Mutex
+	writes   []string // "METHOD path body"
+	reads    []string
+	view     string            // what every route answers; the level's fixture by default
+	fixtures map[string]string // the default answer of each route, by path
+	refuse   int               // the status the writes answer with, with refusal as the body
+	body     string
 }
 
 func (a *wpAPI) handler(w http.ResponseWriter, r *http.Request) {
@@ -54,11 +61,18 @@ func (a *wpAPI) handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	io.WriteString(w, orString(a.view, wpViewJSON))
+	io.WriteString(w, orString(a.view, a.fixtures[r.URL.Path]))
 }
 
 func runWP(t *testing.T, a *wpAPI, stdin string, args ...string) fleetRan {
 	t.Helper()
+	if a.fixtures == nil {
+		a.fixtures = map[string]string{
+			"/iam/workloads/prod-eu/w-1/waiting-page": fixture(t, "wl-template"),
+			"/iam/routers/prod-eu/waiting-page":       fixture(t, "rt-template"),
+			"/iam/settings/waiting-page":              fixture(t, "org-template-put"),
+		}
+	}
 	return runFleetWith(t, &fakeAPI{custom: a.handler, stdin: stdin}, "eu-west-1", nil, args...)
 }
 
@@ -89,7 +103,7 @@ func TestWaitingPageShowAtTheThreeLevels(t *testing.T) {
 		if !reflect.DeepEqual(a.reads, []string{tg.path}) {
 			t.Errorf("%s: reads %q", tg.name, a.reads)
 		}
-		for _, want := range []string{tg.label + ": waiting page, template", "Acme portal (from the workload)", "set on "} {
+		for _, want := range []string{tg.label + ": waiting page, template", "icon", "set on ", "arn:aws:iam::121014831971:user/cli"} {
 			if !strings.Contains(r.stdout, want) {
 				t.Errorf("%s: stdout lacks %q:\n%s", tg.name, want, r.stdout)
 			}
@@ -97,16 +111,38 @@ func TestWaitingPageShowAtTheThreeLevels(t *testing.T) {
 	}
 }
 
-func TestWaitingPageShowPrintsNeitherTheIconNorThePageButJSONDoes(t *testing.T) {
-	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(wpPNG)
-	view := `{"own":{"mode":"template","icon":"` + uri + `"},"effective":{"mode":"template","icon":"` + uri + `","from":{"mode":"workload","icon":"workload"}},"warnings":[]}`
-	r := runWP(t, &wpAPI{view: view}, "", wpArgs(0, "show")...)
-	if !strings.Contains(r.stdout, "PNG, 11 bytes") || strings.Contains(r.stdout, "base64") {
-		t.Errorf("stdout %q", r.stdout)
+func TestWaitingPageShowOfTheOrganizationsRealAnswers(t *testing.T) {
+	for name, c := range map[string]struct{ fixture, want string }{
+		"none set":   {"org-none", "the organization: no waiting page set\nicon  auto (from built-in default)\n"},
+		"unreadable": {"org-unreadable", "the organization: the waiting page is not known: settings.json is unreadable\n"},
+		"template":   {"org-template", "set on the organization by arn:aws:iam::121014831971:user/cli, 2027-01-15 08:00 UTC\n"},
+	} {
+		r := runWP(t, &wpAPI{view: fixture(t, c.fixture)}, "", "settings", "waiting-page", "show")
+		if r.exit != 0 || !strings.Contains(r.stdout, c.want) {
+			t.Errorf("%s: exit %d, stdout %q", name, r.exit, r.stdout)
+		}
 	}
-	r = runWP(t, &wpAPI{view: view}, "", wpArgs(0, "show", "--json")...)
-	if !strings.Contains(r.stdout, uri) || !strings.Contains(r.stdout, `"warnings"`) {
-		t.Errorf("--json stdout %q", r.stdout)
+}
+
+func TestWaitingPageShowPrintsNeitherTheIconNorThePageButJSONDoes(t *testing.T) {
+	for _, c := range []struct {
+		fixture string
+		args    []string
+		secret  string
+	}{
+		{"wl-custom", wpArgs(0, "show"), "SECRET-HTML"},
+		{"org-custom", wpArgs(2, "show"), "SECRET-HTML"},
+		{"wl-template", wpArgs(0, "show"), "data:image/png"},
+		{"org-template", wpArgs(2, "show"), "data:image/png"},
+	} {
+		r := runWP(t, &wpAPI{view: fixture(t, c.fixture)}, "", c.args...)
+		if r.exit != 0 || strings.Contains(r.stdout, c.secret) || strings.Contains(r.stdout, "iVBOR") || strings.Contains(r.stdout, "<p>") {
+			t.Errorf("%s: exit %d, stdout %q", c.fixture, r.exit, r.stdout)
+		}
+		j := runWP(t, &wpAPI{view: fixture(t, c.fixture)}, "", append(c.args, "--json")...)
+		if !strings.Contains(j.stdout, c.secret) || !strings.Contains(j.stdout, `"warnings"`) {
+			t.Errorf("%s --json: %q", c.fixture, j.stdout)
+		}
 	}
 }
 
@@ -123,6 +159,9 @@ func TestWaitingPageSetATemplate(t *testing.T) {
 		}
 		if !strings.HasPrefix(r.stdout, tg.label+": waiting page set (template)\n") {
 			t.Errorf("%s: stdout %q", tg.name, r.stdout)
+		}
+		if note := strings.Contains(r.stdout, "routers apply it at their next check, within 5 minutes\n"); note != (i == 2) {
+			t.Errorf("%s: the organization's note is printed there alone: %q", tg.name, r.stdout)
 		}
 	}
 	// Only what is given is written: the document replaces the level's.
@@ -225,18 +264,25 @@ func TestWaitingPageWrongTargets(t *testing.T) {
 
 func TestWaitingPageClear(t *testing.T) {
 	for i, tg := range wpTargets {
-		a := &wpAPI{view: `{"own":null,"effective":{"mode":"template","icon":"auto","from":{"mode":"default","icon":"default"}},"warnings":[]}`}
+		a := &wpAPI{}
+		if i == 2 {
+			a.view = fixture(t, "org-clear")
+		}
 		r := runWP(t, a, "", wpArgs(i, "clear")...)
-		if r.exit != 0 || !reflect.DeepEqual(a.writes, []string{"DELETE " + tg.path + " "}) || r.stdout != tg.label+": waiting page cleared\n" {
+		want := tg.label + ": waiting page cleared\n"
+		if i == 2 {
+			want += "routers apply it at their next check, within 5 minutes\n"
+		}
+		if r.exit != 0 || !reflect.DeepEqual(a.writes, []string{"DELETE " + tg.path + " "}) || r.stdout != want {
 			t.Errorf("%s: exit %d, writes %q, stdout %q, stderr %q", tg.name, r.exit, a.writes, r.stdout, r.stderr)
 		}
 	}
 }
 
 func TestWaitingPageWarningsAreAnswered(t *testing.T) {
-	a := &wpAPI{view: `{"own":{"mode":"custom","html":"<p>"},"warnings":["the page has no element with data-dormeto=\"status\"","it has a Content-Security-Policy meta tag"]}`}
+	a := &wpAPI{view: fixture(t, "wl-custom")}
 	r := runWP(t, a, "<p>x</p>", wpArgs(0, "set", "--html", "-")...)
-	want := "prod-eu/w-1: waiting page set (custom)\nwarning: the page has no element with data-dormeto=\"status\"\nwarning: it has a Content-Security-Policy meta tag\n"
+	want := "prod-eu/w-1: waiting page set (custom)\nwarning: the page has no element data-dormeto=\"status\": the visitor will not read why it waits\n"
 	if r.exit != 0 || r.stdout != want {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
@@ -244,30 +290,43 @@ func TestWaitingPageWarningsAreAnswered(t *testing.T) {
 
 func TestWaitingPageRefusalsArePrinted(t *testing.T) {
 	for name, c := range map[string]struct {
-		status        int
-		body, wantErr string
+		status  int
+		body    string
+		wantErr string
+		not     string
 	}{
-		"403":                   {403, `{"error":"forbidden","message":"a custom waiting page needs an administrator"}`, "a custom waiting page needs an administrator"},
-		"409":                   {409, `{"error":"conflict","message":"upgrade the router to 0.35.0"}`, "upgrade the router to 0.35.0"},
-		"409 without a message": {409, `{"error":"conflict"}`, "upgrade the router to 0.35.0"},
-		"400": {400, `{"error":"bad_request","message":"the page is not valid","errors":["title must be at most 80 characters","icon is not a png image"]}`,
-			"title must be at most 80 characters\n"},
+		"403":     {403, fixture(t, "err-403"), "admin role required: a custom waiting page runs scripts on the application's own address", ""},
+		"409":     {409, `{"error":"conflict","message":"upgrade the router to 0.35.0"}`, "upgrade the router to 0.35.0", ""},
+		"409 tf":  {409, fixture(t, "err-409-tf"), "set waiting_page in its workload module", ""},
+		"400":     {400, fixture(t, "err-400"), "prod-eu/w-1: icon must be auto, none, or a data:image/png, jpeg, webp, svg+xml or x-icon base64 URI of at most 64 KiB\ntitle must be at most 80 characters\n", "; "},
+		"gateway": {403, `{"message":"Forbidden"}`, "execute-api:Invoke", ""},
 	} {
 		a := &wpAPI{refuse: c.status, body: c.body}
 		r := runWP(t, a, "", wpArgs(0, "set", "--title", "T")...)
-		if r.exit != 1 || r.stdout != "" || !strings.Contains(r.stderr, c.wantErr) || !strings.Contains(r.stderr, "prod-eu/w-1") {
+		if r.exit != 1 || r.stdout != "" || !strings.Contains(r.stderr, c.wantErr) || !strings.Contains(r.stderr, "prod-eu/w-1") || (c.not != "" && strings.Contains(r.stderr, c.not)) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", name, r.exit, r.stdout, r.stderr)
 		}
 	}
-	a := &wpAPI{refuse: 403, body: `{"error":"forbidden"}`}
-	if r := runWP(t, a, "", wpArgs(2, "clear")...); !strings.Contains(r.stderr, "needs an administrator") {
-		t.Errorf("a 403 without a message: %q", r.stderr)
+}
+
+func TestWaitingPageIconFromInputIsAUsageError(t *testing.T) {
+	r := runWP(t, &wpAPI{}, "\x89PNG", wpArgs(0, "set", "--icon", "-")...)
+	if r.exit != 2 || len(r.api.requests) != 0 || !strings.Contains(r.stderr, "--icon") || strings.Contains(r.stderr, "panic") {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
+func TestWaitingPageHTMLKeepsItsByteOrderMark(t *testing.T) {
+	a := &wpAPI{}
+	runWP(t, a, "\ufeff<p>x</p>", wpArgs(0, "set", "--html", "-")...)
+	if len(a.writes) != 1 || !strings.Contains(a.writes[0], "\ufeff\\u003cp") {
+		t.Errorf("writes %q", a.writes)
 	}
 }
 
 func TestWaitingPageSetJSONPrintsTheAnswer(t *testing.T) {
-	r := runWP(t, &wpAPI{}, "", wpArgs(0, "set", "--title", "T", "--json")...)
-	if r.exit != 0 || !strings.HasPrefix(r.stdout, "{") || !strings.Contains(r.stdout, `"effective"`) {
+	r := runWP(t, &wpAPI{}, "", wpArgs(2, "set", "--title", "T", "--json")...)
+	if r.exit != 0 || !strings.HasPrefix(r.stdout, "{") || !strings.Contains(r.stdout, `"note"`) {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 }

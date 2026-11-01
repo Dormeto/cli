@@ -1,0 +1,1 @@
+{"error":"bad_request","message":"icon must be auto, none, or a data:image/png, jpeg, webp, svg+xml or x-icon base64 URI of at most 64 KiB; title must be at most 80 characters"}

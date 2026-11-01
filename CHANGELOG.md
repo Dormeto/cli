@@ -9,7 +9,7 @@
   not blank, at most 256 KiB) are checked before any call (exit 2). `show` prints the effective icon, title and description
   with the level each comes from, the cached favicon with its date or why there is none, and an icon or a page as its type
   and size, never its content; `--json` prints everything. A write prints the page's warnings; a custom page needs an
-  administrator, and a router before 0.35.0 is refused with its upgrade sentence. The README has a Waiting page section.
+  administrator in the dashboard, but a caller of the manager's `/iam/` routes counts as one, so whoever may write these routes can set custom HTML; a router before 0.35.0 is refused with its upgrade sentence. The README has a Waiting page section.
 
 ## 0.8.0
 

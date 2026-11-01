@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -144,6 +145,10 @@ func IconDataURI(b []byte) (string, error) {
 	}
 }
 
+// isJSSpace is what JavaScript's trim() removes, which is what the router's blank test removes: Unicode white space
+// except U+0085, and the byte order mark.
+func isJSSpace(r rune) bool { return r == '\ufeff' || (r != '\u0085' && unicode.IsSpace(r)) }
+
 // CheckHTML is the custom page of the bytes read: UTF-8, not blank, at most 256 KiB.
 func CheckHTML(b []byte) (string, error) {
 	switch {
@@ -151,7 +156,7 @@ func CheckHTML(b []byte) (string, error) {
 		return "", errors.New("the page is larger than 256 KiB")
 	case !utf8.Valid(b):
 		return "", errors.New("the page is not UTF-8 text")
-	case strings.TrimSpace(strings.TrimPrefix(string(b), "\ufeff")) == "":
+	case strings.TrimFunc(string(b), isJSSpace) == "":
 		return "", errors.New("the page is blank")
 	}
 	return string(b), nil
@@ -182,6 +187,12 @@ type PageView struct {
 	Terraform bool     `json:"terraform"`
 	By        string   `json:"by"`
 	At        string   `json:"at"`
+	// The organization's page is stamped updatedBy and updatedAt; Error is said when settings.json cannot be read; Note
+	// is what a write adds (when routers apply it).
+	UpdatedBy string `json:"updatedBy"`
+	UpdatedAt string `json:"updatedAt"`
+	Error     string `json:"error"`
+	Note      string `json:"note"`
 }
 
 var iconURI = regexp.MustCompile(`^data:image/(png|jpeg|webp|svg\+xml|x-icon);base64,`)
@@ -198,9 +209,12 @@ func sizeText(n int) string {
 
 // IconText is an icon value as it is printed: auto and none as they are, a data URI as its type and size.
 func IconText(icon string) string {
+	if icon == "auto" || icon == "none" || icon == "" {
+		return icon
+	}
 	m := iconURI.FindStringSubmatch(icon)
 	if m == nil {
-		return icon
+		return "other, " + sizeText(len(icon))
 	}
 	n := len(icon) - len(m[0])
 	if data, err := base64.StdEncoding.DecodeString(icon[len(m[0]):]); err == nil {
@@ -216,29 +230,74 @@ func levelText(level string) string {
 	return "the " + level
 }
 
+// ownDoc is the level's own document: own for a router or a workload, page for the organization.
+func (v PageView) ownDoc() *PageDoc {
+	if v.Own != nil {
+		return v.Own
+	}
+	return v.Page
+}
+
+// effective is the page the level shows. The manager's answer carries it for a router and a workload; the organization's
+// is made here from its page alone (it is the top level): the icon is auto unless it says, the rest is what it has.
+func (v PageView) effective() *EffectivePage {
+	if v.Effective != nil {
+		return v.Effective
+	}
+	e := &EffectivePage{Mode: "template", Icon: "auto", From: map[string]string{"mode": "default", "icon": "default"}}
+	own := v.ownDoc()
+	if own == nil {
+		return e
+	}
+	e.Mode, e.From = own.Mode, map[string]string{"mode": "organization", "icon": "default"}
+	if own.Mode == "custom" {
+		e.Icon, e.HTML = "", derefOr(own.HTML)
+		e.From["html"] = "organization"
+		return e
+	}
+	for _, f := range []struct {
+		key string
+		v   *string
+		to  *string
+	}{{"icon", own.Icon, &e.Icon}, {"title", own.Title, &e.Title}, {"description", own.Description, &e.Description}} {
+		if f.v != nil {
+			*f.to, e.From[f.key] = *f.v, "organization"
+		}
+	}
+	return e
+}
+
+func derefOr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // Text is the view of a level ("workload", "router" or "organization") under label: the effective values and where each
 // comes from, for a workload the cached favicon, then who set this level and the warnings. Times are in loc.
 func (v PageView) Text(label, level string, loc *time.Location) string {
-	own := v.Own
-	if own == nil {
-		own = v.Page
+	own := v.ownDoc()
+	if v.Error != "" { // the organization's settings.json could not be read: nothing is known of its page
+		return fmt.Sprintf("%s: the waiting page is not known: %s\n", label, v.Error)
 	}
 	var b strings.Builder
-	var rows [][2]string
+	e := v.effective()
 	from := func(key string) string {
-		if v.Effective == nil || v.Effective.From[key] == "" {
+		if e.From[key] == "" {
 			return ""
 		}
-		return " (from " + levelText(v.Effective.From[key]) + ")"
+		return " (from " + levelText(e.From[key]) + ")"
 	}
-	switch {
-	case v.Effective != nil:
-		e := v.Effective
+	if own == nil && level == "organization" {
+		fmt.Fprintf(&b, "%s: no waiting page set\n", label)
+	} else {
 		fmt.Fprintf(&b, "%s: waiting page, %s%s\n", label, e.Mode, from("mode"))
-		if e.Mode == "custom" {
-			rows = append(rows, [2]string{"html", "custom page, " + sizeText(len(e.HTML)) + from("html")})
-			break
-		}
+	}
+	var rows [][2]string
+	if e.Mode == "custom" {
+		rows = append(rows, [2]string{"html", "custom page, " + sizeText(len(e.HTML)) + from("html")})
+	} else {
 		rows = append(rows, [2]string{"icon", IconText(e.Icon) + from("icon")})
 		if e.Title != "" {
 			rows = append(rows, [2]string{"title", e.Title + from("title")})
@@ -246,31 +305,12 @@ func (v PageView) Text(label, level string, loc *time.Location) string {
 		if e.Description != "" {
 			rows = append(rows, [2]string{"description", e.Description + from("description")})
 		}
-	case own == nil:
-		fmt.Fprintf(&b, "%s: no waiting page set\n", label)
-	default:
-		fmt.Fprintf(&b, "%s: waiting page, %s\n", label, own.Mode)
-		if own.HTML != nil {
-			rows = append(rows, [2]string{"html", "custom page, " + sizeText(len(*own.HTML))})
-		}
-		for _, r := range []struct {
-			name string
-			v    *string
-		}{{"icon", own.Icon}, {"title", own.Title}, {"description", own.Description}} {
-			if r.v != nil {
-				text := *r.v
-				if r.name == "icon" {
-					text = IconText(text)
-				}
-				rows = append(rows, [2]string{r.name, text})
-			}
-		}
 	}
 	if level == "workload" {
 		rows = append(rows, [2]string{"favicon", v.faviconText(loc)})
 	}
 	b.WriteString(Labelled(rows))
-	if own == nil && v.Effective != nil {
+	if own == nil && level != "organization" {
 		b.WriteString("no document at this level: it shows what it inherits\n")
 	}
 	if own != nil {
@@ -280,7 +320,7 @@ func (v PageView) Text(label, level string, loc *time.Location) string {
 		}
 		line := "set on " + where
 		var by []string
-		for _, p := range []string{v.By, When(v.At, loc)} {
+		for _, p := range []string{orElse(v.By, v.UpdatedBy), When(orElse(v.At, v.UpdatedAt), loc)} {
 			if p != "" {
 				by = append(by, p)
 			}
@@ -290,7 +330,7 @@ func (v PageView) Text(label, level string, loc *time.Location) string {
 		}
 		b.WriteString(line + "\n")
 	}
-	if v.Terraform {
+	if v.Terraform && level == "workload" {
 		b.WriteString("written by Terraform: set waiting_page in its workload module (it cannot be changed here)\n")
 	}
 	for _, w := range v.Warnings {
