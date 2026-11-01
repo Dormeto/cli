@@ -141,7 +141,7 @@ func TestSettingsSetOnAManagerWithoutTheJoinSaysSo(t *testing.T) {
 		io.WriteString(w, `{"error":"bad_request","message":"hibernate must be true or false"}`)
 	}
 	r := runFleetWith(t, &fakeAPI{custom: refuses}, "eu-west-1", nil, "settings", "set", "--join-minutes", "30")
-	if r.exit != 1 || !strings.Contains(r.stderr, "--join-minutes needs a manager after 0.20.0 (hibernate must be true or false)") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "--join-minutes needs manager 0.21.0 or later (hibernate must be true or false)") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 	r = runFleetWith(t, &fakeAPI{custom: refuses}, "eu-west-1", nil, "settings", "set", "--hibernate", "maybe")
@@ -149,7 +149,7 @@ func TestSettingsSetOnAManagerWithoutTheJoinSaysSo(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 	r = runSettings(t, &globalAPI{}, "set", "--hibernate", "true", "--join-minutes", "30")
-	if r.exit != 1 || !strings.Contains(r.stderr, "--join-minutes was not applied: it needs a manager after 0.20.0") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "--join-minutes was not applied: it needs manager 0.21.0 or later") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
@@ -253,11 +253,11 @@ func TestRoutersSettingsOnAnOlderRouterOrManagerSaysSo(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 	r = runFleetWith(t, &fakeAPI{custom: answer(400, `{"error":"bad_request","message":"hibernate must be true, false or null"}`)}, "eu-west-1", nil, "routers", "settings", "r1", "--join-minutes", "30")
-	if r.exit != 1 || !strings.Contains(r.stderr, "r1: --join-minutes needs a manager after 0.20.0 (hibernate must be true, false or null)") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "r1: --join-minutes needs manager 0.21.0 or later (hibernate must be true, false or null)") {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 	r = runFleetWith(t, &fakeAPI{custom: answer(200, `{"level":"router","settings":{"hibernate":true,"by":"ann@x.io","at":"2026-10-19T10:00:00.000Z"}}`)}, "eu-west-1", nil, "routers", "settings", "r1", "--hibernate", "true", "--join-minutes", "30")
-	if r.exit != 1 || !strings.Contains(r.stdout, "r1: hibernate on, join windows not applied: it needs a manager after 0.20.0\n") {
+	if r.exit != 1 || !strings.Contains(r.stdout, "r1: hibernate on, join windows not applied: it needs manager 0.21.0 or later\n") {
 		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }

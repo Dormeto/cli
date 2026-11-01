@@ -95,7 +95,7 @@ func (l levelSettings) applied(answer *int) bool {
 func settingsRefusal(err error) error {
 	var ae *fleet.APIError
 	if errors.As(err, &ae) && ae.Status == http.StatusBadRequest && strings.HasPrefix(ae.Message, "hibernate must be") {
-		return fmt.Errorf("--join-minutes needs a manager after 0.20.0 (%s)", ae.Message)
+		return fmt.Errorf("--join-minutes needs manager 0.21.0 or later (%s)", ae.Message)
 	}
 	return needsRecurrenceRouter(needsManager019(err))
 }
@@ -201,7 +201,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				})
 				var g globalSettings
 				if err == nil && json.Unmarshal(raw, &g) == nil && !settings.applied(g.joinMinutes()) {
-					fmt.Fprintln(c.ErrOrStderr(), "--join-minutes was not applied: it needs a manager after 0.20.0")
+					fmt.Fprintln(c.ErrOrStderr(), "--join-minutes was not applied: it needs manager 0.21.0 or later")
 					return exitCode(1)
 				}
 				return err

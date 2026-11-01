@@ -1000,7 +1000,7 @@ The most specific level that sets it wins:
   `--tag` too. There is no flag and no `workloads settings`: leave it out of the file to inherit.
 - **The router:** `routers settings --join-minutes <minutes>`, `inherit` to unset it (administrators; routers 0.36.0).
   `routers show` prints a `join windows` line.
-- **The organization:** `settings set --join-minutes <minutes>`, `inherit` to unset it (administrators; a manager after 0.20.0).
+- **The organization:** `settings set --join-minutes <minutes>`, `inherit` to unset it (administrators; manager 0.21.0 or later).
   `settings show` prints it. Routers apply it at their next check, within 5 minutes.
 - **The default:** 15, also when a level cannot be read. On Google Cloud there is only the workload's, then the default.
 

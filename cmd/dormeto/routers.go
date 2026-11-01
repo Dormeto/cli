@@ -379,7 +379,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					case !settings.joining:
 					case !settings.applied(a.Settings.JoinMinutes):
 						notApplied = true
-						said = append(said, "join windows not applied: it needs a manager after 0.20.0")
+						said = append(said, "join windows not applied: it needs manager 0.21.0 or later")
 					case a.Settings.JoinMinutes == nil:
 						said = append(said, "join windows inherit")
 					default:
