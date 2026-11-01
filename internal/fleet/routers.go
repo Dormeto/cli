@@ -207,7 +207,7 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 		conf = append(conf, [2]string{"manager's ip lists", withSource(listsText(c.IPListsCatalog.Value.Lists), c.IPListsCatalog.Source)})
 	}
 	conf = append(conf, [2]string{"no-wake rules", withSource(rulesText(c.NoWakeRules.Value), c.NoWakeRules.Source)},
-		[2]string{"hibernate", d.hibernateText(loc, now)})
+		[2]string{"hibernate", d.hibernateText(loc, now)}, [2]string{"join windows", d.joinText(loc, now)})
 	return Labelled(rows) + d.Description.block(loc) + "\nconfiguration\n" + indent(Labelled(conf))
 }
 

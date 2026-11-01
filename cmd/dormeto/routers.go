@@ -20,6 +20,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // maxReason is the longest reason of a pause, in characters.
@@ -204,8 +205,8 @@ func routerSends(ctx context.Context, c *cobra.Command, api *fleet.Client, names
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if suffix == "/settings" { // a manager before 0.19.0 has no such route
-					err = needsManager019(err)
+				if suffix == "/settings" { // a manager before 0.19.0 has no such route, and a manager or a router may not know a setting
+					err = settingsRefusal(err)
 				}
 				fmt.Fprintf(c.ErrOrStderr(), "%s: %s\n", name, err)
 				failed = true
@@ -331,43 +332,71 @@ func newRoutersResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 
 func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		hibernate   string
-		dryRun, yes bool
-		asJSON      bool
+		hibernate, join string
+		dryRun, yes     bool
+		asJSON          bool
 	)
 	cmd := &cobra.Command{
-		Use: "settings <router>... --hibernate true|false|inherit", Short: "Set the hibernation of the workloads of routers",
+		Use: "settings <router>... [--hibernate true|false|inherit] [--join-minutes <minutes>|inherit]", Short: "Set the hibernation and the join of windows of the workloads of routers",
 		SilenceErrors: true,
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the routers'\n" +
 			"workloads nap: true or false for the router, inherit to follow the manager's default (`dormeto aws settings set`). A\n" +
 			"workload's own setting wins over it. Routers 0.32.0 and later; an older one is refused with the version to\n" +
 			"upgrade it to.\n" +
+			"--join-minutes is the largest gap that joins two schedule windows of one kind, 0 to 120, a multiple of 5, 0 never\n" +
+			"joins; inherit follows the manager's default. A joinMinutes on a workload's schedule wins over it. Routers 0.36.0\n" +
+			"and later. What is not given stays as it was.\n" +
 			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +
 			"the others (exit 1). Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
-			var value *bool
+			var settings levelSettings
 			if err == nil {
-				value, err = parseHibernate(hibernate, true)
+				settings, err = readLevelSettings(c, hibernate, join, true)
 			}
 			if err != nil {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				question := fmt.Sprintf("Set hibernate to %s for %s?", hibernateWord(value), strings.Join(names, ", "))
+				question := fmt.Sprintf("Set %s for %s?", strings.Join(settings.words, " and "), strings.Join(names, ", "))
 				if done, err := confirmNames(ctx, c, deps, names, "router", question, false, dryRun, yes); done || err != nil {
 					return err
 				}
-				return routerSends(ctx, c, api, names, "/settings", true, map[string]*bool{"hibernate": value}, asJSON, func(raw json.RawMessage) string {
-					var a struct{ Settings struct{ Hibernate *bool } }
+				var notApplied bool
+				err := routerSends(ctx, c, api, names, "/settings", true, settings.body, asJSON, func(raw json.RawMessage) string {
+					var a struct {
+						Settings struct {
+							Hibernate   *bool
+							JoinMinutes *int
+						}
+					}
 					_ = json.Unmarshal(raw, &a)
-					return "hibernate " + hibernateWord(a.Settings.Hibernate)
+					var said []string
+					if _, ok := settings.body["hibernate"]; ok {
+						said = append(said, "hibernate "+hibernateWord(a.Settings.Hibernate))
+					}
+					switch {
+					case !settings.joining:
+					case !settings.applied(a.Settings.JoinMinutes):
+						notApplied = true
+						said = append(said, "join windows not applied: it needs a manager after 0.20.0")
+					case a.Settings.JoinMinutes == nil:
+						said = append(said, "join windows inherit")
+					default:
+						said = append(said, schedule.JoinText(*a.Settings.JoinMinutes))
+					}
+					return strings.Join(said, ", ")
 				})
+				if err == nil && notApplied {
+					return exitCode(1)
+				}
+				return err
 			})
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the manager's default)")
+	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit (the manager's default)")
 	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")

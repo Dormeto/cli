@@ -1158,7 +1158,7 @@ func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "windows[0].repeat: unknown field; windows[0].from: unknown field\n",
-		"Recurrences need a router of version 0.36.0 or later. Upgrade it with: dormeto gcp install --project "+r.Project+" --region "+r.Region+" --image <the router's image, 0.36.0 or later>")
+		"Recurrences and joined windows need a router of version 0.36.0 or later. Upgrade it with: dormeto gcp install --project "+r.Project+" --region "+r.Region+" --image <the router's image, 0.36.0 or later>")
 	// This router's own refusal, in a recurrence: its words alone.
 	g.s.ScheduleProblem = "windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week"
 	code, out = g.call(t, WorkloadsScheduleSet, r)
@@ -1166,6 +1166,55 @@ func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "windows[0].repeat.cron: five fields")
+}
+
+func TestWorkloadsScheduleSaysTheJoinAndKeepsIt(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.NextEvents = parisEvents
+	g.s.ScheduleJoin = map[string]any{"joinMinutes": 0, "joinFrom": "workload", "joinInherited": map[string]any{"joinMinutes": 15, "joinFrom": "default"}}
+	r := workloadsEurope
+	r.ID = "shop"
+	r.File = g.scheduleFile(t, `{"timeZone":"Europe/Paris","windows":[{"kind":"nap","days":["mon"],"start":"22:00","end":"23:00"}],"joinMinutes":0}`)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if body := g.body(t, "PUT", controllerHost, "/v1/workloads/shop/schedule"); body["joinMinutes"] != float64(0) {
+		t.Fatalf("sent %v", body)
+	}
+	contains(t, out, "  windows never join (workload)\nNext events:\n")
+	r.File, r.JSON = "", true
+	_, out = g.call(t, WorkloadsScheduleShow, r)
+	var shown map[string]any
+	if err := json.Unmarshal([]byte(out), &shown); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if v, ok := shown["joinMinutes"]; !ok || v != float64(0) || shown["joinFrom"] != "workload" || shown["joinInherited"] == nil {
+		t.Fatalf("%s", out)
+	}
+	// The default, and a controller that answers none of it.
+	r.JSON = false
+	g.s.ScheduleJoin = map[string]any{"joinMinutes": 15, "joinFrom": "default", "joinInherited": map[string]any{"joinMinutes": 15, "joinFrom": "default"}}
+	_, out = g.call(t, WorkloadsScheduleShow, r)
+	contains(t, out, "  join windows up to 15 min apart (default)\n")
+	g.s.ScheduleJoin = nil
+	if _, out = g.call(t, WorkloadsScheduleShow, r); strings.Contains(out, "join") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestWorkloadsScheduleSetAJoinOnARouterBefore036SaysItNeeds036(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.ScheduleProblem = "joinMinutes: unknown field"
+	r := workloadsEurope
+	r.ID, r.File = "shop", g.scheduleFile(t, `{"timeZone":"Europe/Paris","maxNapDays":7,"joinMinutes":30}`)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "joinMinutes: unknown field\n", "Recurrences and joined windows need a router of version 0.36.0 or later.")
 }
 
 func TestWorkloadsScheduleSetRefusesAMissingOrUnreadableFileBeforeAnyCall(t *testing.T) {

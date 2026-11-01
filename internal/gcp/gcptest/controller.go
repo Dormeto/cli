@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -393,7 +394,9 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request, id string) {
 		if s.Schedules[id] != nil {
 			events = s.NextEvents
 		}
-		Reply(w, map[string]any{"schedule": s.Schedules[id], "nextEvents": events})
+		answer := map[string]any{"schedule": s.Schedules[id], "nextEvents": events}
+		maps.Copy(answer, s.ScheduleJoin)
+		Reply(w, answer)
 	}
 	switch r.Method {
 	case http.MethodGet:

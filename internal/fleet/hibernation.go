@@ -1,27 +1,33 @@
 package fleet
 
 // What the commands print of the hibernation setting: a router's value and what it inherits, a workload's resolved
-// value, where it comes from and which instances were launched with hibernation.
+// value, where it comes from and which instances were launched with hibernation. And of a router's joinMinutes.
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
-// RouterSettings is a router's own settings: Hibernate nil when it inherits.
+// RouterSettings is a router's own settings: Hibernate nil when it inherits, JoinMinutes null too, and empty for a router
+// that does not have it.
 type RouterSettings struct {
-	Hibernate *bool  `json:"hibernate"`
-	By        string `json:"by"`
-	At        string `json:"at"`
+	Hibernate   *bool           `json:"hibernate"`
+	JoinMinutes json.RawMessage `json:"joinMinutes"`
+	By          string          `json:"by"`
+	At          string          `json:"at"`
 }
 
 // ManagerSettings is what a router last read of the manager's settings; URL is nil when it reads none.
 type ManagerSettings struct {
-	URL       *string `json:"url"`
-	Hibernate *bool   `json:"hibernate"`
-	ReadAt    string  `json:"readAt"`
-	Error     string  `json:"error"`
+	URL         *string `json:"url"`
+	Hibernate   *bool   `json:"hibernate"`
+	JoinMinutes *int    `json:"joinMinutes"`
+	ReadAt      string  `json:"readAt"`
+	Error       string  `json:"error"`
 }
 
 // Hibernation is a workload's resolved hibernation as a router 0.32.0 or later reports it.
@@ -49,14 +55,7 @@ func (d RouterDetails) hibernateText(loc *time.Location, now time.Time) string {
 		return ""
 	}
 	if s.Hibernate != nil {
-		text := OnOff(*s.Hibernate) + " (set on this router"
-		if s.By != "" {
-			text += " by " + s.By
-		}
-		if s.At != "" {
-			text += ", " + When(s.At, loc)
-		}
-		return text + ")"
+		return OnOff(*s.Hibernate) + s.setHere(loc)
 	}
 	m := d.ManagerSettings
 	if m == nil || m.URL == nil {
@@ -65,7 +64,23 @@ func (d RouterDetails) hibernateText(loc *time.Location, now time.Time) string {
 	if m.Hibernate == nil { // nothing read: the router stops at naps until it has
 		return fmt.Sprintf("inherit (manager: unknown, %s: naps stop)", orElse(m.Error, "not read yet"))
 	}
-	value := OnOff(*m.Hibernate)
+	return fmt.Sprintf("inherit (manager: %s, %s)", OnOff(*m.Hibernate), m.readText(now))
+}
+
+// setHere is " (set on this router by ann, 2026-10-19 10:00 UTC)".
+func (s RouterSettings) setHere(loc *time.Location) string {
+	text := " (set on this router"
+	if s.By != "" {
+		text += " by " + s.By
+	}
+	if s.At != "" {
+		text += ", " + When(s.At, loc)
+	}
+	return text + ")"
+}
+
+// readText is when the router last read the manager's settings, and its last failure.
+func (m ManagerSettings) readText(now time.Time) string {
 	read := "not read yet"
 	if m.ReadAt != "" {
 		read = "read " + Age(m.ReadAt, now) + " ago"
@@ -73,7 +88,24 @@ func (d RouterDetails) hibernateText(loc *time.Location, now time.Time) string {
 	if m.Error != "" {
 		read += "; last read failed: " + m.Error
 	}
-	return fmt.Sprintf("inherit (manager: %s, %s)", value, read)
+	return read
+}
+
+// joinText is a router's join windows row: its own value, or what it inherits. "" for a router that does not report it.
+func (d RouterDetails) joinText(loc *time.Location, now time.Time) string {
+	s := d.Settings
+	if s == nil || len(s.JoinMinutes) == 0 {
+		return ""
+	}
+	var own *int
+	if json.Unmarshal(s.JoinMinutes, &own) == nil && own != nil {
+		return schedule.JoinGap(*own) + s.setHere(loc)
+	}
+	m := d.ManagerSettings
+	if m == nil || m.JoinMinutes == nil { // a level that cannot be read counts as unset
+		return "inherit (built-in default: " + schedule.JoinGap(schedule.JoinDefault) + ")"
+	}
+	return fmt.Sprintf("inherit (manager: %s, %s)", schedule.JoinGap(*m.JoinMinutes), m.readText(now))
 }
 
 // fromText is where a workload's value comes from.

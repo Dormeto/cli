@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // WorkloadDetails is the answer of GET /iam/workloads/{router}/{id}: the router's `status` action spread with the
@@ -45,10 +47,11 @@ type WorkloadDetails struct {
 	Backends    *[]struct {
 		Kind string `json:"kind"`
 	} `json:"backends"`
-	Pauses         []Pause         `json:"pauses"`
-	Schedule       json.RawMessage `json:"schedule"`
-	Next           []NextEvent     `json:"next"`
-	MaintenanceDue string          `json:"maintenanceDue"`
+	Pauses   []Pause         `json:"pauses"`
+	Schedule json.RawMessage `json:"schedule"`
+	schedule.Join
+	Next           []NextEvent `json:"next"`
+	MaintenanceDue string      `json:"maintenanceDue"`
 	States7d       *struct {
 		Totals map[string]int `json:"totals"`
 	} `json:"states7d"`
@@ -191,6 +194,9 @@ func (d WorkloadDetails) scheduleText() string {
 	}
 	if s.MaxNapDays > 0 {
 		fmt.Fprintf(&b, "  maximum nap %d %s\n", s.MaxNapDays, Plural(s.MaxNapDays, "day"))
+	}
+	if line := d.Line(); line != "" {
+		fmt.Fprintf(&b, "  %s\n", line)
 	}
 	s.PrintNext(&b, loc, d.Next, d.MaintenanceDue)
 	return b.String()

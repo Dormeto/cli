@@ -93,3 +93,20 @@ func TestWorkloadDetailsScheduleSaysARecurrence(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkloadDetailsScheduleSaysTheJoin(t *testing.T) {
+	text := func(extra string) string {
+		var d WorkloadDetails
+		raw := `{"workloadId":"w-1","state":"AWAKE","schedule":{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["sat"],"start":"08:30","end":"19:00"}],"maxNapDays":7}` + extra + `}`
+		if err := json.Unmarshal([]byte(raw), &d); err != nil {
+			t.Fatal(err)
+		}
+		return d.Text("prod", time.UTC)
+	}
+	if got := text(`,"joinMinutes":0,"joinFrom":"workload","joinInherited":{"joinMinutes":15,"joinFrom":"default"}`); !strings.Contains(got, "  maximum nap 7 days\n  windows never join (workload)\n") {
+		t.Errorf("%s", got)
+	}
+	if got := text(""); strings.Contains(got, "join") {
+		t.Errorf("an older router: %s", got)
+	}
+}

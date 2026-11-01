@@ -5,14 +5,16 @@ package schedule
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
 
-// RecurrenceRouter is the first router that takes repeat, from and until.
+// RecurrenceRouter is the first router that takes repeat, from, until and joinMinutes.
 const RecurrenceRouter = "0.36.0"
 
 // Window is a window as the router stores it. Repeat stays raw until it is read: a stored one that does not read has no
@@ -201,8 +203,63 @@ func (w Window) dates() string {
 	return ""
 }
 
-var unknownNewField = regexp.MustCompile(`(^|; )windows\[\d+\]\.(repeat|from|until): unknown field`)
+// unknownNewField is an older router's refusal: of a window's field or joinMinutes on a schedule, and of a setting in its
+// own words.
+var unknownNewField = regexp.MustCompile(`(^|; )((windows\[\d+\]\.(repeat|from|until)|joinMinutes): unknown field|settings: unknown setting joinMinutes)`)
 
-// RefusedAsUnknown says a router's refusal is a router older than RecurrenceRouter's: it names repeat, from or until as
-// unknown fields. A router that has them only says that of a field inside repeat.
+// RefusedAsUnknown says a router's refusal is a router older than RecurrenceRouter's: it names repeat, from, until or
+// joinMinutes as unknown. A router that has them only says that of a field inside repeat.
 func RefusedAsUnknown(message string) bool { return unknownNewField.MatchString(message) }
+
+// JoinDefault is the largest gap that joins two windows when no level sets it.
+const JoinDefault = 15
+
+// Join is what a router's status and schedule answers add beside the schedule: the value in force, its level and what
+// removing the workload's own would give. Raw, so it goes through --json as answered, 0 included, and an older router's
+// answer adds nothing.
+type Join struct {
+	JoinMinutes   json.RawMessage `json:"joinMinutes,omitempty"`
+	JoinFrom      json.RawMessage `json:"joinFrom,omitempty"`
+	JoinInherited json.RawMessage `json:"joinInherited,omitempty"`
+}
+
+// Line is "join windows up to 15 min apart (organization)" or "windows never join (workload)", "" without a value.
+func (j Join) Line() string {
+	var minutes *int
+	if json.Unmarshal(j.JoinMinutes, &minutes) != nil || minutes == nil {
+		return ""
+	}
+	var from string
+	if json.Unmarshal(j.JoinFrom, &from) != nil || from == "" {
+		return JoinText(*minutes)
+	}
+	return JoinText(*minutes) + " (" + from + ")"
+}
+
+// JoinText is "join windows up to 15 min apart", or "windows never join" for 0.
+func JoinText(minutes int) string {
+	if minutes == 0 {
+		return "windows never join"
+	}
+	return "join windows " + JoinGap(minutes)
+}
+
+// JoinGap is "up to 15 min apart", or "never" for 0.
+func JoinGap(minutes int) string {
+	if minutes == 0 {
+		return "never"
+	}
+	return fmt.Sprintf("up to %d min apart", minutes)
+}
+
+// ParseJoinMinutes reads a --join-minutes value: a whole number from 0 to 120, a multiple of 5, or inherit (nil).
+func ParseJoinMinutes(s string) (*int, error) {
+	if s == "inherit" {
+		return nil, nil
+	}
+	if n, err := strconv.ParseUint(s, 10, 8); err == nil && n <= 120 && n%5 == 0 {
+		minutes := int(n)
+		return &minutes, nil
+	}
+	return nil, errors.New("a whole number from 0 to 120, a multiple of 5, or inherit")
+}

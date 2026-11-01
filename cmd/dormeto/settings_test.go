@@ -18,6 +18,7 @@ import (
 type globalAPI struct {
 	mu     sync.Mutex
 	writes []string
+	join   string // the members the answers add for joinMinutes ("" for a manager that has none)
 }
 
 func (a *globalAPI) handler(w http.ResponseWriter, r *http.Request) {
@@ -27,10 +28,10 @@ func (a *globalAPI) handler(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.Unlock()
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/iam/settings/workloads":
-		io.WriteString(w, `{"hibernate":true,"updatedAt":"2026-10-19T10:00:00.000Z","updatedBy":"ann@x.io"}`)
+		io.WriteString(w, `{"hibernate":true,`+a.join+`"updatedAt":"2026-10-19T10:00:00.000Z","updatedBy":"ann@x.io"}`)
 	case r.Method == http.MethodPut && r.URL.Path == "/iam/settings/workloads":
 		a.writes = append(a.writes, string(body))
-		io.WriteString(w, `{"hibernate":false,"updatedAt":"2026-10-19T12:00:00.000Z","updatedBy":"ann@x.io","note":"routers apply it at their next check, within 5 minutes"}`)
+		io.WriteString(w, `{"hibernate":false,`+a.join+`"updatedAt":"2026-10-19T12:00:00.000Z","updatedBy":"ann@x.io","note":"routers apply it at their next check, within 5 minutes"}`)
 	default:
 		w.WriteHeader(404)
 	}
@@ -75,6 +76,84 @@ func TestSettingsSetRefusesABadOrMissingValueBeforeSending(t *testing.T) {
 	}
 }
 
+func TestSettingsShowPrintsTheJoinOfTheOrganization(t *testing.T) {
+	for join, want := range map[string]string{
+		`"joinMinutes":30,`:   "Join windows: up to 30 min apart\n",
+		`"joinMinutes":0,`:    "Join windows: never\n",
+		`"joinMinutes":null,`: "Join windows: not set (up to 15 min apart by default)\n",
+	} {
+		r := runSettings(t, &globalAPI{join: join}, "show")
+		if r.exit != 0 || !strings.Contains(r.stdout, "Hibernate: on (changed by ann@x.io at 2026-10-19 10:00 UTC)\n"+want) {
+			t.Errorf("%s: exit %d, stdout %q", join, r.exit, r.stdout)
+		}
+	}
+	// A manager that has none: nothing new.
+	if r := runSettings(t, &globalAPI{}, "show"); r.exit != 0 || strings.Contains(r.stdout, "Join") {
+		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
+	}
+	r := runSettings(t, &globalAPI{join: `"joinMinutes":null,`}, "show", "--json")
+	if r.exit != 0 || !strings.Contains(r.stdout, `"joinMinutes": null`) {
+		t.Errorf("--json: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}
+
+// Only what is given is sent: an absent key stays as it was, and inherit is null.
+func TestSettingsSetSendsTheJoinItIsGiven(t *testing.T) {
+	for _, c := range []struct {
+		args       []string
+		join, sent string
+		want       string
+	}{
+		{[]string{"--join-minutes", "30"}, `"joinMinutes":30,`, `{"joinMinutes":30}`, "Join windows: up to 30 min apart\n"},
+		{[]string{"--join-minutes", "0"}, `"joinMinutes":0,`, `{"joinMinutes":0}`, "Join windows: never\n"},
+		{[]string{"--join-minutes", "inherit"}, `"joinMinutes":null,`, `{"joinMinutes":null}`, "Join windows: not set (up to 15 min apart by default)\n"},
+		{[]string{"--hibernate", "true", "--join-minutes", "45"}, `"joinMinutes":45,`, `{"hibernate":true,"joinMinutes":45}`, "Join windows: up to 45 min apart\n"},
+		{[]string{"--hibernate", "false"}, `"joinMinutes":45,`, `{"hibernate":false}`, "Join windows: up to 45 min apart\n"},
+	} {
+		a := &globalAPI{join: c.join}
+		r := runSettings(t, a, append([]string{"set"}, c.args...)...)
+		if r.exit != 0 || !reflect.DeepEqual(a.writes, []string{c.sent}) {
+			t.Fatalf("%q: exit %d, writes %q, stderr %q", c.args, r.exit, a.writes, r.stderr)
+		}
+		if !strings.Contains(r.stdout, c.want) || !strings.Contains(r.stdout, "within 5 minutes") {
+			t.Errorf("%q: stdout %q", c.args, r.stdout)
+		}
+	}
+}
+
+func TestSettingsSetRefusesABadJoinBeforeSending(t *testing.T) {
+	for _, args := range [][]string{
+		{"set", "--join-minutes", "7"}, {"set", "--join-minutes", "125"}, {"set", "--join-minutes", "-5"}, {"set", "--join-minutes", ""},
+		{"set", "--join-minutes", "soon"}, {"set", "--hibernate", "true", "--join-minutes", "7"}, {"set", "--hibernate", "maybe", "--join-minutes", "15"},
+	} {
+		a := &globalAPI{}
+		r := runSettings(t, a, args...)
+		if r.exit != 2 || len(a.writes) != 0 {
+			t.Errorf("%q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
+		}
+	}
+}
+
+// A manager 0.20.0 asks for hibernate: alone, --join-minutes is refused; beside it, joinMinutes is dropped without a word.
+func TestSettingsSetOnAManagerWithoutTheJoinSaysSo(t *testing.T) {
+	refuses := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		io.WriteString(w, `{"error":"bad_request","message":"hibernate must be true or false"}`)
+	}
+	r := runFleetWith(t, &fakeAPI{custom: refuses}, "eu-west-1", nil, "settings", "set", "--join-minutes", "30")
+	if r.exit != 1 || !strings.Contains(r.stderr, "--join-minutes needs a manager after 0.20.0 (hibernate must be true or false)") {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+	r = runFleetWith(t, &fakeAPI{custom: refuses}, "eu-west-1", nil, "settings", "set", "--hibernate", "maybe")
+	if r.exit != 2 {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+	r = runSettings(t, &globalAPI{}, "set", "--hibernate", "true", "--join-minutes", "30")
+	if r.exit != 1 || !strings.Contains(r.stderr, "--join-minutes was not applied: it needs a manager after 0.20.0") {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
 func TestParseHibernate(t *testing.T) {
 	for in, want := range map[string]string{"true": "true", "false": "false", "inherit": "nil"} {
 		got, err := parseHibernate(in, true)
@@ -97,6 +176,89 @@ func TestRoutersSettingsInheritSendsNull(t *testing.T) {
 	r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "routers", "settings", "r1", "--hibernate", "inherit")
 	if want := []string{`PUT /iam/routers/r1/settings {"hibernate":null}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
 		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+// The answer of a router's settings, as a router 0.36.0 words it.
+func routerJoinAPI(joinMinutes string, writes *[]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		*writes = append(*writes, r.Method+" "+r.URL.Path+" "+string(body))
+		io.WriteString(w, `{"level":"router","settings":{"hibernate":true,"joinMinutes":`+joinMinutes+`,"by":"ann@x.io","at":"2026-10-19T10:00:00.000Z"}}`)
+	}
+}
+
+// Only what is given is sent, inherit as null, and never a {} that would mean no change.
+func TestRoutersSettingsSendsTheJoinItIsGiven(t *testing.T) {
+	for _, c := range []struct {
+		args              []string
+		answer, sent, say string
+	}{
+		{[]string{"--join-minutes", "30"}, "30", `{"joinMinutes":30}`, "r1: join windows up to 30 min apart\n"},
+		{[]string{"--join-minutes", "0"}, "0", `{"joinMinutes":0}`, "r1: windows never join\n"},
+		{[]string{"--join-minutes", "inherit"}, "null", `{"joinMinutes":null}`, "r1: join windows inherit\n"},
+		{[]string{"--hibernate", "true", "--join-minutes", "45"}, "45", `{"hibernate":true,"joinMinutes":45}`, "r1: hibernate on, join windows up to 45 min apart\n"},
+		{[]string{"--hibernate", "true"}, "45", `{"hibernate":true}`, "r1: hibernate on\n"},
+	} {
+		var writes []string
+		r := runFleetWith(t, &fakeAPI{custom: routerJoinAPI(c.answer, &writes)}, "eu-west-1", nil, append([]string{"routers", "settings", "r1"}, c.args...)...)
+		if want := []string{"PUT /iam/routers/r1/settings " + c.sent}; r.exit != 0 || !reflect.DeepEqual(writes, want) {
+			t.Errorf("%q: exit %d, writes %q, stderr %q", c.args, r.exit, writes, r.stderr)
+		}
+		if r.stdout != c.say {
+			t.Errorf("%q: stdout %q", c.args, r.stdout)
+		}
+	}
+}
+
+func TestRoutersSettingsRefusesABadJoinOrNothingToSet(t *testing.T) {
+	for _, args := range [][]string{
+		{"r1"}, {"r1", "--join-minutes", "7"}, {"r1", "--join-minutes", "125"}, {"r1", "--join-minutes", ""}, {"r1", "--hibernate", "true", "--join-minutes", "soon"}, {"--join-minutes", "15"},
+	} {
+		a := &wrAPI{}
+		r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, append([]string{"routers", "settings"}, args...)...)
+		if r.exit != 2 || len(a.writes) != 0 {
+			t.Errorf("%q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
+		}
+	}
+}
+
+func TestRoutersSettingsConfirmsTheJoinOfSeveral(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--join-minutes", "30"}, "Set join minutes to 30 for prod-eu, prod-us?"},
+		{[]string{"--join-minutes", "inherit"}, "Set join minutes to inherit for prod-eu, prod-us?"},
+		{[]string{"--hibernate", "false", "--join-minutes", "0"}, "Set hibernate to off and join minutes to 0 for prod-eu, prod-us?"},
+	} {
+		var asked []string
+		runFleetWith(t, &fakeAPI{custom: (&wrAPI{}).handler()}, "eu-west-1", withTerminal(false, &asked), append([]string{"routers", "settings", "prod-eu", "prod-us"}, c.args...)...)
+		if len(asked) != 1 || asked[0] != c.want {
+			t.Errorf("%q: asked %q", c.args, asked)
+		}
+	}
+}
+
+// An older router refuses it, in its own words for a setting; a manager 0.20.0 refuses it alone and drops it beside hibernate.
+func TestRoutersSettingsOnAnOlderRouterOrManagerSaysSo(t *testing.T) {
+	answer := func(code int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			io.WriteString(w, body)
+		}
+	}
+	r := runFleetWith(t, &fakeAPI{custom: answer(400, `{"error":"bad_request","message":"settings: unknown setting joinMinutes"}`)}, "eu-west-1", nil, "routers", "settings", "r1", "--join-minutes", "30")
+	if r.exit != 1 || !strings.Contains(r.stderr, "r1: settings: unknown setting joinMinutes (recurrences and joined windows need router 0.36.0: upgrade the router to 0.36.0 or later)") {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+	r = runFleetWith(t, &fakeAPI{custom: answer(400, `{"error":"bad_request","message":"hibernate must be true, false or null"}`)}, "eu-west-1", nil, "routers", "settings", "r1", "--join-minutes", "30")
+	if r.exit != 1 || !strings.Contains(r.stderr, "r1: --join-minutes needs a manager after 0.20.0 (hibernate must be true, false or null)") {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+	r = runFleetWith(t, &fakeAPI{custom: answer(200, `{"level":"router","settings":{"hibernate":true,"by":"ann@x.io","at":"2026-10-19T10:00:00.000Z"}}`)}, "eu-west-1", nil, "routers", "settings", "r1", "--hibernate", "true", "--join-minutes", "30")
+	if r.exit != 1 || !strings.Contains(r.stdout, "r1: hibernate on, join windows not applied: it needs a manager after 0.20.0\n") {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }
 
@@ -190,6 +352,39 @@ func TestRoutersShowPrintsTheHibernation(t *testing.T) {
 	}
 	if out := show(""); strings.Contains(out, "hibernate") {
 		t.Errorf("an old router prints a hibernate line:\n%s", out)
+	}
+}
+
+func TestRoutersShowPrintsTheJoinOfTheWindows(t *testing.T) {
+	show := func(extra string) string {
+		h := func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, strings.Replace(routerDetailsAnswer, `"pauses":`, extra+`"pauses":`, 1))
+		}
+		r := runFleetWith(t, &fakeAPI{custom: h}, "eu-west-1", nil, "routers", "show", "prod-eu")
+		if r.exit != 0 {
+			t.Fatalf("exit %d: %s", r.exit, r.stderr)
+		}
+		return r.stdout
+	}
+	re := func(value string) *regexp.Regexp {
+		return regexp.MustCompile(`(?m)^ +join windows +` + regexp.QuoteMeta(value) + `$`)
+	}
+	for name, c := range map[string]struct{ extra, want string }{
+		"own":      {`"settings":{"hibernate":null,"joinMinutes":30,"by":"ann@x.io","at":"2026-10-19T10:00:00.000Z"},"managerSettings":null,`, "up to 30 min apart (set on this router by ann@x.io, 2026-10-19 10:00 UTC)"},
+		"never":    {`"settings":{"hibernate":null,"joinMinutes":0,"by":"ann@x.io","at":null},"managerSettings":null,`, "never (set on this router by ann@x.io)"},
+		"manager":  {`"settings":{"hibernate":null,"joinMinutes":null,"by":null,"at":null},"managerSettings":{"url":"s3://b/settings.json","hibernate":true,"joinMinutes":45,"readAt":"2026-10-19T11:58:00.000Z","error":null},`, "inherit (manager: up to 45 min apart, read 2m ago)"},
+		"failed":   {`"settings":{"hibernate":null,"joinMinutes":null},"managerSettings":{"url":"s3://b/settings.json","hibernate":true,"joinMinutes":0,"readAt":"2026-10-19T11:58:00.000Z","error":"AccessDenied"},`, "inherit (manager: never, read 2m ago; last read failed: AccessDenied)"},
+		"unset":    {`"settings":{"hibernate":null,"joinMinutes":null},"managerSettings":{"url":"s3://b/settings.json","hibernate":true,"joinMinutes":null,"readAt":"2026-10-19T11:58:00.000Z","error":null},`, "inherit (built-in default: up to 15 min apart)"},
+		"no url":   {`"settings":{"hibernate":null,"joinMinutes":null},"managerSettings":{"url":null},`, "inherit (built-in default: up to 15 min apart)"},
+		"no block": {`"settings":{"hibernate":null,"joinMinutes":null},"managerSettings":null,`, "inherit (built-in default: up to 15 min apart)"},
+	} {
+		if out := show(c.extra); !re(c.want).MatchString(out) {
+			t.Errorf("%s: no %q in\n%s", name, c.want, out)
+		}
+	}
+	// A router before the field answers settings without it.
+	if out := show(`"settings":{"hibernate":null,"by":null,"at":null},"managerSettings":null,`); strings.Contains(out, "join") {
+		t.Errorf("an old router prints a join line:\n%s", out)
 	}
 }
 

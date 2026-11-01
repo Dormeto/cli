@@ -170,7 +170,7 @@ func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Comman
 		"Set the schedule of a workload from a JSON file: {\"timeZone\", \"windows\": [{\"kind\": \"nap\"|\"awake\", \"days\", \"start\", \"end\", \"wake\"}],\n"+
 			"\"exceptions\", \"maxNapDays\"}. The controller checks it and says what is wrong, if anything. The file is the one\n"+
 			"'schedule show --json' prints under \"schedule\". From router 0.36.0, a window also takes \"repeat\" (in place of \"days\"),\n"+
-			"\"from\" and \"until\"; the README has the JSON.",
+			"\"from\" and \"until\", and the schedule \"joinMinutes\"; the README has the JSON.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.File = file
 			return runs.scheduleSet(ctx, d, r)

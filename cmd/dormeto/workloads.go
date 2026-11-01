@@ -493,8 +493,9 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "show <router>/<workload>", Short: "Show a workload's schedule and its next events",
 		Long: "Show the schedule: the time zone, the windows (a recurrence in words), the exceptions, the maximum nap and the\n" +
 			"next events, in the schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none,\n" +
-			"and left out when the router, before 0.31.0, does not report schedules), which\n" +
-			"`dormeto aws workloads schedule set --file -` accepts back.",
+			"and left out when the router, before 0.31.0, does not report schedules), and from router 0.36.0 joinMinutes,\n" +
+			"joinFrom and joinInherited, the join in force beside the schedule's own. `dormeto aws workloads schedule set\n" +
+			"--file -` accepts it back and sends its schedule.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := (&targetFlags{}).check(args, true); err != nil {
@@ -506,6 +507,7 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					Schedule       json.RawMessage   `json:"schedule"`
 					Next           []fleet.NextEvent `json:"next"`
 					MaintenanceDue string            `json:"maintenanceDue"`
+					schedule.Join
 				}
 				if err := api.Get(ctx, t.Path(""), nil, &st); err != nil {
 					return fmt.Errorf("%s: %w", t, err)
@@ -523,7 +525,8 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						Schedule       *json.RawMessage  `json:"schedule,omitempty"`
 						Next           []fleet.NextEvent `json:"next"`
 						MaintenanceDue *string           `json:"maintenanceDue"`
-					}{sched, orNext(st.Next), nilIfEmpty(st.MaintenanceDue)})
+						schedule.Join
+					}{sched, orNext(st.Next), nilIfEmpty(st.MaintenanceDue), st.Join})
 				}
 				if unreported {
 					fmt.Fprintf(out, "%s: the router does not report schedules (upgrade it to 0.31.0 or later)\n", t)
@@ -561,6 +564,9 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if s.MaxNapDays > 0 {
 					fmt.Fprintf(out, "  maximum nap %d %s\n", s.MaxNapDays, fleet.Plural(s.MaxNapDays, "day"))
 				}
+				if line := st.Line(); line != "" {
+					fmt.Fprintf(out, "  %s\n", line)
+				}
 				s.PrintNext(out, loc, st.Next, st.MaintenanceDue)
 				return nil
 			})
@@ -587,7 +593,7 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"               {\"kind\": \"nap\", \"days\": [\"sat\"], \"start\": \"00:00\", \"end\": \"00:00\", \"wake\": \"header\"}],\n" +
 			"   \"exceptions\": [\"2026-12-25\"], \"maxNapDays\": 7}\n\n" +
 			"From router 0.36.0, a window also takes repeat (daily, weekly, monthly or a cron expression, in place of days),\n" +
-			"from and until; the README has the JSON:\n\n" +
+			"from and until, and the schedule joinMinutes; the README has the JSON:\n\n" +
 			"  {\"kind\": \"nap\", \"start\": \"20:00\", \"end\": \"07:00\", \"from\": \"2027-01-04\",\n" +
 			"   \"repeat\": {\"pattern\": \"weekly\", \"interval\": 2, \"days\": [\"mon\", \"thu\"]}}",
 		SilenceErrors: true,
@@ -641,7 +647,7 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 func needsRecurrenceRouter(err error) error {
 	var ae *fleet.APIError
 	if errors.As(err, &ae) && schedule.RefusedAsUnknown(ae.Message) {
-		return fmt.Errorf("%w (recurrences need router %s: upgrade the router to %s or later)", err, schedule.RecurrenceRouter, schedule.RecurrenceRouter)
+		return fmt.Errorf("%w (recurrences and joined windows need router %s: upgrade the router to %s or later)", err, schedule.RecurrenceRouter, schedule.RecurrenceRouter)
 	}
 	return err
 }

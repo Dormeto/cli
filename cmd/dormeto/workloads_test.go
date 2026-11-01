@@ -30,6 +30,7 @@ type wlAPI struct {
 	schedule  string // the schedule GET …/{id} reports ("" for null)
 	oldRouter bool   // the status has no schedule key (router before 0.31.0)
 	putSched  string // the schedule member of the PUT's answer ("" for {})
+	join      string // members the status adds beside the schedule (a router 0.36.0: joinMinutes, joinFrom, joinInherited)
 }
 
 func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
@@ -89,6 +90,9 @@ func (a *wlAPI) handler(t *testing.T) http.HandlerFunc {
 			}
 			if a.oldRouter {
 				st = `{"state":"AWAKE"}`
+			}
+			if a.join != "" {
+				st = strings.TrimSuffix(st, "}") + "," + a.join + "}"
 			}
 			io.WriteString(w, st)
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/schedule"):
@@ -524,13 +528,98 @@ func TestScheduleSetSendsARecurrenceTheRouterWillRefuse(t *testing.T) {
 func TestScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
 	a := &wlAPI{putCode: 400, putBody: `{"error":"bad_request","message":"windows[0].days: one or more of mon, tue, wed, thu, fri, sat, sun, each once; windows[0].repeat: unknown field; windows[0].from: unknown field"}`}
 	r := runWLStdin(t, a, nil, recurringSchedule, "schedule", "set", "prod-eu/w-1", "--file", "-")
-	if r.exit != 1 || !strings.Contains(r.stderr, "windows[0].repeat: unknown field; windows[0].from: unknown field (recurrences need router 0.36.0: upgrade the router to 0.36.0 or later)\n") {
+	if r.exit != 1 || !strings.Contains(r.stderr, "windows[0].repeat: unknown field; windows[0].from: unknown field (recurrences and joined windows need router 0.36.0: upgrade the router to 0.36.0 or later)\n") {
 		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
 	}
 	// This router's own refusal of a field in a repeat is not its age.
 	a = &wlAPI{putCode: 400, putBody: `{"error":"bad_request","message":"windows[0].repeat.frequency: unknown field"}`}
 	r = runWLStdin(t, a, nil, recurringSchedule, "schedule", "set", "prod-eu/w-1", "--file", "-")
 	if r.exit != 1 || strings.Contains(r.stderr, "0.36.0") {
+		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
+	}
+}
+
+const joinAnswer = `"joinMinutes":15,"joinFrom":"organization","joinInherited":{"joinMinutes":15,"joinFrom":"organization"}`
+
+func TestScheduleShowSaysTheJoinOfTheWindowsAndItsLevel(t *testing.T) {
+	for join, want := range map[string]string{
+		joinAnswer: "  join windows up to 15 min apart (organization)\n",
+		`"joinMinutes":0,"joinFrom":"workload","joinInherited":{"joinMinutes":15,"joinFrom":"default"}`: "  windows never join (workload)\n",
+		`"joinMinutes":30,"joinFrom":"router","joinInherited":{"joinMinutes":30,"joinFrom":"router"}`:   "  join windows up to 30 min apart (router)\n",
+	} {
+		r := runWL(t, &wlAPI{schedule: shownSchedule, join: join}, nil, "schedule", "show", "prod-eu/w-1")
+		if r.exit != 0 || !strings.Contains(r.stdout, "  maximum nap 7 days\n"+want+"  next\n") {
+			t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+		}
+	}
+	// An older router answers none of it: nothing new. No schedule says only that.
+	r := runWL(t, &wlAPI{schedule: shownSchedule}, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || strings.Contains(r.stdout, "join") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+	r = runWL(t, &wlAPI{join: joinAnswer}, nil, "schedule", "show", "prod-eu/w-1")
+	if r.exit != 0 || strings.Contains(r.stdout, "join") || !strings.Contains(r.stdout, "no schedule") {
+		t.Errorf("exit %d stdout %q", r.exit, r.stdout)
+	}
+}
+
+func TestScheduleShowJSONKeepsTheJoin(t *testing.T) {
+	join := `"joinMinutes":0,"joinFrom":"workload","joinInherited":{"joinMinutes":15,"joinFrom":"default"}`
+	r := runWL(t, &wlAPI{schedule: `{"timeZone":"Europe/Paris","windows":[],"joinMinutes":0}`, join: join}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	var shown map[string]any
+	if err := json.Unmarshal([]byte(r.stdout), &shown); r.exit != 0 || err != nil {
+		t.Fatalf("exit %d: %v: %s", r.exit, err, r.stdout)
+	}
+	inherited, _ := shown["joinInherited"].(map[string]any)
+	sched, _ := shown["schedule"].(map[string]any)
+	if v, ok := shown["joinMinutes"]; !ok || v != float64(0) || shown["joinFrom"] != "workload" || inherited["joinMinutes"] != float64(15) || inherited["joinFrom"] != "default" || sched["joinMinutes"] != float64(0) {
+		t.Errorf("shown %s", r.stdout)
+	}
+	// An older router: the keys stay out.
+	r = runWL(t, &wlAPI{schedule: shownSchedule}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	if strings.Contains(r.stdout, "join") {
+		t.Errorf("shown %s", r.stdout)
+	}
+}
+
+// What the file holds is sent, 0 included, to one target or by tag. From `show --json`, only the schedule's own value goes
+// back: the effective value beside it comes from another level and must not pin the workload to it.
+func TestScheduleSetSendsTheJoinOfTheFile(t *testing.T) {
+	own := `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00"}],"joinMinutes":0}`
+	for name, args := range map[string][]string{
+		"one target": {"schedule", "set", "prod-eu/w-1", "--file", "-"},
+		"by tag":     {"schedule", "set", "--tag", "team=payments", "--file", "-", "--yes"},
+	} {
+		a := &wlAPI{}
+		r := runWLStdin(t, a, nil, own, args...)
+		if r.exit != 0 || len(a.writes) == 0 {
+			t.Fatalf("%s: exit %d writes %q stderr %q", name, r.exit, a.writes, r.stderr)
+		}
+		for _, write := range a.writes {
+			if !strings.Contains(write, `"joinMinutes":0`) {
+				t.Errorf("%s: sent %s", name, write)
+			}
+		}
+	}
+	inherits := `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon"],"start":"08:30","end":"19:00"}]}`
+	shown := runWL(t, &wlAPI{schedule: inherits, join: joinAnswer}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	a := &wlAPI{}
+	r := runWLStdin(t, a, nil, shown.stdout, "schedule", "set", "prod-eu/w-2", "--file", "-")
+	if r.exit != 0 || len(a.writes) != 1 || strings.Contains(a.writes[0], "join") {
+		t.Errorf("exit %d writes %q stderr %q", r.exit, a.writes, r.stderr)
+	}
+	shown = runWL(t, &wlAPI{schedule: own, join: `"joinMinutes":0,"joinFrom":"workload"`}, nil, "schedule", "show", "prod-eu/w-1", "--json")
+	a = &wlAPI{}
+	r = runWLStdin(t, a, nil, shown.stdout, "schedule", "set", "prod-eu/w-2", "--file", "-")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"joinMinutes":0`) {
+		t.Errorf("exit %d writes %q stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestScheduleSetAJoinOnAnOlderRouterSaysItNeeds036(t *testing.T) {
+	a := &wlAPI{putCode: 400, putBody: `{"error":"bad_request","message":"joinMinutes: unknown field"}`}
+	r := runWLStdin(t, a, nil, `{"timeZone":"Europe/Paris","maxNapDays":7,"joinMinutes":30}`, "schedule", "set", "prod-eu/w-1", "--file", "-")
+	if r.exit != 1 || !strings.Contains(r.stderr, "joinMinutes: unknown field (recurrences and joined windows need router 0.36.0: upgrade the router to 0.36.0 or later)\n") {
 		t.Errorf("exit %d stderr %q", r.exit, r.stderr)
 	}
 }

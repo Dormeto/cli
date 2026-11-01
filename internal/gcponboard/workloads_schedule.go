@@ -123,7 +123,7 @@ func (x *run) needsRecurrenceRouter(err error) error {
 	if !errors.As(err, &e) || !schedule.RefusedAsUnknown(e.Message) {
 		return err
 	}
-	return &stop{1, fmt.Sprintf("%s\nRecurrences need a router of version %s or later. Upgrade it with: dormeto gcp install --project %s --region %s --image <the router's image, %s or later>",
+	return &stop{1, fmt.Sprintf("%s\nRecurrences and joined windows need a router of version %s or later. Upgrade it with: dormeto gcp install --project %s --region %s --image <the router's image, %s or later>",
 		refusal(err), schedule.RecurrenceRouter, x.n.project, x.n.region, schedule.RecurrenceRouter)}
 }
 
@@ -152,6 +152,7 @@ func (x *run) schedule(method string, body func() (any, error)) error {
 	var view struct {
 		Schedule   *scheduleOf `json:"schedule"`
 		NextEvents []nextEvent `json:"nextEvents"`
+		schedule.Join
 	}
 	if err := json.Unmarshal(raw, &view); err != nil {
 		return fmt.Errorf("the controller's answer is not a schedule: %w", err)
@@ -165,12 +166,12 @@ func (x *run) schedule(method string, body func() (any, error)) error {
 		if method == http.MethodPut {
 			x.say("The schedule of workload %s is set.", x.r.ID)
 		}
-		x.printSchedule(*view.Schedule, view.NextEvents)
+		x.printSchedule(*view.Schedule, view.NextEvents, view.Line())
 	}
 	return nil
 }
 
-func (x *run) printSchedule(s scheduleOf, events []nextEvent) {
+func (x *run) printSchedule(s scheduleOf, events []nextEvent, join string) {
 	x.say("Schedule of workload %s (set by %s, %s):", x.r.ID, s.By, s.At)
 	x.say("  time zone: %s", s.TimeZone)
 	for _, w := range s.Windows {
@@ -188,6 +189,9 @@ func (x *run) printSchedule(s scheduleOf, events []nextEvent) {
 	}
 	if s.MaxNapDays != nil {
 		x.say("  maxNapDays: %d", *s.MaxNapDays)
+	}
+	if join != "" {
+		x.say("  %s", join)
 	}
 	if len(events) == 0 {
 		x.say("No next event.")

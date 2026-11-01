@@ -1,19 +1,23 @@
 package main
 
 // `dormeto aws settings show|set`, `routers settings` and `workloads settings`: the hibernation setting of the manager's
-// workloads, at the three levels (the manager's default for every router, one router, one workload), through the
-// manager's /iam routes. Exit codes as the fleet commands.
+// workloads, at the three levels (the manager's default for every router, one router, one workload), and the join of
+// windows at the first two (a workload's is on its schedule), through the manager's /iam routes. Exit codes as the fleet
+// commands.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // parseHibernate reads a --hibernate value: true or false, and inherit (nil) where inherit is allowed.
@@ -38,12 +42,90 @@ func hibernateWord(b *bool) string {
 	return fleet.OnOff(*b)
 }
 
+// levelSettings is what --hibernate and --join-minutes ask of a level. Only what is given is sent: an absent key stays as
+// it was, so there is always a key, and never a {} that changes nothing.
+type levelSettings struct {
+	body    map[string]any
+	words   []string // "hibernate to on", "join minutes to 30"
+	joining bool
+	join    *int // nil to inherit
+}
+
+// readLevelSettings reads the two flags, refused before any call; inherit is whether --hibernate takes inherit.
+func readLevelSettings(c *cobra.Command, hibernate, join string, inherit bool) (levelSettings, error) {
+	l := levelSettings{body: map[string]any{}}
+	if c.Flags().Changed("hibernate") {
+		value, err := parseHibernate(hibernate, inherit)
+		if err != nil {
+			return l, err
+		}
+		l.body["hibernate"] = value
+		l.words = append(l.words, "hibernate to "+hibernateWord(value))
+	}
+	if c.Flags().Changed("join-minutes") {
+		value, err := schedule.ParseJoinMinutes(join)
+		if err != nil {
+			return l, usagef("--join-minutes: give %v", err)
+		}
+		l.body["joinMinutes"] = value
+		l.joining, l.join = true, value
+		l.words = append(l.words, "join minutes to "+joinWord(value))
+	}
+	if len(l.body) == 0 {
+		return l, usagef("give --hibernate or --join-minutes")
+	}
+	return l, nil
+}
+
+// joinWord is a value of --join-minutes as it was given.
+func joinWord(minutes *int) string {
+	if minutes == nil {
+		return "inherit"
+	}
+	return fmt.Sprint(*minutes)
+}
+
+// applied is whether an answer holds the minutes asked: a manager 0.20.0 passes hibernate on and drops the rest.
+func (l levelSettings) applied(answer *int) bool {
+	return !l.joining || l.join == nil || (answer != nil && *answer == *l.join)
+}
+
+// settingsRefusal says what a refusal of a level's settings means when the manager or the router is too old. A manager
+// 0.20.0 asks for hibernate; it is checked here, so that refusal is only of a --join-minutes without it.
+func settingsRefusal(err error) error {
+	var ae *fleet.APIError
+	if errors.As(err, &ae) && ae.Status == http.StatusBadRequest && strings.HasPrefix(ae.Message, "hibernate must be") {
+		return fmt.Errorf("--join-minutes needs a manager after 0.20.0 (%s)", ae.Message)
+	}
+	return needsRecurrenceRouter(needsManager019(err))
+}
+
 // globalSettings is the answer of GET and PUT /settings/workloads.
 type globalSettings struct {
-	Hibernate bool    `json:"hibernate"`
-	UpdatedAt *string `json:"updatedAt"`
-	UpdatedBy *string `json:"updatedBy"`
-	Note      string  `json:"note"`
+	Hibernate   bool            `json:"hibernate"`
+	JoinMinutes json.RawMessage `json:"joinMinutes"` // null when unset, empty from a manager that does not have it
+	UpdatedAt   *string         `json:"updatedAt"`
+	UpdatedBy   *string         `json:"updatedBy"`
+	Note        string          `json:"note"`
+}
+
+// joinLine is "Join windows: up to 30 min apart\n", "" for a manager that does not answer it.
+func (g globalSettings) joinLine() string {
+	if len(g.JoinMinutes) == 0 {
+		return ""
+	}
+	if minutes := g.joinMinutes(); minutes != nil {
+		return "Join windows: " + schedule.JoinGap(*minutes) + "\n"
+	}
+	return "Join windows: not set (" + schedule.JoinGap(schedule.JoinDefault) + " by default)\n"
+}
+
+func (g globalSettings) joinMinutes() *int {
+	var minutes *int
+	if json.Unmarshal(g.JoinMinutes, &minutes) != nil {
+		return nil
+	}
+	return minutes
 }
 
 // line is "Hibernate: on (changed by ann at 2026-10-19 10:00 CEST)", or "(never changed)".
@@ -73,17 +155,17 @@ func newSettings(deps fleetDeps) *cobra.Command {
 func newSettingsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use: "show", Short: "Show the manager's default hibernation of workloads", Args: noArgs, SilenceErrors: true,
+		Use: "show", Short: "Show the manager's default hibernation and join of windows of workloads", Args: noArgs, SilenceErrors: true,
 		Long: "Show whether the EC2 instances launched with hibernation are hibernated, not stopped, when a workload naps, by\n" +
-			"default in every router that reads the manager's settings, and who changed it and when. --json prints the\n" +
-			"manager's answer.",
+			"default in every router that reads the manager's settings, and who changed it and when, and the largest gap\n" +
+			"that joins two schedule windows of one kind. --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
 				if err := api.Get(ctx, "/settings/workloads", nil, &raw); err != nil {
 					return needsManager019(err)
 				}
-				return printRead(c, raw, asJSON, func(g globalSettings) string { return g.line(deps.now().Location()) + "\n" })
+				return printRead(c, raw, asJSON, func(g globalSettings) string { return g.line(deps.now().Location()) + "\n" + g.joinLine() })
 			})
 		},
 	}
@@ -93,32 +175,41 @@ func newSettingsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 
 func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		hibernate string
-		asJSON    bool
+		hibernate, join string
+		asJSON          bool
 	)
 	cmd := &cobra.Command{
-		Use: "set --hibernate true|false", Short: "Set the manager's default hibernation of workloads", Args: noArgs, SilenceErrors: true,
+		Use: "set [--hibernate true|false] [--join-minutes <minutes>|inherit]", Short: "Set the manager's default hibernation and join of windows of workloads", Args: noArgs, SilenceErrors: true,
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when a workload naps: true\n" +
 			"or false by default, for every router that reads the manager's settings and does not set its own, from its next\n" +
 			"check (within 5 minutes). Every other instance is stopped as before. A router's or a workload's own setting wins\n" +
-			"over it. Needs an administrator. --json prints the manager's answer.",
+			"over it. --join-minutes is the largest gap that joins two schedule windows of one kind, 0 to 120, a multiple of\n" +
+			"5, 0 never joins; inherit unsets it, and the default is 15. What is not given stays as it was. Needs an\n" +
+			"administrator. --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			value, err := parseHibernate(hibernate, false)
+			settings, err := readLevelSettings(c, hibernate, join, false)
 			if err != nil {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
-				if err := api.Put(ctx, "/settings/workloads", map[string]bool{"hibernate": *value}, &raw); err != nil {
-					return needsManager019(err)
+				if err := api.Put(ctx, "/settings/workloads", settings.body, &raw); err != nil {
+					return settingsRefusal(err)
 				}
-				return printRead(c, raw, asJSON, func(g globalSettings) string {
-					return g.line(deps.now().Location()) + "\n" + g.Note + "\n"
+				err := printRead(c, raw, asJSON, func(g globalSettings) string {
+					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.Note + "\n"
 				})
+				var g globalSettings
+				if err == nil && json.Unmarshal(raw, &g) == nil && !settings.applied(g.joinMinutes()) {
+					fmt.Fprintln(c.ErrOrStderr(), "--join-minutes was not applied: it needs a manager after 0.20.0")
+					return exitCode(1)
+				}
+				return err
 			})
 		},
 	}
-	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true or false (required)")
+	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true or false")
+	cmd.Flags().StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5; inherit unsets it (default 15)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }

@@ -112,10 +112,12 @@ type Server struct {
 	Workloads    map[string]string
 	WorkloadDocs map[string]map[string]any
 	// Schedules are the workloads' schedules, by ID; NextEvents the events GET .../schedule answers while one is set;
-	// ScheduleProblem, when set, makes PUT .../schedule refuse with a 400 saying it.
+	// ScheduleProblem, when set, makes PUT .../schedule refuse with a 400 saying it; ScheduleJoin, members its answers add
+	// (a router 0.36.0: joinMinutes, joinFrom, joinInherited).
 	Schedules       map[string]map[string]any
 	NextEvents      []any
 	ScheduleProblem string
+	ScheduleJoin    map[string]any
 	// SQLInstances are the project's Cloud SQL instances, by name, with their region.
 	SQLInstances map[string]string
 	// ControllerBelow035 plays a controller older than 0.35.0: no route for a workload's schedule, pause and resume, and a

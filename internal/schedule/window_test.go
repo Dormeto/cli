@@ -119,19 +119,78 @@ func TestFarReachIsTheRoutersLongHorizon(t *testing.T) {
 
 func TestRefusedAsUnknownIsARouterBefore036(t *testing.T) {
 	for message, want := range map[string]bool{
-		"windows[0].repeat: unknown field":                                                true,
-		"windows[0].days: one or more of mon; windows[12].repeat: unknown field":          true,
-		"windows[1].from: unknown field":                                                  true,
-		"windows[1].until: unknown field; windows[1].from: unknown field":                 true,
-		"windows[0].repeat.frequency: unknown field":                                      false, // this router, a field of repeat it does not know
-		"windows[0].foo: unknown field":                                                   false,
-		"windows[0].from: a date YYYY-MM-DD":                                              false,
-		"windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week": false,
-		"repeat: unknown field":                                                           false,
-		"":                                                                                false,
+		"windows[0].repeat: unknown field":                                                     true,
+		"windows[0].days: one or more of mon; windows[12].repeat: unknown field":               true,
+		"windows[1].from: unknown field":                                                       true,
+		"windows[1].until: unknown field; windows[1].from: unknown field":                      true,
+		"windows[0].repeat.frequency: unknown field":                                           false, // this router, a field of repeat it does not know
+		"windows[0].foo: unknown field":                                                        false,
+		"windows[0].from: a date YYYY-MM-DD":                                                   false,
+		"windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week":      false,
+		"repeat: unknown field":                                                                false,
+		"":                                                                                     false,
+		"joinMinutes: unknown field":                                                           true,
+		"maxNapDays: a whole number; joinMinutes: unknown field":                               true,
+		"settings: unknown setting joinMinutes":                                                true, // a router's settings, in an older router's words
+		"settings: unknown setting other":                                                      false,
+		"joinMinutes: a whole number from 0 to 120, a multiple of 5":                           false,
+		"settings: joinMinutes must be a whole number from 0 to 120, a multiple of 5, or null": false,
 	} {
 		if got := RefusedAsUnknown(message); got != want {
 			t.Errorf("%q: %v", message, got)
+		}
+	}
+}
+
+func TestJoinSaysTheValueAndItsLevel(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"joinMinutes":15,"joinFrom":"organization","joinInherited":{"joinMinutes":15,"joinFrom":"default"}}`: "join windows up to 15 min apart (organization)",
+		`{"joinMinutes":0,"joinFrom":"workload"}`:                                                              "windows never join (workload)",
+		`{"joinMinutes":120}`:  "join windows up to 120 min apart",
+		`{}`:                   "", // a router before the field
+		`{"joinMinutes":null}`: "",
+		`{"joinMinutes":"soon","joinFrom":"router"}`: "",
+	} {
+		var j Join
+		if err := json.Unmarshal([]byte(in), &j); err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		if got := j.Line(); got != want {
+			t.Errorf("%s: %q", in, got)
+		}
+	}
+}
+
+// The fields go through as the router answered them: 0 and the inherited value kept, nothing added for an older router.
+func TestJoinPassesThroughJSON(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"joinMinutes":0,"joinFrom":"workload","joinInherited":{"joinMinutes":15,"joinFrom":"default"}}`: `{"joinMinutes":0,"joinFrom":"workload","joinInherited":{"joinMinutes":15,"joinFrom":"default"}}`,
+		`{}`: `{}`,
+	} {
+		var j Join
+		if err := json.Unmarshal([]byte(in), &j); err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(j)
+		if err != nil || string(got) != want {
+			t.Errorf("%s: %s, %v", in, got, err)
+		}
+	}
+}
+
+func TestParseJoinMinutes(t *testing.T) {
+	for in, want := range map[string]int{"0": 0, "5": 5, "15": 15, "120": 120} {
+		got, err := ParseJoinMinutes(in)
+		if err != nil || got == nil || *got != want {
+			t.Errorf("%q: %v, %v", in, got, err)
+		}
+	}
+	if got, err := ParseJoinMinutes("inherit"); err != nil || got != nil {
+		t.Errorf("inherit: %v, %v", got, err)
+	}
+	for _, in := range []string{"", "7", "125", "-5", "+5", "1.5", "15m", "INHERIT", "1000", "null"} {
+		if got, err := ParseJoinMinutes(in); err == nil {
+			t.Errorf("%q accepted: %v", in, got)
 		}
 	}
 }
