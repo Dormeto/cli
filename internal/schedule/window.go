@@ -63,6 +63,9 @@ func (w Window) Text() string {
 			return unreadable
 		}
 	}
+	if r.Pattern == "daily" && r.Interval <= 1 && w.From != "" && w.From == w.Until { // the dashboard's Do not repeat
+		return "Once on " + w.From + ", " + w.hours()
+	}
 	how := r.text(w.From)
 	if how == "" {
 		return unreadable

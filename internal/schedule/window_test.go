@@ -19,6 +19,11 @@ func TestTextSaysTheRecurrenceInWords(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily"}}`, "Every day, 08:00–12:00"},
 		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily","interval":1}}`, "Every day, 08:00–12:00"},
+		// Do not repeat: daily on one day.
+		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily"},"from":"2027-01-04","until":"2027-01-04"}`, "Once on 2027-01-04, 08:00–12:00"},
+		{`{"start":"20:00","end":"07:00","repeat":{"pattern":"daily","interval":1},"from":"2027-01-04","until":"2027-01-04"}`, "Once on 2027-01-04, 20:00–07:00 next day"},
+		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily","interval":2},"from":"2027-01-04","until":"2027-01-04"}`, "Every 2 days, 08:00–12:00, from 2027-01-04, until 2027-01-04"},
+		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily"},"from":"2027-01-04","until":"2027-01-05"}`, "Every day, 08:00–12:00, from 2027-01-04, until 2027-01-05"},
 		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily","interval":3},"from":"2027-01-04"}`, "Every 3 days, 08:00–12:00, from 2027-01-04, no end date"},
 		{`{"start":"20:00","end":"07:00","repeat":{"pattern":"weekly","interval":2,"days":["mon","thu"]},"from":"2027-01-04"}`, "Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date"},
 		{`{"start":"20:00","end":"07:00","repeat":{"pattern":"weekly","days":["thu","mon"]},"from":"2027-01-04","until":"2027-06-30"}`, "Weekly on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, until 2027-06-30"},
