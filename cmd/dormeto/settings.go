@@ -66,7 +66,7 @@ func newSettings(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
 	cmd := fleetCommand("settings", "Show and set the manager's defaults for every router's workloads")
 	f.bind(cmd)
-	cmd.AddCommand(newSettingsShow(f, deps), newSettingsSet(f, deps))
+	cmd.AddCommand(newSettingsShow(f, deps), newSettingsSet(f, deps), newSettingsWaitingPage(f, deps))
 	return cmd
 }
 

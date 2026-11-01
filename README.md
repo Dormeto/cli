@@ -640,6 +640,9 @@ needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pau
 | `workloads settings` | `PUT /workloads/{router}/{id}/settings` |
 | `routers description` | `PUT /routers/{router}/description`, `DELETE` on the same path |
 | `workloads description` | `PUT /workloads/{router}/{id}/description`, `DELETE` on the same path |
+| `workloads waiting-page set`, `clear` | `PUT /workloads/{router}/{id}/waiting-page`, `DELETE` on the same path |
+| `routers waiting-page set`, `clear` | `PUT /routers/{router}/waiting-page`, `DELETE` on the same path |
+| `settings waiting-page set`, `clear` | `PUT /settings/waiting-page`, `DELETE` on the same path |
 | `workloads schedule set`, `clear` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
 | `workloads exclude`, `exclusions add` | `POST /exclusions` |
 | `exclusions lift` | `DELETE /exclusions/{id}` |
@@ -981,6 +984,52 @@ it, where its runbook is. The dashboard draws it; the CLI prints it as written.
   `{"description": …}`, as the manager answers a read or a write.
 - `workloads show` and `routers show` print the description, indented, under their header lines; nothing for none, or
   for a manager before 0.19.0.
+
+### Waiting page
+
+```sh
+dormeto workloads waiting-page show <router>/<workload> [--json]
+dormeto workloads waiting-page set <router>/<workload> [--icon auto|none|<file>] [--title <text>] [--description <text>]
+dormeto workloads waiting-page set <router>/<workload> --html <file or ->
+dormeto workloads waiting-page clear <router>/<workload>
+dormeto routers waiting-page show <router> [--json]
+dormeto routers waiting-page set <router> [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->
+dormeto routers waiting-page clear <router>
+dormeto settings waiting-page show [--json]
+dormeto settings waiting-page set [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->
+dormeto settings waiting-page clear
+```
+
+```sh
+dormeto settings waiting-page set --title "Acme portal" --icon ./logo.svg --description "Our test environments sleep at night."
+dormeto workloads waiting-page set prod-eu/w-1 --title "Shop (staging)"
+dormeto routers waiting-page set prod-eu --html ./waiting.html
+cat waiting.html | dormeto workloads waiting-page set prod-eu/w-1 --html -
+dormeto workloads waiting-page show prod-eu/w-1
+dormeto workloads waiting-page clear prod-eu/w-1
+```
+
+The page a visitor sees while a workload wakes can carry your name, icon and words, or be your own HTML. One document is
+kept per level: the workload, its router and the organization (`settings waiting-page`, for every router). The most
+specific level with a document decides the mode; a template takes each of its icon, title and description from the most
+specific template that has it. Needs routers 0.35.0 or later (an older router answers `upgrade the router to 0.35.0`,
+exit 1) and a manager that serves the waiting-page routes.
+
+- `set` replaces that level's document. `--title` (at most 80 characters, one line), `--description` (at most 500
+  characters) and `--icon` write a template; a field left out is inherited. `--icon auto` is the favicon the router reads
+  from the application, `none` shows no icon, and a file is a PNG, JPEG, WebP, SVG or ICO of at most 64 KiB, its type
+  taken from its bytes (a file named `auto` or `none` is given as `./auto`). `--html` writes a custom page instead: a
+  file or `-` for standard input, UTF-8, not blank, at most 256 KiB. `--html` with any of the template's flags, or `set`
+  with none of them, is a usage error. The icon and the page are checked before any call (exit 2).
+- A custom page runs scripts on the application's own address, so setting, replacing or clearing one needs an
+  administrator at every level; templates need an administrator for a router or the organization and an operator for a
+  workload. The refusal is printed (exit 1). A workload written by Terraform is refused: set `waiting_page` in its
+  workload module. The page's warnings (no `data-dormeto="status"` element, a Content-Security-Policy meta tag) are
+  printed after the write, which goes through.
+- `show` prints the effective mode, icon, title and description with the level each comes from, for a workload the cached
+  favicon (its type, size and date, or why there is none), who set the level and when, and the warnings. An icon or a
+  page is printed as its type and size, never its content; `--json` prints the manager's whole answer.
+- `clear` removes the level's document, which then inherits.
 
 ### Onboarding, offboarding and excluding workloads
 

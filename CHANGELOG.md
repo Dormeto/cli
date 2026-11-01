@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- The branded waiting page (router 0.35.0): `dormeto workloads waiting-page`, `routers waiting-page` and `settings waiting-page`
+  (the organization's) `show`, `set` and `clear`. `set` replaces the level's document: `--title`, `--description` and
+  `--icon auto|none|<file>` write a template, `--html <file or ->` writes a custom page, and mixing them is a usage error
+  (exit 2). An icon file (PNG, JPEG, WebP, SVG or ICO, at most 64 KiB, its type taken from its bytes) and a page (UTF-8,
+  not blank, at most 256 KiB) are checked before any call (exit 2). `show` prints the effective icon, title and description
+  with the level each comes from, the cached favicon with its date or why there is none, and an icon or a page as its type
+  and size, never its content; `--json` prints everything. A write prints the page's warnings; a custom page needs an
+  administrator, and a router before 0.35.0 is refused with its upgrade sentence. The README has a Waiting page section.
+
 ## 0.8.0
 
 - Google Cloud (router 0.34.0, the manager is unchanged): `dormeto gcp check`, `install`, `status` and `uninstall` for a
