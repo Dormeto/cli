@@ -64,7 +64,7 @@ func TestGcpWorkloadsOnboardReadsTheFlags(t *testing.T) {
 func TestGcpWorkloadsOnboardReadsTheFeaturesFlags(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be",
 		"--load-balancer", "regional", "--wake-timeout", "900", "--cloud-sql", "db-1", "--cloud-sql", "db-2", "--gke-cluster", "europe-west1-b/c", "--yes")
-	if exit != 0 || errs != "" || len(calls) != 1 {
+	if exit != 0 || errs != untriedWarning || len(calls) != 1 {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	r := calls[0].r
@@ -218,7 +218,7 @@ func TestGcpWorkloadsAccessReadsTheFlags(t *testing.T) {
 			want.Yes = true
 		}
 		calls, errs, exit := gcpRan(t, 0, args...)
-		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads access "+verb {
+		if exit != 0 || errs != untriedWarning || len(calls) != 1 || calls[0].run != "workloads access "+verb {
 			t.Fatalf("%s: %d %q %v", verb, exit, errs, calls)
 		}
 		if !reflect.DeepEqual(calls[0].r, want) {

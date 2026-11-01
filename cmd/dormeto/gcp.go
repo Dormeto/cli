@@ -97,9 +97,25 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 				return exitCode(2)
 			}
 		}
+		warnUntried(c)
 		return nil
 	}
 	return cmd
+}
+
+// warnUntried says, once per command, that Cloud SQL and GKE have never run against Google; it goes on.
+func warnUntried(c *cobra.Command) {
+	untried := c.Flags().Changed("cloud-sql") || c.Flags().Changed("gke-cluster")
+	if with, err := c.Flags().GetStringSlice("with"); err == nil {
+		for _, w := range with {
+			if w == "cloud-sql" || w == "gke" {
+				untried = true
+			}
+		}
+	}
+	if untried {
+		fmt.Fprintln(c.ErrOrStderr(), "dormeto: Cloud SQL and GKE on Google Cloud have never run against Google: try them in a project you can lose.")
+	}
 }
 
 func newGcpCheck(run gcpRun, version string) *cobra.Command {

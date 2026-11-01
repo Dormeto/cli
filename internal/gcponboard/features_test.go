@@ -47,7 +47,7 @@ func TestInstallWithCloudSQLPlansItsAPIRolesAndGrants(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "  + API sqladmin.googleapis.com\n",
-		`  + role dormetoRouterDatabasesRead "Dormeto router databases (read)" (1 permissions)`+"\n",
+		`  + role dormetoRouterDatabasesRead "Dormeto router databases (read)" (2 permissions)`+"\n",
 		`  + role dormetoRouterDatabases "Dormeto router databases" (1 permissions)`+"\n",
 		"  + grant projects/dormeto-dev/roles/dormetoRouterDatabasesRead to "+routerMember+" on the project\n",
 		"  + grant "+sqlPlan+"\n")

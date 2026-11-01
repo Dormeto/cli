@@ -224,7 +224,7 @@ func TestGcpUninstallIsWiredInTheRoot(t *testing.T) {
 func TestGcpWithIsCommaSeparatedAndRepeatable(t *testing.T) {
 	for _, cmd := range []string{"check", "install", "uninstall"} {
 		calls, errs, exit := gcpRan(t, 0, "gcp", cmd, "--project", "p", "--region", "europe-west1", "--with", "cloud-sql,gke", "--with", "gke")
-		if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.With, []string{"cloud-sql", "gke", "gke"}) {
+		if exit != 0 || errs != untriedWarning || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.With, []string{"cloud-sql", "gke", "gke"}) {
 			t.Errorf("%s: %d %q %+v", cmd, exit, errs, calls)
 		}
 		calls, _, _ = gcpRan(t, 0, "gcp", cmd, "--project", "p", "--region", "europe-west1")
@@ -261,5 +261,45 @@ func TestGcpInstallRefusesABadIPListBeforeAnyRun(t *testing.T) {
 		if exit != 2 || len(calls) != 0 || errs == "" {
 			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
 		}
+	}
+}
+
+const untriedWarning = "dormeto: Cloud SQL and GKE on Google Cloud have never run against Google: try them in a project you can lose.\n"
+
+func TestGcpWarnsOnceThatCloudSQLAndGKEHaveNeverRunAgainstGoogle(t *testing.T) {
+	for name, args := range map[string][]string{
+		"check --with":      {"gcp", "check", "--project", "p", "--with", "cloud-sql"},
+		"install --with":    {"gcp", "install", "--project", "p", "--region", "europe-west1", "--yes", "--with", "cloud-sql,gke"},
+		"uninstall --with":  {"gcp", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--with", "gke"},
+		"onboard cloud-sql": {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--cloud-sql", "db"},
+		"onboard gke":       {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c"},
+		"onboard both":      {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c", "--cloud-sql", "a", "--cloud-sql", "b2"},
+		"access show":       {"gcp", "workloads", "access", "show", "--project", "p", "--region", "r", "--gke-cluster", "z/c", "--namespace", "n", "--workload", "w"},
+		"access grant":      {"gcp", "workloads", "access", "grant", "--project", "p", "--region", "r", "--gke-cluster", "z/c", "--namespace", "n", "--workload", "w", "--yes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls, errs, exit := gcpRan(t, 0, args...)
+			if exit != 0 || len(calls) != 1 {
+				t.Fatalf("%d %q %v", exit, errs, calls)
+			}
+			if errs != untriedWarning {
+				t.Fatalf("stderr %q", errs)
+			}
+		})
+	}
+}
+
+func TestGcpDoesNotWarnWithoutThoseFlags(t *testing.T) {
+	for name, args := range map[string][]string{
+		"check":   {"gcp", "check", "--project", "p"},
+		"install": {"gcp", "install", "--project", "p", "--region", "europe-west1", "--yes"},
+		"onboard": {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls, errs, exit := gcpRan(t, 0, args...)
+			if exit != 0 || len(calls) != 1 || errs != "" {
+				t.Fatalf("%d %q %v", exit, errs, calls)
+			}
+		})
 	}
 }

@@ -21,22 +21,16 @@
         "compute.urlMaps.list",
         "compute.urlMaps.update",
         "compute.backendServices.get",
-        "compute.backendServices.list",
         "compute.backendServices.use",
         "compute.backendServices.create",
         "compute.backendServices.delete",
-        "compute.regionNetworkEndpointGroups.get",
         "compute.regionNetworkEndpointGroups.use",
-        "compute.healthChecks.get",
         "compute.globalForwardingRules.list",
         "compute.targetHttpProxies.list",
         "compute.targetHttpsProxies.list",
         "compute.instances.get",
-        "compute.instances.list",
         "compute.instanceGroups.get",
-        "compute.instanceGroups.list",
         "compute.instanceGroupManagers.get",
-        "compute.instanceGroupManagers.list",
         "compute.autoscalers.get",
         "compute.autoscalers.update",
         "compute.machineTypes.get",
@@ -275,10 +269,13 @@
       "tag": [
         "resourcemanager.tagValues.get",
         "resourcemanager.tagValueBindings.create",
+        "resourcemanager.tagValueBindings.delete",
         "compute.instances.listTagBindings",
         "compute.instances.createTagBinding",
+        "compute.instances.deleteTagBinding",
         "compute.instanceGroupManagers.listTagBindings",
-        "compute.instanceGroupManagers.createTagBinding"
+        "compute.instanceGroupManagers.createTagBinding",
+        "compute.instanceGroupManagers.deleteTagBinding"
       ]
     },
     "offboard": {
@@ -303,9 +300,10 @@
       "roles": {
         "dormetoRouterDatabasesRead": {
           "title": "Dormeto router databases (read)",
-          "description": "Lets a Dormeto router read its workloads' Cloud SQL instances: whether they run and their activation policy. Granted on the whole project; it changes nothing.",
+          "description": "Lets a Dormeto router read its workloads' Cloud SQL instances: whether they run, their activation policy and their operations. Granted on the whole project; it changes nothing.",
           "permissions": [
-            "cloudsql.instances.get"
+            "cloudsql.instances.get",
+            "cloudsql.instances.list"
           ]
         },
         "dormetoRouterDatabases": {
@@ -335,11 +333,14 @@
           "tag": [
             "cloudsql.instances.get",
             "cloudsql.instances.listTagBindings",
-            "cloudsql.instances.createTagBinding"
+            "cloudsql.instances.createTagBinding",
+            "cloudsql.instances.deleteTagBinding",
+            "datastore.entities.get"
           ]
         },
         "offboard": {
           "tag": [
+            "cloudsql.instances.get",
             "cloudsql.instances.listTagBindings",
             "cloudsql.instances.deleteTagBinding"
           ]
@@ -374,20 +375,16 @@
             "container.roles.update",
             "container.roleBindings.create",
             "container.roleBindings.update",
-            "container.deployments.get",
-            "container.statefulSets.get",
             "container.services.get",
             "container.roles.escalate",
             "container.roles.bind",
             "container.clusters.connect",
-            "container.services.list",
-            "container.deployments.list",
-            "container.statefulSets.list",
-            "container.replicaSets.get",
             "container.replicaSets.list",
             "container.pods.list",
             "container.roles.get",
             "container.roleBindings.get",
+            "container.roles.delete",
+            "container.roleBindings.delete",
             "datastore.databases.get",
             "datastore.entities.get",
             "datastore.entities.update"
