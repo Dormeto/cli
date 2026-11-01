@@ -179,9 +179,19 @@ func TestPageViewNeverPrintsAPageOrAnIconAtAnyLevel(t *testing.T) {
 
 func TestPageViewOfACustomWorkload(t *testing.T) {
 	got := fixture(t, "wl-custom").Text("prod-eu/w-1", "workload", utc)
-	for _, want := range []string{"waiting page, custom (from the workload)", "custom page, 18 bytes (from the workload)", "warning: the page has no element data-dormeto", "favicon  none: no host name (tried 2027-01-15 08:00 UTC)"} {
+	for _, want := range []string{"waiting page, custom (from the workload)", "custom page, 18 bytes (from the workload)", "warning: the page has no element data-dormeto", "favicon  none: no rule for the whole of a host name (tried 2027-01-15 08:00 UTC)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+}
+
+func TestPageViewFaviconNotUsed(t *testing.T) {
+	for _, effective := range []EffectivePage{{Mode: "custom"}, {Mode: "template", Icon: "none"}, {Mode: "template", Icon: "data:image/png;base64,iVBORw0KGgo="}} {
+		v := fixture(t, "wl-none")
+		v.Effective = &effective
+		if got := v.faviconText(utc); got != "not used: this page doesn't show it" {
+			t.Errorf("%+v: %q", effective, got)
 		}
 	}
 }
@@ -190,7 +200,7 @@ func TestPageViewFavicon(t *testing.T) {
 	if got := fixture(t, "wl-none").Text("w", "workload", utc); !strings.Contains(got, "favicon  not read yet") || !strings.Contains(got, "no document at this level") {
 		t.Errorf("never read:\n%s", got)
 	}
-	if got := fixture(t, "wl-favicon-failed").Text("w", "workload", utc); !strings.Contains(got, "favicon  none: no host name (tried 2027-01-15 08:00 UTC)") {
+	if got := fixture(t, "wl-favicon-failed").Text("w", "workload", utc); !strings.Contains(got, "favicon  none: no rule for the whole of a host name (tried 2027-01-15 08:00 UTC)") {
 		t.Errorf("failed:\n%s", got)
 	}
 	v := fixture(t, "wl-none")

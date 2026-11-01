@@ -339,6 +339,9 @@ func (v PageView) Text(label, level string, loc *time.Location) string {
 // faviconText is the workload's cached favicon: its type, size and date, or why there is none.
 func (v PageView) faviconText(loc *time.Location) string {
 	f := v.Favicon
+	if e := v.effective(); f == nil && (e.Mode == "custom" || e.Icon != "auto") {
+		return "not used: this page doesn't show it"
+	}
 	if f == nil {
 		return "not read yet (a workload's favicon is read before its next nap)"
 	}
