@@ -1017,6 +1017,22 @@ was, and giving neither is refused (exit 2). A value out of range is refused bef
 own would give). `schedule set --file -` sends only the `schedule` member of that JSON, so the value in force beside it does
 not become the workload's. A router before 0.36.0 refuses `joinMinutes` as unknown, and the CLI adds that it needs router 0.36.0.
 
+### Ended windows
+
+Routers 0.36.0 remove from a schedule a window whose end date (`until`) passed more than a year ago, and the dates without a
+window as old, the schedule's and each window's; a schedule left with nothing is removed. The organization sets the delay:
+
+```bash
+dormeto aws settings set --ended-window-days 90
+dormeto aws settings set --ended-window-days 0        # keep them
+dormeto aws settings set --ended-window-days default  # a year
+```
+
+30 to 3650 days, 0 keeps them; a value out of range is refused before any call (exit 2). It goes with `--hibernate` and
+`--join-minutes` or alone (administrators; manager 0.21.0 or later). `settings show` prints an `Ended windows` line. A router
+removes nothing while it has never read the manager's settings, never while a window is active, and never over a schedule saved
+since its check read it.
+
 ### Hibernation
 
 ```sh

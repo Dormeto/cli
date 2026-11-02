@@ -528,3 +528,58 @@ func TestSettingsConfirmationReadsToTheValueForTheTargets(t *testing.T) {
 		}
 	}
 }
+
+// How long an ended window stays, the organization's (manager 0.21.0, router 0.36.0): 0 keeps them, default unsets it.
+func TestSettingsShowPrintsHowLongAnEndedWindowStays(t *testing.T) {
+	for members, want := range map[string]string{
+		`"endedWindowDays":90,`:   "Ended windows: removed 90 days after their end\n",
+		`"endedWindowDays":0,`:    "Ended windows: kept\n",
+		`"endedWindowDays":null,`: "Ended windows: not set (removed 365 days after their end by default)\n",
+	} {
+		r := runSettings(t, &globalAPI{join: `"joinMinutes":null,` + members}, "show")
+		if r.exit != 0 || !strings.Contains(r.stdout, want) {
+			t.Errorf("%s: exit %d, stdout %q", members, r.exit, r.stdout)
+		}
+	}
+	if r := runSettings(t, &globalAPI{join: `"joinMinutes":null,`}, "show"); r.exit != 0 || strings.Contains(r.stdout, "Ended") {
+		t.Errorf("a manager without it: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}
+
+func TestSettingsSetSendsHowLongAnEndedWindowStays(t *testing.T) {
+	for _, c := range []struct {
+		args          []string
+		members, sent string
+	}{
+		{[]string{"--ended-window-days", "90"}, `"endedWindowDays":90,`, `{"endedWindowDays":90}`},
+		{[]string{"--ended-window-days", "0"}, `"endedWindowDays":0,`, `{"endedWindowDays":0}`},
+		{[]string{"--ended-window-days", "default"}, `"endedWindowDays":null,`, `{"endedWindowDays":null}`},
+		{[]string{"--join-minutes", "30", "--ended-window-days", "3650"}, `"joinMinutes":30,"endedWindowDays":3650,`, `{"endedWindowDays":3650,"joinMinutes":30}`},
+	} {
+		a := &globalAPI{join: c.members}
+		r := runSettings(t, a, append([]string{"set"}, c.args...)...)
+		if r.exit != 0 || !reflect.DeepEqual(a.writes, []string{c.sent}) || !strings.Contains(r.stdout, "Ended windows:") {
+			t.Errorf("%q: exit %d, writes %q, stdout %q, stderr %q", c.args, r.exit, a.writes, r.stdout, r.stderr)
+		}
+	}
+	for _, args := range [][]string{
+		{"set", "--ended-window-days", "10"}, {"set", "--ended-window-days", "3651"}, {"set", "--ended-window-days", "-1"},
+		{"set", "--ended-window-days", "soon"}, {"set", "--ended-window-days", ""}, {"set", "--hibernate", "maybe", "--ended-window-days", "90"},
+	} {
+		a := &globalAPI{}
+		if r := runSettings(t, a, args...); r.exit != 2 || len(a.writes) != 0 {
+			t.Errorf("%q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
+		}
+	}
+	// A manager without it drops it, or refuses it alone.
+	if r := runSettings(t, &globalAPI{join: `"joinMinutes":null,`}, "set", "--ended-window-days", "90"); r.exit != 1 || !strings.Contains(r.stderr, "--ended-window-days was not applied: it needs manager 0.21.0 or later") {
+		t.Errorf("dropped: exit %d, stderr %q", r.exit, r.stderr)
+	}
+	refuses := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		io.WriteString(w, `{"error":"bad_request","message":"hibernate must be true or false"}`)
+	}
+	if r := runFleetWith(t, &fakeAPI{custom: refuses}, "eu-west-1", nil, "settings", "set", "--ended-window-days", "90"); r.exit != 1 || !strings.Contains(r.stderr, "--ended-window-days needs manager 0.21.0 or later") {
+		t.Errorf("refused: exit %d, stderr %q", r.exit, r.stderr)
+	}
+}

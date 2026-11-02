@@ -15,6 +15,8 @@
   for them says it needs 0.36.0.
 - Joined windows (router 0.36.0): `joinMinutes`, the largest gap that joins two windows of one kind, 0 to 120, a multiple of 5,
   15 by default. `schedule set --file` carries it, with `--tag` too.
+- `settings set --ended-window-days <days>|default` (manager 0.21.0, routers 0.36.0): how long after its end date a window stays
+  in its schedule, 30 to 3650 days, 0 keeps them, a year by default; `settings show` prints it.
 - `settings set` and `routers settings` take `--join-minutes <minutes>|inherit`, alone or with `--hibernate`; what is not given
   stays as it was, and `--hibernate` is no longer required when `--join-minutes` is given. The organization's needs manager
   0.21.0 or later, which the CLI says.
