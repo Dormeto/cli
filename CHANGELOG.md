@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 - `waiting-page set`: the title and the description take Markdown from router 0.36.0, as the README says. The CLI sends them
   as it did.
