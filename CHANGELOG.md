@@ -10,6 +10,9 @@
 - `schedule set --file`, with `--tag` too, and `schedule show --json` carry `repeat`, `from` and `until`. It needs router 0.36.0:
   an older one's `unknown field` now says so. The README has a Schedule recurrences section.
 - Next events of a schedule with a `repeat` or a `from` say their year: they can be up to 400 days away.
+- A window's own `exceptions` (router 0.36.0), the dates it does not start on: `schedule show` says them last
+  (`except 2027-01-04 and 2027-01-11`, three at most), `schedule set --file` carries them, and an older router's `unknown field`
+  for them says it needs 0.36.0.
 - Joined windows (router 0.36.0): `joinMinutes`, the largest gap that joins two windows of one kind, 0 to 120, a multiple of 5,
   15 by default. `schedule set --file` carries it, with `--tag` too.
 - `settings set` and `routers settings` take `--join-minutes <minutes>|inherit`, alone or with `--hibernate`; what is not given

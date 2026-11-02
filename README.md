@@ -950,10 +950,14 @@ Each pattern, as a window of `windows`, and what `schedule show` prints for it (
 | Yearly | `{ "kind": "nap", "start": "00:00", "end": "00:00", "repeat": { "pattern": "monthly", "interval": 12, "day": 25 }, "from": "2026-12-01" }` | `Yearly on 25 Dec, all day (24 hours), from 2026-12-01, no end date` |
 | Cron | `{ "kind": "awake", "repeat": { "pattern": "cron", "cron": "30 8 * * 1-5", "minutes": 630 } }` | `Cron 30 8 * * 1-5, 10 h 30 min` |
 | Weekly days, a range | `{ "kind": "awake", "days": ["mon", "fri"], "start": "08:30", "end": "19:00", "until": "2027-06-30" }` | `Weekly on Mon, Fri, 08:30–19:00, until 2027-06-30` |
+| Dates of its own without it | `{ "kind": "awake", "days": ["mon"], "start": "08:00", "end": "12:00", "exceptions": ["2027-01-04"] }` | `Weekly on Mon, 08:00–12:00, except 2027-01-04` |
 
 - **`from` and `until`** are local dates `YYYY-MM-DD` in the schedule's zone, both days included, each optional: with no
   `until` there is no end date. No occurrence starts outside them; one started on `until` runs to its end. `until` before
   `from` is refused.
+- **A window's `exceptions`**, at most 100 local dates: that window does not start on them, the others do (the schedule's
+  `exceptions` skip every window). The dashboard writes them when one occurrence of a series is dragged alone, with a window of
+  that one date at the new times. A schedule takes 100 windows (20 before router 0.36.0).
 - **`repeat`** replaces `days`: a window has one or the other. `interval` is 1 to 99, 1 by default. Above 1, `from` is
   required: daily counts days from it, weekly counts weeks (Monday to Sunday) from its week, monthly counts months from its
   month.

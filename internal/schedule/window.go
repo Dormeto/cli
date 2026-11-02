@@ -14,20 +14,22 @@ import (
 	"time"
 )
 
-// RecurrenceRouter is the first router that takes repeat, from, until and joinMinutes.
+// RecurrenceRouter is the first router that takes repeat, from, until, a window's exceptions and joinMinutes.
 const RecurrenceRouter = "0.36.0"
 
 // Window is a window as the router stores it. Repeat stays raw until it is read: a stored one that does not read has no
 // occurrence and raises no error, so it cannot fail the decoding of the schedule around it. null on a field is its absence.
+// Exceptions are the window's own dates without it (router 0.36.0); the schedule's skip every window.
 type Window struct {
-	Kind   string          `json:"kind"`
-	Days   []string        `json:"days"`
-	Start  string          `json:"start"`
-	End    string          `json:"end"`
-	Repeat json.RawMessage `json:"repeat"`
-	From   string          `json:"from"`
-	Until  string          `json:"until"`
-	Wake   string          `json:"wake"`
+	Kind       string          `json:"kind"`
+	Days       []string        `json:"days"`
+	Start      string          `json:"start"`
+	End        string          `json:"end"`
+	Repeat     json.RawMessage `json:"repeat"`
+	From       string          `json:"from"`
+	Until      string          `json:"until"`
+	Wake       string          `json:"wake"`
+	Exceptions []string        `json:"exceptions"`
 }
 
 type repeat struct {
@@ -44,7 +46,9 @@ type repeat struct {
 func (w Window) hasRepeat() bool { return len(w.Repeat) > 0 && string(w.Repeat) != "null" }
 
 // Plain is a window with only weekly days and times, as there were before recurrences.
-func (w Window) Plain() bool { return !w.hasRepeat() && w.From == "" && w.Until == "" }
+func (w Window) Plain() bool {
+	return !w.hasRepeat() && w.From == "" && w.Until == "" && len(w.Exceptions) == 0
+}
 
 // FarReach is a window that takes the router's next events as far as 400 days: a repeat or a from; an until alone does not.
 func (w Window) FarReach() bool { return w.hasRepeat() || w.From != "" }
@@ -66,7 +70,7 @@ func (w Window) Text() string {
 		}
 	}
 	if r.Pattern == "daily" && r.Interval <= 1 && w.From != "" && w.From == w.Until { // the dashboard's Do not repeat
-		return "Once on " + w.From + ", " + w.hours()
+		return "Once on " + w.From + ", " + w.hours() + w.except()
 	}
 	how := r.text(w.From)
 	if how == "" {
@@ -75,7 +79,22 @@ func (w Window) Text() string {
 	if r.Pattern != "cron" {
 		how += ", " + w.hours()
 	}
-	return how + w.dates()
+	return how + w.dates() + w.except()
+}
+
+// except is the window's own dates without it, in date order, three at most: ", except 2027-01-04 and 2027-01-11".
+func (w Window) except() string {
+	dates := slices.Sorted(slices.Values(w.Exceptions))
+	if len(dates) == 0 {
+		return ""
+	}
+	if len(dates) > 3 {
+		dates = append(dates[:3:3], fmt.Sprintf("%d more", len(dates)-3))
+	}
+	if len(dates) == 1 {
+		return ", except " + dates[0]
+	}
+	return ", except " + strings.Join(dates[:len(dates)-1], ", ") + " and " + dates[len(dates)-1]
 }
 
 const unreadable = "repeat unreadable, no occurrence"
@@ -205,10 +224,10 @@ func (w Window) dates() string {
 
 // unknownNewField is an older router's refusal: of a window's field or joinMinutes on a schedule, and of a setting in its
 // own words.
-var unknownNewField = regexp.MustCompile(`(^|; )((windows\[\d+\]\.(repeat|from|until)|joinMinutes): unknown field|settings: unknown setting joinMinutes)`)
+var unknownNewField = regexp.MustCompile(`(^|; )((windows\[\d+\]\.(repeat|from|until|exceptions)|joinMinutes): unknown field|settings: unknown setting joinMinutes)`)
 
-// RefusedAsUnknown says a router's refusal is a router older than RecurrenceRouter's: it names repeat, from, until or
-// joinMinutes as unknown. A router that has them only says that of a field inside repeat.
+// RefusedAsUnknown says a router's refusal is a router older than RecurrenceRouter's: it names repeat, from, until, a window's
+// exceptions or joinMinutes as unknown. A router that has them only says that of a field inside repeat.
 func RefusedAsUnknown(message string) bool { return unknownNewField.MatchString(message) }
 
 // JoinDefault is the largest gap that joins two windows when no level sets it.

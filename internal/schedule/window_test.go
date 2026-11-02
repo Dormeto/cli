@@ -53,6 +53,11 @@ func TestTextSaysTheRecurrenceInWords(t *testing.T) {
 		// As the dashboard's daysText: a pair alone stays a list, a pair among others is a range.
 		{`{"start":"08:00","end":"18:00","repeat":{"pattern":"weekly","days":["sat","sun"]}}`, "Weekly on Sat, Sun, 08:00–18:00"},
 		{`{"start":"08:00","end":"18:00","repeat":{"pattern":"weekly","days":["mon","tue","thu","fri","sat"]}}`, "Weekly on Mon–Tue, Thu–Sat, 08:00–18:00"},
+		// A window's own dates without it (router 0.36.0), last, in date order, three at most.
+		{`{"days":["mon"],"start":"08:00","end":"12:00","exceptions":["2027-01-11","2027-01-04"]}`, "Weekly on Mon, 08:00–12:00, except 2027-01-04 and 2027-01-11"},
+		{`{"start":"08:00","end":"12:00","repeat":{"pattern":"daily"},"from":"2027-01-04","exceptions":["2027-01-05"]}`, "Every day, 08:00–12:00, from 2027-01-04, no end date, except 2027-01-05"},
+		{`{"days":["mon"],"start":"08:00","end":"12:00","exceptions":["2027-01-04","2027-01-11","2027-01-18","2027-01-25","2027-02-01"]}`, "Weekly on Mon, 08:00–12:00, except 2027-01-04, 2027-01-11, 2027-01-18 and 2 more"},
+		{`{"repeat":{"pattern":"cron","cron":"0 8 * * *","minutes":60},"exceptions":["2027-01-05"]}`, "Cron 0 8 * * *, 1 h, except 2027-01-05"},
 	} {
 		if got := window(t, c.in).Text(); got != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", c.in, got, c.want)
@@ -94,6 +99,8 @@ func TestPlainIsAWindowThatSaysNothingNew(t *testing.T) {
 		`{"days":["mon"],"start":"08:30","end":"19:00","repeat":null,"from":null,"until":null}`:             true,
 		`{"days":["mon"],"start":"08:30","end":"19:00","from":"2027-01-04"}`:                                false,
 		`{"days":["mon"],"start":"08:30","end":"19:00","until":"2027-01-04"}`:                               false,
+		`{"days":["mon"],"start":"08:30","end":"19:00","exceptions":["2027-01-04"]}`:                        false,
+		`{"days":["mon"],"start":"08:30","end":"19:00","exceptions":[]}`:                                    true,
 		`{"days":null,"start":"08:30","end":"19:00","repeat":{"pattern":"daily"}}`:                          false,
 		`{"days":null,"repeat":{"pattern":"cron","cron":"0 8 * * *","minutes":60},"start":null,"end":null}`: false,
 	} {
@@ -123,6 +130,7 @@ func TestRefusedAsUnknownIsARouterBefore036(t *testing.T) {
 		"windows[0].days: one or more of mon; windows[12].repeat: unknown field":               true,
 		"windows[1].from: unknown field":                                                       true,
 		"windows[1].until: unknown field; windows[1].from: unknown field":                      true,
+		"windows[2].exceptions: unknown field":                                                 true,
 		"windows[0].repeat.frequency: unknown field":                                           false, // this router, a field of repeat it does not know
 		"windows[0].foo: unknown field":                                                        false,
 		"windows[0].from: a date YYYY-MM-DD":                                                   false,
