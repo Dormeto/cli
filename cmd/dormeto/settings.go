@@ -111,7 +111,7 @@ type globalSettings struct {
 	Note            string          `json:"note"`
 }
 
-// endedDaysDefault is how long after its end a window stays in its schedule when the organization does not say (router 0.36.0).
+// endedDaysDefault is how long after its last valid occurrence a window stays in its schedule when the organization does not say (router 0.36.0).
 const endedDaysDefault = 365
 
 // parseEndedDays reads --ended-window-days: 0 keeps ended windows, 30 to 3650 days, default (nil) unsets it.
@@ -126,19 +126,19 @@ func parseEndedDays(s string) (*int, error) {
 	return &days, nil
 }
 
-// endedLine is "Ended windows: removed 90 days after their end\n", "" for a manager that does not answer it.
+// endedLine is "Ended windows: removed 90 days after their last occurrence\n", "" for a manager that does not answer it.
 func (g globalSettings) endedLine() string {
 	if len(g.EndedWindowDays) == 0 {
 		return ""
 	}
 	var days *int
 	if json.Unmarshal(g.EndedWindowDays, &days) != nil || days == nil {
-		return fmt.Sprintf("Ended windows: not set (removed %d days after their end by default)\n", endedDaysDefault)
+		return fmt.Sprintf("Ended windows: not set (removed %d days after their last occurrence by default)\n", endedDaysDefault)
 	}
 	if *days == 0 {
 		return "Ended windows: kept\n"
 	}
-	return fmt.Sprintf("Ended windows: removed %d days after their end\n", *days)
+	return fmt.Sprintf("Ended windows: removed %d days after their last occurrence\n", *days)
 }
 
 // joinLine is "Join windows: up to 30 min apart\n", "" for a manager that does not answer it.
@@ -218,8 +218,8 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"or false by default, for every router that reads the manager's settings and does not set its own, from its next\n" +
 			"check (within 5 minutes). Every other instance is stopped as before. A router's or a workload's own setting wins\n" +
 			"over it. --join-minutes is the largest gap that joins two schedule windows of one kind, 0 to 120, a multiple of\n" +
-			"5, 0 never joins; inherit unsets it, and the default is 15. --ended-window-days is how long after its end date a\n" +
-			"window stays in its schedule before routers 0.36.0 remove it, with the dates without a window as old: 30 to 3650\n" +
+			"5, 0 never joins; inherit unsets it, and the default is 15. --ended-window-days is how long after its last valid\n" +
+			"occurrence a window stays in its schedule before routers 0.36.0 remove it, with the dates without a window as old: 30 to 3650\n" +
 			"days, 0 keeps them, default unsets it (365). What is not given stays as it was. Needs an administrator. --json\n" +
 			"prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -268,7 +268,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true or false")
 	cmd.Flags().StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5; inherit unsets it (default 15)")
-	cmd.Flags().StringVar(&ended, "ended-window-days", "", "days after its end a window stays, 30 to 3650, 0 keeps them; default unsets it (365)")
+	cmd.Flags().StringVar(&ended, "ended-window-days", "", "days after its last occurrence a window stays, 30 to 3650, 0 keeps them; default unsets it (365)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }

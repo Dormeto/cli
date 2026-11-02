@@ -532,9 +532,9 @@ func TestSettingsConfirmationReadsToTheValueForTheTargets(t *testing.T) {
 // How long an ended window stays, the organization's (manager 0.21.0, router 0.36.0): 0 keeps them, default unsets it.
 func TestSettingsShowPrintsHowLongAnEndedWindowStays(t *testing.T) {
 	for members, want := range map[string]string{
-		`"endedWindowDays":90,`:   "Ended windows: removed 90 days after their end\n",
+		`"endedWindowDays":90,`:   "Ended windows: removed 90 days after their last occurrence\n",
 		`"endedWindowDays":0,`:    "Ended windows: kept\n",
-		`"endedWindowDays":null,`: "Ended windows: not set (removed 365 days after their end by default)\n",
+		`"endedWindowDays":null,`: "Ended windows: not set (removed 365 days after their last occurrence by default)\n",
 	} {
 		r := runSettings(t, &globalAPI{join: `"joinMinutes":null,` + members}, "show")
 		if r.exit != 0 || !strings.Contains(r.stdout, want) {

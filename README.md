@@ -1019,8 +1019,8 @@ not become the workload's. A router before 0.36.0 refuses `joinMinutes` as unkno
 
 ### Ended windows
 
-Routers 0.36.0 remove from a schedule a window whose end date (`until`) passed more than a year ago, and the dates without a
-window as old, the schedule's and each window's; a schedule left with nothing is removed. The organization sets the delay:
+Routers 0.36.0 remove from a schedule a window with no valid occurrence within the last year and none to come (its pattern,
+range and dates without a window decide), and the dates without a window as old, the schedule's and each window's; a schedule left with nothing is removed. The organization sets the delay:
 
 ```bash
 dormeto aws settings set --ended-window-days 90
