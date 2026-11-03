@@ -56,6 +56,8 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 	// (a cobra command has one parent), hidden, and run through aws by execute with a notice.
 	aws := &cobra.Command{Use: "aws", Short: "Dormeto in AWS", Args: noArgs, SilenceErrors: true}
 	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
+	// Born under aws (settings at scale): no hidden twin at the top level.
+	aws.AddCommand(newTypes(fleet))
 	root.AddCommand(aws)
 	for _, old := range awsCommands(b, fleet, installs, orDefault(v, "dev")) {
 		old.Hidden = true

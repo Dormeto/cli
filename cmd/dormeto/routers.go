@@ -335,9 +335,10 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		hibernate, join string
 		dryRun, yes     bool
 		asJSON          bool
+		levels          *levelFlags
 	)
 	cmd := &cobra.Command{
-		Use: "settings <router>... [--hibernate true|false|inherit] [--join-minutes <minutes>|inherit]", Short: "Set the hibernation and the join of windows of the workloads of routers",
+		Use: "settings <router>... [--hibernate true|false|inherit] [--join-minutes <minutes>|inherit] [--idle-minutes <minutes>|inherit] ...", Short: "Set the hibernation, the join of windows and the workload settings of routers",
 		SilenceErrors: true,
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the routers'\n" +
 			"workloads nap: true or false for the router, inherit to follow the manager's default (`dormeto aws settings set`). A\n" +
@@ -345,14 +346,25 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"upgrade it to.\n" +
 			"--join-minutes is the largest gap that joins two schedule windows of one kind, 0 to 120, a multiple of 5, 0 never\n" +
 			"joins; inherit follows the manager's default. A joinMinutes on a workload's schedule wins over it. Routers 0.36.0\n" +
-			"and later. What is not given stays as it was.\n" +
+			"and later. The workload settings (--idle-minutes, --wait-seconds, --drain-seconds, --wake-timeout-seconds,\n" +
+			"--max-holders, --failed-retry-seconds, --wake-mode and the rules files) are the router's defaults for its workloads\n" +
+			"whose own value and type's set none; inherit removes one (the organization's, then the built-in value). Routers\n" +
+			"0.37.0 and later. What is not given stays as it was.\n" +
 			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +
 			"the others (exit 1). Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
-			var settings levelSettings
+			settings := levelSettings{body: map[string]any{}}
+			var defaults map[string]any
 			if err == nil {
+				defaults, err = levels.body(c)
+			}
+			if err == nil && (c.Flags().Changed("hibernate") || c.Flags().Changed("join-minutes") || len(defaults) == 0) {
 				settings, err = readLevelSettings(c, hibernate, join, true)
+			}
+			if err == nil && len(defaults) > 0 {
+				settings.body["defaults"] = defaults
+				settings.words = append(settings.words, "the workload settings")
 			}
 			if err != nil {
 				return finish(c, err)
@@ -372,6 +384,9 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					_ = json.Unmarshal(raw, &a)
 					var said []string
+					if _, ok := settings.body["defaults"]; ok {
+						said = append(said, "workload settings set")
+					}
 					if _, ok := settings.body["hibernate"]; ok {
 						said = append(said, "hibernate "+hibernateWord(a.Settings.Hibernate))
 					}
@@ -400,5 +415,6 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
+	levels = bindLevelFlags(cmd, "inherit")
 	return cmd
 }

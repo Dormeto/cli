@@ -198,7 +198,7 @@ func newSettingsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return needsManager019(err)
 				}
 				return printRead(c, raw, asJSON, func(g globalSettings) string {
-					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.endedLine()
+					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.endedLine() + defaultsLine(raw)
 				})
 			})
 		},
@@ -211,23 +211,29 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		hibernate, join, ended string
 		asJSON                 bool
+		levels                 *levelFlags
 	)
 	cmd := &cobra.Command{
-		Use: "set [--hibernate true|false] [--join-minutes <minutes>|inherit] [--ended-window-days <days>|default]", Short: "Set the manager's defaults for the workloads", Args: noArgs, SilenceErrors: true,
+		Use: "set [--hibernate true|false] [--join-minutes <minutes>|inherit] [--ended-window-days <days>|default] [--idle-minutes <minutes>|default] ...", Short: "Set the manager's defaults for the workloads", Args: noArgs, SilenceErrors: true,
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when a workload naps: true\n" +
 			"or false by default, for every router that reads the manager's settings and does not set its own, from its next\n" +
 			"check (within 5 minutes). Every other instance is stopped as before. A router's or a workload's own setting wins\n" +
 			"over it. --join-minutes is the largest gap that joins two schedule windows of one kind, 0 to 120, a multiple of\n" +
 			"5, 0 never joins; inherit unsets it, and the default is 15. --ended-window-days is how long after its last valid\n" +
 			"occurrence a window stays in its schedule before routers 0.36.0 remove it, with the dates without a window as old: 30 to 3650\n" +
-			"days, 0 keeps them, default unsets it (365). What is not given stays as it was. Needs an administrator. --json\n" +
-			"prints the manager's answer.",
+			"days, 0 keeps them, default unsets it (365). The workload settings (--idle-minutes, --wait-seconds, --drain-seconds,\n" +
+			"--wake-timeout-seconds, --max-holders, --failed-retry-seconds, --wake-mode and the rules files) are the organization's\n" +
+			"defaults: a workload, its type or its router that sets one keeps its own; default removes one (the built-in value).\n" +
+			"What is not given stays as it was. Needs an administrator. --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			ending := c.Flags().Changed("ended-window-days")
 			settings := levelSettings{body: map[string]any{}}
-			var err error
-			if c.Flags().Changed("hibernate") || c.Flags().Changed("join-minutes") || !ending {
+			defaults, err := levels.body(c)
+			if err == nil && (c.Flags().Changed("hibernate") || c.Flags().Changed("join-minutes") || (!ending && len(defaults) == 0)) {
 				settings, err = readLevelSettings(c, hibernate, join, false)
+			}
+			if err == nil && len(defaults) > 0 {
+				settings.body["defaults"] = defaults
 			}
 			if err == nil && ending {
 				var days *int
@@ -248,7 +254,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return settingsRefusal(err)
 				}
 				err := printRead(c, raw, asJSON, func(g globalSettings) string {
-					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.endedLine() + g.Note + "\n"
+					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.endedLine() + defaultsLine(raw) + g.Note + "\n"
 				})
 				var g globalSettings
 				if err != nil || json.Unmarshal(raw, &g) != nil {
@@ -270,57 +276,95 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd.Flags().StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5; inherit unsets it (default 15)")
 	cmd.Flags().StringVar(&ended, "ended-window-days", "", "days after its last occurrence a window stays, 30 to 3650, 0 keeps them; default unsets it (365)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
+	levels = bindLevelFlags(cmd, "default")
 	return cmd
 }
 
 func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
 	var (
-		hibernate string
-		asJSON    bool
+		hibernate, kind string
+		asJSON          bool
+		levels          *levelFlags
 	)
 	cmd := &cobra.Command{
-		Use: "settings (<router>/<workload>... | --tag k=v...) --hibernate true|false|inherit", Short: "Set the hibernation of workloads",
+		Use:   "settings (<router>/<workload>... | --tag k=v...) [--hibernate true|false|inherit] [--type <name>|inherit] [--idle-minutes <minutes>|inherit] ...",
+		Short: "Set the settings of workloads",
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the workloads nap: true\n" +
 			"or false for the workload, inherit to follow its router's setting, then the manager's. A workload with fallback\n" +
 			"instance types does not hibernate unless it is set true on the workload itself (a hibernated instance cannot\n" +
-			"change type). A workload written by Terraform is refused (set hibernate in its workload module), as is one on\n" +
-			"a router before 0.32.0; a refusal is printed for that workload, the others go on (exit 1). Several targets are\n" +
-			"confirmed on a terminal. Needs an operator.",
+			"change type). Its own workload settings (--idle-minutes, --wait-seconds, --drain-seconds, --wake-timeout-seconds,\n" +
+			"--max-holders, --failed-retry-seconds, --wake-mode and the rules files) and --type (a custom or built-in type),\n" +
+			"inherit giving each back to its type, its router, then the organization (routers 0.37.0 and later). A workload\n" +
+			"written by Terraform is refused (set them in its workload module); a refusal is printed for that workload, the\n" +
+			"others go on (exit 1). Several targets are confirmed on a terminal. Needs an operator.",
 		SilenceErrors: true,
-		RunE: func(c *cobra.Command, args []string) error {
-			err := w.targets.check(args, false)
+	}
+	levels = bindLevelFlags(cmd, "inherit")
+	cmd.RunE = func(c *cobra.Command, args []string) error {
+		err := w.targets.check(args, false)
+		body := map[string]any{}
+		var words []string
+		if err == nil && c.Flags().Changed("hibernate") {
 			var value *bool
-			if err == nil {
-				value, err = parseHibernate(hibernate, true)
+			if value, err = parseHibernate(hibernate, true); err == nil {
+				body["hibernate"] = value
+				words = append(words, "hibernate to "+hibernateWord(value))
 			}
-			if err != nil {
-				return finish(c, err)
+		}
+		if err == nil {
+			var own map[string]any
+			if own, err = levels.body(c); err == nil {
+				for k, v := range own {
+					body[k] = v
+				}
+				if len(own) > 0 {
+					words = append(words, "its settings")
+				}
 			}
-			return w.run(c, args, "hibernate "+hibernateWord(value)+": would act on", "Set hibernate to "+hibernateWord(value)+" for %s?",
-				func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-					_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
-						var raw json.RawMessage
-						if err := api.Put(ctx, t.Path("/settings"), map[string]*bool{"hibernate": value}, &raw); err != nil {
-							return "", nil, needsManager019(err)
-						}
-						var a struct {
-							Settings    struct{ Hibernate *bool }
-							Hibernation *fleet.Hibernation
-						}
-						_ = json.Unmarshal(raw, &a)
-						line := fmt.Sprintf("%s: hibernate %s", t, hibernateWord(a.Settings.Hibernate))
-						if a.Hibernation != nil {
-							line += " (effective: " + a.Hibernation.Text() + ")"
-						}
-						return line + "\n", raw, nil
-					})
-					return err
+		}
+		if err == nil && c.Flags().Changed("type") {
+			switch {
+			case kind == "inherit":
+				body["type"] = nil
+				words = append(words, "type inherit")
+			case typeName.MatchString(kind):
+				body["type"] = kind
+				words = append(words, "type "+kind)
+			default:
+				err = usagef("--type: give a type's name (lower-case letters, digits and hyphens) or inherit")
+			}
+		}
+		if err == nil && len(body) == 0 {
+			err = usagef("give --hibernate, --type or a setting")
+		}
+		if err != nil {
+			return finish(c, err)
+		}
+		said := strings.Join(words, ", ")
+		return w.run(c, args, said+": would act on", "Set "+said+" for %s?",
+			func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
+					var raw json.RawMessage
+					if err := api.Put(ctx, t.Path("/settings"), body, &raw); err != nil {
+						return "", nil, needsManager019(err)
+					}
+					var a struct {
+						Hibernation *fleet.Hibernation
+					}
+					_ = json.Unmarshal(raw, &a)
+					line := fmt.Sprintf("%s: %s", t, said)
+					if _, ok := body["hibernate"]; ok && a.Hibernation != nil {
+						line += " (effective: " + a.Hibernation.Text() + ")"
+					}
+					return line + "\n", raw, nil
 				})
-		},
+				return err
+			})
 	}
 	w.bindShared(cmd)
 	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the router's, then the manager's)")
+	cmd.Flags().StringVar(&kind, "type", "", "a type's name, or inherit (its tags', then its backends')")
 	bindJSON(cmd, &asJSON)
 	return cmd
 }

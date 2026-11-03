@@ -644,6 +644,7 @@ needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pau
 | `settings set` | `PUT /settings/workloads` |
 | `routers settings` | `PUT /routers/{router}/settings` |
 | `workloads settings` | `PUT /workloads/{router}/{id}/settings` |
+| `types list`, `show`, `set`, `delete` | `GET /settings/types`, `PUT /settings/types` |
 | `routers description` | `PUT /routers/{router}/description`, `DELETE` on the same path |
 | `workloads description` | `PUT /workloads/{router}/{id}/description`, `DELETE` on the same path |
 | `workloads waiting-page set`, `clear` | `PUT /workloads/{router}/{id}/waiting-page`, `DELETE` on the same path (**these give custom HTML on the application's address, see Waiting page**) |
@@ -983,6 +984,25 @@ Each pattern, as a window of `windows`, and what `schedule show` prints for it (
 (`windows[1].repeat.cron: ...`). A router before 0.36.0 refuses the new fields as `unknown field`, and `schedule set` adds that
 they need router 0.36.0. `dormeto gcp workloads schedule` takes the same JSON and prints the same words, and its `--file`
 is the file `schedule show --json` prints under `schedule`.
+
+### Workload settings and types
+
+```sh
+dormeto aws settings set --idle-minutes 30 --wake-mode default
+dormeto aws routers settings prod-eu --wait-seconds 20 --no-wake-rules-file rules.json
+dormeto aws types set api --tag kind=api --description "Public APIs" --wake-mode any
+dormeto aws types set databases --idle-minutes 45
+dormeto aws workloads settings prod-eu/w-1 --idle-minutes 10 --type inherit
+dormeto aws workloads show prod-eu/w-1        # each value says where it comes from
+```
+
+From router 0.37.0, a workload's idle window, hold, drain, wake timeout, held requests, retry after a failed wake and wake
+mode each come from the first level that sets them: the workload, its type, its router, the organization, then the built-in
+value. Its no-wake and wake rules add up across the levels, the organization's first. A type is built in (`instance`, `asg`,
+`ecs`, `k8s`, or `databases` for a workload with RDS or Aurora) or one of the organization's, picked by `--type` on the
+workload, else by its tags. `default` removes a value at the organization or in a type, `inherit` at a router or a workload.
+The CLI refuses a value out of its range before any call; a rules file is a JSON list, `-` for the standard input. A workload
+written by Terraform is refused: set it in its workload module. A router before 0.37.0 answers that it must be upgraded.
 
 ### Joined windows
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Workload settings at scale, with manager 0.22.0 and routers 0.37.0: `settings set`, `routers settings` and `workloads
+settings` take `--idle-minutes`, `--wait-seconds`, `--drain-seconds`, `--wake-timeout-seconds`, `--max-holders`,
+`--failed-retry-seconds`, `--wake-mode`, `--no-wake-rules-file` and `--wake-rules-file` (`default` or `inherit` removes one), and
+`workloads settings` takes `--type`. `dormeto aws types` lists, shows, sets and deletes the organization's workload types.
+`workloads show` says where each setting comes from and the workload's type.
+
 ## 0.10.0
 
 - `waiting-page set`: the title and the description take Markdown from router 0.36.0, as the README says. The CLI sends them

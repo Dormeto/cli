@@ -41,7 +41,15 @@ type WorkloadDetails struct {
 		DrainSeconds       *int `json:"drainSeconds"`
 		WakeTimeoutSeconds *int `json:"wakeTimeoutSeconds"`
 		MaxHolders         *int `json:"maxHolders"`
+		FailedRetrySeconds *int `json:"failedRetrySeconds"` // routers 0.37.0 and later
 	} `json:"settings"`
+	// Settings at scale (routers 0.37.0): the level each setting comes from, and the workload's type.
+	SettingsFrom map[string]string `json:"settingsFrom"`
+	Type         *struct {
+		Name    *string `json:"name"`
+		From    *string `json:"from"`
+		Missing string  `json:"missing"`
+	} `json:"type"`
 	Description *Description `json:"description"`
 	Hibernation *Hibernation `json:"hibernation"`
 	Backends    *[]struct {
@@ -141,14 +149,62 @@ func (d WorkloadDetails) settingsText() string {
 			hibernate, instances = notApplyText, ""
 		}
 	}
+	// Each value with the level it comes from, when the router says (routers 0.37.0).
+	from := func(key, value string) string {
+		if value == "" || d.SettingsFrom[key] == "" {
+			return value
+		}
+		return value + " (" + d.sourceText(d.SettingsFrom[key]) + ")"
+	}
 	return block(Labelled([][2]string{
-		{"idle window", n(s.IdleMinutes, func(v int) string { return fmt.Sprintf("%d min", v) })},
-		{"hold", n(s.WaitSeconds, func(v int) string { return Seconds(v) })},
-		{"drain", n(s.DrainSeconds, func(v int) string { return Seconds(v) })},
-		{"wake timeout", n(s.WakeTimeoutSeconds, func(v int) string { return Seconds(v) })},
-		{"held requests", n(s.MaxHolders, func(v int) string { return fmt.Sprintf("≤ %d", v) })},
+		{"type", d.typeText()},
+		{"idle window", from("idleMinutes", n(s.IdleMinutes, func(v int) string { return fmt.Sprintf("%d min", v) }))},
+		{"hold", from("waitSeconds", n(s.WaitSeconds, func(v int) string { return Seconds(v) }))},
+		{"drain", from("drainSeconds", n(s.DrainSeconds, func(v int) string { return Seconds(v) }))},
+		{"wake timeout", from("wakeTimeoutSeconds", n(s.WakeTimeoutSeconds, func(v int) string { return Seconds(v) }))},
+		{"held requests", from("maxHolders", n(s.MaxHolders, func(v int) string { return fmt.Sprintf("≤ %d", v) }))},
+		{"retry after a failed wake", from("failedRetrySeconds", n(s.FailedRetrySeconds, func(v int) string { return Seconds(v) }))},
 		{"hibernate", hibernate}, {"hibernate readiness", instances},
 	}))
+}
+
+// sourceText is a level in a few words, as the dashboard says it.
+func (d WorkloadDetails) sourceText(level string) string {
+	switch level {
+	case "workload":
+		return "set on this workload"
+	case "type":
+		if d.Type != nil && d.Type.Name != nil {
+			return "type " + *d.Type.Name
+		}
+		return "its type"
+	case "default":
+		return "built-in"
+	}
+	return level
+}
+
+// typeText is the workload's type and why, empty from a router before 0.37.0.
+func (d WorkloadDetails) typeText() string {
+	if d.Type == nil {
+		return ""
+	}
+	lost := ""
+	if d.Type.Missing != "" {
+		lost = " (its type " + d.Type.Missing + " no longer exists)"
+	}
+	if d.Type.Name == nil {
+		return "none" + lost
+	}
+	why := map[string]string{"workload": "set on this workload", "tags": "from its tags", "backends": "from its backends"}
+	from := ""
+	if d.Type.From != nil {
+		from = why[*d.Type.From]
+	}
+	if from == "" {
+		return *d.Type.Name + lost
+	}
+	return *d.Type.Name + " (" + from + ")" + lost
 }
 
 // hasInstanceBackend is whether the workload has a standalone EC2 instance, the only backend that hibernates. A router

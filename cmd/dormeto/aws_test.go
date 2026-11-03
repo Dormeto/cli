@@ -17,6 +17,9 @@ import (
 var movedToAws = []string{"alerts", "api", "audit", "discovery", "estimate", "exclusions", "groups", "install", "ip-lists", "manager",
 	"operations", "overview", "routers", "savings", "settings", "uninstall", "users", "whoami", "workloads"}
 
+// bornUnderAws are the commands added under aws since: none of them has an old top-level twin.
+var bornUnderAws = []string{"types"}
+
 // atTheTop are the only commands a root may show at its top level besides cobra's own; a new one goes under aws.
 var atTheTop = []string{"help", "completion", "version", "gcp", "aws"}
 
@@ -76,7 +79,7 @@ func TestEveryOldCommandIsUnderAwsAndHidden(t *testing.T) {
 	}
 	// aws holds exactly these, and none of the old ones is left visible.
 	for _, sub := range aws.Commands() {
-		if !slices.Contains(movedToAws, sub.Name()) {
+		if !slices.Contains(movedToAws, sub.Name()) && !slices.Contains(bornUnderAws, sub.Name()) {
 			t.Errorf("aws holds %q, which was not at the top level", sub.Name())
 		}
 	}
