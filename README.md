@@ -1511,14 +1511,18 @@ dormeto aws api PUT /discovery/config --data @discovery.json
 
 From CLI 0.8.0, `dormeto gcp` installs and runs a Dormeto router in a Google Cloud project, with the account of your
 `gcloud` (its active configuration, or `--gcloud-configuration <name>`); nothing else is needed on your machine. The
-router naps Compute Engine VMs and managed instance groups behind a global external Application Load Balancer, and a
-visitor's first request wakes them. Every command takes `--project` (required) and, but `check` and `status`, `--region`
-(required: the router is `dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google
-refuses; 2 for a bad flag or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
+router naps the backends of a global, regional or classic external Application Load Balancer, and a visitor's first
+request wakes them: Compute Engine VMs and managed instance groups, VMs in zonal network endpoint groups, GKE pods behind
+standalone network endpoint groups, and Cloud SQL instances as their companions. Everything but VMs and groups behind a
+global load balancer comes with router 0.37.0 and CLI 0.11.0, which carry what the measures of 2026-11-04 changed
+([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
+Every command takes `--project` (required) and, but `check` and `status`, `--region` (required: the router is
+`dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google refuses; 2 for a bad flag
+or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
 
 ```sh
 dormeto gcp check --project my-project --region europe-west1
-dormeto gcp install --project my-project --region europe-west1 --image <registry>/router:0.35.0
+dormeto gcp install --project my-project --region europe-west1 --image <registry>/router:0.37.0
 dormeto gcp workloads onboard --project my-project --region europe-west1 \
   --url-map shop-map --backend-service shop --idle-minutes 30
 dormeto gcp workloads list --project my-project --region europe-west1
@@ -1527,7 +1531,8 @@ dormeto gcp uninstall --project my-project --region europe-west1
 
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
   otherwise, then the project's parent, the APIs already on and the warnings (the Compute Engine default service
-  account's Editor grant). `--json` prints the report.
+  account's Editor grant). `--with <features>` also tests the [optional access](#optional-access-cloud-sql-and-gke) of
+  those features; with `--region`, those of the install record are tested too. `--json` prints the report.
 - **`gcp install`** checks your permissions first (a ✗ stops it with nothing changed), prints the plan (the APIs to turn
   on, every IAM binding to add with its role, member, resource and condition, every resource to create), asks for
   confirmation (`--yes` without a terminal, `--dry-run` prints the plan only), applies it, prints the IAM policy
@@ -1539,48 +1544,251 @@ dormeto gcp uninstall --project my-project --region europe-west1
   (`roles/run.invoker`, to the router's service account only), and `dmtr-<region>-waker`, with the waker's invoker check off
   (its ingress admits only the load balancer), the waker's network endpoint group and the check job `dmtr-<region>-check`
   (every 5 minutes). Run again, it plans only the differences, and shows the project's bindings its record does not
-  explain, recording those of Google's service agents. It never changes or removes a binding it did not add.
+  explain, recording those of Google's service agents. It never changes or removes a binding it did not add. `--with`
+  adds the [optional access](#optional-access-cloud-sql-and-gke), `--ip-list` the router's [IP lists](#ip-lists-on-google-cloud).
 - **`gcp status`** (read-only, `--json`) shows the router's record and live state: version, services, controller
-  health, queue, job, database and grants.
+  health, queue, job, database and grants, and the record's features, IP lists and Kubernetes access. Exit 1 when
+  something differs from the record, such as `DMT_IP_LISTS` on a service after an interrupted run.
 - **`gcp uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while workloads are
   onboarded (`--force` offboards each first, tag bindings included), keeps the roles and the tag while another router of
-  the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place. It prints every IAM
-  change and warns of what the project's policy holds at the end beyond its bindings from before the install and Google's.
+  the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place. It removes every
+  feature the record lists (their roles and grants; their APIs are left too), and lists the Kubernetes access no
+  offboarding removed as left in its cluster. It prints every IAM change and warns of what the project's policy holds at
+  the end beyond its bindings from before the install and Google's.
   A tag Google refuses to delete, still bound, is left and the record kept: run the same command again to finish. To
   reinstall in the same region, wait: Google may keep a deleted queue's name blocked for up to 3 days (a create can appear
   to succeed in that window, and `gcp install` then says so), and a deleted database's ID for about 5 minutes.
 - **`gcp workloads`** call the router's controller with your identity token, so you need `run.routes.invoke` on it
   (`gcp check` says whether you hold it). `gcp install` does not give it to you: it grants the role to the router's
   service account only, so ask for `roles/run.invoker` on the controller if you lack it.
-  If Terraform writes the load balancer or the VMs, it must ignore what the router changes: the fields are on the website's
-  [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
+  If Terraform writes the load balancer, the VMs, the databases or the Deployments, it must ignore what the router
+  changes: the fields are on the website's [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
+
+### Optional access: Cloud SQL and GKE
+
+Turning on the Cloud SQL Admin API or the Kubernetes Engine API makes Google add service agents of its own, and a project
+that uses neither should not get them. So you ask for each feature by name:
+
+```sh
+dormeto gcp install --project my-project --region europe-west1 --with cloud-sql,gke
+```
+
+- `cloud-sql` turns on `sqladmin.googleapis.com` and adds two custom roles, granted to the router on the project:
+  `dormetoRouterDatabasesRead` (`cloudsql.instances.get`, `cloudsql.instances.list`) and `dormetoRouterDatabases`
+  (`cloudsql.instances.update`, on the condition that the instance carries the tag `dormeto=managed`). The router holds
+  no other database permission and never connects to a database.
+- `gke` turns on `container.googleapis.com` and adds `dormetoRouterKubernetes` (`container.clusters.get`,
+  `container.clusters.connect`), which grants nothing inside a cluster: each GKE workload gets its own
+  [Kubernetes access](#kubernetes-access-of-gke-workloads).
+- The install record keeps the features. A later run with more adds them, a run without `--with` keeps the record's, and
+  only `uninstall` removes them. A feature joins the record once its API is on. An unknown feature exits 2.
+- `workloads onboard --cloud-sql` needs the feature `cloud-sql` of the router's install, and `--gke-cluster` its feature
+  `gke`.
+
+What Google adds, as seen on a real project on 2026-11-04. The CLI prints each binding Google adds as Google's, after the
+step it appeared after, and records it; one that appears later, from a resource you create, is shown and recorded at the
+next run. `uninstall` leaves them, and the APIs, in place.
+
+| Feature | After | What Google adds |
+|---|---|---|
+| `gke` | `container.googleapis.com` turned on | `roles/container.serviceAgent` to `service-<project number>@container-engine-robot.iam.gserviceaccount.com` and `roles/file.serviceAgent` to `service-<project number>@cloud-filer.iam.gserviceaccount.com`; six APIs turned on with it, `.googleapis.com` each: `autoscaling`, `containerfilesystem`, `dns`, `file`, `gkebackup`, `networkconnectivity` |
+| `gke` | a GKE cluster created (yours: the CLI creates none) | `roles/container.defaultNodeServiceAgent` to `service-<project number>@gcp-sa-gkenode.iam.gserviceaccount.com` |
+| `cloud-sql` | `sqladmin.googleapis.com` turned on, a Cloud SQL instance created | no binding and no other API; each instance has a service account of its own, `p<project number>-…@gcp-sa-cloud-sql.iam.gserviceaccount.com`, with no binding on the project |
+
+### IP lists on Google Cloud
+
+```sh
+dormeto gcp install --project my-project --region europe-west1 \
+  --ip-list name=scanners,url=https://lists.example.com/scanners.txt,refresh=12
+dormeto gcp install --project my-project --region europe-west1 --no-ip-lists
+```
+
+With `--ip-list name=<n>,url=<u>[,refresh=<hours>]`, repeatable, the router downloads each list over HTTP(S), every 24
+hours unless `refresh` says otherwise, and a visit from an address on one never wakes a workload. Only the action `ignore`
+exists on Google Cloud, and `action=` is refused: a listed address's `GET /_dormeto/wake` (the waiting page's probe)
+never wakes, but a listed address's `POST /_dormeto/wake` still wakes, as an API client's explicit wake. A list stops
+browsers and scanners on those addresses, not a client that means to wake.
+
+- A run with `--ip-list` replaces the set, `--no-ip-lists` clears it, and a run with neither keeps it, a later `--image`
+  included.
+- The lists go in `DMT_IP_LISTS` on both Cloud Run services and in the install record, so either flag needs the router:
+  without `--image` the recorded image is reused, and with neither the run is refused before any call (exit 2). A router
+  below 0.35.0 does not read the lists, and the run is refused, naming `--image`.
+- A name is lowercase letters, digits and `-`, 1 to 40 characters. A URL starts with `http://` or `https://` (`s3://` is
+  refused), and one with credentials (`user:password@`) is refused. Its query string is printed in the plan and stored
+  in the record and the services' environment: keep tokens out of it. A comma in a URL is written `%2C`.
+- The waker runs with 512 MiB of memory when a list is set, else 256 MiB.
+
+### Google Cloud workloads
 
 | Command | What it does |
 |---|---|
 | `workloads list` | the router's workloads and their states |
-| `workloads show <id>` | one workload: state, URL map, backend service, waker backend service, settings, backends |
-| `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs and groups, onboard the workload awake |
-| `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its VMs and groups down (listed) |
+| `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, and a Cloud SQL instance that no longer exists |
+| `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
+| `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed) |
 | `workloads nap <id>`, `workloads wake <id>` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends) |
+| `workloads schedule show`, `set` or `clear <id>` | its nap and awake windows ([schedules and pauses](#google-cloud-schedules-and-pauses)) |
+| `workloads pause <id> --reason <text>`, `workloads resume <id>` | hold its naps, then let them run again |
+| `workloads access show`, `grant` or `revoke` | a GKE workload's [Kubernetes access](#kubernetes-access-of-gke-workloads), alone |
 
 `--json` prints the controller's answer as it is. `onboard` first asks the controller for a dry run: a workload that is
 not eligible is refused with the reasons and nothing is changed (`--dry-run` stops there). Then it binds the tag
-`dormeto=managed` to each VM and managed group as you (the router itself holds no permission to tag, or it could tag any
-VM and stop it), then onboards. `--id` is the workload's ID (lowercase letters, digits and dashes, at most 40
-characters); it defaults to the backend service's name when that is a valid ID, else it is asked on a terminal and
-exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440) and `--hibernate
+`dormeto=managed` to each VM, managed group and Cloud SQL instance as you (the router itself holds no permission to tag,
+or it could tag any VM and stop it), then onboards. `--id` is the workload's ID (lowercase letters, digits and dashes,
+at most 40 characters); it defaults to the backend service's name when that is a valid ID, else it is asked on a
+terminal and exit 2 without one. The settings are optional: `--idle-minutes` (5 to 1440) and `--hibernate
 true|false` (suspend the VMs that can be suspended instead of stopping them); a value out of its range exits 2 before
-any call. A binding of the `dormeto=managed` tag that was on a VM or group before the onboarding is treated as Dormeto's and removed at the offboarding. The permissions of `onboard` and `offboard` (the tag bindings of VMs and groups) are listed by `gcp check`.
+any call. A binding of the `dormeto=managed` tag that was on a VM or group before the onboarding is treated as Dormeto's and removed at the offboarding. The permissions of `onboard` and `offboard` (the tag bindings, and a feature's own) are listed by `gcp check`.
 
-**How far Google Cloud has been tried.** There are three levels, and the flags below belong to the last two.
+The onboarding's other flags:
+
+- `--load-balancer global|regional|classic`: the load balancer's kind, read from Google by default (the URL map found
+  globally or in the router's region, its forwarding rules' scheme telling global from classic). A map of that name in
+  both places is refused, asking for the flag, and a regional load balancer must be in the router's region. Regional and
+  classic load balancers have no custom error response, so a nap swaps the map's references from the application to the
+  waker, and a wake swaps them back once a VM is healthy. The onboarding adds a route `/_dormeto/backend/*` to the
+  application's service for good: it keeps that service health checked through a swap, and the application sees that
+  path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (one measured wake of
+  each reached the application after 62 s and 2 min 16 s). Google advises moving a classic load balancer to the global
+  external one.
+- `--wake-timeout <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call). The router's default is
+  600 s for VMs, 300 s for pods and 1700 s with a Cloud SQL companion, plus the swap's wait on regional (100 s) and classic
+  (250 s), up to 1700. If you set it, give a regional load balancer about 250 s or more, and a classic one about 340 s
+  or more.
+- `--cloud-sql <instance>`, repeatable: a Cloud SQL instance of the project that naps with the workload, stopped after the
+  application and started before it. The tag is bound to it as you, and unbound at the offboarding.
+- `--gke-cluster <location>/<name>`: the workload's pods are in this GKE cluster, behind standalone network endpoint groups
+  (the Service's `cloud.google.com/neg` annotation) on a load balancer you own. No tag is bound for pods. The CLI reads the
+  Service's owner in the cluster as you, then prints, asks and applies its Kubernetes access before the onboarding; a
+  refused onboarding removes what this run added. `--yes` applies it without asking, and is needed without a terminal and
+  with `--json`.
+
+`offboard` restores the load balancer, then unbinds the tag from the workload's VMs, groups and databases and removes its
+Role and RoleBinding, as you. `--force` passes only a failed wake: a workload still `NAPPING` or `WAKING` is refused as busy,
+with or without it, until that ends or the router's check fails it. With `--force`, a tag or an access it cannot remove
+does not stop the rest: it names each and exits 1, and running the same command again finishes. What the router could not
+give back, `notGivenBack` in its answer, is printed with a `!` and the command exits 1: it is yours to change, as the
+workload is offboarded and no rerun reaches it. A GKE workload asleep keeps its owner at 0 replicas, and `notGivenBack`
+names a paused `ScaledObject` and the annotation to remove. When the controller does not answer, it names what is left and
+removes nothing.
+
+### Google Cloud schedules and pauses
+
+```sh
+dormeto gcp workloads schedule show shop --project my-project --region europe-west1
+dormeto gcp workloads schedule set shop --project my-project --region europe-west1 --file schedule.json
+dormeto gcp workloads schedule clear shop --project my-project --region europe-west1
+dormeto gcp workloads pause shop --project my-project --region europe-west1 \
+  --reason "load test" --until 2026-12-01T08:00:00+01:00
+dormeto gcp workloads resume shop --project my-project --region europe-west1
+```
+
+- `schedule set --file` takes the schedule's JSON, the same as on AWS
+  ([Keeping workloads awake and scheduling them](#keeping-workloads-awake-and-scheduling-them), and
+  [Schedule recurrences](#schedule-recurrences) from router 0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`.
+  The controller checks it and a refused one prints what is wrong, exit 1. `schedule show` prints the windows, a
+  recurrence in words, and the next events with their local time and zone; `--json` prints the file under `schedule`.
+  `schedule clear` leaves the workload to its idle window alone.
+- During a nap window, the waiting page tells a visitor when the window ends, and the visitor's browser does not wake
+  the workload. Google Cloud has no maintenance wake of its own, so `maxNapDays` is only yours.
+- The router's check asks at most 10 scheduled naps each run, every 5 minutes, oldest first: 30 workloads in one nap
+  window nap within 15 minutes. Wakes are never held back. A scheduled nap's occurrence is spent once its task is
+  accepted: a nap that a pause refuses, or whose task is lost, does not come back when the pause ends.
+- `pause <id> --reason <text>` (required, at most 256 characters) stops every nap, by the idle window, the schedule or
+  `nap`, until `resume` or `--until` (RFC 3339, at most 366 days away). A workload asleep is woken. With `--keep-asleep`
+  it is not, but a visitor still wakes it: only scheduled and maintenance wakes wait for the pause to end.
+- A router below 0.35.0 has no route for these commands, and the CLI says so; `repeat`, `from`, `until` and
+  `joinMinutes` need router 0.36.0.
+
+### Kubernetes access of GKE workloads
+
+The router's IAM role grants nothing inside a cluster. For each GKE workload, the CLI writes, as you, a `Role` and a
+`RoleBinding` named `dormeto-<workload>` in the workload's namespace, for the router's service account, labelled
+`app.kubernetes.io/managed-by: dormeto`: nothing cluster-wide. Their rules are exactly the router's calls:
+
+- `get` on `deployments` and `statefulsets`;
+- `list` on `replicasets`, `pods`, `events` and `scaledobjects`;
+- `patch` on `deployments/scale`, `statefulsets/scale` and `scaledobjects`.
+
+`onboard --gke-cluster` runs in this order: the controller's dry run, which reads Google only (the load balancer, its
+network endpoint groups, the cluster's DNS endpoint); the CLI's reading of the cluster (the Service's selector, then its
+owner) and the access, printed, asked and applied; the onboarding, where the controller checks each rule and reads the
+owner. Refused there, the CLI removes the access it just added. `offboard` removes it too. The same steps run alone:
+
+```sh
+dormeto gcp workloads access show --project my-project --region europe-west1 \
+  --gke-cluster europe-west1-b/shop --namespace shop --workload shop
+dormeto gcp workloads access grant --project my-project --region europe-west1 \
+  --gke-cluster europe-west1-b/shop --namespace shop --workload shop
+dormeto gcp workloads access revoke --project my-project --region europe-west1 \
+  --gke-cluster europe-west1-b/shop --namespace shop --workload shop
+```
+
+- `access show` is read-only: what is in the cluster, and what `grant` would write.
+- `access grant` prints the objects, asks (`--yes` without a terminal and with `--json`), lists them in the install
+  record, then writes what differs: run again, it writes nothing. A Role or RoleBinding of that name without the label is
+  refused, nothing changed. The binding's other subjects stay; another router's service account (`dmtr-*@…`) among them
+  is refused. Kubernetes lets no one grant rights they do not hold: without them, you need `container.roles.escalate`
+  (Google lists it as testing in custom roles) and `container.roles.bind`.
+- `access revoke` removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
+  name without the label is left and said. While another subject holds the binding, only the router's subject goes, and
+  both objects stay. It works after `dormeto gcp uninstall`, which lists what it leaves in a cluster.
+- The CLI and the router reach the cluster on its DNS endpoint, which must be open to traffic from outside its network:
+  the router calls it from Cloud Run with its own token, with no VPC. A cluster with no DNS endpoint is refused, saying
+  what to turn on; a private cluster is reached by its DNS endpoint only.
+
+### Google Cloud limits
+
+- **A pause with `--keep-asleep` does not keep visitors out**: a visitor still wakes it. Only scheduled and maintenance
+  wakes wait.
+- **An IP list does not stop an explicit wake**: a listed address's `POST /_dormeto/wake` still wakes the workload.
+- **Under a swap** (regional and classic), the waker gets every request while the workload sleeps and answers the waiting
+  page with a `503` and `Retry-After`, whatever the method: an API client reads it as asleep, sends
+  `POST /_dormeto/wake`, then retries. A plain request (a `curl`, a webhook) gets the page and does not wake the workload.
+  A visitor at a nap's start may wait up to twice the swap's wait with the VMs still running, and a nap that dies while
+  swapped holds visitors at the waker for up to 15 minutes, until the router's check fails it. Right after a classic
+  map's change first routes a path to the waker, Cloud Run answered plain HTTP with a `302` to `https://` for about 40 s
+  (measured): an HTTP-only classic front end gets that error for that moment.
+- **A zonal network endpoint group's VMs**: a nap acts only on what still is the group. A membership changed, or a group
+  gone, aborts every nap until you offboard and onboard the workload again; a wake still starts what was recorded. A VM
+  of a managed group, an empty group and the other types are refused at the onboarding.
+- **A database belongs to one router**: two routers on one instance flip it at each check, and offboarding one unbinds
+  the tag the other needs.
+- **Read replicas keep running**: Google stops only a primary. A primary with read replicas is taken, and the onboarding
+  warns that its replicas keep running, and billing, while the workload sleeps; a read replica itself is refused.
+- **Cloud SQL is slow to start**: on a `db-f1-micro` instance, a stop took 104 s and a start 562 s, 9.4 minutes (one
+  measure each). A wake starts the database first, so a visitor waits for it. A stopped instance still bills its storage
+  and IP addresses.
+- **The tag on an instance**: with its binding removed, the workload naps but its database keeps running, and billing,
+  logged `DatabaseNotFollowed` at each check, until the tag is bound again. A companion that no longer exists aborts every
+  nap; a wake starts the application anyway, and `workloads show` says to offboard and onboard the workload again. An
+  offboarding of an awake workload whose database is stopped leaves it stopped.
+- **A GKE Standard cluster's nodes are paid all the same**: scaling pods saves money only on Autopilot, or with the node
+  autoscaler freeing a node. The onboarding warns of a Standard cluster.
+- **GKE's own load balancers are refused**: a URL map named `k8s2-`, `gkegw1-` or `gkemcg1-` belongs to an Ingress or a
+  Gateway, whose controller writes it back. One measured case: GKE removed a policy written on a Gateway's map 48 s after
+  its routes changed, without a word. Use a standalone network endpoint group on a load balancer you own.
+- **GKE pods**: a workload at 0 replicas cannot be onboarded. A nap needs the owner's pods behind the network endpoint
+  group, and may wait a window for a new pod's endpoint; one aborted for an empty group or a foreign endpoint shows only
+  in the router's logs. A wake with no recorded replicas, after a scale to 0 by hand, brings 1 replica. An onboarding
+  refused because the new Role was not applied yet passes when run again.
+
+### How far Google Cloud has been tried
+
+There are three levels.
+
 - *Accepted on a real project* (2026-10-30): `gcp check`, `install`, `uninstall`, `status` and `workloads`, and Compute
   Engine VMs (unmanaged and managed groups, suspended when possible) behind a global external Application Load Balancer.
 - *Built and reviewed, its acceptance not run yet*: regional and classic load balancers (`--load-balancer`), zonal network
   endpoint groups, schedules and pauses (`workloads schedule`, `pause`, `resume`) and IP lists (`--ip-list`). Some of
-  their behavior was measured on Google; no more than that.
-- *Written, never run against Google*: Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and GKE (`--with gke`,
-  `--gke-cluster`, `workloads access`). Try them in a project you can lose: each command that takes one of these flags
-  prints one warning on stderr to say so, and goes on.
+  their behavior was measured on Google, including real onboardings, naps and wakes on regional and classic load
+  balancers; no more than that.
+- *Built and reviewed, measured on Google, its acceptance not run yet*: Cloud SQL companions (`--with cloud-sql`,
+  `--cloud-sql`) and GKE (`--with gke`, `--gke-cluster`, `workloads access`). On 2026-11-04,
+  `gcp install --with cloud-sql,gke` and `workloads access grant` ran on a real project, and the Google behavior they
+  rely on was measured. Try them in a project you can lose: each command that takes one of these flags prints one
+  warning on stderr, and goes on.
 
 There is no public router image: you build and push your own (`scripts/gcp-image.sh` in the router's repository; the
 website's [Google Cloud page](https://dormeto.com/google-cloud.html) has the steps). There is no dashboard or manager for

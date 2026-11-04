@@ -229,6 +229,45 @@ func TestReadmeGoogleCloudSaysWhoHoldsTheInvokerRoleAndHowLongGoogleHoldsDeleted
 	}
 }
 
+// Google Cloud's coverage (vision docs/specs/2026-10-30-google-cloud-coverage-design.md, sections 4 to 9, and the
+// measures of section 10): the README names each feature, flag and command, what Google adds per feature, and the limits
+// a user must know before relying on them, with the router version they ship in.
+func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	for _, want := range []string{
+		// the features, and what Google adds for each (measured 2026-11-04)
+		"--with cloud-sql,gke", "dormetoRouterDatabasesRead", "dormetoRouterDatabases", "dormetoRouterKubernetes",
+		"`roles/container.serviceAgent`", "`roles/file.serviceAgent`", "`roles/container.defaultNodeServiceAgent`",
+		"container-engine-robot", "cloud-filer", "gcp-sa-gkenode", "gcp-sa-cloud-sql",
+		"`autoscaling`", "`containerfilesystem`", "`dns`", "`file`", "`gkebackup`", "`networkconnectivity`",
+		// IP lists
+		"--ip-list name=<n>,url=<u>[,refresh=<hours>]", "--no-ip-lists", "`DMT_IP_LISTS`", "512 MiB",
+		"a listed address's `POST /_dormeto/wake` still wakes",
+		// schedules and pauses
+		"workloads schedule show", "workloads schedule set", "workloads schedule clear", "--reason", "--until", "at most 10 scheduled naps",
+		"`--keep-asleep`", "a visitor still wakes it",
+		// the onboarding's flags
+		"--load-balancer global|regional|classic", "--wake-timeout", "60 to 1700", "--cloud-sql <instance>", "--gke-cluster <location>/<name>",
+		// the Kubernetes access
+		"workloads access show", "workloads access grant", "workloads access revoke", "dormeto-<workload>", "nothing cluster-wide",
+		"`container.roles.escalate`", "`container.roles.bind`",
+		// the limits
+		"read replicas", "keep running, and billing", "a read replica itself is refused", "A database belongs to one router",
+		"Standard cluster", "`k8s2-`", "`gkegw1-`", "`gkemcg1-`", "`notGivenBack`", "exits 1",
+		// the versions and how far it was tried
+		"router 0.37.0", "CLI 0.11.0", "acceptance not run yet",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"router:0.35.0", "Written, never run against Google"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the Google Cloud section still says %q", gone)
+		}
+	}
+}
+
 // A caller of the manager's /iam routes counts as an administrator, so the permission to write a waiting page is the
 // permission to set custom HTML on the application's address: the README says it in the section and at the table's rows.
 func TestReadmeWarnsThatWaitingPageWritesGiveCustomHTML(t *testing.T) {

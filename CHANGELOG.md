@@ -8,6 +8,24 @@ settings` take `--idle-minutes`, `--wait-seconds`, `--drain-seconds`, `--wake-ti
 `workloads settings` takes `--type`. `dormeto aws types` lists, shows, sets and deletes the organization's workload types.
 `workloads show` says where each setting comes from and the workload's type.
 
+Google Cloud's coverage, with router 0.37.0: regional and classic load balancers, zonal network endpoint groups,
+schedules, pauses, IP lists, Cloud SQL companions and GKE pods. Their commands came with 0.8.0, written before Google was
+measured; router 0.37.0 carries what the measures of 2026-11-04 changed. Their acceptance has not run yet.
+
+- With router 0.37.0, `gcp workloads onboard --cloud-sql` takes a primary with read replicas, which an older router
+  refuses. Google stops only the primary (measured), so the onboarding prints `! Cloud SQL instance <name> has read
+  replicas (<replicas>): Google stops only the primary, its replicas keep running, and billing, while the workload
+  sleeps.` and goes on, on stderr under `--json`. A read replica is still refused.
+- The README's Google Cloud section documents each part: the optional access (`--with cloud-sql,gke`) and what Google
+  adds per feature, as measured (turning `container.googleapis.com` on adds `roles/container.serviceAgent`,
+  `roles/file.serviceAgent` and six APIs, a GKE cluster `roles/container.defaultNodeServiceAgent`, Cloud SQL nothing on
+  the project); IP lists (`--ip-list`, `--no-ip-lists`); schedules and pauses (`workloads schedule`, `pause`, `resume`);
+  the onboarding's `--load-balancer`, `--wake-timeout`, `--cloud-sql` and `--gke-cluster`; the Kubernetes access
+  (`workloads access show|grant|revoke`); `offboard --force`, whose `notGivenBack` exits 1; and the limits to know, such
+  as a `--keep-asleep` workload that a visitor still wakes, a listed address's `POST /_dormeto/wake` that still wakes, a
+  database that belongs to one router, and a GKE Standard cluster's nodes, paid all the same. It says how far each part
+  has been tried, Cloud SQL and GKE now measured on Google, and its example installs router 0.37.0.
+
 ## 0.10.0
 
 - `waiting-page set`: the title and the description take Markdown from router 0.36.0, as the README says. The CLI sends them
