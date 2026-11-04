@@ -1649,9 +1649,9 @@ The onboarding's other flags:
   classic load balancers have no custom error response, so a nap swaps the map's references from the application to the
   waker, and a wake swaps them back once a VM is healthy. The onboarding adds a route `/_dormeto/backend/*` to the
   application's service for good: it keeps that service health checked through a swap, and the application sees that
-  path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (measured wakes reached
-  the application on regional after 62 s from a browser, and 62 s and 123 s from `POST /_dormeto/wake`, on classic after
-  2 min 16 s). Google advises moving a classic load balancer to the global external one.
+  path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (measured: visitors reached
+  the application 62 s after a `POST /_dormeto/wake` on regional and 2 min 16 s after one on classic; the router reads the
+  workload `AWAKE` 123 to 188 s and 287 s after the wake, its unswap's wait included). Google advises moving a classic load balancer to the global external one.
 - `--wake-timeout <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call). The router's default is
   600 s for VMs, 300 s for pods and 1700 s with a Cloud SQL companion, plus the swap's wait on regional (100 s) and classic
   (250 s), up to 1700. If you set it, give a regional load balancer about 250 s or more, and a classic one about 340 s

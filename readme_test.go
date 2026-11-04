@@ -260,7 +260,7 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		"*Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both unreleased",
 		"Not run: ten workloads on one URL map in one nap window",
 		"Ten workloads on one URL map in one nap window were not run in the acceptance",
-		"62 s from a browser", "123 s from `POST /_dormeto/wake`", "551 s",
+		"62 s after a `POST /_dormeto/wake`", "`AWAKE` 123 to 188 s and 287 s after the wake", "551 s",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)
