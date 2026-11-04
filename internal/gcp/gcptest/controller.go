@@ -240,7 +240,11 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 				reasons = append(reasons, "Cloud SQL instance "+name+" not found: name an instance of this project")
 				continue
 			}
-			databases = append(databases, map[string]any{"name": name, "selfLink": "https://sqladmin.googleapis.com/v1/projects/" + s.ProjectID + "/instances/" + name})
+			database := map[string]any{"name": name, "selfLink": "https://sqladmin.googleapis.com/v1/projects/" + s.ProjectID + "/instances/" + name}
+			if replicas := s.SQLReplicas[name]; len(replicas) > 0 {
+				database["replicas"] = replicas
+			}
+			databases = append(databases, database)
 		}
 		if _, there := s.Workloads[id]; there {
 			reasons = append(slices.Clone(reasons), "workload "+id+" is onboarded already")

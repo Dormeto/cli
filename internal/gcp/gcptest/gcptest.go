@@ -120,6 +120,8 @@ type Server struct {
 	ScheduleJoin    map[string]any
 	// SQLInstances are the project's Cloud SQL instances, by name, with their region.
 	SQLInstances map[string]string
+	// SQLReplicas are the read replicas of a Cloud SQL instance, by its name, as the dry run names them.
+	SQLReplicas map[string][]string
 	// ControllerBelow035 plays a controller older than 0.35.0: no route for a workload's schedule, pause and resume, and a
 	// dry run that says nothing of a load balancer, a database or a cluster.
 	ControllerBelow035 bool

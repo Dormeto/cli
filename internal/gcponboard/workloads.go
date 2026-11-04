@@ -134,6 +134,8 @@ type gkeRef struct {
 
 type databaseRef struct {
 	Name string `json:"name"`
+	// Replicas are its read replicas: Google stops only the primary (M8).
+	Replicas []string `json:"replicas,omitempty"`
 }
 
 // lbRef is a workload's load balancer as the controller names it: global, regional in a region, or classic.
@@ -599,6 +601,7 @@ func (x *run) onboard() error {
 		return err
 	}
 	x.warnStandard(dry)
+	x.warnReplicas(dry)
 	if x.r.DryRun {
 		if x.r.JSON {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
@@ -715,7 +718,7 @@ func (x *run) covers(dry dryRun) error {
 		return x.ignoredFlag("--load-balancer " + asked)
 	}
 	for _, name := range x.r.CloudSQL {
-		if !slices.Contains(dry.Databases, databaseRef{name}) {
+		if !slices.ContainsFunc(dry.Databases, func(d databaseRef) bool { return d.Name == name }) {
 			return x.ignoredFlag("--cloud-sql " + name)
 		}
 	}

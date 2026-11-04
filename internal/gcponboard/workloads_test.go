@@ -1477,6 +1477,24 @@ var shopWithDatabase = func() Request {
 	return r
 }()
 
+// M8: Google stops a primary with read replicas and leaves them running: the onboarding goes on, saying so.
+func TestWorkloadsOnboardWithADatabaseOfReadReplicasWarnsAndGoesOn(t *testing.T) {
+	g := newDatabaseRig(t)
+	g.s.SQLReplicas = map[string][]string{"shop-db": {"shop-db-r1", "shop-db-r2"}}
+	code, out := g.call(t, WorkloadsOnboard, shopWithDatabase)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "! Cloud SQL instance shop-db has read replicas (shop-db-r1, shop-db-r2)", "Google stops only the primary", "keep running, and billing")
+	if g.s.Workloads["shop"] != "AWAKE" {
+		t.Fatal("not onboarded")
+	}
+	g2 := newDatabaseRig(t)
+	if _, out := g2.call(t, WorkloadsOnboard, shopWithDatabase); strings.Contains(out, "read replicas") {
+		t.Fatalf("no replica, no warning:\n%s", out)
+	}
+}
+
 func TestWorkloadsOnboardBindsTheDatabasesTagOnItsParentBeforeTheOnboarding(t *testing.T) {
 	g := newDatabaseRig(t)
 	value := g.tagValue(t)
