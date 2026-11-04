@@ -264,9 +264,10 @@ func TestGcpInstallRefusesABadIPListBeforeAnyRun(t *testing.T) {
 	}
 }
 
-const untriedWarning = "dormeto: Cloud SQL and GKE on Google Cloud have never run against Google: try them in a project you can lose.\n"
+// Cloud SQL and GKE were accepted in dormeto-dev on 2026-11-04 (vision plan 2026-10-30): no warning of them any more.
+const untriedWarning = ""
 
-func TestGcpWarnsOnceThatCloudSQLAndGKEHaveNeverRunAgainstGoogle(t *testing.T) {
+func TestGcpNoLongerWarnsOfCloudSQLAndGKE(t *testing.T) {
 	for name, args := range map[string][]string{
 		"check --with":      {"gcp", "check", "--project", "p", "--with", "cloud-sql"},
 		"install --with":    {"gcp", "install", "--project", "p", "--region", "europe-west1", "--yes", "--with", "cloud-sql,gke"},

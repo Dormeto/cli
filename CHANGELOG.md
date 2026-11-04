@@ -10,7 +10,14 @@ settings` take `--idle-minutes`, `--wait-seconds`, `--drain-seconds`, `--wake-ti
 
 Google Cloud's coverage, with router 0.37.0: regional and classic load balancers, zonal network endpoint groups,
 schedules, pauses, IP lists, Cloud SQL companions and GKE pods. Their commands came with 0.8.0, written before Google was
-measured; router 0.37.0 carries what the measures of 2026-11-04 changed. Their acceptance has not run yet.
+measured; router 0.37.0 carries what the measures of 2026-11-04 changed. Accepted the same day in `dormeto-dev` (vision plan
+2026-10-30), but for ten workloads on one URL map.
+
+- Cloud SQL and GKE are no longer said to have never run against Google: `gcp check`, `install`, `uninstall --with`,
+  `workloads onboard --cloud-sql|--gke-cluster` and `workloads access` print no warning of them.
+- A billing read refused for quota (Google's 429, after the client's own tries) is a warning, `! billing not checked`, as a
+  refused one is: gcloud's token has no quota project, so that read counts against a quota Google shares between gcloud's
+  users, and it stopped an uninstall in the acceptance.
 
 - With router 0.37.0, `gcp workloads onboard --cloud-sql` takes a primary with read replicas, which an older router
   refuses. Google stops only the primary (measured), so the onboarding prints `! Cloud SQL instance <name> has read
