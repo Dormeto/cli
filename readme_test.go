@@ -254,14 +254,20 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		// the limits
 		"read replicas", "keep running, and billing", "a read replica itself is refused", "A database belongs to one router",
 		"Standard cluster", "`k8s2-`", "`gkegw1-`", "`gkemcg1-`", "`notGivenBack`", "exits 1",
-		// the versions and how far it was tried
-		"router 0.37.0", "CLI 0.11.0", "acceptance not run yet",
+		// the versions and how far it was tried: accepted on 2026-11-04 but for ten workloads on one URL map (vision
+		// docs/plans/2026-10-30-google-cloud-coverage.md, "Acceptance results"), with the acceptance's times
+		"router 0.37.0", "CLI 0.11.0",
+		"*Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both unreleased",
+		"Not run: ten workloads on one URL map in one nap window",
+		"Ten workloads on one URL map in one nap window were not run in the acceptance",
+		"62 s from a browser", "123 s from `POST /_dormeto/wake`", "551 s",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"router:0.35.0", "Written, never run against Google"} {
+	// The warning that Cloud SQL and GKE never ran against Google is gone (CLI 564f41b).
+	for _, gone := range []string{"router:0.35.0", "Written, never run against Google", "acceptance not run yet", "prints one warning on stderr"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("the Google Cloud section still says %q", gone)
 		}

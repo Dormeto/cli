@@ -1514,8 +1514,8 @@ From CLI 0.8.0, `dormeto gcp` installs and runs a Dormeto router in a Google Clo
 router naps the backends of a global, regional or classic external Application Load Balancer, and a visitor's first
 request wakes them: Compute Engine VMs and managed instance groups, VMs in zonal network endpoint groups, GKE pods behind
 standalone network endpoint groups, and Cloud SQL instances as their companions. Everything but VMs and groups behind a
-global load balancer comes with router 0.37.0 and CLI 0.11.0, which carry what the measures of 2026-11-04 changed
-([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
+global load balancer comes with router 0.37.0 and CLI 0.11.0, not released yet, which carry what the measures of
+2026-11-04 changed and were accepted the same day ([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
 Every command takes `--project` (required) and, but `check` and `status`, `--region` (required: the router is
 `dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google refuses; 2 for a bad flag
 or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
@@ -1649,9 +1649,9 @@ The onboarding's other flags:
   classic load balancers have no custom error response, so a nap swaps the map's references from the application to the
   waker, and a wake swaps them back once a VM is healthy. The onboarding adds a route `/_dormeto/backend/*` to the
   application's service for good: it keeps that service health checked through a swap, and the application sees that
-  path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (one measured wake of
-  each reached the application after 62 s and 2 min 16 s). Google advises moving a classic load balancer to the global
-  external one.
+  path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (measured wakes reached
+  the application on regional after 62 s from a browser, and 62 s and 123 s from `POST /_dormeto/wake`, on classic after
+  2 min 16 s). Google advises moving a classic load balancer to the global external one.
 - `--wake-timeout <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call). The router's default is
   600 s for VMs, 300 s for pods and 1700 s with a Cloud SQL companion, plus the swap's wait on regional (100 s) and classic
   (250 s), up to 1700. If you set it, give a regional load balancer about 250 s or more, and a classic one about 340 s
@@ -1695,6 +1695,9 @@ dormeto gcp workloads resume shop --project my-project --region europe-west1
 - The router's check asks at most 10 scheduled naps each run, every 5 minutes, oldest first: 30 workloads in one nap
   window nap within 15 minutes. Wakes are never held back. A scheduled nap's occurrence is spent once its task is
   accepted: a nap that a pause refuses, or whose task is lost, does not come back when the pause ends.
+- Ten workloads on one URL map in one nap window were not run in the acceptance. On a regional map, whose updates are
+  slow, only 2 or 3 of them may nap in that window, the others later by their idle window: give them different nap
+  windows, or maps of their own (the router's Compute Engine scenario page says why).
 - `pause <id> --reason <text>` (required, at most 256 characters) stops every nap, by the idle window, the schedule or
   `nap`, until `resume` or `--until` (RFC 3339, at most 366 days away). A workload asleep is woken. With `--keep-asleep`
   it is not, but a visitor still wakes it: only scheduled and maintenance wakes wait for the pause to end.
@@ -1758,7 +1761,8 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 - **Read replicas keep running**: Google stops only a primary. A primary with read replicas is taken, and the onboarding
   warns that its replicas keep running, and billing, while the workload sleeps; a read replica itself is refused.
 - **Cloud SQL is slow to start**: on a `db-f1-micro` instance, a stop took 104 s and a start 562 s, 9.4 minutes (one
-  measure each). A wake starts the database first, so a visitor waits for it. A stopped instance still bills its storage
+  measure each), and a workload's wake through the router, a VM with such a companion, 551 s. A wake starts the database
+  first, so a visitor waits for it. A stopped instance still bills its storage
   and IP addresses.
 - **The tag on an instance**: with its binding removed, the workload naps but its database keeps running, and billing,
   logged `DatabaseNotFollowed` at each check, until the tag is bound again. A companion that no longer exists aborts every
@@ -1776,19 +1780,15 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 
 ### How far Google Cloud has been tried
 
-There are three levels.
-
 - *Accepted on a real project* (2026-10-30): `gcp check`, `install`, `uninstall`, `status` and `workloads`, and Compute
   Engine VMs (unmanaged and managed groups, suspended when possible) behind a global external Application Load Balancer.
-- *Built and reviewed, its acceptance not run yet*: regional and classic load balancers (`--load-balancer`), zonal network
-  endpoint groups, schedules and pauses (`workloads schedule`, `pause`, `resume`) and IP lists (`--ip-list`). Some of
-  their behavior was measured on Google, including real onboardings, naps and wakes on regional and classic load
-  balancers; no more than that.
-- *Built and reviewed, measured on Google, its acceptance not run yet*: Cloud SQL companions (`--with cloud-sql`,
-  `--cloud-sql`) and GKE (`--with gke`, `--gke-cluster`, `workloads access`). On 2026-11-04,
-  `gcp install --with cloud-sql,gke` and `workloads access grant` ran on a real project, and the Google behavior they
-  rely on was measured. Try them in a project you can lose: each command that takes one of these flags prints one
-  warning on stderr, and goes on.
+- *Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both unreleased: regional and classic
+  load balancers (`--load-balancer`), zonal network endpoint groups, schedules and pauses (`workloads schedule`, `pause`,
+  `resume`), IP lists (`--ip-list`), Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and GKE (`--with gke`,
+  `--gke-cluster`, `workloads access`), installed by `gcp install --with cloud-sql,gke` and removed by `gcp uninstall`.
+  Not run: ten workloads on one URL map in one nap window (the router's cap of 10 scheduled naps a check and its retries
+  on a busy map are unit-tested only), an operator holding exactly the permissions `gcp check` lists for `onboard`, a
+  Cloud SQL start refused for lack of capacity, and a nap cut short by a new revision of the controller.
 
 There is no public router image: you build and push your own (`scripts/gcp-image.sh` in the router's repository; the
 website's [Google Cloud page](https://dormeto.com/google-cloud.html) has the steps). There is no dashboard or manager for
