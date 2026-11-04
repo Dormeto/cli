@@ -203,6 +203,9 @@ func IsAlreadyExists(err error) bool {
 // IsDenied is a 403.
 func IsDenied(err error) bool { e := asError(err); return e != nil && e.Code == 403 }
 
+// IsExhausted tells a quota or rate limit's refusal, a 429 (after Do's own tries).
+func IsExhausted(err error) bool { e := asError(err); return e != nil && e.Code == 429 }
+
 // IsPrecondition is a 412, or a 400 whose status is FAILED_PRECONDITION.
 func IsPrecondition(err error) bool {
 	e := asError(err)

@@ -315,7 +315,9 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 	switch err := d.Google.Do(ctx, http.MethodGet, cloudBilling+url.PathEscape(r.Project)+"/billingInfo", nil, &billing); {
 	case err == nil:
 		rep.Billing = BillingReport{Checked: true, Enabled: billing.BillingEnabled}
-	case gcp.IsDenied(err):
+	// Refused, or out of quota: gcloud's token has no quota project, so the read counts against a quota Google shares between
+	// gcloud's users (seen in the acceptance). The read is advice: Google refuses to turn APIs on without billing anyway.
+	case gcp.IsDenied(err), gcp.IsExhausted(err):
 		rep.Warnings = append(rep.Warnings, "billing not checked: "+err.Error())
 	default:
 		return Report{}, err

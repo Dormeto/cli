@@ -379,6 +379,25 @@ func TestCheckFailsWithoutBilling(t *testing.T) {
 	}
 }
 
+// Seen in the acceptance (2026-11-04): gcloud's token has no quota project, so the billing read counts against a quota that
+// Google shares between gcloud's users, and a 429 that outlasts the client's retries stopped a whole uninstall. The read is
+// advice: it warns, as a denial does.
+func TestBillingQuotaExhaustedIsAWarning(t *testing.T) {
+	s := gcptest.New(t)
+	s.Refuse(gcptest.Refusal{Method: "GET", Host: "cloudbilling.googleapis.com", Path: "/v1/projects/dormeto-dev/billingInfo", Code: 429,
+		Status: "RESOURCE_EXHAUSTED", Message: "Quota exceeded for quota metric 'All requests' of service 'cloudbilling.googleapis.com'", Reason: "RATE_LIMIT_EXCEEDED"})
+	d, out := deps(s)
+	if code := RunCheck(context.Background(), d, Request{Project: "dormeto-dev"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	if !strings.Contains(out.String(), "  ! billing not checked: google: 429 RESOURCE_EXHAUSTED") || strings.Contains(out.String(), " billing: ") {
+		t.Fatal(out)
+	}
+	if n := len(s.CallsTo("/billingInfo")); n != 4 {
+		t.Fatalf("billing read %d times, not once and 3 retries", n)
+	}
+}
+
 func TestBillingNotReadableIsAWarning(t *testing.T) {
 	s := gcptest.New(t)
 	s.BillingDenied = true
