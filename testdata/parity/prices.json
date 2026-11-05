@@ -1,7 +1,7 @@
 {
-  "manager": "0.21.0",
-  "router": "0.36.0",
-  "commit": "7d2705009e31cfa25279753ecb7a9ff8891584bf",
+  "manager": "0.22.0",
+  "router": "0.37.0",
+  "commit": "48850380a71c2f0d8589c05aee64aae6305580d9",
   "cases": [
     {
       "name": "hourly: EC2 by type, region and OS, times the count; asked once, then from the book",
