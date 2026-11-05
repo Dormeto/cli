@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 Workload settings at scale, with manager 0.22.0 and routers 0.37.0: `settings set`, `routers settings` and `workloads
 settings` take `--idle-minutes`, `--wait-seconds`, `--drain-seconds`, `--wake-timeout-seconds`, `--max-holders`,
