@@ -66,7 +66,11 @@ func newInstallRig(t *testing.T) *installRig {
 	return &installRig{s: s, d: d, out: &out, slept: &slept, cache: cache}
 }
 
-var europe = Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true}
+// europe installs the access only (--access-only), as a run without --image did before G4: most tests are of the access.
+var europe = Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, AccessOnly: true}
+
+// plain is a run with neither --version, --image nor --access-only: the record and the CLI's version decide the router.
+var plain = Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true}
 
 func (g *installRig) run(t *testing.T, r Request) (int, string) {
 	t.Helper()
@@ -152,7 +156,6 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + API cloudtasks.googleapis.com
   + API cloudscheduler.googleapis.com
   + API monitoring.googleapis.com
-  + API artifactregistry.googleapis.com
   + API iam.googleapis.com
   + API cloudresourcemanager.googleapis.com
   + API logging.googleapis.com
@@ -181,7 +184,7 @@ Turning APIs on and creating the database can make Google add bindings of its ow
 
 func TestInstallDryRunPrintsThePlanOfAFreshProject(t *testing.T) {
 	g := newInstallRig(t)
-	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true, AccessOnly: true})
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -206,7 +209,7 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, freshPlan,
-		"  ✓ apis: turned on compute.googleapis.com, run.googleapis.com, firestore.googleapis.com, cloudtasks.googleapis.com, cloudscheduler.googleapis.com, monitoring.googleapis.com, artifactregistry.googleapis.com, iam.googleapis.com, cloudresourcemanager.googleapis.com, logging.googleapis.com\n"+
+		"  ✓ apis: turned on compute.googleapis.com, run.googleapis.com, firestore.googleapis.com, cloudtasks.googleapis.com, cloudscheduler.googleapis.com, monitoring.googleapis.com, iam.googleapis.com, cloudresourcemanager.googleapis.com, logging.googleapis.com\n"+
 			"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
 			"  ✓ database: created dmtr-europe-west1 (Firestore Native, europe-west1), wrote install/record\n"+
 			"      IAM + roles/firestore.serviceAgent to "+firestoreAgent+" on the project (Google, after database)\n"+
@@ -226,8 +229,9 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 
 	s := g.s
 	for _, api := range access.Load().APIs {
-		if !slices.Contains(s.Enabled, api) {
-			t.Errorf("%s not enabled", api)
+		// Artifact Registry is for a router of --image only: neither the access nor Dormeto's public image needs it.
+		if on := slices.Contains(s.Enabled, api); on != (api != "artifactregistry.googleapis.com") {
+			t.Errorf("%s enabled: %t", api, on)
 		}
 	}
 	m := access.Load()
@@ -308,8 +312,8 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 	for _, r := range rec.Resources {
 		kinds[r.Kind]++
 	}
-	if kinds["api"] != 10 || kinds["role"] != 2 || kinds["serviceAccount"] != 1 || kinds["tagKey"] != 1 || kinds["tagValue"] != 1 ||
-		kinds["database"] != 1 || kinds["queue"] != 1 || len(rec.Resources) != 17 {
+	if kinds["api"] != 9 || kinds["role"] != 2 || kinds["serviceAccount"] != 1 || kinds["tagKey"] != 1 || kinds["tagValue"] != 1 ||
+		kinds["database"] != 1 || kinds["queue"] != 1 || len(rec.Resources) != 16 {
 		t.Errorf("resources %+v", rec.Resources)
 	}
 	for _, want := range []Resource{
@@ -374,7 +378,8 @@ func TestInstallChangesInTheStepsOrder(t *testing.T) {
 	}
 	enable := g.s.CallsTo("services:batchEnable")[0]
 	var body struct{ ServiceIDs []string }
-	if json.Unmarshal([]byte(enable.Body), &body) != nil || !slices.Equal(body.ServiceIDs, access.Load().APIs) ||
+	apis := slices.DeleteFunc(slices.Clone(access.Load().APIs), func(api string) bool { return api == "artifactregistry.googleapis.com" })
+	if json.Unmarshal([]byte(enable.Body), &body) != nil || !slices.Equal(body.ServiceIDs, apis) ||
 		enable.URL != "https://serviceusage.googleapis.com/v1/projects/1034397096264/services:batchEnable" {
 		t.Fatalf("%+v", enable)
 	}
@@ -466,7 +471,7 @@ func TestInstallUpdatesADescriptionOfAnotherVersion(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g.d.Version = "0.8.1"
-	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true, AccessOnly: true})
 	want := access.Load().Roles["dormetoRouterBackends"].Description
 	if code != 0 || !strings.Contains(out, `  ~ role dormetoRouterBackends: description "Dormeto 0.8.1: `+want+`"`+"\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -584,7 +589,7 @@ func TestInstallStopsAtARefusedStepAndContinuesAfter(t *testing.T) {
 	if len(rec.Google) != 2 || rec.Google[0].Member != runAgent || rec.Google[0].Step != "apis" || rec.Google[1].Step != "database" {
 		t.Errorf("google %+v", rec.Google)
 	}
-	if len(rec.Resources) != 17 {
+	if len(rec.Resources) != 16 {
 		t.Errorf("resources %+v", rec.Resources)
 	}
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
@@ -661,7 +666,7 @@ func TestInstallMissingPermissionChangesNothing(t *testing.T) {
 
 func TestInstallWithoutTerminalNeedsYes(t *testing.T) {
 	g := newInstallRig(t)
-	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
 	if code != 2 || !strings.Contains(out, freshPlan) || !strings.HasSuffix(out, "--yes: needed\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -674,7 +679,7 @@ func TestInstallAsksForConfirmation(t *testing.T) {
 	g := newInstallRig(t)
 	g.d.Terminal = true
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
-	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
 	if code != 0 || !strings.Contains(out, "Apply these changes to project dormeto-dev? [y/N]: ") || !strings.HasSuffix(out, "Nothing was changed.\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -685,7 +690,7 @@ func TestInstallAsksForConfirmation(t *testing.T) {
 		t.Fatalf("cache file: %v", err)
 	}
 	g.d.Prompter = install.NewPrompter(strings.NewReader("y\n"), g.out, true)
-	code, out = g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	code, out = g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
 	if code != 0 || !strings.Contains(out, "Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1059,7 +1064,7 @@ func TestInstallStoppedDuringAStepSaysGooglesChanges(t *testing.T) {
 	if len(rec.Google) != 1 || rec.Google[0] != (GoogleGrant{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis"}) {
 		t.Errorf("google %+v", rec.Google)
 	}
-	if apis(rec) != 10 || len(rec.Enabling) != 0 || rec.Running != "apis" {
+	if apis(rec) != 9 || len(rec.Enabling) != 0 || rec.Running != "apis" {
 		t.Errorf("resources %+v, enabling %v, running %q", rec.Resources, rec.Enabling, rec.Running)
 	}
 }
@@ -1085,14 +1090,14 @@ func TestInstallSaysGooglesChangesWhenTheReadAfterAStepFails(t *testing.T) {
 	contains(t, out, "  ✗ apis: google: 403 PERMISSION_DENIED: denied once\n"+
 		"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
 		"Done: none. Not done: apis, ")
-	if rec := g.cached(t); len(rec.Google) != 1 || rec.Google[0].Member != runAgent || apis(rec) != 10 {
+	if rec := g.cached(t); len(rec.Google) != 1 || rec.Google[0].Member != runAgent || apis(rec) != 9 {
 		t.Fatalf("%+v", rec)
 	}
 	code, out = g.run(t, europe)
 	if code != 0 || strings.Contains(out, "since the last run") || strings.Contains(out, "IAM change not made") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if rec := g.record(t); len(rec.Google) != 2 || rec.Google[0].Step != "apis" || rec.Google[1].Step != "database" || apis(rec) != 10 || rec.Running != "" {
+	if rec := g.record(t); len(rec.Google) != 2 || rec.Google[0].Step != "apis" || rec.Google[1].Step != "database" || apis(rec) != 9 || rec.Running != "" {
 		t.Fatalf("%+v", rec)
 	}
 }
@@ -1105,7 +1110,7 @@ func TestInstallAfterAStoppedRunRecordsGooglesChangesSeenLater(t *testing.T) {
 	if code := Install(ctx, g.d, europe); code != 130 || strings.Contains(g.out.String(), "IAM +") {
 		t.Fatalf("exit %d:\n%s", code, g.out)
 	}
-	if rec := g.cached(t); apis(rec) != 0 || len(rec.Enabling) != 10 {
+	if rec := g.cached(t); apis(rec) != 0 || len(rec.Enabling) != 9 {
 		t.Fatalf("%+v", rec)
 	}
 	// Google finishes turning the APIs on after the CLI stopped; someone grants a role, another router is installed.
@@ -1132,7 +1137,7 @@ func TestInstallAfterAStoppedRunRecordsGooglesChangesSeenLater(t *testing.T) {
 	if !slices.Equal(rec.Google, want) {
 		t.Errorf("google %+v", rec.Google)
 	}
-	if apis(rec) != 10 || len(rec.Enabling) != 0 || rec.Running != "" || len(rec.Resources) != 17 {
+	if apis(rec) != 9 || len(rec.Enabling) != 0 || rec.Running != "" || len(rec.Resources) != 16 {
 		t.Errorf("resources %+v, enabling %v, running %q", rec.Resources, rec.Enabling, rec.Running)
 	}
 	// Recorded: the next run plans nothing (only the binding it does not record is shown again).
@@ -1169,7 +1174,7 @@ func TestInstallResumesTheUnfinishedRecordOfTheDatabase(t *testing.T) {
 }
 
 func TestInstallPlanSaysWhichBindingsGoogleIsExpectedToAdd(t *testing.T) {
-	dry := Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true}
+	dry := Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true, AccessOnly: true}
 	// In an organization (its policy decides the default service account's Editor): every other one.
 	g := newInstallRig(t)
 	g.s.Parent = "organizations/42"
@@ -1299,11 +1304,14 @@ func TestInstallImageDryRunPlansTheRouterAfterTheAccess(t *testing.T) {
 	}
 }
 
-func TestInstallWithoutImageDoesNotPlanTheRouter(t *testing.T) {
+func TestInstallAccessOnlyDoesNotPlanTheRouter(t *testing.T) {
 	g := newRouterRig(t)
-	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true, AccessOnly: true})
 	if code != 0 || strings.Contains(out, "service dmtr") || strings.Contains(out, "network endpoint group") || strings.Contains(out, "+ job") {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if heads := callsOf(g.s.Calls(), "HEAD"); len(heads) != 0 {
+		t.Fatalf("%+v", heads)
 	}
 }
 
@@ -1468,18 +1476,445 @@ func TestInstallAnotherTagUpdatesOnlyTheTwoServices(t *testing.T) {
 	}
 }
 
-func TestInstallWithoutImageLeavesAnInstalledRouterAlone(t *testing.T) {
+// Dormeto's public image (design §4): <multi-region>-docker.pkg.dev/dormeto-releases/router/router:<version>, deployed by
+// its digest. The default version is the CLI's embedded router version; the tests take it from there, so they hold at
+// each release.
+
+// publicImage is Dormeto's public image of a version, for europe-west1; digestOf its digest in the fake registry.
+func publicImage(version string) string {
+	return "europe-docker.pkg.dev/dormeto-releases/router/router:" + version
+}
+
+func digestOf(version string) string { return "sha256:d" + strings.ReplaceAll(version, ".", "") }
+
+func deployedOf(version string) string { return publicImage(version) + "@" + digestOf(version) }
+
+// publicRig is a rig whose public registry holds Dormeto's router images of these versions.
+func publicRig(t *testing.T, versions ...string) *installRig {
+	t.Helper()
+	g := newRouterRig(t)
+	for _, v := range versions {
+		g.s.Images[publicImage(v)] = true
+		g.s.Digests[publicImage(v)] = digestOf(v)
+	}
+	return g
+}
+
+// atPublicVersion plays a newer CLI's upgrade of the router: both services and the record at that version.
+func (g *installRig) atPublicVersion(t *testing.T, version string) {
+	t.Helper()
+	g.s.Lock()
+	defer g.s.Unlock()
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc == nil {
+			t.Fatalf("no service %s", name)
+		}
+		c := &svc.Template.Containers[0]
+		c.Image = deployedOf(version)
+		for i := range c.Env {
+			if c.Env[i].Name == "DMT_VERSION" {
+				c.Env[i].Value = version
+			}
+		}
+	}
+	data, _ := g.s.Documents[recordDB+"/install/record"]["data"].(map[string]any)
+	var rec Record
+	if err := json.Unmarshal([]byte(data["stringValue"].(string)), &rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.Image, rec.RouterVersion, rec.Digest = publicImage(version), version, digestOf(version)
+	b, _ := json.Marshal(rec)
+	g.s.Documents[recordDB+"/install/record"] = map[string]any{"data": map[string]any{"stringValue": string(b)}}
+}
+
+func (g *installRig) writeRecord(t *testing.T, rec Record) {
+	t.Helper()
+	b, _ := json.Marshal(rec)
+	g.s.Lock()
+	g.s.Documents[recordDB+"/install/record"] = map[string]any{"data": map[string]any{"stringValue": string(b)}}
+	g.s.Unlock()
+}
+
+// asked are the permissions the run's testIamPermissions calls asked.
+func (g *installRig) asked(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, c := range g.s.CallsTo(":testIamPermissions") {
+		var body struct{ Permissions []string }
+		if err := json.Unmarshal([]byte(c.Body), &body); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, body.Permissions...)
+	}
+	return out
+}
+
+func TestEmbeddedRouterVersionIsTheParityFilesRouter(t *testing.T) {
+	b, err := os.ReadFile("../../testdata/parity/versions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct{ Router string }
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	if got := embeddedRouterVersion(); got != v.Router || !install.IsVersion(got) {
+		t.Fatalf("%q, the parity file's %q", got, v.Router)
+	}
+}
+
+func TestDefaultImageIsInTheMultiRegionOfTheRoutersRegion(t *testing.T) {
+	for region, multi := range map[string]string{
+		"europe-west1": "europe", "europe-north2": "europe",
+		"us-central1": "us", "northamerica-northeast1": "us", "southamerica-east1": "us",
+		"asia-east1": "asia", "me-west1": "asia", "australia-southeast1": "asia", "africa-south1": "asia",
+	} {
+		if got, want := defaultImage(region, "0.38.0"), multi+"-docker.pkg.dev/dormeto-releases/router/router:0.38.0"; got != want {
+			t.Errorf("%s: %s, want %s", region, got, want)
+		}
+	}
+}
+
+// A first install without --version, --image nor --access-only installs the router at the default version, from Dormeto's
+// public image read without a token and deployed by digest; neither the image's permissions nor Artifact Registry's API are
+// the project's business.
+func TestInstallFirstInstallsTheRouterAtTheDefaultVersion(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	code, out := g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Checked: image "+publicImage(def)+" is public, digest "+digestOf(def)+".\n",
+		"  + service "+controllerName+" (image "+deployedOf(def)+", ingress all, ",
+		"  + service "+wakerName+" (image "+deployedOf(def)+", ingress internal and Cloud Load Balancing, ",
+		"/v1/health answering version "+def+"\n",
+		"Installed router dmtr-europe-west1 in project dormeto-dev, version "+def+".\n")
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc == nil || svc.Template.Containers[0].Image != deployedOf(def) || svc.Env("DMT_VERSION") != def {
+			t.Errorf("%s: %+v", name, svc)
+		}
+	}
+	rec := g.record(t)
+	if rec.Image != publicImage(def) || rec.RouterVersion != def || rec.Digest != digestOf(def) || rec.AccessOnly || rec.Running != "" {
+		t.Errorf("record %+v", rec)
+	}
+	heads := callsOf(g.s.CallsTo("/manifests/"+def), "HEAD")
+	if len(heads) != 1 || heads[0].URL != "https://europe-docker.pkg.dev/v2/dormeto-releases/router/router/manifests/"+def || heads[0].Auth != "" {
+		t.Fatalf("%+v", heads)
+	}
+	if slices.Contains(g.s.Enabled, "artifactregistry.googleapis.com") {
+		t.Error("Artifact Registry's API turned on")
+	}
+	asked := g.asked(t)
+	if !slices.Contains(asked, "run.services.create") || slices.ContainsFunc(asked, func(p string) bool { return strings.HasPrefix(p, "artifactregistry.") }) {
+		t.Errorf("asked %v", asked)
+	}
+}
+
+func TestInstallOfThePublicImageDoesNotNeedTheImagesPermissions(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range append(access.Needs("install"), access.Needs("install-router")...) {
+		g.s.Held[p] = !strings.HasPrefix(p, "artifactregistry.")
+	}
+	if code, out := g.run(t, plain); code != 0 || strings.Contains(out, "✗") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// The default run's router permissions are tested once the record says it installs the router: a missing one stops it
+// before any change.
+func TestInstallOfThePublicImageTestsTheRoutersPermissions(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range append(access.Needs("install"), access.Needs("install-router")...) {
+		g.s.Held[p] = p != "run.services.create"
+	}
+	code, out := g.run(t, plain)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ install-router: missing run.services.create\nNothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+// --image keeps today's checks: the image's permissions and Artifact Registry's API.
+func TestInstallImageNeedsTheImagesPermissionsAndArtifactRegistry(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range append(access.Needs("install"), access.Needs("install-router")...) {
+		g.s.Held[p] = p != "artifactregistry.dockerimages.get"
+	}
+	code, out := g.run(t, withImage)
+	if code != 1 || !strings.Contains(out, "  ✗ install-router: missing artifactregistry.dockerimages.get\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.HoldsAll = true
+	if code, out := g.run(t, withImage); code != 0 || !slices.Contains(g.s.Enabled, "artifactregistry.googleapis.com") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestInstallVersionPlansThePublicImageByDigest(t *testing.T) {
+	const older = "0.36.0"
+	g := publicRig(t, older)
+	r := plain
+	r.Version, r.Yes, r.DryRun = older, false, true
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Checked: image "+publicImage(older)+" is public, digest "+digestOf(older)+".\n",
+		"  + service "+controllerName+" (image "+deployedOf(older)+", ingress all, ",
+		"  + service "+wakerName+" (image "+deployedOf(older)+", ")
+	heads := callsOf(g.s.Calls(), "HEAD")
+	if len(heads) != 1 || heads[0].URL != "https://europe-docker.pkg.dev/v2/dormeto-releases/router/router/manifests/"+older || heads[0].Auth != "" {
+		t.Fatalf("%+v", heads)
+	}
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallVersionNotInThePublicRegistryStopsNamingIt(t *testing.T) {
+	g := newInstallRig(t)
+	r := plain
+	r.Version = "0.36.0"
+	code, out := g.run(t, r)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ image: router 0.36.0 is not in Dormeto's public registry ("+publicImage("0.36.0")+")\nNothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallPublicRegistryOutOfReachStops(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	g.s.Route("europe-docker.pkg.dev", "/v2/", func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	})
+	code, out := g.run(t, plain)
+	if code != 1 || strings.Contains(out, "Plan for") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "image "+publicImage(def)+": ", "Nothing was changed.\n")
+	if m := g.s.Mutations(); len(m) != 0 {
+		t.Fatalf("mutating calls: %+v", m)
+	}
+}
+
+func TestInstallVersionNewerThanTheCLIsIsRefusedBeforeAnyCall(t *testing.T) {
+	g := newInstallRig(t)
+	r := plain
+	r.Version = "9.0.0"
+	code, out := g.run(t, r)
+	if code != 2 || out != "router 9.0.0 needs a newer CLI: brew upgrade dormeto\n" {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if c := g.s.Calls(); len(c) != 0 {
+		t.Fatalf("calls: %+v", c)
+	}
+}
+
+func TestInstallRouterFlagsAreChecked(t *testing.T) {
+	g := newInstallRig(t)
+	for want, r := range map[string]Request{
+		fmt.Sprintf("--version: %q is not a version such as %s", "0.37", embeddedRouterVersion()): {Version: "0.37"},
+		"--image and --version: one or the other":                                                 {Image: routerImage, Version: "0.36.0"},
+		"--version and --access-only: one or the other":                                           {Version: "0.36.0", AccessOnly: true},
+		"--image and --access-only: one or the other":                                             {Image: routerImage, AccessOnly: true},
+		"--ip-list and --access-only: one or the other":                                           {IPLists: []IPList{blockList}, AccessOnly: true},
+		"--no-ip-lists and --access-only: one or the other":                                       {NoIPLists: true, AccessOnly: true},
+		"--image, --version and --access-only: one at most":                                       {Image: routerImage, Version: "0.36.0", AccessOnly: true},
+	} {
+		r.Project, r.Region, r.Yes = "dormeto-dev", "europe-west1", true
+		if code, out := g.run(t, r); code != 2 || out != want+"\n" {
+			t.Errorf("%+v: exit %d:\n%s", r, code, out)
+		}
+	}
+	if c := g.s.Calls(); len(c) != 0 {
+		t.Fatalf("calls: %+v", c)
+	}
+}
+
+// An older router of Dormeto's is upgraded to the default version: the plan shows it, and asks like every plan.
+func TestInstallUpgradesAnOlderRouterToTheDefaultVersion(t *testing.T) {
+	def := embeddedRouterVersion()
+	const older = "0.36.0"
+	g := publicRig(t, older, def)
+	r := plain
+	r.Version = older
+	if code, out := g.run(t, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	mark := len(g.s.Calls())
+	r = plain
+	r.Yes = false
+	code, out := g.run(t, r)
+	upgrade := "  ~ service " + controllerName + ": image " + deployedOf(def) + ", environment DMT_VERSION\n" +
+		"  ~ service " + wakerName + ": image " + deployedOf(def) + ", environment DMT_VERSION\n"
+	if code != 2 || !strings.Contains(out, upgrade) || !strings.HasSuffix(out, "--yes: needed\n") || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out = g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, upgrade, "Installed router dmtr-europe-west1 in project dormeto-dev, version "+def+".\n")
+	for _, name := range []string{controllerName, wakerName} {
+		if svc := g.s.RunServices["europe-west1/"+name]; svc == nil || svc.Template.Containers[0].Image != deployedOf(def) || svc.Env("DMT_VERSION") != def {
+			t.Errorf("%s: %+v", name, svc)
+		}
+	}
+	if rec := g.record(t); rec.Image != publicImage(def) || rec.RouterVersion != def || rec.Digest != digestOf(def) {
+		t.Errorf("record %+v", rec)
+	}
+	code, out = g.run(t, plain)
+	if code != 0 || !strings.HasSuffix(out, "Router dmtr-europe-west1 in project dormeto-dev is up to date: version "+def+".\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// A router newer than the CLI's (a newer CLI upgraded it) is kept, and the run says to upgrade the CLI.
+func TestInstallKeepsANewerRouterAndSaysToUpgradeTheCLI(t *testing.T) {
+	def := embeddedRouterVersion()
+	const newer = "9.0.0"
+	g := publicRig(t, def, newer)
+	if code, out := g.run(t, plain); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.atPublicVersion(t, newer)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! router "+newer+" needs a newer CLI: brew upgrade dormeto\n",
+		"Router dmtr-europe-west1 in project dormeto-dev is up to date: version "+newer+".\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+	if rec := g.record(t); rec.RouterVersion != newer {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+// A router from --image is kept, and the run says which public version is available.
+func TestInstallKeepsAnImageOfImageAndSaysWhichPublicVersionIsAvailable(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Using the recorded image "+routerImage+".\n",
+		"  ! router "+def+" is available: dormeto gcp install --version "+def+"\n",
+		"Router dmtr-europe-west1 in project dormeto-dev is up to date: version 0.34.0.\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+	if rec := g.record(t); rec.Image != routerImage || rec.Digest != "" {
+		t.Fatalf("record %+v", rec)
+	}
+}
+
+// --access-only is recorded, and later runs keep it until one with --version or --image.
+func TestInstallAccessOnlyIsRecordedAndKeptUntilAVersion(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	code, out := g.run(t, europe)
+	if code != 0 || !strings.HasSuffix(out, "Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); !rec.AccessOnly || rec.Image != "" {
+		t.Fatalf("record %+v", rec)
+	}
+	mark := len(g.s.Calls())
+	code, out = g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! the router isn't installed: dormeto gcp install --version "+def+"\n",
+		"The access of router dmtr-europe-west1 in project dormeto-dev is up to date.\n")
+	if c := g.changes(mark); len(c) != 0 || len(callsOf(g.s.Calls()[mark:], "HEAD")) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+	r := plain
+	r.Version = def
+	if code, out := g.run(t, r); code != 0 || !strings.Contains(out, "Installed router dmtr-europe-west1 in project dormeto-dev, version "+def+".\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); rec.AccessOnly || rec.Image != publicImage(def) {
+		t.Fatalf("record %+v", rec)
+	}
+}
+
+func TestInstallAccessOnlyOnAnInstalledRouterIsRefused(t *testing.T) {
 	g := routerInstalled(t)
 	mark := len(g.s.Calls())
 	code, out := g.run(t, europe)
-	if code != 0 || !strings.Contains(out, "The access of router dmtr-europe-west1 in project dormeto-dev is up to date.\n") {
+	if code != 2 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if m := g.changes(mark); len(m) != 0 {
-		t.Fatalf("changes: %v", m)
+	contains(t, out, "--access-only: router dmtr-europe-west1 is installed, version 0.34.0, and the install removes no router: dormeto gcp uninstall removes it with its access.\nNothing was changed.\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
 	}
-	if rec := g.record(t); rec.Image != routerImage {
+}
+
+// An older CLI's record without an image is the access only: such installs ran without --image, as the docs said then.
+func TestInstallReadsAnOlderCLIsRecordWithoutImageAsTheAccessOnly(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec := g.record(t)
+	rec.AccessOnly = false
+	g.writeRecord(t, rec)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ! the router isn't installed: dormeto gcp install --version "+def+"\n",
+		"The access of router dmtr-europe-west1 in project dormeto-dev is up to date.\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+}
+
+// A default install that stopped before the router is no older CLI's access only: the next run goes on with the router.
+func TestInstallGoesOnWithTheRouterAfterADefaultInstallStopped(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: "cloudtasks.googleapis.com", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	if code, out := g.run(t, plain); code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if rec := g.record(t); rec.Running != "queue" || rec.Image != "" || rec.AccessOnly {
 		t.Fatalf("record %+v", rec)
+	}
+	code, out := g.run(t, plain)
+	if code != 0 || !strings.Contains(out, "Installed router dmtr-europe-west1 in project dormeto-dev, version "+def+".\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
 
@@ -1984,21 +2419,26 @@ func withLists(r Request, lists ...IPList) Request {
 	return r
 }
 
-func TestInstallIPListWithoutImageNorRecordedImageStopsBeforeAnyChange(t *testing.T) {
+func TestInstallIPListOnTheAccessOnlyStopsBeforeAnyChange(t *testing.T) {
 	g := newRouterRig(t)
-	code, out := g.run(t, withLists(europe, blockList))
-	if code != 2 || !strings.Contains(out, "--image") || !strings.Contains(out, "--ip-list") {
+	if code, out := g.run(t, europe); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if m := g.s.Mutations(); len(m) != 0 {
-		t.Fatalf("mutating calls: %+v", m)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withLists(plain, blockList))
+	if code != 2 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "--ip-list: changes the router's two Cloud Run services, and no router is installed in europe-west1: give --version or --image.\nNothing was changed.\n")
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
 	}
 }
 
 func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T) {
 	g := listsRouter(t)
 	mark := len(g.s.Calls())
-	code, out := g.run(t, withLists(europe, blockList, botsList))
+	code, out := g.run(t, withLists(plain, blockList, botsList))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2040,11 +2480,11 @@ func TestInstallIPListReusesTheRecordedImageAndUpdatesBothServices(t *testing.T)
 
 func TestInstallIPListsAreVerifiedAndAgainIsUpToDate(t *testing.T) {
 	g := listsRouter(t)
-	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
+	if code, out := g.run(t, withLists(plain, blockList)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	mark := len(g.s.Calls())
-	code, out := g.run(t, withLists(europe, blockList))
+	code, out := g.run(t, withLists(plain, blockList))
 	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2052,8 +2492,8 @@ func TestInstallIPListsAreVerifiedAndAgainIsUpToDate(t *testing.T) {
 
 func TestInstallIPListsOfAnotherSetReplaceTheRecordedOnes(t *testing.T) {
 	g := listsRouter(t)
-	g.run(t, withLists(europe, blockList))
-	if code, out := g.run(t, withLists(europe, botsList)); code != 0 {
+	g.run(t, withLists(plain, blockList))
+	if code, out := g.run(t, withLists(plain, botsList)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if got := g.s.RunServices["europe-west1/"+wakerName].Env("DMT_IP_LISTS"); strings.Contains(got, "scanners") || !strings.Contains(got, "bots") {
@@ -2066,8 +2506,8 @@ func TestInstallIPListsOfAnotherSetReplaceTheRecordedOnes(t *testing.T) {
 
 func TestInstallNoIPListsClearsThemAndGivesBackTheWakersMemory(t *testing.T) {
 	g := listsRouter(t)
-	g.run(t, withLists(europe, blockList))
-	r := europe
+	g.run(t, withLists(plain, blockList))
+	r := plain
 	r.NoIPLists = true
 	code, out := g.run(t, r)
 	if code != 0 {
@@ -2088,21 +2528,25 @@ func TestInstallNoIPListsClearsThemAndGivesBackTheWakersMemory(t *testing.T) {
 	}
 }
 
-func TestInstallNoIPListsWithoutRecordedImageStopsBeforeAnyChange(t *testing.T) {
+func TestInstallNoIPListsOnTheAccessOnlyStopsBeforeAnyChange(t *testing.T) {
 	g := newRouterRig(t)
-	r := europe
-	r.NoIPLists = true
-	if code, out := g.run(t, r); code != 2 || !strings.Contains(out, "--no-ip-lists") {
+	if code, out := g.run(t, europe); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if m := g.s.Mutations(); len(m) != 0 {
-		t.Fatalf("mutating calls: %+v", m)
+	mark := len(g.s.Calls())
+	r := plain
+	r.NoIPLists = true
+	if code, out := g.run(t, r); code != 2 || !strings.Contains(out, "--no-ip-lists: changes the router's two Cloud Run services") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
 	}
 }
 
 func TestInstallALaterImageKeepsTheRecordedIPLists(t *testing.T) {
 	g := listsRouter(t)
-	g.run(t, withLists(europe, blockList))
+	g.run(t, withLists(plain, blockList))
 	r := withImage
 	r.Image = laterImage
 	code, out := g.run(t, r)
@@ -2127,9 +2571,9 @@ func TestInstallALaterImageKeepsTheRecordedIPLists(t *testing.T) {
 
 func TestInstallWithoutEitherFlagChangesNothingOfTheLists(t *testing.T) {
 	g := listsRouter(t)
-	g.run(t, withLists(europe, blockList))
+	g.run(t, withLists(plain, blockList))
 	mark := len(g.s.Calls())
-	code, out := g.run(t, europe)
+	code, out := g.run(t, plain)
 	if code != 0 || len(g.changes(mark)) != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2141,7 +2585,7 @@ func TestInstallWithoutEitherFlagChangesNothingOfTheLists(t *testing.T) {
 func TestInstallNoIPListsOnARouterWithNoneChangesNothing(t *testing.T) {
 	g := listsRouter(t)
 	mark := len(g.s.Calls())
-	r := europe
+	r := plain
 	r.NoIPLists = true
 	code, out := g.run(t, r)
 	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
@@ -2151,9 +2595,9 @@ func TestInstallNoIPListsOnARouterWithNoneChangesNothing(t *testing.T) {
 
 // A router below 0.35.0 does not read DMT_IP_LISTS: on the recorded version, the flags are refused and name --image.
 func TestInstallIPListFlagsOnARecordedRouterBelowTheirVersionAreRefused(t *testing.T) {
-	noLists := europe
+	noLists := plain
 	noLists.NoIPLists = true
-	for name, r := range map[string]Request{"--ip-list": withLists(europe, blockList), "--no-ip-lists": noLists} {
+	for name, r := range map[string]Request{"--ip-list": withLists(plain, blockList), "--no-ip-lists": noLists} {
 		t.Run(name, func(t *testing.T) {
 			g := routerInstalled(t)
 			mark := len(g.s.Calls())
@@ -2189,7 +2633,7 @@ func TestInstallIPListFlagsWithAnImageBelowTheirVersionAreRefusedBeforeAnyCall(t
 
 func TestInstallRecordedIPListsWithAnImageBelowTheirVersionAreRefused(t *testing.T) {
 	g := listsRouter(t)
-	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
+	if code, out := g.run(t, withLists(plain, blockList)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	mark := len(g.s.Calls())
@@ -2215,7 +2659,7 @@ func TestInstallIPListsOnATagThatIsNoVersionSayWhatWasRead(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, `  ! the router's version "dev-4ca90e1" is no release's: whether it reads IP lists (0.35.0 or later) is not checked`+"\n")
-	code, out = g.run(t, withLists(europe, botsList))
+	code, out = g.run(t, withLists(plain, botsList))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2242,7 +2686,7 @@ func TestInstallIPListWithARecordedImageGoneStopsBeforeAnyChange(t *testing.T) {
 	g := listsRouter(t)
 	delete(g.s.Images, nextImage)
 	mark := len(g.s.Calls())
-	code, out := g.run(t, withLists(europe, blockList))
+	code, out := g.run(t, withLists(plain, blockList))
 	if code != 1 || strings.Contains(out, "Plan for") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2255,7 +2699,7 @@ func TestInstallIPListWithARecordedImageGoneStopsBeforeAnyChange(t *testing.T) {
 func TestInstallIPListChecksTheRecordedImageOnce(t *testing.T) {
 	g := listsRouter(t)
 	mark := len(g.s.Calls())
-	code, out := g.run(t, withLists(europe, blockList))
+	code, out := g.run(t, withLists(plain, blockList))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2274,7 +2718,7 @@ func TestInstallIPListWithoutInstallRouterPermissionsStopsBeforeAnyChange(t *tes
 		g.s.Held[p] = p != "run.services.update"
 	}
 	mark := len(g.s.Calls())
-	code, out := g.run(t, withLists(europe, blockList))
+	code, out := g.run(t, withLists(plain, blockList))
 	if code != 1 || strings.Contains(out, "Plan for") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2305,7 +2749,7 @@ func TestInstallRefusesBadIPLists(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g := routerInstalled(t)
 			mark := len(g.s.Calls())
-			r := withLists(europe, tc.lists...)
+			r := withLists(plain, tc.lists...)
 			r.NoIPLists = tc.no
 			code, out := g.run(t, r)
 			if code != 2 || !strings.Contains(out, tc.want) || len(g.s.Calls()) != mark {

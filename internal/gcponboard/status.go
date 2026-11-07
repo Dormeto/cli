@@ -170,7 +170,7 @@ func (x *run) routerStatus() RouterStatus {
 			controllerFound = true
 			detail += ", " + x.controllerURL()
 		}
-		if expected && got.image() != st.Record.Image {
+		if expected && got.image() != st.Record.deployedImage() {
 			detail += ": not the recorded image"
 			ok = false
 		}

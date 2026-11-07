@@ -37,6 +37,7 @@ type Call struct {
 	URL    string // the full URL as the client wrote it: https://<host><path>?<query>
 	Path   string
 	Body   string
+	Auth   string // the Authorization header: "" for an anonymous request
 }
 
 // Mutating tells whether the call may change something: anything but a GET or a HEAD, except the read-only POSTs
@@ -140,8 +141,10 @@ type Server struct {
 	AnswerOnboarding func(w http.ResponseWriter)
 	// TagBindings are the tag values bound to resources.
 	TagBindings []TagBinding
-	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>.
-	Images map[string]bool
+	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>; Digests the Docker-Content-Digest
+	// their HEAD answers, when set.
+	Images  map[string]bool
+	Digests map[string]string
 	// HealthVersion is the version the controller's health answers instead of its service's DMT_VERSION.
 	HealthVersion string
 	// GrantOnCreate plays a binding Google adds to the project (role, member) when a resource of a kind (service, neg, job)
@@ -186,7 +189,7 @@ func New(t testing.TB) *Server {
 		Roles:  map[string]*Role{}, ServiceAccounts: map[string]*ServiceAccount{}, TagKeys: map[string]*Tag{},
 		TagValues: map[string]*Tag{}, Databases: map[string]*Database{}, Documents: map[string]map[string]any{},
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
-		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Workloads: map[string]string{},
+		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Digests: map[string]string{}, Workloads: map[string]string{},
 		WorkloadDocs: map[string]map[string]any{}, Schedules: map[string]map[string]any{}, WakeFails: map[string]bool{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
@@ -271,7 +274,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		full += "?" + r.URL.RawQuery
 	}
 	s.mu.Lock()
-	s.calls = append(s.calls, Call{Method: r.Method, Host: r.Host, URL: full, Path: r.URL.Path, Body: string(body)})
+	s.calls = append(s.calls, Call{Method: r.Method, Host: r.Host, URL: full, Path: r.URL.Path, Body: string(body), Auth: r.Header.Get("Authorization")})
 	refusal := s.refusal(r)
 	routes := slices.Clone(s.routes)
 	s.mu.Unlock()

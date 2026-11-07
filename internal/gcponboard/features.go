@@ -80,9 +80,13 @@ func everyAPI() []string {
 	return out
 }
 
-// apisWith are the manifest's APIs and those of the named features.
-func apisWith(features []string) []string {
+// apisWith are the manifest's APIs and those of the named features; Artifact Registry's for an image of the customer's own
+// only.
+func apisWith(features []string, ownImage bool) []string {
 	out := slices.Clone(access.Load().APIs)
+	if !ownImage {
+		out = slices.DeleteFunc(out, func(api string) bool { return api == imageAPI })
+	}
 	for _, name := range featureSet(features) {
 		out = append(out, access.Load().Features[name].APIs...)
 	}
@@ -123,22 +127,27 @@ func allRoleIDs() []string { return roleIDsWith(access.FeatureNames()) }
 // roleIDs are the custom roles of this run: the base ones and those of its features.
 func (x *run) roleIDs() []string { return roleIDsWith(x.features) }
 
-// recordedFeatures are the features of the router's install record in the database: none when the region has no record
-// (no database, or its API off); any other failure to read it is an error, as a feature not tested must not pass for
-// tested.
+// recordedFeatures are the features of the router's install record in the database (recordInDatabase).
 func recordedFeatures(x *run) ([]string, error) {
+	rec, err := recordInDatabase(x)
+	return rec.Features, err
+}
+
+// recordInDatabase is the router's install record in the database: none when the region has no record (no database, or
+// its API off); any other failure to read it is an error, as a feature not tested must not pass for tested.
+func recordInDatabase(x *run) (Record, error) {
 	var doc recordDocument
 	// Not through get: an API that is off is no reason to wait for it, a report only tests.
 	switch err := x.d.Google.Do(x.ctx, http.MethodGet, x.recordURL(), nil, &doc); {
 	case err == nil:
 	case gcp.IsNotFound(err), serviceDisabled(err):
-		return nil, nil
+		return Record{}, nil
 	default:
-		return nil, err
+		return Record{}, err
 	}
 	var rec Record
 	if err := json.Unmarshal([]byte(doc.Fields.Data.StringValue), &rec); err != nil {
-		return nil, fmt.Errorf("%s in database %s: %w", recordPath, x.n.database, err)
+		return Record{}, fmt.Errorf("%s in database %s: %w", recordPath, x.n.database, err)
 	}
-	return rec.Features, nil
+	return rec, nil
 }

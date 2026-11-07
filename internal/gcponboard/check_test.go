@@ -123,7 +123,8 @@ func TestNoRoleInTheProject(t *testing.T) {
 		t.Fatal("ok")
 	}
 	for _, c := range r.Commands {
-		if !slices.Equal(c.Missing, access.Needs(c.Command)) || len(c.Held) != 0 {
+		// install-router's image step is for an image of --image only (none here).
+		if !slices.Equal(c.Missing, access.NeedsWithout(c.Command, nil, "image")) || len(c.Held) != 0 {
 			t.Fatalf("%+v", c)
 		}
 	}
@@ -211,7 +212,8 @@ func TestAPIsOnAndOffAcrossPages(t *testing.T) {
 	s.ServicePageSize = 1
 	d, out := deps(s)
 	r, _ := Check(context.Background(), d, Request{Project: "dormeto-dev"})
-	if !slices.Equal(r.APIs.Enabled, []string{"compute.googleapis.com", "run.googleapis.com"}) || len(r.APIs.Missing) != 8 {
+	// Artifact Registry's API is for an image of --image only (none here).
+	if !slices.Equal(r.APIs.Enabled, []string{"compute.googleapis.com", "run.googleapis.com"}) || len(r.APIs.Missing) != 7 {
 		t.Fatalf("%+v", r.APIs)
 	}
 	PrintText(out, r)
@@ -246,7 +248,7 @@ func TestJSONShape(t *testing.T) {
 	}
 	if got.Project["id"] != "dormeto-dev" || got.Project["number"] != "1034397096264" || got.Project["parent"] != "folders/7" ||
 		got.Account != "me@example.com" || len(got.Commands) != 7 || got.Commands[0].Command != "check" ||
-		len(got.APIs.Enabled) != 1 || len(got.APIs.Missing) != 9 {
+		len(got.APIs.Enabled) != 1 || len(got.APIs.Missing) != 8 {
 		t.Fatalf("%s", out)
 	}
 	for _, k := range []string{`"missing":[]`, `"warnings":[]`, `"billing":{"checked":true,"enabled":true}`} {
@@ -374,7 +376,7 @@ func TestCheckFailsWithoutBilling(t *testing.T) {
 		}
 	}
 	if !slices.Equal(s.CallsTo("/billingInfo")[0:1], []gcptest.Call{{Method: "GET", Host: "cloudbilling.googleapis.com",
-		URL: "https://cloudbilling.googleapis.com/v1/projects/dormeto-dev/billingInfo", Path: "/v1/projects/dormeto-dev/billingInfo"}}) {
+		URL: "https://cloudbilling.googleapis.com/v1/projects/dormeto-dev/billingInfo", Path: "/v1/projects/dormeto-dev/billingInfo", Auth: "Bearer test-token"}}) {
 		t.Fatalf("%+v", s.CallsTo("/billingInfo"))
 	}
 }
@@ -408,5 +410,35 @@ func TestBillingNotReadableIsAWarning(t *testing.T) {
 	if !strings.Contains(out.String(), "  ! billing not checked: google: 403 PERMISSION_DENIED: The caller does not have permission\n") ||
 		strings.Contains(out.String(), " billing: ") {
 		t.Fatal(out)
+	}
+}
+
+// The image's permissions (install-router's step image) and Artifact Registry's API are for a router of --image only:
+// check tests them when the install record holds such an image, not for Dormeto's public image nor without a record.
+func TestCheckTestsTheImagesPermissionsOnlyForARouterOfImage(t *testing.T) {
+	const registry = "artifactregistry.googleapis.com"
+	image := func(p string) bool { return strings.HasPrefix(p, "artifactregistry.") }
+	g := newRouterRig(t)
+	g.s.Enabled = slices.DeleteFunc(slices.Clone(access.Load().APIs), func(a string) bool { return a == registry })
+	rep, err := Check(t.Context(), g.d, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	router := command(t, rep, "install-router")
+	if err != nil || slices.ContainsFunc(router.Held, image) || slices.ContainsFunc(router.Missing, image) || len(rep.APIs.Missing) != 0 ||
+		slices.Contains(rep.APIs.Enabled, registry) {
+		t.Fatalf("without a record: %v %+v %+v", err, router, rep.APIs)
+	}
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	g.s.Enabled = slices.DeleteFunc(g.s.Enabled, func(a string) bool { return a == registry })
+	g.s.Unlock()
+	rep, err = Check(t.Context(), g.d, Request{Project: "dormeto-dev", Region: "europe-west1"})
+	router = command(t, rep, "install-router")
+	if err != nil || !slices.Contains(router.Held, "artifactregistry.dockerimages.get") || !slices.Equal(rep.APIs.Missing, []string{registry}) {
+		t.Fatalf("with a router of --image: %v %+v %+v", err, router, rep.APIs)
+	}
+	rep, err = Check(t.Context(), g.d, Request{Project: "dormeto-dev"})
+	if router = command(t, rep, "install-router"); err != nil || slices.ContainsFunc(router.Held, image) || len(rep.APIs.Missing) != 0 {
+		t.Fatalf("without a region: %v %+v %+v", err, router, rep.APIs)
 	}
 }

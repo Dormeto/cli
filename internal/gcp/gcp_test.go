@@ -578,6 +578,88 @@ func TestHeadOfAMissingResourceIsNotFoundAndATransientAnswerIsRetried(t *testing
 	}
 }
 
+func TestDigestIsAnAnonymousHeadOfTheManifest(t *testing.T) {
+	var gotMethod, gotAuth, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotAuth, gotAccept = r.Method, r.Header.Get("Authorization"), r.Header.Get("Accept")
+		w.Header().Set("Docker-Content-Digest", "sha256:abc")
+	}))
+	defer srv.Close()
+	digest, err := newClient(srv).Digest(context.Background(), srv.URL, "a/b", "c/d")
+	if err != nil || digest != "sha256:abc" {
+		t.Fatalf("%q %v", digest, err)
+	}
+	if gotMethod != "HEAD" || gotAuth != "" || gotAccept != "a/b, c/d" {
+		t.Fatalf("%q %q %q", gotMethod, gotAuth, gotAccept)
+	}
+}
+
+func TestDigestOfAMissingManifestIsNotFoundAndATransientAnswerIsRetried(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	var slept []time.Duration
+	c := &Client{HTTP: srv.Client(), Tokens: fakeTokens{}, Sleep: sleeper(&slept)}
+	if _, err := c.Digest(context.Background(), srv.URL); !IsNotFound(err) || calls.Load() != 2 || len(slept) != 1 {
+		t.Fatalf("%v after %d calls", err, calls.Load())
+	}
+}
+
+// A registry may ask for a token even for a public repository: Docker's clients then take an anonymous one from the
+// challenge's realm, and so does Digest.
+func TestDigestTakesAnAnonymousTokenWhenTheRegistryAsksForOne(t *testing.T) {
+	var auths, tokenAsks []string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/token" {
+			tokenAsks = append(tokenAsks, r.Header.Get("Authorization")+" "+r.URL.RawQuery)
+			_, _ = w.Write([]byte(`{"token":"anonymous"}`))
+			return
+		}
+		auths = append(auths, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer anonymous" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="`+srv.URL+`/v2/token",service="europe-docker.pkg.dev",scope="repository:dormeto-releases/router/router:pull"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Docker-Content-Digest", "sha256:abc")
+	}))
+	defer srv.Close()
+	digest, err := newClient(srv).Digest(context.Background(), srv.URL+"/v2/dormeto-releases/router/router/manifests/0.38.0")
+	if err != nil || digest != "sha256:abc" {
+		t.Fatalf("%q %v", digest, err)
+	}
+	if !slices.Equal(auths, []string{"", "Bearer anonymous"}) ||
+		!slices.Equal(tokenAsks, []string{" scope=repository%3Adormeto-releases%2Frouter%2Frouter%3Apull&service=europe-docker.pkg.dev"}) {
+		t.Fatalf("%q %q", auths, tokenAsks)
+	}
+}
+
+func TestDigestRefusedEvenWithAnAnonymousTokenIsUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	var e *Error
+	if _, err := newClient(srv).Digest(context.Background(), srv.URL); !errors.As(err, &e) || e.Code != http.StatusUnauthorized {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestDigestWithoutTheHeaderIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	if digest, err := newClient(srv).Digest(context.Background(), srv.URL); err == nil || !strings.Contains(err.Error(), "Docker-Content-Digest") {
+		t.Fatalf("%q %v", digest, err)
+	}
+}
+
 func TestInvokeIsNotBoundByTheClientsShortTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)

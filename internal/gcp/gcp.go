@@ -5,13 +5,16 @@ package gcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -328,6 +331,77 @@ func (c *Client) Head(ctx context.Context, url string, accept ...string) error {
 	return c.exchange(ctx, http.MethodHead, url, c.Tokens.AccessToken, strings.Join(accept, ", "), nil, nil)
 }
 
+// Digest is an anonymous HEAD of an image's manifest on a public registry, asking for the media types of accept: the
+// answer's Docker-Content-Digest. A registry that answers 401 with a Bearer challenge is asked for an anonymous token at
+// the challenge's realm first, as Docker's clients do. A transient answer is tried again as a read is; another non-2xx
+// answer is an *Error.
+func (c *Client) Digest(ctx context.Context, manifest string, accept ...string) (string, error) {
+	token := func(context.Context) (string, error) { return "", nil }
+	challenged, retries := false, 0
+	for {
+		code, header, data, err := c.send(ctx, http.MethodHead, manifest, token, strings.Join(accept, ", "), nil)
+		if err != nil {
+			return "", err
+		}
+		if code == http.StatusUnauthorized && !challenged && strings.HasPrefix(header.Get("WWW-Authenticate"), "Bearer ") {
+			challenged = true
+			anonymous, err := c.anonymousToken(ctx, header.Get("WWW-Authenticate"))
+			if err != nil {
+				return "", err
+			}
+			token = func(context.Context) (string, error) { return anonymous, nil }
+			continue
+		}
+		if transient(code) && retries < readRetries {
+			if err := c.sleep(ctx, time.Second<<retries); err != nil {
+				return "", err
+			}
+			retries++
+			continue
+		}
+		if code < 200 || code > 299 {
+			return "", parseError(code, data)
+		}
+		digest := header.Get("Docker-Content-Digest")
+		if digest == "" {
+			return "", fmt.Errorf("%s: the registry answered no Docker-Content-Digest", manifest)
+		}
+		return digest, nil
+	}
+}
+
+var challengeParam = regexp.MustCompile(`(\w+)="([^"]*)"`)
+
+// anonymousToken is the token a registry's Bearer challenge (realm, service, scope) gives without credentials.
+func (c *Client) anonymousToken(ctx context.Context, challenge string) (string, error) {
+	params := map[string]string{}
+	for _, m := range challengeParam.FindAllStringSubmatch(challenge, -1) {
+		params[m[1]] = m[2]
+	}
+	q := url.Values{}
+	for _, k := range []string{"service", "scope"} {
+		if params[k] != "" {
+			q.Set(k, params[k])
+		}
+	}
+	none := func(context.Context) (string, error) { return "", nil }
+	code, _, data, err := c.send(ctx, http.MethodGet, params["realm"]+"?"+q.Encode(), none, "", nil)
+	if err != nil {
+		return "", err
+	}
+	if code < 200 || code > 299 {
+		return "", parseError(code, data)
+	}
+	var out struct {
+		Token       string `json:"token"`
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return "", fmt.Errorf("the registry's token: %w", err)
+	}
+	return cmp.Or(out.Token, out.AccessToken), nil
+}
+
 func (c *Client) exchange(ctx context.Context, method, url string, token func(context.Context) (string, error), accept string, in, out any) error {
 	var payload []byte
 	if in != nil {
@@ -339,7 +413,7 @@ func (c *Client) exchange(ctx context.Context, method, url string, token func(co
 	}
 	refreshed, retries := false, 0
 	for {
-		code, data, err := c.send(ctx, method, url, token, accept, payload)
+		code, _, data, err := c.send(ctx, method, url, token, accept, payload)
 		if err != nil {
 			return err
 		}
@@ -367,12 +441,12 @@ func (c *Client) exchange(ctx context.Context, method, url string, token func(co
 	}
 }
 
-// send sends one request (payload: its JSON body, nil for none; accept: its Accept header, "" for none) and returns the
-// answer's code and body.
-func (c *Client) send(ctx context.Context, method, url string, token func(context.Context) (string, error), accept string, payload []byte) (int, []byte, error) {
+// send sends one request (payload: its JSON body, nil for none; accept: its Accept header, "" for none; a token "": no
+// Authorization) and returns the answer's code, headers and body.
+func (c *Client) send(ctx context.Context, method, url string, token func(context.Context) (string, error), accept string, payload []byte) (int, http.Header, []byte, error) {
 	bearer, err := token(ctx)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	var body io.Reader
 	if payload != nil {
@@ -380,9 +454,11 @@ func (c *Client) send(ctx context.Context, method, url string, token func(contex
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+bearer)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -395,14 +471,14 @@ func (c *Client) send(ctx context.Context, method, url string, token func(contex
 	}
 	res, err := h.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	defer res.Body.Close()
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
-	return res.StatusCode, data, nil
+	return res.StatusCode, res.Header, data, nil
 }
 
 type operation struct {

@@ -76,3 +76,23 @@ func TestFeaturesAreCheckedAndAddTheirOperatorPermissions(t *testing.T) {
 		t.Error("the features add nothing to install")
 	}
 }
+
+// install-router's image step is for a router image of the customer's own only: its permissions can be left out, and a
+// permission another step needs too stays.
+func TestNeedsWithoutLeavesOutTheStepsSkipped(t *testing.T) {
+	image := Load().perms["install-router"]["image"]
+	without := NeedsWithout("install-router", nil, "image")
+	if len(image) == 0 || len(without) != len(NeedsWith("install-router", nil))-len(image) ||
+		slices.ContainsFunc(without, func(p string) bool { return slices.Contains(image, p) }) {
+		t.Fatalf("%v without %v", without, image)
+	}
+	if !slices.Contains(NeedsWithout("install-router", nil, "job"), "iam.serviceAccounts.actAs") {
+		t.Fatal("cloudRun's iam.serviceAccounts.actAs left out with job's")
+	}
+	if !slices.Equal(NeedsWithout("install", []string{"gke"}, "image"), NeedsWith("install", []string{"gke"})) {
+		t.Fatal("a step the command does not have changed its permissions")
+	}
+	if NeedsWithout("nope", nil) != nil {
+		t.Fatal("an unknown command needs something")
+	}
+}

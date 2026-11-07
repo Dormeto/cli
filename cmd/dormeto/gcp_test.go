@@ -142,6 +142,33 @@ func TestGcpInstallImageReadIntoTheRequest(t *testing.T) {
 	}
 }
 
+func TestGcpInstallVersionAndAccessOnlyReadIntoTheRequest(t *testing.T) {
+	for _, tc := range []struct {
+		flags []string
+		want  gcponboard.Request
+	}{
+		{[]string{"--version", "0.38.0"}, gcponboard.Request{Project: "p", Region: "europe-west1", Version: "0.38.0"}},
+		{[]string{"--access-only"}, gcponboard.Request{Project: "p", Region: "europe-west1", AccessOnly: true}},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "install", "--project", "p", "--region", "europe-west1"}, tc.flags...)...)
+		if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r, tc.want) {
+			t.Fatalf("%v: %d %q %+v", tc.flags, exit, errs, calls)
+		}
+	}
+}
+
+func TestGcpInstallHelpNamesThePublicImageAndItsFlags(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	for _, want := range []string{"--version", "--access-only", "dormeto-releases/router/router:<version>", "europe, us or asia"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%d: lacks %q in:\n%s", code, want, out)
+		}
+	}
+	if strings.Contains(out, "Install the access of a Dormeto router") || strings.Contains(out, "without --image the recorded image is reused") {
+		t.Errorf("still says the access only by default:\n%s", out)
+	}
+}
+
 func TestGcpInstallImageIsInItsHelp(t *testing.T) {
 	out, _, code := executed(t, build{}, "gcp", "install", "--help")
 	if code != 0 || !strings.Contains(out, "--image") || !strings.Contains(out, "dmtr-<region>-controller") {

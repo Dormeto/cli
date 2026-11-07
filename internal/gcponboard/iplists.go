@@ -178,9 +178,9 @@ func (x *run) imageTooOld() error {
 }
 
 // useIPLists sets the run's lists: --ip-list's, none with --no-ip-lists, else the record's. Either flag changes the two
-// services, so it needs the router: without --image the recorded image is reused (and, as with --image, its permissions
-// tested), and refused with its version below minRouterVersion; with neither, the run is refused, before any change. An --image
-// below it is refused with the record's lists too. Follows loadRecord.
+// services, so it needs the router this run installs (useRouter): with the access only, the run is refused before any
+// change; on a recorded router below minRouterVersion too. An --image below it is refused with the record's lists too.
+// Follows useRouter.
 func (x *run) useIPLists() error {
 	switch {
 	case len(x.r.IPLists) > 0:
@@ -191,12 +191,14 @@ func (x *run) useIPLists() error {
 		x.lists = listsOfRecord(x.rec.IPLists)
 	}
 	flag := x.ipListsFlag()
-	if flag != "" && x.r.Image == "" {
-		if err := x.useRecordedImage(flag); err != nil {
-			return err
-		}
-	}
-	if x.r.Image == "" || (flag == "" && len(x.lists) == 0) {
+	version := cmp.Or(x.rec.RouterVersion, x.version)
+	switch {
+	case flag != "" && x.image == "":
+		return &stop{2, fmt.Sprintf("%s: changes the router's two Cloud Run services, and no router is installed in %s: give --version or --image.\nNothing was changed.", flag, x.n.region)}
+	case flag != "" && x.keepsRouter && belowMinRouter(version):
+		return &stop{2, fmt.Sprintf("%s: router %s is at version %s, and IP lists need %s or later: give --version %s, or an --image of %s or later.\nNothing was changed.",
+			flag, x.n.router, version, minRouterVersion, embeddedRouterVersion(), minRouterVersion)}
+	case x.image == "" || (flag == "" && len(x.lists) == 0):
 		return nil
 	}
 	if belowMinRouter(x.version) {
@@ -211,31 +213,6 @@ func (x *run) useIPLists() error {
 		x.say("  ! the router's version %q is no release's: whether it reads IP lists (%s or later) is not checked", x.version, minRouterVersion)
 	}
 	return nil
-}
-
-// useRecordedImage takes the recorded image for a flag that needs the router: its version, its permissions and the image
-// itself checked, as --image's are, so that one deleted stops here rather than at cloudRun, after the access's steps.
-func (x *run) useRecordedImage(flag string) error {
-	if x.rec.Image == "" {
-		return &stop{2, fmt.Sprintf("%s: changes the router's two Cloud Run services, and no router is installed in %s: give --image, or install the router first.\nNothing was changed.", flag, x.n.region)}
-	}
-	_, tag, _ := splitImage(x.rec.Image)
-	if version := cmp.Or(x.rec.RouterVersion, tag); belowMinRouter(version) {
-		return &stop{2, fmt.Sprintf("%s: router %s is at version %s, and IP lists need %s or later: give an --image of %s or later.\nNothing was changed.",
-			flag, x.n.router, version, minRouterVersion, minRouterVersion)}
-	}
-	x.r.Image, x.version = x.rec.Image, tag
-	x.say("Using the recorded image %s.", x.r.Image)
-	rep, err := check(x.ctx, x.d, x.r, []string{"install-router"})
-	if err != nil {
-		return err
-	}
-	for _, c := range rep.Commands {
-		if !c.OK() {
-			return &stop{1, fmt.Sprintf("  ✗ %s: missing %s\nNothing was changed.", c.Command, strings.Join(c.Missing, ", "))}
-		}
-	}
-	return x.checkImage()
 }
 
 // listLines are the lines of the lists the router will download, or downloads.

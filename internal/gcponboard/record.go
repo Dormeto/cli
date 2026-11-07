@@ -60,6 +60,12 @@ type Record struct {
 	// Rbac is the Kubernetes access written in clusters for the workloads, listed before it is applied and until it is
 	// removed. The uninstall says what is left of it: it does not reach clusters.
 	Rbac []RecordRbac `json:"rbac,omitempty"`
+	// Digest is the digest Dormeto's public image is deployed by (--version, or the default version): the services run
+	// <Image>@<Digest>. Empty for an image of --image, deployed as given.
+	Digest string `json:"digest,omitempty"`
+	// AccessOnly is an install of the access without the router (--access-only): later runs keep it until one with
+	// --version or --image. An older CLI's record without an image is read as such.
+	AccessOnly bool `json:"accessOnly,omitempty"`
 	// Operations are the names of the Google operations that create a resource, by "<kind>/<name>" as Resources lists it:
 	// written when the install starts the creation, removed once the resource is seen. The uninstall waits for one before
 	// it deletes a resource that answers 404 meanwhile, so a creation still running is not orphaned.

@@ -1,14 +1,16 @@
 package gcponboard
 
-// `dormeto gcp install`: the access of a Dormeto router in a project and a region and, with --image, the router itself
-// (spec §5). It checks the caller's permissions (a ✗ stops it before any change), with --image the image too, reads what
-// is there, prints the plan, asks (or takes --yes), applies the steps in order — apis, roles, serviceAccount, tag, database
-// (and the record), projectBindings, queue (and its binding), serviceAccountBinding, with --image cloudRun, neg and job,
-// then record — printing every IAM change after the steps that make one, Dormeto's and Google's, then verifies. Each
+// `dormeto gcp install`: the access of a Dormeto router in a project and a region and the router itself (spec §5), from
+// Dormeto's public image by default or --image, the access alone with --access-only (image.go says which router a run
+// installs). It checks the caller's permissions (a ✗ stops it before any change) and the image, reads what is there,
+// prints the plan, asks (or takes --yes), applies the steps in order — apis, database (and the record), roles,
+// serviceAccount, tag, projectBindings, queue (and its binding), serviceAccountBinding, with the router cloudRun, neg and
+// job, then record — printing every IAM change after the steps that make one, Dormeto's and Google's, then verifies. Each
 // step's file reads what it changes and plans exactly what its apply does. Run again, it plans only the differences;
 // none: "up to date".
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,7 +83,10 @@ type run struct {
 	number           string   // the project's number
 	parent           string   // the project's organization or folder, "" for none
 	account          string   // the caller, from gcloud
-	version          string   // the router's version: the tag of --image
+	image            string   // the router's image as recorded: --image's, the record's, or Dormeto's public one; "" for the access only
+	version          string   // the router's version: the tag of --image, or the public image's version
+	digest           string   // the digest the public image is deployed by: "" for an image of --image
+	keepsRouter      bool     // the router keeps the recorded image: an earlier --image's, or a newer router than this CLI's
 	recordedFeatures []string // the record's features at the start of the run
 	joining          []string // the features whose APIs the apis step turns on: in the record once it has
 	features         []string // the optional features of this run: --with's and the record's, sorted
@@ -138,9 +143,9 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 			}
 		}
 	}
-	_, version, _ := splitImage(r.Image)
-	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), version: version, granted: map[string]bool{}, google: map[string]bool{},
-		waitedFor: map[string]bool{}}
+	_, tag, _ := splitImage(r.Image)
+	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), image: r.Image, version: cmp.Or(r.Version, tag), granted: map[string]bool{},
+		google: map[string]bool{}, waitedFor: map[string]bool{}}
 }
 
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
@@ -148,7 +153,8 @@ func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a
 func (x *run) now() string { return x.d.Now().UTC().Format(time.RFC3339) }
 
 // Install is `dormeto gcp install`: 0 when installed or up to date (or the plan only, with DryRun, or declined), 1 when a
-// check fails or Google refuses, 2 for a bad region or image, or no --yes without a terminal, 130 when interrupted.
+// check fails or Google refuses, 2 for a bad region, image or version, flags that contradict one another, or no --yes
+// without a terminal, 130 when interrupted.
 func Install(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.end(x.install())
@@ -190,7 +196,7 @@ func (x *run) install() error {
 // upToDate says that nothing differs, after asking the router: a health no step can change is not "up to date".
 func (x *run) upToDate() error {
 	x.printSinceLast()
-	if x.r.Image == "" {
+	if x.image == "" {
 		x.say("The access of router %s in project %s is up to date.", x.n.router, x.n.project)
 		return nil
 	}
@@ -234,17 +240,24 @@ func (x *run) validate() error {
 		return &stop{2, "--with: " + access.CheckFeatures(x.r.With).Error()}
 	case listsErr != nil:
 		return &stop{2, listsErr.Error()}
+	case x.routerFlags() != "":
+		return &stop{2, x.routerFlags()}
+	case x.r.Version != "" && !install.IsVersion(x.r.Version):
+		return &stop{2, fmt.Sprintf("--version: %q is not a version such as %s", x.r.Version, embeddedRouterVersion())}
+	case x.r.Version != "" && install.CompareVersions(x.r.Version, embeddedRouterVersion()) > 0:
+		return &stop{2, fmt.Sprintf("router %s needs a newer CLI: brew upgrade dormeto", x.r.Version)}
 	case x.r.Image != "" && x.version == "":
 		return &stop{2, fmt.Sprintf("--image: %s has no tag: its tag is the router's version", x.r.Image)}
 	}
 	return x.imageTooOld()
 }
 
-// checks are `dormeto gcp check`'s verdict for install (with --image, install-router too), their permissions alone
-// asked: every permission held, or the missing ones named and nothing done.
+// checks are `dormeto gcp check`'s verdict for install (with --image or --version, install-router too: a run with neither
+// tests it once the record says it installs the router), their permissions alone asked: every permission held, or the
+// missing ones named and nothing done.
 func (x *run) checks() error {
 	commands := []string{"install"}
-	if x.r.Image != "" {
+	if x.r.Image != "" || x.r.Version != "" {
 		commands = append(commands, "install-router")
 	}
 	rep, err := check(x.ctx, x.d, x.r, commands)
@@ -280,8 +293,8 @@ func (x *run) checks() error {
 	return nil
 }
 
-// plan checks the image, reads the project's policy (the before snapshot of a first install), the record, then each
-// step's resources.
+// plan checks --image's image, reads the project's policy (the before snapshot of a first install), the record, the router
+// it installs, then each step's resources.
 func (x *run) plan() error {
 	if x.r.Image != "" {
 		if err := x.checkImage(); err != nil {
@@ -299,13 +312,16 @@ func (x *run) plan() error {
 	if err := x.useFeatures(); err != nil {
 		return err
 	}
+	if err := x.useRouter(); err != nil {
+		return err
+	}
 	if err := x.useIPLists(); err != nil {
 		return err
 	}
 	x.resume()
 	planners := []func() (*step, error){x.planAPIs, x.planDatabase, x.planRoles, x.planServiceAccount, x.planTag,
 		x.planProjectBindings, x.planQueue, x.planAccountBinding}
-	if x.r.Image != "" {
+	if x.image != "" {
 		planners = append(planners, x.planCloudRun, x.planNEG, x.planJob)
 	}
 	for _, plan := range planners {
@@ -451,11 +467,11 @@ func (x *run) apply() error {
 		return &stop{1, "Run the same command again to change what differs."}
 	}
 	x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue")
-	if x.r.Image != "" {
+	if x.image != "" {
 		x.say("  ✓ verified: both Cloud Run services ready, the controller's URL among its URLs, the network endpoint group, the job, /v1/health answering version %s", x.version)
 	}
 	x.warn(warnings)
-	if x.r.Image != "" {
+	if x.image != "" {
 		x.say("Installed router %s in project %s, version %s.", x.n.router, x.n.project, x.version)
 		return nil
 	}

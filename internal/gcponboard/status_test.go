@@ -196,7 +196,7 @@ func TestStatusOfARegionWithoutARouter(t *testing.T) {
 
 func TestStatusWithoutARegionFindsTheRouters(t *testing.T) {
 	g := routerInstalled(t)
-	west4 := Request{Project: "dormeto-dev", Region: "europe-west4", Yes: true}
+	west4 := Request{Project: "dormeto-dev", Region: "europe-west4", Yes: true, AccessOnly: true}
 	if code, out := g.run(t, west4); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -244,7 +244,7 @@ func TestStatusOfAProjectNotVisibleOrABadRegion(t *testing.T) {
 // A stopped run's drift is visible: the lists on both services are compared with the record's, and printed.
 func TestStatusComparesTheIPListsOnBothServicesWithTheRecord(t *testing.T) {
 	g := listsRouter(t)
-	if code, out := g.run(t, withLists(europe, blockList)); code != 0 {
+	if code, out := g.run(t, withLists(plain, blockList)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	code, out := g.status(t, europeStatus)
@@ -292,4 +292,29 @@ func TestStatusPrintsTheRecordedKubernetesAccess(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "  Kubernetes access: Role and RoleBinding dormeto-shop, namespace shop, cluster europe-west1-b/shop-cluster\n")
+}
+
+// A router of Dormeto's public image runs it by digest: that is the recorded image, and another digest is not.
+func TestStatusOfARouterOfThePublicImageComparesItsDigest(t *testing.T) {
+	def := embeddedRouterVersion()
+	g := publicRig(t, def)
+	if code, out := g.run(t, plain); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.status(t, europeStatus)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Router dmtr-europe-west1, region europe-west1: version "+def+", image "+publicImage(def)+"\n",
+		"  ✓ service "+controllerName+": ready, image "+deployedOf(def)+", "+controllerURL+"\n",
+		"  ✓ service "+wakerName+": ready, image "+deployedOf(def)+"\n")
+	g.s.Lock()
+	if waker := g.s.RunServices["europe-west1/"+wakerName]; waker != nil {
+		waker.Template.Containers[0].Image = publicImage(def) + "@sha256:other"
+	}
+	g.s.Unlock()
+	code, out = g.status(t, europeStatus)
+	if code != 1 || !strings.Contains(out, "  ✗ service "+wakerName+": ready, image "+publicImage(def)+"@sha256:other: not the recorded image\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
 }

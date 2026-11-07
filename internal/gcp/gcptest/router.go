@@ -358,7 +358,7 @@ func (s *Server) cloudScheduler(w http.ResponseWriter, r *http.Request, body []b
 	}
 }
 
-// manifest answers a HEAD of a manifest of Images. Without an Accept header naming OCI's image index it is not found, as
+// manifest answers a HEAD of a manifest of Images, with its digest of Digests. Without an Accept header naming OCI's image index it is not found, as
 // a registry that holds only that format answers.
 func (s *Server) manifest(w http.ResponseWriter, r *http.Request) {
 	rest, ok := strings.CutPrefix(r.URL.Path, "/v2/")
@@ -369,6 +369,10 @@ func (s *Server) manifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.Images[r.Host+"/"+path+":"+ref] || !strings.Contains(r.Header.Get("Accept"), "application/vnd.oci.image.index.v1+json") {
 		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if digest := s.Digests[r.Host+"/"+path+":"+ref]; digest != "" {
+		w.Header().Set("Docker-Content-Digest", digest)
 	}
 }
 

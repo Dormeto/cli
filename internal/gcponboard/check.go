@@ -45,6 +45,11 @@ type Request struct {
 	Configuration            string
 	Yes, DryRun, JSON, Force bool
 
+	// The install's router (design §4): Version is --version (Dormeto's public image of that version), AccessOnly
+	// --access-only (the access without the router); Image, --image, is a router image of the customer's own.
+	Version    string
+	AccessOnly bool
+
 	// The workloads commands: the workload's ID (an argument, or --id of onboard), the URL map and backend service to
 	// onboard, and the settings given (nil: not given).
 	ID, URLMap, BackendService string
@@ -223,14 +228,18 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 	if err := access.CheckFeatures(r.With); err != nil {
 		return Report{}, fmt.Errorf("--with: %w", err)
 	}
-	// The features of the router's install record are tested too, when the region says which router.
+	// The features of the router's install record are tested too, when the region says which router, and the image's
+	// permissions and API when it runs an image of --image.
 	warning := ""
 	if r.Region != "" {
-		recorded, err := recordedFeatures(newRun(ctx, d, r))
+		rec, err := recordInDatabase(newRun(ctx, d, r))
 		if err != nil {
-			warning = "the install record is not read, so its features are not tested: " + err.Error()
+			warning = "the install record is not read, so its features and an image of --image are not tested: " + err.Error()
 		}
-		r.With = featureSet(r.With, recorded)
+		r.With = featureSet(r.With, rec.Features)
+		if rec.Image != "" && rec.Digest == "" {
+			r.Image = rec.Image
+		}
 	}
 	rep, err := check(ctx, d, r, access.Commands())
 	if err == nil && warning != "" {
@@ -240,7 +249,16 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 }
 
 // check is Check for some commands only: their permissions alone are asked (install asks exactly what its steps need).
+// install-router's image step and Artifact Registry's API are asked for an image of the customer's own (r.Image: --image,
+// or the recorded one) only.
 func check(ctx context.Context, d Deps, r Request, commands []string) (Report, error) {
+	ownImage := r.Image != ""
+	needs := func(command string) []string {
+		if ownImage {
+			return access.NeedsWith(command, r.With)
+		}
+		return access.NeedsWithout(command, r.With, imageStep)
+	}
 	account, err := d.Google.Tokens.Account(ctx)
 	if err != nil {
 		return Report{}, err
@@ -265,7 +283,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 
 	var all []string
 	for _, c := range commands {
-		all = append(all, access.NeedsWith(c, r.With)...)
+		all = append(all, needs(c)...)
 	}
 	slices.Sort(all)
 	all = slices.Compact(all)
@@ -278,7 +296,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 	}
 	for _, c := range commands {
 		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}}
-		for _, perm := range access.NeedsWith(c, r.With) {
+		for _, perm := range needs(c) {
 			if rep.Visible && slices.Contains(held, perm) {
 				cr.Held = append(cr.Held, perm)
 			} else {
@@ -299,7 +317,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 	case err != nil:
 		return Report{}, err
 	default:
-		for _, api := range apisWith(r.With) {
+		for _, api := range apisWith(r.With, ownImage) {
 			if slices.Contains(enabled, api) {
 				rep.APIs.Enabled = append(rep.APIs.Enabled, api)
 			} else {

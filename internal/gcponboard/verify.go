@@ -1,7 +1,7 @@
 package gcponboard
 
 // The verification after the apply, read only: the router's grants in the project's, the queue's and the service
-// account's policies, the custom roles' permissions, the service account, the database and the queue; with --image, the
+// account's policies, the custom roles' permissions, the service account, the database and the queue; with the router, the
 // grant on the controller and the router itself (verifyRouter). The project's
 // policy must hold exactly what it held at the start of this run, the grants this run added and those Google added
 // during it: any other difference is said as a warning (someone else's change during the run, not the install's to
@@ -86,7 +86,7 @@ func (x *run) verify() (warnings []string, err error) {
 		lacks(QueuePolicy(x.n.project, x.n.region, x.n.queue), "queue "+x.n.queue, x.grantOn("queue"))
 	}
 
-	if x.r.Image != "" {
+	if x.image != "" {
 		lacks(RunPolicy(x.n.project, x.n.region, x.n.controller), x.where("controller"), x.grantOn("controller"))
 		problems = append(problems, x.verifyRouter()...)
 	}

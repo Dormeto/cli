@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto gcp install` installs the router from Dormeto's public image, `<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>` in the multi-region of `--region`, read without a token and deployed by its digest, which the plan shows: a first install takes the router version this CLI's access describes, a later run upgrades an older router of Dormeto's to it, and keeps a newer one (saying to upgrade the CLI) or an image of `--image` (saying which public version is available). `--version` installs another version, up to that one. `--access-only` installs the access without the router, as a run without `--image` did: the record says so (`accessOnly`), later runs keep it, and an older CLI's install without an image is read as such. `--image` stays, for an image of your own, and only it needs Artifact Registry's API and the image's permissions, in `gcp check` too.
+
 `dormeto gcp uninstall` no longer orphans a database or a tag whose creation was still running when an install stopped: the install records the creation's operation, and the uninstall waits for it before it deletes the resource.
 
 `dormeto gcp install` creates the router's database right after the APIs, so the install record is in it before the roles, the tag, the service account and the grants: a run that stops at any of them leaves them listed in the record, and another region's uninstall keeps the roles and the tag they share.

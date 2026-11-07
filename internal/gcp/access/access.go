@@ -173,10 +173,20 @@ func CheckFeatures(names []string) error {
 
 // NeedsWith are Needs(command) and, for each named feature, the permissions its operator steps need for the command (a
 // name that is not a feature adds nothing).
-func NeedsWith(command string, features []string) []string {
-	out := Needs(command)
-	if out == nil {
+func NeedsWith(command string, features []string) []string { return NeedsWithout(command, features) }
+
+// NeedsWithout are NeedsWith(command, features) without the permissions of the command's steps named in skip: a
+// permission another step needs too stays.
+func NeedsWithout(command string, features []string, skip ...string) []string {
+	steps, ok := Load().perms[command]
+	if !ok {
 		return nil
+	}
+	var out []string
+	for step, ps := range steps {
+		if !slices.Contains(skip, step) {
+			out = append(out, ps...)
+		}
 	}
 	for _, name := range features {
 		for _, ps := range Load().Features[name].Operator[command] {

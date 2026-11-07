@@ -1,9 +1,10 @@
 package gcponboard
 
-// The router's steps of `dormeto gcp install --image`, after the access: cloudRun (the controller, its invoker binding to
-// the router, the waker with its invoker check off), neg (the waker's serverless network endpoint group) and job (the
-// check every 5 minutes). The image is checked while planning, before any change. Its tag is the router's version: set in
-// DMT_VERSION, recorded, and what the controller's health must answer. A new image changes the two services only.
+// The router's steps of `dormeto gcp install`, after the access: cloudRun (the controller, its invoker binding to the
+// router, the waker with its invoker check off), neg (the waker's serverless network endpoint group) and job (the check
+// every 5 minutes). The image is checked while planning, before any change. Its tag is the router's version: set in
+// DMT_VERSION, recorded, and what the controller's health must answer. Dormeto's public image is deployed by its digest
+// (image.go). A new image changes the two services only.
 
 import (
 	"errors"
@@ -249,7 +250,7 @@ func (x *run) environment(role string) []runEnv {
 
 // wantService is the service as the install writes it.
 func (x *run) wantService(s serviceSettings) runService {
-	c := runContainer{Image: x.r.Image, Env: x.environment(s.role), Ports: []runPort{{containerPort}}}
+	c := runContainer{Image: x.deployed(), Env: x.environment(s.role), Ports: []runPort{{containerPort}}}
 	c.Resources.Limits = map[string]string{"memory": s.memory}
 	c.Resources.CPUIdle = true
 	return runService{Ingress: s.ingress, InvokerIamDisabled: s.invokerOff, Template: runTemplate{
@@ -327,7 +328,7 @@ func (x *run) planService(s serviceSettings) (lines []string, write func() (stri
 		return nil, nil, false, err
 	}
 	if !found {
-		line := fmt.Sprintf("+ service %s (image %s, %s, %s, %s, %s, %s, %s, %s, as %s)", s.name, x.r.Image, s.ingressWords, s.invokerWords(),
+		line := fmt.Sprintf("+ service %s (image %s, %s, %s, %s, %s, %s, %s, %s, as %s)", s.name, x.deployed(), s.ingressWords, s.invokerWords(),
 			s.instanceWords(), s.requestWords(), s.timeoutWords(), s.memoryWords(), cpuWords, x.n.email)
 		return []string{line}, func() (string, error) { return x.writeService(s, true) }, false, nil
 	}
@@ -370,10 +371,10 @@ func (x *run) writeService(s serviceSettings, create bool) (string, error) {
 	return done, nil
 }
 
-// noteImage records the image the two services run, and their IP lists.
+// noteImage records the image the two services run, its digest, and their IP lists.
 func (x *run) noteImage() {
-	if x.rec.Image != x.r.Image || x.rec.RouterVersion != x.version {
-		x.rec.Image, x.rec.RouterVersion = x.r.Image, x.version
+	if x.rec.Image != x.image || x.rec.RouterVersion != x.version || x.rec.Digest != x.digest {
+		x.rec.Image, x.rec.RouterVersion, x.rec.Digest = x.image, x.version, x.digest
 		x.recChanged = true
 	}
 	if lists := recordLists(x.lists); !slices.Equal(x.rec.IPLists, lists) {
@@ -592,7 +593,7 @@ func (x *run) planJob() (*step, error) {
 // the caller's identity token. The waker admits only the load balancer: it is checked through a workload, at its first
 // onboarding. It returns the problems found.
 func (x *run) verifyRouter() []string {
-	if x.r.Image == "" {
+	if x.image == "" {
 		return nil
 	}
 	var problems []string

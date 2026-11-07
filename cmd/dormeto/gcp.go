@@ -43,11 +43,11 @@ func newGcp(runs gcpRuns, version string) *cobra.Command {
 
 // gcpFlags are the flags of the gcp commands.
 type gcpFlags struct {
-	project, region, image, configuration string
-	json, yes, dryRun, force              bool
-	with                                  []string
-	ipLists                               []string
-	noIPLists                             bool
+	project, region, image, version, configuration string
+	json, yes, dryRun, force, accessOnly           bool
+	with                                           []string
+	ipLists                                        []string
+	noIPLists                                      bool
 }
 
 // gcpCommand is a gcp command calling run with the flags' request; a bad flag, an argument or a missing required flag
@@ -72,7 +72,7 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
 			code := run(ctx, gcpDeps(c, f.configuration, version), gcponboard.Request{
-				Project: f.project, Region: f.region, Image: f.image, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with,
+				Project: f.project, Region: f.region, Image: f.image, Version: f.version, AccessOnly: f.accessOnly, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with,
 				IPLists: lists, NoIPLists: f.noIPLists})
 			if s := signalled(); s != nil {
 				code = signalCode(s)
@@ -122,18 +122,28 @@ func withFlag(cmd *cobra.Command, f *gcpFlags, usage string) {
 
 func newGcpInstall(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	cmd := gcpCommand("install", "Install the access of a Dormeto router in a Google Cloud project and region",
-		"Install what a Dormeto router dmtr-<region> needs in a Google Cloud project: the APIs, the custom roles\n"+
+	cmd := gcpCommand("install", "Install a Dormeto router and its access in a Google Cloud project and region",
+		"Install a Dormeto router dmtr-<region> and what it needs in a Google Cloud project: the APIs, the custom roles\n"+
 			"dormetoRouter and dormetoRouterBackends, the service account dmtr-<region>, its grants, the secure tag\n"+
 			"dormeto=managed, the Firestore database dmtr-<region> with the install record, the Cloud Tasks queue\n"+
-			"dmtr-<region>. It checks your permissions first and changes nothing when one is missing, prints the plan\n"+
-			"(every IAM binding it adds), asks before applying (--yes without a terminal), prints every IAM change after\n"+
-			"the steps that make one, Dormeto's and Google's, and records them. Run again, it plans only what differs.\n"+
-			"It never changes or removes a binding it did not add.\n\n"+
-			"With --image it also installs the router from that image, whose tag is its version: the Cloud Run services\n"+
-			"dmtr-<region>-controller and dmtr-<region>-waker, the controller's invoker binding, the waker's network endpoint\n"+
-			"group and the check job dmtr-<region>-check; then it checks that both services are ready and that the controller\n"+
-			"answers that version. A new image changes the two services only.\n\n"+
+			"dmtr-<region>; then the router: the Cloud Run services dmtr-<region>-controller and dmtr-<region>-waker, the\n"+
+			"controller's invoker binding, the waker's network endpoint group and the check job dmtr-<region>-check. It\n"+
+			"checks your permissions first and changes nothing when one is missing, prints the plan (every IAM binding it\n"+
+			"adds), asks before applying (--yes without a terminal), prints every IAM change after the steps that make one,\n"+
+			"Dormeto's and Google's, and records them. Then it checks that both services are ready and that the controller\n"+
+			"answers the router's version. Run again, it plans only what differs. It never changes or removes a binding it did\n"+
+			"not add.\n\n"+
+			"The router runs Dormeto's public image <multi-region>-docker.pkg.dev/dormeto-releases/router/router:<version>, in\n"+
+			"the multi-region of --region (europe, us or asia), read without a token and deployed by its digest, which the plan\n"+
+			"shows. Its default version is the one this CLI's access describes, "+gcponboard.DefaultRouterVersion()+": a first install takes it, and a\n"+
+			"run upgrades an older router of Dormeto's to it. A newer router is kept, and the run says to upgrade the CLI.\n"+
+			"--version installs another version, up to the default. --image installs a router image of your own instead, whose\n"+
+			"tag is its version (a copy inside a VPC Service Controls perimeter, say): only that needs Artifact Registry's API\n"+
+			"in the project and your permissions on the image, an image in another project needs Artifact Registry Reader\n"+
+			"for this project's Cloud Run service agent (yours to give), and a later run keeps it, saying which public version\n"+
+			"is available. --image and --version are exclusive. --access-only installs the access without the router: the record\n"+
+			"says so, and later runs keep it until one with --version or --image (an older CLI's install without --image is\n"+
+			"read as such). A new image changes the two services only.\n\n"+
 			"With --with cloud-sql,gke it also installs the optional access of those features: their APIs, their custom\n"+
 			"roles (dormetoRouterDatabasesRead and dormetoRouterDatabases; dormetoRouterKubernetes) and the router's grants,\n"+
 			"kept in the install record. Without it, neither API is turned on (Google then adds service agents of its own). A\n"+
@@ -143,16 +153,18 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"workload by a visit (only the action ignore exists on Google Cloud; an API client's explicit POST /_dormeto/wake\n"+
 			"still wakes). The lists go in DMT_IP_LISTS on both Cloud Run services and in the install record, so the URL is\n"+
 			"printed in the plan, and one with credentials is refused. The set is replaced by each run with --ip-list, cleared by\n"+
-			"--no-ip-lists, and kept by a run with neither (a later --image included). Either flag changes the two services, so it\n"+
-			"needs the router: without --image the recorded image is reused. A router below 0.35.0 does not read the lists: it is\n"+
-			"refused, naming --image. The waker runs at 512 MiB with a list, else 256 MiB.",
+			"--no-ip-lists, and kept by a run with neither (a later --version or --image included). Either flag changes the two\n"+
+			"services, so it needs the router: it is refused with --access-only, and on a router below 0.35.0, which does not\n"+
+			"read the lists. The waker runs at 512 MiB with a list, else 256 MiB.",
 		&f, []string{"project", "region"}, version, run)
 	fl := cmd.Flags()
 	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
-	fl.StringVar(&f.image, "image", "", "the router's container image, with its version as tag: installs the router too")
+	fl.StringVar(&f.version, "version", "", "the router's version, from Dormeto's public image (default "+gcponboard.DefaultRouterVersion()+", the newest this CLI installs)")
+	fl.StringVar(&f.image, "image", "", "a router image of your own, with its version as tag, instead of Dormeto's public image")
+	fl.BoolVar(&f.accessOnly, "access-only", false, "install the access without the router (later runs keep it until one with --version or --image)")
 	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
-	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh=<hours, default 24>], repeatable; replaces the set; needs the router (the recorded image is reused without --image)")
+	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh=<hours, default 24>], repeatable; replaces the set; needs the router")
 	fl.BoolVar(&f.noIPLists, "no-ip-lists", false, "clear the router's IP lists")
 	withFlag(cmd, &f, "also install the optional access of these features (a later run adds more and a run without --with keeps the record's; only uninstall removes them)")
 	return cmd

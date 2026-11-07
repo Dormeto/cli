@@ -277,7 +277,7 @@ func TestMergedRecordTakesAChangedIPListsWhole(t *testing.T) {
 // set, the one the services have, not a mix that no run deployed, with the name twice.
 func TestRecordTwoIPListRunsAtOnceLeaveTheSetOfOne(t *testing.T) {
 	g := listsRouter(t)
-	if code, out := g.run(t, withLists(europe, IPList{Name: "first", URL: "https://example.com/first.txt", RefreshHours: 24})); code != 0 {
+	if code, out := g.run(t, withLists(plain, IPList{Name: "first", URL: "https://example.com/first.txt", RefreshHours: 24})); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	now, written := g.d.Now, false
@@ -297,7 +297,7 @@ func TestRecordTwoIPListRunsAtOnceLeaveTheSetOfOne(t *testing.T) {
 		}
 		return now()
 	}
-	code, out := g.run(t, withLists(europe, blockList))
+	code, out := g.run(t, withLists(plain, blockList))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
