@@ -4,7 +4,8 @@ package gcponboard
 // router/router:<version>, at the router version the CLI embeds, read without a token and deployed by its digest;
 // --version picks another, up to that one; --image is a customer's own copy, checked as before; --access-only installs no
 // router. A run with none of them follows the record: a first install takes the default version, an older router of
-// Dormeto's is upgraded to it, a newer one or an image of --image is kept, the access only stays the access only.
+// Dormeto's is upgraded to it, an image of --image is kept, the access only stays the access only. A router of Dormeto's
+// newer than the CLI's stops every run before any change: this CLI's roles and access are older than what it needs.
 
 import (
 	"encoding/json"
@@ -59,21 +60,21 @@ func defaultImage(region, version string) string {
 	return multi + "-docker.pkg.dev/dormeto-releases/router/router:" + version
 }
 
-// deployed is the image the services run: Dormeto's public image by its digest, an image of --image as given.
-func (x *run) deployed() string {
-	if x.digest == "" {
-		return x.image
+// byDigest is how the services run an image: Dormeto's public one by its digest, without its tag (<name>@sha256:…, the
+// form Google documents; the version stays in the record and DMT_VERSION), an image of --image as given.
+func byDigest(image, digest string) string {
+	if digest == "" {
+		return image
 	}
-	return x.image + "@" + x.digest
+	name, _, _ := splitImage(image)
+	return name + "@" + digest
 }
 
+// deployed is the image the services run.
+func (x *run) deployed() string { return byDigest(x.image, x.digest) }
+
 // deployedImage is the image a record's services run.
-func (r Record) deployedImage() string {
-	if r.Digest == "" {
-		return r.Image
-	}
-	return r.Image + "@" + r.Digest
-}
+func (r Record) deployedImage() string { return byDigest(r.Image, r.Digest) }
 
 // routerFlags is the refusal of flags that contradict one another ("" when none do): --image, --version and
 // --access-only each pick the router, and the IP lists' flags need one.
@@ -102,7 +103,9 @@ func (x *run) routerFlags() string {
 // loadRecord. --image's own checks ran already (checkImage); --version's permissions were tested with install's.
 func (x *run) useRouter() error {
 	def := embeddedRouterVersion()
-	switch {
+	switch v := x.rec.RouterVersion; {
+	case x.rec.Digest != "" && install.IsVersion(v) && install.CompareVersions(v, def) > 0:
+		return &stop{1, fmt.Sprintf("router %s is newer than this CLI knows (%s): brew upgrade dormeto\nNothing was changed.", v, def)}
 	case x.r.Image != "":
 		x.setAccessOnly(false)
 		return nil
@@ -123,15 +126,10 @@ func (x *run) useRouter() error {
 	case x.rec.Image != "" && x.rec.Digest == "":
 		return x.keepOwnImage(def)
 	}
-	version := def
-	if v := x.rec.RouterVersion; x.rec.Image != "" && install.IsVersion(v) && install.CompareVersions(v, def) > 0 {
-		version, x.keepsRouter = v, true
-		x.notice("router %s needs a newer CLI: brew upgrade dormeto", v)
-	}
 	if err := x.requireRouter(); err != nil {
 		return err
 	}
-	return x.usePublic(version)
+	return x.usePublic(def)
 }
 
 // keepOwnImage keeps the recorded image of an earlier --image: its permissions and the image itself are checked as

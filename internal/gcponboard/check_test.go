@@ -442,3 +442,18 @@ func TestCheckTestsTheImagesPermissionsOnlyForARouterOfImage(t *testing.T) {
 		t.Fatalf("without a region: %v %+v %+v", err, router, rep.APIs)
 	}
 }
+
+// Before a first --image install, check --image tests what it needs: the image's permissions and Artifact Registry's API.
+func TestCheckImageTestsTheImagesPermissionsWithoutARecord(t *testing.T) {
+	const registry = "artifactregistry.googleapis.com"
+	for _, region := range []string{"", "europe-west1"} {
+		s := gcptest.New(t)
+		s.Enabled = slices.DeleteFunc(slices.Clone(access.Load().APIs), func(a string) bool { return a == registry })
+		d, _ := deps(s)
+		rep, err := Check(t.Context(), d, Request{Project: "dormeto-dev", Region: region, Image: routerImage})
+		router := command(t, rep, "install-router")
+		if err != nil || !slices.Equal(router.Held, access.Needs("install-router")) || !slices.Equal(rep.APIs.Missing, []string{registry}) {
+			t.Fatalf("region %q: %v %+v %+v", region, err, router, rep.APIs)
+		}
+	}
+}

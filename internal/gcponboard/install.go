@@ -86,7 +86,7 @@ type run struct {
 	image            string   // the router's image as recorded: --image's, the record's, or Dormeto's public one; "" for the access only
 	version          string   // the router's version: the tag of --image, or the public image's version
 	digest           string   // the digest the public image is deployed by: "" for an image of --image
-	keepsRouter      bool     // the router keeps the recorded image: an earlier --image's, or a newer router than this CLI's
+	keepsRouter      bool     // the router keeps the recorded image of an earlier --image
 	recordedFeatures []string // the record's features at the start of the run
 	joining          []string // the features whose APIs the apis step turns on: in the record once it has
 	features         []string // the optional features of this run: --with's and the record's, sorted

@@ -142,6 +142,20 @@ func TestGcpInstallImageReadIntoTheRequest(t *testing.T) {
 	}
 }
 
+func TestGcpCheckImageReadIntoTheRequestAndItsHelp(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "check", "--project", "p", "--image", "europe-west1-docker.pkg.dev/p/d/router:0.34.0")
+	want := gcponboard.Request{Project: "p", Image: "europe-west1-docker.pkg.dev/p/d/router:0.34.0"}
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "check" || !reflect.DeepEqual(calls[0].r, want) {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+	out, _, code := executed(t, build{}, "gcp", "check", "--help")
+	for _, w := range []string{"--image", "artifactregistry.googleapis.com", "only for a router of --image"} {
+		if code != 0 || !strings.Contains(out, w) {
+			t.Errorf("%d: lacks %q in:\n%s", code, w, out)
+		}
+	}
+}
+
 func TestGcpInstallVersionAndAccessOnlyReadIntoTheRequest(t *testing.T) {
 	for _, tc := range []struct {
 		flags []string

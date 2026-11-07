@@ -61,7 +61,7 @@ type Record struct {
 	// removed. The uninstall says what is left of it: it does not reach clusters.
 	Rbac []RecordRbac `json:"rbac,omitempty"`
 	// Digest is the digest Dormeto's public image is deployed by (--version, or the default version): the services run
-	// <Image>@<Digest>. Empty for an image of --image, deployed as given.
+	// Image's name without its tag, @Digest (<name>@sha256:…). Empty for an image of --image, deployed as given.
 	Digest string `json:"digest,omitempty"`
 	// AccessOnly is an install of the access without the router (--access-only): later runs keep it until one with
 	// --version or --image. An older CLI's record without an image is read as such.

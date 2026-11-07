@@ -310,11 +310,11 @@ func TestStatusOfARouterOfThePublicImageComparesItsDigest(t *testing.T) {
 		"  ✓ service "+wakerName+": ready, image "+deployedOf(def)+"\n")
 	g.s.Lock()
 	if waker := g.s.RunServices["europe-west1/"+wakerName]; waker != nil {
-		waker.Template.Containers[0].Image = publicImage(def) + "@sha256:other"
+		waker.Template.Containers[0].Image = "europe-docker.pkg.dev/dormeto-releases/router/router@sha256:other"
 	}
 	g.s.Unlock()
 	code, out = g.status(t, europeStatus)
-	if code != 1 || !strings.Contains(out, "  ✗ service "+wakerName+": ready, image "+publicImage(def)+"@sha256:other: not the recorded image\n") {
+	if code != 1 || !strings.Contains(out, "  ✗ service "+wakerName+": ready, image europe-docker.pkg.dev/dormeto-releases/router/router@sha256:other: not the recorded image\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }

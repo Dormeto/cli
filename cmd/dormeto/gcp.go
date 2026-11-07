@@ -107,9 +107,13 @@ func newGcpCheck(run gcpRun, version string) *cobra.Command {
 	cmd := gcpCommand("check", "Check which permissions you lack for each dormeto gcp command (read-only)",
 		"Check, read-only, the permissions you hold in a Google Cloud project against what each dormeto gcp command\n"+
 			"needs, which of Dormeto's APIs are on, and that a billing account is linked. Nothing is changed. Exit 1 when\n"+
-			"a command lacks a permission or the project has no billing.",
+			"a command lacks a permission or the project has no billing.\n\n"+
+			"The permissions on the router's image (install-router's step image) and the API artifactregistry.googleapis.com\n"+
+			"are tested only for a router of --image, a router image of your own: give --image before a first install with\n"+
+			"it; with --region, the install record's image of --image is tested too. Dormeto's public image needs neither.",
 		&f, []string{"project"}, version, run)
 	cmd.Flags().StringVar(&f.region, "region", "", "the router's region")
+	cmd.Flags().StringVar(&f.image, "image", "", "a router image of your own: also test its permissions and Artifact Registry's API, needed only for a router of --image")
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the report as JSON")
 	withFlag(cmd, &f, "also test the permissions and APIs of these optional features (those of the install record are tested too with --region)")
 	return cmd
@@ -136,7 +140,7 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"The router runs Dormeto's public image <multi-region>-docker.pkg.dev/dormeto-releases/router/router:<version>, in\n"+
 			"the multi-region of --region (europe, us or asia), read without a token and deployed by its digest, which the plan\n"+
 			"shows. Its default version is the one this CLI's access describes, "+gcponboard.DefaultRouterVersion()+": a first install takes it, and a\n"+
-			"run upgrades an older router of Dormeto's to it. A newer router is kept, and the run says to upgrade the CLI.\n"+
+			"run upgrades an older router of Dormeto's to it. On a newer router, it stops before any change: upgrade the CLI.\n"+
 			"--version installs another version, up to the default. --image installs a router image of your own instead, whose\n"+
 			"tag is its version (a copy inside a VPC Service Controls perimeter, say): only that needs Artifact Registry's API\n"+
 			"in the project and your permissions on the image, an image in another project needs Artifact Registry Reader\n"+

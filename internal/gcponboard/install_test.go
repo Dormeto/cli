@@ -1487,7 +1487,10 @@ func publicImage(version string) string {
 
 func digestOf(version string) string { return "sha256:d" + strings.ReplaceAll(version, ".", "") }
 
-func deployedOf(version string) string { return publicImage(version) + "@" + digestOf(version) }
+// deployedOf is how the services run a public version: by digest, without the tag (the form Google documents).
+func deployedOf(version string) string {
+	return "europe-docker.pkg.dev/dormeto-releases/router/router@" + digestOf(version)
+}
 
 // publicRig is a rig whose public registry holds Dormeto's router images of these versions.
 func publicRig(t *testing.T, versions ...string) *installRig {
@@ -1792,7 +1795,9 @@ func TestInstallUpgradesAnOlderRouterToTheDefaultVersion(t *testing.T) {
 }
 
 // A router newer than the CLI's (a newer CLI upgraded it) is kept, and the run says to upgrade the CLI.
-func TestInstallKeepsANewerRouterAndSaysToUpgradeTheCLI(t *testing.T) {
+// A router newer than the CLI's (a newer CLI upgraded it) would get this CLI's older roles and access: the install stops
+// before any change, whatever its flags. Status and check still read it and report.
+func TestInstallOnARouterNewerThanTheCLIStopsBeforeAnyChange(t *testing.T) {
 	def := embeddedRouterVersion()
 	const newer = "9.0.0"
 	g := publicRig(t, def, newer)
@@ -1801,17 +1806,27 @@ func TestInstallKeepsANewerRouterAndSaysToUpgradeTheCLI(t *testing.T) {
 	}
 	g.atPublicVersion(t, newer)
 	mark := len(g.s.Calls())
-	code, out := g.run(t, plain)
-	if code != 0 {
-		t.Fatalf("exit %d:\n%s", code, out)
+	version := plain
+	version.Version = def
+	for _, r := range []Request{plain, version, withImage, withLists(plain, blockList)} {
+		code, out := g.run(t, r)
+		if code != 1 || strings.Contains(out, "Plan for") || strings.Contains(out, "Using the recorded image") ||
+			!strings.HasSuffix(out, "router "+newer+" is newer than this CLI knows ("+def+"): brew upgrade dormeto\nNothing was changed.\n") {
+			t.Fatalf("%+v: exit %d:\n%s", r, code, out)
+		}
 	}
-	contains(t, out, "  ! router "+newer+" needs a newer CLI: brew upgrade dormeto\n",
-		"Router dmtr-europe-west1 in project dormeto-dev is up to date: version "+newer+".\n")
 	if c := g.changes(mark); len(c) != 0 {
 		t.Fatalf("changes: %v", c)
 	}
 	if rec := g.record(t); rec.RouterVersion != newer {
 		t.Errorf("record %+v", rec)
+	}
+	code, out := g.status(t, europeStatus)
+	if code != 0 || !strings.Contains(out, "version "+newer+", image "+publicImage(newer)+"\n") {
+		t.Fatalf("status: exit %d:\n%s", code, out)
+	}
+	if rep, err := Check(t.Context(), g.d, Request{Project: "dormeto-dev", Region: "europe-west1"}); err != nil || !rep.OK() {
+		t.Fatalf("check: %v %+v", err, rep)
 	}
 }
 
@@ -1838,7 +1853,6 @@ func TestInstallKeepsAnImageOfImageAndSaysWhichPublicVersionIsAvailable(t *testi
 // The notices go where the install's other lines go, its "!" lines among them: the output.
 func TestInstallNoticesGoToTheOutput(t *testing.T) {
 	def := embeddedRouterVersion()
-	const newer = "9.0.0"
 	for name, tc := range map[string]struct {
 		setup  func(t *testing.T) *installRig
 		notice string
@@ -1849,12 +1863,6 @@ func TestInstallNoticesGoToTheOutput(t *testing.T) {
 			return g
 		}, "  ! the router isn't installed: dormeto gcp install --version " + def + "\n"},
 		"--image": {routerInstalled, "  ! router " + def + " is available: dormeto gcp install --version " + def + "\n"},
-		"newer": {func(t *testing.T) *installRig {
-			g := publicRig(t, def, newer)
-			g.run(t, plain)
-			g.atPublicVersion(t, newer)
-			return g
-		}, "  ! router " + newer + " needs a newer CLI: brew upgrade dormeto\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := tc.setup(t)
