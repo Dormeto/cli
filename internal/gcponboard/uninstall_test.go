@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1283,4 +1284,122 @@ func TestUninstallWaitsForTheTagStillBeingCreatedThenDeletesIt(t *testing.T) {
 	if len(g.s.TagKeys)+len(g.s.TagValues) != 0 {
 		t.Errorf("tags left: %v %v", g.s.TagKeys, g.s.TagValues)
 	}
+}
+
+// stopThenAnswer stops an install at its first poll of the operations under prefix; the polls after are answered by
+// answer (nil: as Google does), which the test sets before it uninstalls.
+func stopThenAnswer(t *testing.T, g *installRig, host, prefix, version string) (answer *func(w http.ResponseWriter, name string)) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	answer = new(func(w http.ResponseWriter, name string))
+	stopped := false
+	g.s.Route(host, prefix, func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, version)
+		if !stopped {
+			stopped = true
+			cancel()
+			gcptest.Reply(w, map[string]any{"name": name, "done": false})
+			return
+		}
+		if *answer != nil {
+			(*answer)(w, name)
+			return
+		}
+		g.s.Poll(w, name)
+	})
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	return answer
+}
+
+func (g *installRig) databaseDeletions() (n int) {
+	for _, c := range g.s.Calls() {
+		if c.Method == "DELETE" && strings.Contains(c.Path, "/databases/") {
+			n++
+		}
+	}
+	return n
+}
+
+// The cache the uninstall leaves, if any, holds no operation.
+func (g *installRig) cacheHoldsNoOperation(t *testing.T) {
+	t.Helper()
+	b, err := os.ReadFile(g.cacheFile())
+	if err != nil {
+		return
+	}
+	var rec Record
+	if json.Unmarshal(b, &rec) == nil && len(rec.Operations) != 0 {
+		t.Errorf("the record still holds %v", rec.Operations)
+	}
+}
+
+func TestUninstallGoesOnWhenTheCreationOperationEndedWithAnError(t *testing.T) {
+	cases := map[string]struct {
+		host, prefix, version, said string
+	}{
+		"the database": {"firestore.googleapis.com", pendingDatabase, "/v1/", "database dmtr-europe-west1 is gone"},
+		"the tag key":  {"cloudresourcemanager.googleapis.com", "/v3/operations/", "/v3/", "tag dormeto is gone"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			g := newInstallRig(t)
+			answer := stopThenAnswer(t, g, c.host, c.prefix, c.version)
+			*answer = func(w http.ResponseWriter, name string) {
+				gcptest.Reply(w, map[string]any{"name": name, "done": true, "error": map[string]any{"code": 3, "message": "creation failed"}})
+			}
+			code, out := g.uninstall(t, uninstallEurope)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, c.said)
+			if g.databaseDeletions() != 0 {
+				t.Errorf("a database was deleted:\n%s", out)
+			}
+			g.cacheHoldsNoOperation(t)
+		})
+	}
+}
+
+func TestUninstallStopsWhenTheCreationOperationCannotBeRead(t *testing.T) {
+	for name, c := range map[string]struct {
+		host, prefix, version string
+		code                  int
+		status                string
+	}{
+		"the database, 403": {"firestore.googleapis.com", pendingDatabase, "/v1/", 403, "PERMISSION_DENIED"},
+		"the database, 503": {"firestore.googleapis.com", pendingDatabase, "/v1/", 503, "UNAVAILABLE"},
+		"the tag key, 403":  {"cloudresourcemanager.googleapis.com", "/v3/operations/", "/v3/", 403, "PERMISSION_DENIED"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newInstallRig(t)
+			answer := stopThenAnswer(t, g, c.host, c.prefix, c.version)
+			*answer = func(w http.ResponseWriter, _ string) { gcptest.Fail(w, c.code, c.status, "no") }
+			code, out := g.uninstall(t, uninstallEurope)
+			if code == 0 {
+				t.Fatalf("exit 0:\n%s", out)
+			}
+			contains(t, out, "google: "+strconv.Itoa(c.code))
+			if _, err := os.ReadFile(g.cacheFile()); err != nil {
+				t.Errorf("the cache is gone: %v", err)
+			}
+		})
+	}
+}
+
+func TestUninstallTakesACreationOperationAnsweringNotFoundAsNeverCreated(t *testing.T) {
+	g := newInstallRig(t)
+	answer := stopThenAnswer(t, g, "firestore.googleapis.com", pendingDatabase, "/v1/")
+	*answer = func(w http.ResponseWriter, name string) {
+		gcptest.Fail(w, 404, "NOT_FOUND", "operation "+name+" not found")
+	}
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "database dmtr-europe-west1 is gone")
+	g.cacheHoldsNoOperation(t)
 }

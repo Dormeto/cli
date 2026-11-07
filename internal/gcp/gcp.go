@@ -161,6 +161,9 @@ type Error struct {
 	Message    string
 	Permission string
 	Service    string
+	// Operation is set when the error is the one a long-running operation ended with (done, with an error), not the
+	// failure of a call.
+	Operation bool
 }
 
 func (e *Error) Error() string {
@@ -445,7 +448,7 @@ func WaitOperation(ctx context.Context, c *Client, url string, every, timeout ti
 		if op.Done {
 			if op.Error != nil {
 				code, status := fromGRPC(op.Error.Code)
-				return &Error{Code: code, Status: status, Message: op.Error.Message}
+				return &Error{Code: code, Status: status, Message: op.Error.Message, Operation: true}
 			}
 			return nil
 		}

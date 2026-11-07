@@ -407,6 +407,12 @@ func (x *run) planDatabaseRemoval() (*step, error) {
 	}}, nil
 }
 
+// operationFailed tells whether an error is the one a long-running operation ended with, not a failed call.
+func operationFailed(err error) bool {
+	var e *gcp.Error
+	return errors.As(err, &e) && e.Operation
+}
+
 // planPendingDatabaseRemoval is for a database that answers 404 while the record holds the operation creating it (an
 // install that stopped): the uninstall waits for the operation, within the budget of an operation's wait, then deletes the
 // database if it is there, so the creation does not end up orphaned. The record is in the cache, which the step keeps.
@@ -415,19 +421,30 @@ func (x *run) planPendingDatabaseRemoval(operation string) *step {
 		if err := x.writeCache(); err != nil {
 			return "", fmt.Errorf("the record is not kept in the cache before the database goes: %w", err)
 		}
-		gone := "database " + x.n.database + " is gone (its creation did not leave it)"
+		gone := func() (string, error) {
+			x.forgetOperation("database", x.databaseName())
+			return "database " + x.n.database + " is gone (its creation did not leave it)", x.writeKept()
+		}
 		if err := x.wait(firestoreV1, longOperation{Name: operation}, databaseTimeout); err != nil {
-			if gcp.IsNotFound(err) {
-				return gone, nil
+			// Only an operation that is not there or ended with an error says it never created the database; a failed
+			// poll says nothing.
+			if gcp.IsNotFound(err) || operationFailed(err) {
+				if found, ferr := x.get(firestoreAPI, x.databaseURL(), nil); ferr != nil || !found {
+					if ferr != nil {
+						return "", ferr
+					}
+					return gone()
+				}
+			} else {
+				return "", err
 			}
-			return "", err
 		}
 		found, err := x.get(firestoreAPI, x.databaseURL(), nil)
 		if err != nil {
 			return "", err
 		}
 		if !found {
-			return gone, nil
+			return gone()
 		}
 		var op longOperation
 		if err := x.call(http.MethodDelete, x.databaseURL(), nil, &op); err != nil && !gcp.IsNotFound(err) {
@@ -542,10 +559,11 @@ func (x *run) planTagRemoval() (*step, error) {
 			// budget of an operation's wait), read it again, then delete it if it is there.
 			label := "tag " + strings.TrimPrefix(t.namespaced, x.n.project+"/")
 			steps = append(steps, &step{name: "tag", lines: []string{"- " + label + " (its creation is still running: waited for first)"}, apply: func() (string, error) {
-				if err := x.wait(crmV3, longOperation{Name: pending}, tagTimeout); err != nil {
-					if gcp.IsNotFound(err) {
-						return label + " is gone", nil
-					}
+				gone := func() (string, error) {
+					x.forgetOperation(t.resource, t.namespaced)
+					return label + " is gone", x.writeKept()
+				}
+				if err := x.wait(crmV3, longOperation{Name: pending}, tagTimeout); err != nil && !gcp.IsNotFound(err) && !operationFailed(err) {
 					return "", err
 				}
 				id, found, err := x.tag(t.kind, t.namespaced)
@@ -553,7 +571,7 @@ func (x *run) planTagRemoval() (*step, error) {
 					return "", err
 				}
 				if !found {
-					return label + " is gone", nil
+					return gone()
 				}
 				var op longOperation
 				err = x.call(http.MethodDelete, crmV3+id, nil, &op)
