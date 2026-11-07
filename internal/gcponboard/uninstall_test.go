@@ -127,6 +127,33 @@ func TestUninstallKeepsAMemberSomeoneElseAddedToADormetoRole(t *testing.T) {
 	}
 }
 
+func TestUninstallKeepsTheRolesOfAnotherRoutersInstallStoppedAtTheTag(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: "cloudresourcemanager.googleapis.com", Path: "/v3/tagKeys", Times: 1, Code: 403,
+		Status: "PERMISSION_DENIED", Message: "Permission 'resourcemanager.tagKeys.create' denied"})
+	if code, out := g.run(t, europe); code != 1 {
+		t.Fatalf("the first install: exit %d:\n%s", code, out)
+	}
+	other := europe
+	other.Region = "europe-west4"
+	if code, out := g.run(t, other); code != 0 {
+		t.Fatalf("install 2: exit %d:\n%s", code, out)
+	}
+	// The first router's record, in its database, lists the roles although its install stopped before the tag.
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west4", Yes: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "= role dormetoRouter kept: used by router dmtr-europe-west1\n", "= role dormetoRouterBackends kept: used by router dmtr-europe-west1\n")
+	g.s.Lock()
+	defer g.s.Unlock()
+	for id, r := range g.s.Roles {
+		if r.Deleted {
+			t.Errorf("role %s is deleted", id)
+		}
+	}
+}
+
 func TestUninstallKeepsTheCustomRolesWhileAnotherRoutersRecordUsesThem(t *testing.T) {
 	g := newRouterRig(t)
 	other := withImage
@@ -888,7 +915,8 @@ func TestUninstallForceGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *testi
 }
 
 // stopAtPoll stops the run (Ctrl-C) at the at-th poll of the operations under prefix on host, the other polls answered as
-// Google does. seen is the record the cache holds at that moment: what a run killed there leaves.
+// Google does. seen is the record kept at that moment, in the database once it exists, else in the cache: what a run
+// killed there leaves.
 func stopAtPoll(t *testing.T, g *installRig, host, prefix, version string, at int) (ctx context.Context, seen *Record) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -901,7 +929,9 @@ func stopAtPoll(t *testing.T, g *installRig, host, prefix, version string, at in
 			g.s.Poll(w, name)
 			return
 		}
-		if b, err := os.ReadFile(g.cacheFile()); err == nil {
+		if data := g.s.Field(recordDB, "install/record", "data"); data != "" {
+			json.Unmarshal([]byte(data), seen)
+		} else if b, err := os.ReadFile(g.cacheFile()); err == nil {
 			json.Unmarshal(b, seen)
 		}
 		cancel()
@@ -931,7 +961,7 @@ func TestUninstallRemovesWhatARunStoppedDuringItsOperationLeft(t *testing.T) {
 				t.Fatalf("exit %d:\n%s", code, g.out)
 			}
 			if !listsResource(*seen, c.kind, c.name) {
-				t.Errorf("the cache does not list it during the operation: %+v", seen.Resources)
+				t.Errorf("the record does not list it during the operation: %+v", seen.Resources)
 			}
 			// Google finishes the operation after the run stopped.
 			g.s.FinishOperations()
@@ -1260,7 +1290,7 @@ func TestUninstallWaitsForTheTagStillBeingCreatedThenDeletesIt(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, g.out)
 	}
 	if seen.Operations["tagKey/dormeto-dev/dormeto"] == "" {
-		t.Errorf("the cache does not hold the tag key's operation: %+v", seen.Operations)
+		t.Errorf("the record does not hold the tag key's operation: %+v", seen.Operations)
 	}
 	g.s.Lock()
 	if len(g.s.TagKeys) != 0 {
@@ -1324,16 +1354,21 @@ func (g *installRig) databaseDeletions() (n int) {
 	return n
 }
 
-// The cache the uninstall leaves, if any, holds no operation.
+// The cache the uninstall leaves, if any, and the record in the database, if any, hold no operation.
 func (g *installRig) cacheHoldsNoOperation(t *testing.T) {
 	t.Helper()
-	b, err := os.ReadFile(g.cacheFile())
-	if err != nil {
-		return
+	var kept []string
+	if b, err := os.ReadFile(g.cacheFile()); err == nil {
+		kept = append(kept, string(b))
 	}
-	var rec Record
-	if json.Unmarshal(b, &rec) == nil && len(rec.Operations) != 0 {
-		t.Errorf("the record still holds %v", rec.Operations)
+	if data := g.s.Field(recordDB, "install/record", "data"); data != "" {
+		kept = append(kept, data)
+	}
+	for _, k := range kept {
+		var rec Record
+		if json.Unmarshal([]byte(k), &rec) == nil && len(rec.Operations) != 0 {
+			t.Errorf("the record still holds %v", rec.Operations)
+		}
 	}
 }
 
@@ -1356,8 +1391,14 @@ func TestUninstallGoesOnWhenTheCreationOperationEndedWithAnError(t *testing.T) {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
 			contains(t, out, c.said)
-			if g.databaseDeletions() != 0 {
-				t.Errorf("a database was deleted:\n%s", out)
+			// The tag key's run had created its database (it comes first): that one goes; the database whose creation
+			// failed was never there.
+			want := 0
+			if name == "the tag key" {
+				want = 1
+			}
+			if n := g.databaseDeletions(); n != want {
+				t.Errorf("%d databases deleted, want %d:\n%s", n, want, out)
 			}
 			g.cacheHoldsNoOperation(t)
 		})

@@ -403,6 +403,8 @@ func (x *run) planDatabaseRemoval() (*step, error) {
 				return "", err
 			}
 		}
+		// The record went with the database: what the steps after it keep goes to the cache.
+		x.recorded = false
 		return "removed database " + x.n.database, nil
 	}}, nil
 }

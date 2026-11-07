@@ -156,11 +156,11 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + API iam.googleapis.com
   + API cloudresourcemanager.googleapis.com
   + API logging.googleapis.com
+  + database dmtr-europe-west1 (Firestore Native, europe-west1)
   + role dormetoRouter "Dormeto router" (32 permissions)
   + role dormetoRouterBackends "Dormeto router backends" (6 permissions)
   + service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
   + tag dormeto/managed
-  + database dmtr-europe-west1 (Firestore Native, europe-west1)
   + grant projects/dormeto-dev/roles/dormetoRouter to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project
   + grant projects/dormeto-dev/roles/dormetoRouterBackends to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project, if "Dormeto-managed resources": resource.matchTag('dormeto-dev/dormeto', 'managed')
   + grant roles/datastore.user to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project, if "The router's database": resource.name == "projects/dormeto-dev/databases/dmtr-europe-west1"
@@ -208,12 +208,12 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 	contains(t, out, freshPlan,
 		"  ✓ apis: turned on compute.googleapis.com, run.googleapis.com, firestore.googleapis.com, cloudtasks.googleapis.com, cloudscheduler.googleapis.com, monitoring.googleapis.com, artifactregistry.googleapis.com, iam.googleapis.com, cloudresourcemanager.googleapis.com, logging.googleapis.com\n"+
 			"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
+			"  ✓ database: created dmtr-europe-west1 (Firestore Native, europe-west1), wrote install/record\n"+
+			"      IAM + roles/firestore.serviceAgent to "+firestoreAgent+" on the project (Google, after database)\n"+
 			"  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n"+
 			"  ✓ serviceAccount: created "+routerSA+"\n"+
 			"  ✓ tag: created dormeto/managed\n"+
-			"  ✓ database: created dmtr-europe-west1 (Firestore Native, europe-west1), wrote install/record\n"+
-			"  ✓ projectBindings: granted 3 roles on the project\n"+
-			"      IAM + roles/firestore.serviceAgent to "+firestoreAgent+" on the project (Google, after database)\n",
+			"  ✓ projectBindings: granted 3 roles on the project\n",
 		"      IAM + projects/dormeto-dev/roles/dormetoRouter to "+routerMember+" on the project (Dormeto)\n",
 		"      IAM + roles/datastore.user to "+routerMember+` on the project, if "The router's database": resource.name == "projects/dormeto-dev/databases/dmtr-europe-west1" (Dormeto)`+"\n",
 		"  ✓ queue: created dmtr-europe-west1 (3 attempts, backoff 5 to 60 s), granted roles/cloudtasks.enqueuer on it\n"+
@@ -353,16 +353,18 @@ func TestInstallChangesInTheStepsOrder(t *testing.T) {
 		}
 		got = append(got, c.Method+" "+path)
 	}
-	// Once the database holds the record, each step starts by writing it, with the step it is at.
+	// The database comes right after the APIs and its first write is the record: from then on each step starts by writing
+	// it, with the step it is at, and a resource is recorded before it is created, so the roles, the tag and the service
+	// account are all in the database's record.
 	const record = "PATCH databases/dmtr-europe-west1/documents/install/record"
 	want := []string{
 		"POST services:batchEnable",
-		"POST roles", "POST roles",
-		"POST serviceAccounts",
-		"POST tagKeys", "POST tagValues",
 		"POST databases",
 		record, // the database's first write
-		record, "POST projects/dormeto-dev:setIamPolicy",
+		record, record, "POST roles", record, "POST roles",
+		record, record, "POST serviceAccounts",
+		record, record, "POST tagKeys", record, record, "POST tagValues",
+		record, record, "POST projects/dormeto-dev:setIamPolicy",
 		record, record, "POST queues", "POST queues/dmtr-europe-west1:setIamPolicy", // the step's start, the queue listed first
 		record, "POST serviceAccounts/" + routerSA + ":setIamPolicy",
 		record, record, // the record step's start, and its end: finished
@@ -497,7 +499,7 @@ func TestInstallGivesUpOnAServiceAccountIAMNeverKnows(t *testing.T) {
 		t.Fatalf("slept %v", *g.slept)
 	}
 	contains(t, out, "  ✗ projectBindings: google: 400 INVALID_ARGUMENT: Service account "+routerSA+" does not exist.\n",
-		"Done: apis, roles, serviceAccount, tag, database. Not done: projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
+		"Done: apis, database, roles, serviceAccount, tag. Not done: projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
 }
 
 func TestInstallRetriesAnAPIJustTurnedOn(t *testing.T) {
@@ -546,9 +548,22 @@ func TestInstallStopsAtARefusedStepAndContinuesAfter(t *testing.T) {
 	}
 	contains(t, out, "  ✓ serviceAccount: created "+routerSA+"\n"+
 		"  ✗ tag: google: 403 PERMISSION_DENIED: Permission 'resourcemanager.tagKeys.create' denied\n"+
-		"Done: apis, roles, serviceAccount. Not done: tag, database, projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
-	if _, err := os.Stat(g.cacheFile()); err != nil {
-		t.Fatalf("the before snapshot waits in the cache: %v", err)
+		"Done: apis, database, roles, serviceAccount. Not done: tag, projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
+	// The database exists before any shared resource: the record is in it, listing the roles and the service account,
+	// and nothing waits in the cache.
+	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
+		t.Fatalf("the cache holds a record although the database does: %v", err)
+	}
+	stopped := g.record(t)
+	for _, want := range []Resource{{Kind: "database", Name: "projects/dormeto-dev/databases/dmtr-europe-west1"},
+		{Kind: "role", Name: "projects/dormeto-dev/roles/dormetoRouter"}, {Kind: "role", Name: "projects/dormeto-dev/roles/dormetoRouterBackends"},
+		{Kind: "serviceAccount", Name: "projects/dormeto-dev/serviceAccounts/" + routerSA}} {
+		if !slices.Contains(stopped.Resources, want) {
+			t.Errorf("the stopped run's record does not list %+v: %+v", want, stopped.Resources)
+		}
+	}
+	if stopped.Running != "tag" || len(stopped.Before) != 1 || stopped.Before[0].Role != "roles/owner" {
+		t.Errorf("running %q, before %+v", stopped.Running, stopped.Before)
 	}
 
 	code, out = g.run(t, europe)
@@ -556,9 +571,8 @@ func TestInstallStopsAtARefusedStepAndContinuesAfter(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
-		"  + tag dormeto/managed\n"+
-		"  + database dmtr-europe-west1 (Firestore Native, europe-west1)\n")
-	for _, not := range []string{"\n  + API ", "\n  + role ", "\n  + service account "} {
+		"  + tag dormeto/managed\n")
+	for _, not := range []string{"\n  + API ", "\n  + role ", "\n  + service account ", "\n  + database "} {
 		if strings.Contains(out, not) {
 			t.Errorf("%q planned again:\n%s", not, out)
 		}
@@ -730,9 +744,12 @@ func TestInstallInterruptedDuringAStepSaysWhatWasDone(t *testing.T) {
 	if code != 130 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ✗ tag: ", "Done: apis, roles, serviceAccount. Not done: tag, ")
-	if _, err := os.Stat(g.cacheFile()); err != nil {
-		t.Fatalf("the done part waits in the cache: %v", err)
+	contains(t, out, "  ✗ tag: ", "Done: apis, database, roles, serviceAccount. Not done: tag, ")
+	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
+		t.Fatalf("the done part waits in the cache although the database holds the record: %v", err)
+	}
+	if rec := g.record(t); !slices.Contains(rec.Resources, Resource{Kind: "serviceAccount", Name: "projects/dormeto-dev/serviceAccounts/" + routerSA}) {
+		t.Fatalf("the record in the database: %+v", rec.Resources)
 	}
 }
 
@@ -785,7 +802,7 @@ func TestVerifyWarnsOfAnIAMChangeNotMadeByThisInstall(t *testing.T) {
 	injected := false
 	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
 		// Someone grants a role after the install's last read, before its verification.
-		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 7 {
+		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 17 {
 			injected = true
 			grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
 		}
@@ -965,7 +982,7 @@ func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "  ✓ apis: ", "  ✗ roles: google: 403 PERMISSION_DENIED (SERVICE_DISABLED): iam.googleapis.com has not been used",
-		"Done: apis. Not done: roles, ")
+		"Done: apis, database. Not done: roles, ")
 	if len(*g.slept) != 60 || (*g.slept)[0] != 5*time.Second {
 		t.Fatalf("slept %d times: %v", len(*g.slept), *g.slept)
 	}
@@ -1037,7 +1054,7 @@ func TestInstallStoppedDuringAStepSaysGooglesChanges(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "context canceled\n      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
-		"Done: none. Not done: apis, roles, ")
+		"Done: none. Not done: apis, database, roles, ")
 	rec := g.cached(t)
 	if len(rec.Google) != 1 || rec.Google[0] != (GoogleGrant{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis"}) {
 		t.Errorf("google %+v", rec.Google)
@@ -1204,7 +1221,7 @@ func TestInstallWarnsOfTheDefaultServiceAccountsEditorAfterTheAPIs(t *testing.T)
 	warning := "  ! the Compute Engine default service account 1034397096264-compute@developer.gserviceaccount.com has Editor on project dormeto-dev: Dormeto does not use it; remove the grant when nothing else needs it\n"
 	contains(t, out, "      IAM + roles/editor to "+computeDefault+" on the project (Google, after apis)\n"+
 		"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+warning+
-		"  ✓ roles: ")
+		"  ✓ database: ")
 	if n := strings.Count(out, warning); n != 1 {
 		t.Fatalf("%d warnings:\n%s", n, out)
 	}

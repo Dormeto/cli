@@ -303,7 +303,7 @@ func (x *run) plan() error {
 		return err
 	}
 	x.resume()
-	planners := []func() (*step, error){x.planAPIs, x.planRoles, x.planServiceAccount, x.planTag, x.planDatabase,
+	planners := []func() (*step, error){x.planAPIs, x.planDatabase, x.planRoles, x.planServiceAccount, x.planTag,
 		x.planProjectBindings, x.planQueue, x.planAccountBinding}
 	if x.r.Image != "" {
 		planners = append(planners, x.planCloudRun, x.planNEG, x.planJob)

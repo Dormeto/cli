@@ -4,6 +4,8 @@
 
 `dormeto gcp uninstall` no longer orphans a database or a tag whose creation was still running when an install stopped: the install records the creation's operation, and the uninstall waits for it before it deletes the resource.
 
+`dormeto gcp install` creates the router's database right after the APIs, so the install record is in it before the roles, the tag, the service account and the grants: a run that stops at any of them leaves them listed in the record, and another region's uninstall keeps the roles and the tag they share.
+
 ## 0.11.0
 
 Workload settings at scale, with manager 0.22.0 and routers 0.37.0: `settings set`, `routers settings` and `workloads

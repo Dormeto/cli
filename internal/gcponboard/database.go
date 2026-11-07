@@ -52,6 +52,11 @@ func (x *run) planDatabase() (*step, error) {
 		if err := x.writeRecord(); err != nil {
 			return "", err
 		}
+		// Google grants Firestore's service agent as the database is created: read it now, so the grant is said after this
+		// step, not after whichever step reads the policy next. A failed read leaves it to the next one.
+		if err := x.policyChanged("database"); err != nil {
+			x.stale = true
+		}
 		return "created " + what + ", wrote " + recordPath, nil
 	}}, nil
 }
