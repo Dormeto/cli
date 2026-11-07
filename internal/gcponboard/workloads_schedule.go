@@ -111,8 +111,8 @@ func (x *run) controllerSince035(method, path string, in, out any) error {
 	err := x.controller(method, path, in, out)
 	var e *gcp.Error
 	if errors.As(err, &e) && e.Code == http.StatusNotFound && strings.HasPrefix(e.Message, "no route for ") {
-		return &stop{1, fmt.Sprintf("Router %s does not have this call: workloads schedule, pause and resume need a router of version %s or later. Upgrade it with: dormeto gcp install --project %s --region %s --image <the router's image, %s or later>",
-			x.n.router, minRouterVersion, x.n.project, x.n.region, minRouterVersion)}
+		return &stop{1, fmt.Sprintf("Router %s does not have this call: workloads schedule, pause and resume need a router of version %s or later. Upgrade it with: %s",
+			x.n.router, minRouterVersion, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+minRouterVersion+" or later>"))}
 	}
 	return err
 }
@@ -123,8 +123,8 @@ func (x *run) needsRecurrenceRouter(err error) error {
 	if !errors.As(err, &e) || !schedule.RefusedAsUnknown(e.Message) {
 		return err
 	}
-	return &stop{1, fmt.Sprintf("%s\nRecurrences and joined windows need a router of version %s or later. Upgrade it with: dormeto gcp install --project %s --region %s --image <the router's image, %s or later>",
-		refusal(err), schedule.RecurrenceRouter, x.n.project, x.n.region, schedule.RecurrenceRouter)}
+	return &stop{1, fmt.Sprintf("%s\nRecurrences and joined windows need a router of version %s or later. Upgrade it with: %s",
+		refusal(err), schedule.RecurrenceRouter, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+schedule.RecurrenceRouter+" or later>"))}
 }
 
 func (x *run) schedule(method string, body func() (any, error)) error {

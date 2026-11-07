@@ -885,6 +885,21 @@ func TestUninstallForceWithABrokenControllerNamesTheWayOutOfANetworkEndpointGrou
 	}
 }
 
+// On a router of Dormeto's public image, the way out installs it again by --version, the CLI's.
+func TestUninstallForceWithABrokenControllerOfThePublicImageNamesTheVersion(t *testing.T) {
+	g := publicRig(t, embeddedRouterVersion())
+	if code, out := g.run(t, plain); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: controllerHost, Path: "/v1/workloads", Code: 500, Status: "UNAVAILABLE", Message: "down"})
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: "compute.googleapis.com", Path: negPath, Code: 400, Message: "The network_endpoint_group resource is already being used"})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true, Configuration: "c"})
+	if code != 1 || strings.Contains(out, "--image") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "The way out: install the router again (dormeto gcp install --project dormeto-dev --region europe-west1 --gcloud-configuration c --version "+embeddedRouterVersion()+")")
+}
+
 func TestUninstallDoesNotNameThatWayOutWhenTheControllerAnswers(t *testing.T) {
 	g := routerInstalled(t)
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: "compute.googleapis.com", Path: negPath, Code: 400, Message: "refused"})

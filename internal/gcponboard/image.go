@@ -197,11 +197,24 @@ func (x *run) setAccessOnly(on bool) {
 	}
 }
 
-// notice says what the run keeps and how to change it, on the error stream as the workloads commands' notices.
-func (x *run) notice(format string, a ...any) {
-	w := x.d.Err
-	if w == nil {
-		w = x.d.Out
+// notice says what the run keeps and how to change it, where the install's other "!" lines go: the output.
+func (x *run) notice(format string, a ...any) { x.say("  ! "+format, a...) }
+
+// installCommand is the command that installs the router again, at least new enough for a hint: Dormeto's public image
+// at the CLI's version, which has what every hint needs; for a router of the customer's own image (--image in the install
+// record), --image with image saying what it must be, as they rebuild their copy. A record that cannot be read counts as
+// the public image, the default.
+func (x *run) installCommand(flags, image string) string {
+	rec := x.rec
+	if rec == nil {
+		read, err := recordInDatabase(x)
+		if err != nil {
+			read = Record{}
+		}
+		rec = &read
 	}
-	fmt.Fprintf(w, "  ! "+format+"\n", a...)
+	if rec.Image != "" && rec.Digest == "" {
+		return "dormeto gcp install " + flags + " --image " + image
+	}
+	return "dormeto gcp install " + flags + " --version " + embeddedRouterVersion()
 }

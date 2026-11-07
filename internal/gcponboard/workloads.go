@@ -736,7 +736,8 @@ func (x *run) covers(dry dryRun) error {
 
 // ignoredFlag is the end of a run whose router did not read a flag.
 func (x *run) ignoredFlag(flag string) error {
-	return &stop{1, fmt.Sprintf("The dry run of router %s does not answer %s: it is older than %s, which reads it. Install a newer image first, with dormeto gcp install --image.\nNothing was changed.", x.n.router, flag, minRouterVersion)}
+	return &stop{1, fmt.Sprintf("The dry run of router %s does not answer %s: it is older than %s, which reads it. Install a newer router first: %s.\nNothing was changed.",
+		x.n.router, flag, minRouterVersion, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+minRouterVersion+" or later>"))}
 }
 
 // refused tells that the controller's call was answered with a refusal (4xx): nothing was done. A 5xx or no answer at all
@@ -1108,8 +1109,8 @@ func (x *run) controllerFailure(id string, backends []backend, err error, deleti
 	if deleting && !refused(err) {
 		state = "may not be offboarded"
 	}
-	return &stop{1, fmt.Sprintf("The controller %s does not answer (%s): workload %s %s, and nothing was removed, as it may still be running.\nLeft:\n  - %s\nOnce it answers, run the same command again; a good image brings it back: dormeto gcp install %s --image <a good image>",
-		x.n.controller, refusal(err), id, state, strings.Join(left, "\n  - "), flags)}
+	return &stop{1, fmt.Sprintf("The controller %s does not answer (%s): workload %s %s, and nothing was removed, as it may still be running.\nLeft:\n  - %s\nOnce it answers, run the same command again; installing the router again brings it back: %s",
+		x.n.controller, refusal(err), id, state, strings.Join(left, "\n  - "), x.installCommand(flags, "<a good image>"))}
 }
 
 // untag removes the tag bindings of the backends of a workload that is offboarded: none for pods, which carry no tag, and then

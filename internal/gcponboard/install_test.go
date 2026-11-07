@@ -1835,6 +1835,39 @@ func TestInstallKeepsAnImageOfImageAndSaysWhichPublicVersionIsAvailable(t *testi
 	}
 }
 
+// The notices go where the install's other lines go, its "!" lines among them: the output.
+func TestInstallNoticesGoToTheOutput(t *testing.T) {
+	def := embeddedRouterVersion()
+	const newer = "9.0.0"
+	for name, tc := range map[string]struct {
+		setup  func(t *testing.T) *installRig
+		notice string
+	}{
+		"access only": {func(t *testing.T) *installRig {
+			g := publicRig(t, def)
+			g.run(t, europe)
+			return g
+		}, "  ! the router isn't installed: dormeto gcp install --version " + def + "\n"},
+		"--image": {routerInstalled, "  ! router " + def + " is available: dormeto gcp install --version " + def + "\n"},
+		"newer": {func(t *testing.T) *installRig {
+			g := publicRig(t, def, newer)
+			g.run(t, plain)
+			g.atPublicVersion(t, newer)
+			return g
+		}, "  ! router " + newer + " needs a newer CLI: brew upgrade dormeto\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := tc.setup(t)
+			var errs bytes.Buffer
+			g.d.Err = &errs
+			code, out := g.run(t, plain)
+			if code != 0 || !strings.Contains(out, tc.notice) || errs.Len() != 0 {
+				t.Fatalf("exit %d:\n%s\nerror stream:\n%s", code, out, errs.String())
+			}
+		})
+	}
+}
+
 // --access-only is recorded, and later runs keep it until one with --version or --image.
 func TestInstallAccessOnlyIsRecordedAndKeptUntilAVersion(t *testing.T) {
 	def := embeddedRouterVersion()

@@ -322,7 +322,8 @@ func (x *run) planNEGRemoval() (*step, error) {
 			if x.r.Configuration != "" {
 				flags += " --gcloud-configuration " + x.r.Configuration
 			}
-			return fmt.Errorf("%w\nA workload still onboarded keeps this group in use, and its controller does not answer. The way out: install a good image (dormeto gcp install %s --image <a good image>), offboard the workloads (dormeto gcp workloads offboard <workload> %s), then run this command again.", err, flags, flags)
+			return fmt.Errorf("%w\nA workload still onboarded keeps this group in use, and its controller does not answer. The way out: install the router again (%s), offboard the workloads (dormeto gcp workloads offboard <workload> %s), then run this command again.",
+				err, x.installCommand(flags, "<a good image>"), flags)
 		}
 		return err
 	})

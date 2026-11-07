@@ -19,6 +19,7 @@ import (
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 const (
@@ -41,7 +42,20 @@ type workloadsRig struct {
 
 func newWorkloadsRig(t *testing.T) *workloadsRig {
 	t.Helper()
-	g := routerInstalled(t)
+	return workloadsRigOf(routerInstalled(t))
+}
+
+// newPublicWorkloadsRig is newWorkloadsRig with the router of Dormeto's public image, at the CLI's version.
+func newPublicWorkloadsRig(t *testing.T) *workloadsRig {
+	t.Helper()
+	g := publicRig(t, embeddedRouterVersion())
+	if code, out := g.run(t, plain); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	return workloadsRigOf(g)
+}
+
+func workloadsRigOf(g *installRig) *workloadsRig {
 	aud := &[]string{}
 	g.d.Google.Tokens = gcptest.Tokens{AccountName: "me@example.com", Audiences: aud}
 	g.s.DryRun = gcptest.DryRun{
@@ -488,7 +502,8 @@ func TestWorkloadsOnboardStopsWhenTheDryRunIgnoresTheLoadBalancer(t *testing.T) 
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "--load-balancer", "0.35.0", "Nothing was changed.")
+	contains(t, out, "--load-balancer", "0.35.0", "Nothing was changed.",
+		"Install a newer router first: dormeto gcp install --project dormeto-dev --region europe-west1 --image <the router's image, 0.35.0 or later>.\n")
 	if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 {
 		t.Fatalf("changes %v", m)
 	}
@@ -2667,7 +2682,8 @@ func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *te
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "does not answer", "may not be offboarded", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db")
+	contains(t, out, "does not answer", "may not be offboarded", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db",
+		"installing the router again brings it back: dormeto gcp install --project dormeto-dev --region europe-west1 --image <a good image>")
 	if len(g.bindings()) != 2 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -3165,4 +3181,63 @@ func TestWorkloadsOffboardForceKeepsTheFileForAnAccessTheRecordDoesNotList(t *te
 	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
 		t.Fatalf("the file stays: %v", err)
 	}
+}
+
+// On a router of Dormeto's public image, the hints to upgrade it name --version: the CLI's version, which has what they
+// need. On a router of --image (the tests above), they keep --image: the customer rebuilds their copy.
+func TestWorkloadsHintsOnARouterOfThePublicImageNameTheVersion(t *testing.T) {
+	def := embeddedRouterVersion()
+	if install.CompareVersions(def, minRouterVersion) < 0 || install.CompareVersions(def, schedule.RecurrenceRouter) < 0 {
+		t.Fatalf("the CLI's router %s is older than what the hints need", def)
+	}
+	upgrade := "dormeto gcp install --project dormeto-dev --region europe-west1 --version " + def
+	t.Run("recurrences", func(t *testing.T) {
+		g := newPublicWorkloadsRig(t)
+		g.s.Workloads["shop"] = "AWAKE"
+		g.s.ScheduleProblem = "windows[0].repeat: unknown field"
+		r := workloadsEurope
+		r.ID, r.File = "shop", g.scheduleFile(t, recurringSchedule)
+		code, out := g.call(t, WorkloadsScheduleSet, r)
+		if code != 1 || strings.Contains(out, "--image") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "Recurrences and joined windows need a router of version 0.36.0 or later. Upgrade it with: "+upgrade+"\n")
+	})
+	t.Run("schedules", func(t *testing.T) {
+		g := newPublicWorkloadsRig(t)
+		g.s.Workloads["shop"] = "AWAKE"
+		g.s.ControllerBelow035 = true
+		r := workloadsEurope
+		r.ID = "shop"
+		code, out := g.call(t, WorkloadsScheduleShow, r)
+		if code != 1 || strings.Contains(out, "--image") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "need a router of version 0.35.0 or later. Upgrade it with: "+upgrade+"\n")
+	})
+	t.Run("a flag the dry run ignores", func(t *testing.T) {
+		g := newPublicWorkloadsRig(t)
+		g.s.ControllerBelow035 = true
+		r := shopOnboarding
+		r.LoadBalancer = "classic"
+		code, out := g.call(t, WorkloadsOnboard, r)
+		if code != 1 || strings.Contains(out, "--image") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "Install a newer router first: "+upgrade+".\n")
+	})
+	t.Run("a forced offboarding the controller does not answer", func(t *testing.T) {
+		g := newPublicWorkloadsRig(t)
+		g.s.Workloads["shop"] = "AWAKE"
+		g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
+		g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: g.tagValue(t)}}
+		g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Code: 503, Status: "UNAVAILABLE", Message: "down"})
+		r := shopOffboard
+		r.Force = true
+		code, out := g.call(t, WorkloadsOffboard, r)
+		if code != 1 || strings.Contains(out, "--image") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "installing the router again brings it back: "+upgrade)
+	})
 }
