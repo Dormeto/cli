@@ -60,6 +60,10 @@ type Record struct {
 	// Rbac is the Kubernetes access written in clusters for the workloads, listed before it is applied and until it is
 	// removed. The uninstall says what is left of it: it does not reach clusters.
 	Rbac []RecordRbac `json:"rbac,omitempty"`
+	// Operations are the names of the Google operations that create a resource, by "<kind>/<name>" as Resources lists it:
+	// written when the install starts the creation, removed once the resource is seen. The uninstall waits for one before
+	// it deletes a resource that answers 404 meanwhile, so a creation still running is not orphaned.
+	Operations map[string]string `json:"operations,omitempty"`
 }
 
 // RecordRbac is the Role and RoleBinding dormeto-<workload> of a namespace, in a cluster named <location>/<name>.
@@ -143,6 +147,30 @@ func (x *run) recordFirst(kind, name string) error {
 		return fmt.Errorf("the record is not written before %s is created: %w", name, err)
 	}
 	return nil
+}
+
+// recordOperation keeps the name of the operation that creates a resource, where the record is kept, so an uninstall after
+// a stop waits for the creation instead of orphaning what it ends up creating.
+func (x *run) recordOperation(kind, name, operation string) error {
+	if operation == "" {
+		return nil
+	}
+	if x.rec.Operations == nil {
+		x.rec.Operations = map[string]string{}
+	}
+	x.rec.Operations[kind+"/"+name] = operation
+	if err := x.writeKept(); err != nil {
+		return fmt.Errorf("the record is not written with the operation creating %s: %w", name, err)
+	}
+	return nil
+}
+
+// forgetOperation drops the operation of a resource that has been seen; the next write of the record carries it.
+func (x *run) forgetOperation(kind, name string) {
+	if _, ok := x.rec.Operations[kind+"/"+name]; ok {
+		delete(x.rec.Operations, kind+"/"+name)
+		x.recChanged = true
+	}
 }
 
 func (r *Record) addGrant(g RecordGrant) bool {

@@ -1192,3 +1192,95 @@ func TestUninstallForceStopsOnAWorkloadsReadAnswering404NotTheControllers(t *tes
 		t.Fatalf("bindings %v role %v:\n%s", g.bindings(), g.k.has(shopRole), out)
 	}
 }
+
+const pendingDatabase = "/v1/projects/dormeto-dev/databases/dmtr-europe-west1/operations/"
+
+// A creation still running when the run stopped: the resource answers 404, its recorded operation says why.
+func TestUninstallWaitsForTheDatabaseStillBeingCreatedThenDeletesIt(t *testing.T) {
+	g := newInstallRig(t)
+	ctx, seen := stopAtPoll(t, g, "firestore.googleapis.com", pendingDatabase, "/v1/", 1)
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	if seen.Operations["database/projects/dormeto-dev/databases/dmtr-europe-west1"] == "" {
+		t.Errorf("the cache does not hold the database's operation: %+v", seen.Operations)
+	}
+	g.s.Lock()
+	if len(g.s.Databases) != 0 {
+		t.Fatalf("the database exists already: %v", g.s.Databases)
+	}
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	deleted := 0
+	for _, c := range g.s.Calls() {
+		if c.Method == "DELETE" && strings.HasSuffix(c.Path, "/databases/dmtr-europe-west1") {
+			deleted++
+		}
+	}
+	if deleted != 1 {
+		t.Errorf("%d deletions of the database:\n%s", deleted, out)
+	}
+	g.nothingLeft(t, "europe-west1")
+}
+
+func TestUninstallDeletesNothingWhenTheRecordedOperationIsDoneAndTheDatabaseGone(t *testing.T) {
+	g := newInstallRig(t)
+	ctx, _ := stopAtPoll(t, g, "firestore.googleapis.com", pendingDatabase, "/v1/", 1)
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	g.s.FinishOperations()
+	g.s.Lock()
+	delete(g.s.Databases, "dmtr-europe-west1")
+	g.s.Unlock()
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, c := range g.s.Calls() {
+		if c.Method == "DELETE" && strings.Contains(c.Path, "/databases/") {
+			t.Errorf("deleted %s", c.Path)
+		}
+	}
+	contains(t, out, "database dmtr-europe-west1 is gone")
+	g.nothingLeft(t, "europe-west1")
+}
+
+func TestUninstallWaitsForTheTagStillBeingCreatedThenDeletesIt(t *testing.T) {
+	g := newInstallRig(t)
+	ctx, seen := stopAtPoll(t, g, "cloudresourcemanager.googleapis.com", "/v3/operations/", "/v3/", 1)
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 {
+		t.Fatalf("exit %d:\n%s", code, g.out)
+	}
+	if seen.Operations["tagKey/dormeto-dev/dormeto"] == "" {
+		t.Errorf("the cache does not hold the tag key's operation: %+v", seen.Operations)
+	}
+	g.s.Lock()
+	if len(g.s.TagKeys) != 0 {
+		t.Fatalf("the tag key exists already: %v", g.s.TagKeys)
+	}
+	g.s.Unlock()
+	if code, out := g.uninstall(t, uninstallEurope); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	deleted := 0
+	for _, c := range g.s.Calls() {
+		if c.Method == "DELETE" && strings.HasPrefix(c.Path, "/v3/tagKeys/") {
+			deleted++
+		}
+	}
+	if deleted != 1 {
+		t.Errorf("%d deletions of the tag key", deleted)
+	}
+	g.s.Lock()
+	defer g.s.Unlock()
+	if len(g.s.TagKeys)+len(g.s.TagValues) != 0 {
+		t.Errorf("tags left: %v %v", g.s.TagKeys, g.s.TagValues)
+	}
+}

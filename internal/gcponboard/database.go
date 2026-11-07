@@ -41,9 +41,13 @@ func (x *run) planDatabase() (*step, error) {
 		if err := x.call(http.MethodPost, u, in, &op); err != nil {
 			return "", err
 		}
+		if err := x.recordOperation("database", x.databaseName(), op.Name); err != nil {
+			return "", err
+		}
 		if err := x.wait(firestoreV1, op, databaseTimeout); err != nil {
 			return "", err
 		}
+		x.forgetOperation("database", x.databaseName())
 		x.database = true
 		if err := x.writeRecord(); err != nil {
 			return "", err

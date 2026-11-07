@@ -111,6 +111,9 @@ func (x *run) createTag(kind, parent, short, description string) error {
 	if err := x.call(http.MethodPost, crmV3+kind, in, &op); err != nil {
 		return err
 	}
+	if err := x.recordOperation(resource, namespaced, op.Name); err != nil {
+		return err
+	}
 	if !op.Done || op.Error != nil {
 		if err := x.wait(crmV3, op, tagTimeout); err != nil {
 			return err
@@ -132,6 +135,7 @@ func (x *run) createTag(kind, parent, short, description string) error {
 	if kind == "tagKeys" {
 		x.tagKey = t.Name
 	}
+	x.forgetOperation(resource, namespaced)
 	x.rec.nameResource(resource, namespaced, t.Name)
 	return nil
 }

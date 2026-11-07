@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto gcp uninstall` no longer orphans a database or a tag whose creation was still running when an install stopped: the install records the creation's operation, and the uninstall waits for it before it deletes the resource.
+
 ## 0.11.0
 
 Workload settings at scale, with manager 0.22.0 and routers 0.37.0: `settings set`, `routers settings` and `workloads

@@ -384,6 +384,9 @@ func (x *run) planQueueRemoval() (*step, error) {
 
 // planDatabaseRemoval removes the database and with it the install record, which the cache keeps meanwhile.
 func (x *run) planDatabaseRemoval() (*step, error) {
+	if op := x.rec.Operations["database/"+x.databaseName()]; op != "" && !x.database && x.listed("database", x.databaseName()) {
+		return x.planPendingDatabaseRemoval(op), nil
+	}
 	if !x.listed("database", x.databaseName()) || !x.database {
 		return nil, nil
 	}
@@ -402,6 +405,40 @@ func (x *run) planDatabaseRemoval() (*step, error) {
 		}
 		return "removed database " + x.n.database, nil
 	}}, nil
+}
+
+// planPendingDatabaseRemoval is for a database that answers 404 while the record holds the operation creating it (an
+// install that stopped): the uninstall waits for the operation, within the budget of an operation's wait, then deletes the
+// database if it is there, so the creation does not end up orphaned. The record is in the cache, which the step keeps.
+func (x *run) planPendingDatabaseRemoval(operation string) *step {
+	return &step{name: "database", lines: []string{"- database " + x.n.database + " (its creation is still running: waited for first)"}, apply: func() (string, error) {
+		if err := x.writeCache(); err != nil {
+			return "", fmt.Errorf("the record is not kept in the cache before the database goes: %w", err)
+		}
+		gone := "database " + x.n.database + " is gone (its creation did not leave it)"
+		if err := x.wait(firestoreV1, longOperation{Name: operation}, databaseTimeout); err != nil {
+			if gcp.IsNotFound(err) {
+				return gone, nil
+			}
+			return "", err
+		}
+		found, err := x.get(firestoreAPI, x.databaseURL(), nil)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return gone, nil
+		}
+		var op longOperation
+		if err := x.call(http.MethodDelete, x.databaseURL(), nil, &op); err != nil && !gcp.IsNotFound(err) {
+			return "", err
+		} else if err == nil {
+			if err := x.wait(firestoreV1, op, databaseTimeout); err != nil && !gcp.IsNotFound(err) {
+				return "", err
+			}
+		}
+		return "removed database " + x.n.database, nil
+	}}
 }
 
 // planUnbind removes the recorded project grants that the project's bindings before the first install did not hold,
@@ -498,6 +535,41 @@ func (x *run) planTagRemoval() (*step, error) {
 		name, found, err := x.tag(t.kind, t.namespaced)
 		if err != nil {
 			return nil, err
+		}
+		pending := x.rec.Operations[t.resource+"/"+t.namespaced]
+		if !found && pending != "" && x.listed(t.resource, t.namespaced) {
+			// Answering as missing while its creation, recorded by the install, may still be running: wait for it (the
+			// budget of an operation's wait), read it again, then delete it if it is there.
+			label := "tag " + strings.TrimPrefix(t.namespaced, x.n.project+"/")
+			steps = append(steps, &step{name: "tag", lines: []string{"- " + label + " (its creation is still running: waited for first)"}, apply: func() (string, error) {
+				if err := x.wait(crmV3, longOperation{Name: pending}, tagTimeout); err != nil {
+					if gcp.IsNotFound(err) {
+						return label + " is gone", nil
+					}
+					return "", err
+				}
+				id, found, err := x.tag(t.kind, t.namespaced)
+				if err != nil {
+					return "", err
+				}
+				if !found {
+					return label + " is gone", nil
+				}
+				var op longOperation
+				err = x.call(http.MethodDelete, crmV3+id, nil, &op)
+				if err == nil {
+					err = x.wait(crmV3, op, tagTimeout)
+				}
+				if gcp.IsPrecondition(err) {
+					x.stranded = append(x.stranded, fmt.Sprintf("%s: %s", label, strings.TrimSuffix(precondition(err), ".")))
+					return "left " + label + " (Google refuses to delete it)", nil
+				}
+				if err != nil && !gcp.IsNotFound(err) {
+					return "", err
+				}
+				return "removed " + id, nil
+			}})
+			continue
 		}
 		if !found || (!x.listed(t.resource, name) && !x.listed(t.resource, t.namespaced)) {
 			continue
