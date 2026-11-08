@@ -53,8 +53,97 @@ var shopWithLogs = func() Request {
 	return r
 }()
 
-func TestWorkloadsOnboardRequestLogsTurnsOnTheLogsOfASampledBackendService(t *testing.T) {
+// newLogsRig is newWorkloadsRig with a router that keeps an onboarding's requestLogs: its controller's health answers 0.38.0.
+func newLogsRig(t *testing.T) *workloadsRig {
+	t.Helper()
 	g := newWorkloadsRig(t)
+	g.s.HealthVersion = "0.38.0"
+	return g
+}
+
+// The final review's Important 1: a router below 0.38.0 drops the onboarding's requestLogs, so the offboarding would never
+// set the logs back. --request-logs is refused there before any change, the dry run's too.
+func TestWorkloadsOnboardRequestLogsOnARouterBelow038IsRefusedBeforeAnyChange(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		g := newWorkloadsRig(t)
+		g.s.HealthVersion = "0.37.0"
+		g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
+		r := shopWithLogs
+		r.DryRun = dry
+		mark := len(g.s.Calls())
+		code, out := g.call(t, WorkloadsOnboard, r)
+		if code != 2 {
+			t.Fatalf("dry run %t: exit %d:\n%s", dry, code, out)
+		}
+		contains(t, out, "--request-logs needs router 0.38.0 or later: dormeto gcp install --version "+embeddedRouterVersion()+"\n", "Nothing was changed.\n")
+		if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 || len(g.patches(mark)) != 0 {
+			t.Errorf("dry run %t: changes %v, bindings %v", dry, m, g.bindings())
+		}
+		if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/workloads?dryRun=true", "GET /v1/health"}) {
+			t.Errorf("dry run %t: controller calls %v", dry, got)
+		}
+		if got := g.logConfig("global"); !jsonEqual(got, map[string]any{"enable": true, "sampleRate": 0.5}) {
+			t.Errorf("dry run %t: logConfig %v", dry, got)
+		}
+	}
+}
+
+// Such a router counts every request whatever the logs: the warning that names --request-logs is not said.
+func TestWorkloadsOnboardWithoutRequestLogsOnARouterBelow038DoesNotWarn(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.HealthVersion = "0.37.0"
+	g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 0 || g.s.Workloads["shop"] != "AWAKE" {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "--request-logs") || strings.Contains(out, "! the idle check") {
+		t.Fatalf("warned:\n%s", out)
+	}
+}
+
+// Its version unread, the flag stops before any change; without the flag, the warning stays.
+func TestWorkloadsOnboardRequestLogsStopsWhenTheRoutersVersionIsNotRead(t *testing.T) {
+	for _, flag := range []bool{true, false} {
+		g := newLogsRig(t)
+		g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
+		g.s.Refuse(gcptest.Refusal{Method: "GET", Host: controllerHost, Path: "/v1/health", Code: 503, Status: "UNAVAILABLE", Message: "down"})
+		r := shopOnboarding
+		r.RequestLogs = flag
+		mark := len(g.s.Calls())
+		code, out := g.call(t, WorkloadsOnboard, r)
+		if !flag {
+			if code != 0 || !strings.HasSuffix(out, countWarningLine) {
+				t.Errorf("without the flag: exit %d:\n%s", code, out)
+			}
+			continue
+		}
+		if code != 1 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		contains(t, out, "The version of router dmtr-europe-west1 is not read, and --request-logs needs 0.38.0 or later: ", "down", "Nothing was changed.\n")
+		if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 || len(g.patches(mark)) != 0 {
+			t.Errorf("changes %v", m)
+		}
+	}
+}
+
+// A router at 0.38.0 or later, its pre-releases included, takes the flag; one whose version is no release's is not refused.
+func TestWorkloadsOnboardRequestLogsOnARouterAt038OrLaterTurnsTheLogsOn(t *testing.T) {
+	for _, version := range []string{"0.38.0", "0.38.0-rc.1", "0.39.2", "dev"} {
+		g := newWorkloadsRig(t)
+		g.s.HealthVersion = version
+		g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
+		code, out := g.call(t, WorkloadsOnboard, shopWithLogs)
+		if code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", version, code, out)
+		}
+		contains(t, out, "  request logs: on, sample rate 1.0 (before: sample rate 0.5)\n")
+	}
+}
+
+func TestWorkloadsOnboardRequestLogsTurnsOnTheLogsOfASampledBackendService(t *testing.T) {
+	g := newLogsRig(t)
 	g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5, "optionalMode": "EXCLUDE_ALL_OPTIONAL"})
 	mark := len(g.s.Calls())
 	code, out := g.call(t, WorkloadsOnboard, shopWithLogs)
@@ -98,7 +187,7 @@ func TestWorkloadsOnboardRequestLogsTurnsOnTheLogsOfASampledBackendService(t *te
 }
 
 func TestWorkloadsOnboardRequestLogsOfARegionalLoadBalancerPatchesTheRegionalBackendService(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("europe-west1", nil)
 	r := shopWithLogs
 	r.LoadBalancer = "regional"
@@ -118,7 +207,7 @@ func TestWorkloadsOnboardRequestLogsOfARegionalLoadBalancerPatchesTheRegionalBac
 func TestWorkloadsOnboardLeavesABackendServiceLoggingEveryRequest(t *testing.T) {
 	for _, logConfig := range []map[string]any{{"enable": true}, {"enable": true, "sampleRate": 1.0}} {
 		for _, flag := range []bool{true, false} {
-			g := newWorkloadsRig(t)
+			g := newLogsRig(t)
 			g.logging("global", logConfig)
 			r := shopOnboarding
 			r.RequestLogs = flag
@@ -142,7 +231,7 @@ func TestWorkloadsOnboardLeavesABackendServiceLoggingEveryRequest(t *testing.T) 
 
 func TestWorkloadsOnboardWithoutRequestLogsWarnsAfterItsOutput(t *testing.T) {
 	for name, logConfig := range map[string]map[string]any{"none": nil, "off": {"enable": false}, "sampled": {"enable": true, "sampleRate": 0.1}} {
-		g := newWorkloadsRig(t)
+		g := newLogsRig(t)
 		g.logging("global", logConfig)
 		mark := len(g.s.Calls())
 		code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
@@ -162,7 +251,7 @@ func TestWorkloadsOnboardWithoutRequestLogsWarnsAfterItsOutput(t *testing.T) {
 }
 
 func TestWorkloadsOnboardJSONWarnsOnTheErrorStream(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	var stderr bytes.Buffer
 	g.d.Err = &stderr
@@ -179,7 +268,7 @@ func TestWorkloadsOnboardJSONWarnsOnTheErrorStream(t *testing.T) {
 }
 
 func TestWorkloadsOnboardDryRunSaysItWouldTurnTheRequestLogsOnAndChangesNothing(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	r := shopWithLogs
 	r.DryRun = true
@@ -195,7 +284,7 @@ func TestWorkloadsOnboardDryRunSaysItWouldTurnTheRequestLogsOnAndChangesNothing(
 }
 
 func TestWorkloadsOnboardStopsBeforeAnyChangeWhenTheBackendServiceIsNotRead(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "compute.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/backendServices/shop",
 		Code: 403, Status: "PERMISSION_DENIED", Message: "Required 'compute.backendServices.get' permission"})
 	mark := len(g.s.Calls())
@@ -211,7 +300,7 @@ func TestWorkloadsOnboardStopsBeforeAnyChangeWhenTheBackendServiceIsNotRead(t *t
 
 // Without the flag, the read decides the warning alone: a failed read is a notice, and the onboarding goes on.
 func TestWorkloadsOnboardWithoutRequestLogsGoesOnWhenTheBackendServiceIsNotRead(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "compute.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/backendServices/shop",
 		Code: 500, Status: "INTERNAL", Message: "boom"})
 	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
@@ -228,7 +317,7 @@ func TestWorkloadsOnboardWithoutRequestLogsGoesOnWhenTheBackendServiceIsNotRead(
 func TestWorkloadsOnboardAsksTheRequestLogsUpdateWithItsFlagAlone(t *testing.T) {
 	update := []string{"compute.backendServices.update", "compute.globalOperations.get", "compute.regionBackendServices.update", "compute.regionOperations.get"}
 	for _, flag := range []bool{false, true} {
-		g := newWorkloadsRig(t)
+		g := newLogsRig(t)
 		g.logging("global", nil)
 		g.s.HoldsAll = false
 		g.s.Held = map[string]bool{}
@@ -246,7 +335,7 @@ func TestWorkloadsOnboardAsksTheRequestLogsUpdateWithItsFlagAlone(t *testing.T) 
 		}
 	}
 	// The read is asked without the flag too: it decides the warning.
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.s.HoldsAll = false
 	g.s.Held = map[string]bool{}
 	for _, p := range access.Needs("onboard") {
@@ -259,7 +348,7 @@ func TestWorkloadsOnboardAsksTheRequestLogsUpdateWithItsFlagAlone(t *testing.T) 
 
 // As a tag binding is: the onboarding refused after the PATCH, the logConfig is set back.
 func TestWorkloadsOnboardRefusedSetsTheRequestLogsBack(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", map[string]any{"enable": false, "optionalMode": "EXCLUDE_ALL_OPTIONAL"})
 	g.s.OnboardingRefused = refusedOnboarding
 	mark := len(g.s.Calls())
@@ -280,7 +369,7 @@ func TestWorkloadsOnboardRefusedSetsTheRequestLogsBack(t *testing.T) {
 }
 
 func TestWorkloadsOnboardRefusedPatchUndoesTheTags(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	g.s.Refuse(gcptest.Refusal{Method: "PATCH", Host: "compute.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/backendServices/shop",
 		Code: 403, Status: "PERMISSION_DENIED", Message: "Required 'compute.backendServices.update' permission"})
@@ -300,7 +389,7 @@ func TestWorkloadsOnboardRefusedPatchUndoesTheTags(t *testing.T) {
 // The update taken, its operation not read (compute.globalOperations.get is the manifest's for that): the logs may be on, and
 // are set back with the tags.
 func TestWorkloadsOnboardSetsTheRequestLogsBackWhenTheirUpdatesOperationIsNotRead(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "www.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/operations/",
 		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "Required 'compute.globalOperations.get' permission"})
@@ -369,7 +458,7 @@ func (g *workloadsRig) onboardingsSince(t *testing.T, mark int) []map[string]any
 // The review's Important 1: a run that stopped after the PATCH, the controller's answer lost before it onboarded anything; the
 // rerun finds the logs on, and sends the before the first run kept in the cache.
 func TestWorkloadsOnboardRerunAfterALostAnswerSendsTheBeforeTheFirstRunFound(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
 	g.after(patchOperation, func() {
 		g.s.Refuse(gcptest.Refusal{Method: "POST", Host: controllerHost, Path: "/v1/workloads", Times: 1, Code: 502, Message: "bad gateway"})
@@ -410,7 +499,7 @@ func TestWorkloadsOnboardRerunAfterALostAnswerSendsTheBeforeTheFirstRunFound(t *
 // The answer lost after the controller onboarded: the controller holds the before, the offboarding sets it back, and the cache's
 // file goes with the workload.
 func TestWorkloadsOffboardOfAnOnboardingWhoseAnswerWasLostForgetsWhatTheCacheKept(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	g.s.AnswerOnboarding = func(w http.ResponseWriter) { gcptest.Fail(w, 502, "", "bad gateway") }
 	if code, out := g.call(t, WorkloadsOnboard, shopWithLogs); code != 1 || g.s.Workloads["shop"] != "AWAKE" {
@@ -430,7 +519,7 @@ func TestWorkloadsOffboardOfAnOnboardingWhoseAnswerWasLostForgetsWhatTheCacheKep
 
 // Without the flag, a rerun still sends what Dormeto's earlier run changed, and warns of nothing: the logs are on.
 func TestWorkloadsOnboardRerunWithoutTheFlagSendsTheBeforeOfAnEarlierRun(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	g.after(patchOperation, func() {
 		g.s.Refuse(gcptest.Refusal{Method: "POST", Host: controllerHost, Path: "/v1/workloads", Times: 1, Code: 502, Message: "bad gateway"})
@@ -450,7 +539,7 @@ func TestWorkloadsOnboardRerunWithoutTheFlagSendsTheBeforeOfAnEarlierRun(t *test
 
 // The review's Minor 1: an interrupt after the PATCH undoes it, and sends nothing.
 func TestWorkloadsOnboardInterruptedAfterThePatchSetsTheLogsBackAndSendsNothing(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", map[string]any{"enable": false})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -476,7 +565,7 @@ func TestWorkloadsOnboardInterruptedAfterThePatchSetsTheLogsBackAndSendsNothing(
 
 // Interrupted after the PATCH, the logs not set back: the cache keeps what was found, and the rerun sends it.
 func TestWorkloadsOnboardInterruptedAfterThePatchKeepsTheBeforeWhenTheLogsAreNotSetBack(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", map[string]any{"enable": true, "sampleRate": 0.25})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -505,7 +594,7 @@ func TestWorkloadsOnboardInterruptedAfterThePatchKeepsTheBeforeWhenTheLogsAreNot
 // The controller's ruling on the review's Minor 4: the update names the fingerprint of a read just before it, not of the read
 // before the tags and a cluster's prompt.
 func TestWorkloadsOnboardPatchesWithTheFingerprintReadLast(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.logging("global", nil)
 	g.after(func(req *http.Request) bool {
 		return req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/global/backendServices/shop")
@@ -552,7 +641,7 @@ func TestWorkloadsOffboardAsksTheRequestLogsStepOfAWorkloadWhoseLogsDormetoTurne
 		}
 	}
 	// Onboarded without --request-logs: offboarded, nothing of the step asked nor read.
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -567,7 +656,7 @@ func TestWorkloadsOffboardAsksTheRequestLogsStepOfAWorkloadWhoseLogsDormetoTurne
 		}
 	}
 	// Onboarded with --request-logs: refused before any change, the step's permissions named.
-	g = newWorkloadsRig(t)
+	g = newLogsRig(t)
 	g.onboardedWithLogs(t)
 	withheld(g)
 	mark = len(g.s.Calls())
@@ -581,7 +670,7 @@ func TestWorkloadsOffboardAsksTheRequestLogsStepOfAWorkloadWhoseLogsDormetoTurne
 }
 
 func TestWorkloadsOffboardSetsTheRequestLogsBackAfterTheController(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.onboardedWithLogs(t)
 	mark := len(g.s.Calls())
 	code, out := g.call(t, WorkloadsOffboard, offboardShop)
@@ -610,7 +699,7 @@ func TestWorkloadsOffboardSetsTheRequestLogsBackAfterTheController(t *testing.T)
 }
 
 func TestWorkloadsOffboardLeavesRequestLogsChangedSinceAndSaysSo(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.onboardedWithLogs(t)
 	g.logging("global", map[string]any{"enable": true, "sampleRate": 0.2})
 	mark := len(g.s.Calls())
@@ -628,7 +717,7 @@ func TestWorkloadsOffboardLeavesRequestLogsChangedSinceAndSaysSo(t *testing.T) {
 }
 
 func TestWorkloadsOffboardJSONSaysTheRequestLogsRestored(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.onboardedWithLogs(t)
 	r := offboardShop
 	r.JSON = true
@@ -641,7 +730,7 @@ func TestWorkloadsOffboardJSONSaysTheRequestLogsRestored(t *testing.T) {
 
 // A stop after the controller's delete: the rerun finds the workload gone, and sets the logs back from what the cache kept.
 func TestWorkloadsOffboardRerunSetsTheRequestLogsBackFromTheCache(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.onboardedWithLogs(t)
 	g.s.Refuse(gcptest.Refusal{Method: "PATCH", Host: "compute.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/backendServices/shop",
 		Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
@@ -670,7 +759,7 @@ func TestWorkloadsOffboardRerunSetsTheRequestLogsBackFromTheCache(t *testing.T) 
 
 // An older CLI's file holds the backends alone, as a list: a rerun still finishes from it.
 func TestWorkloadsOffboardRerunReadsAnOlderCLIsFile(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	value := g.tagValue(t)
 	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}}
 	if err := os.MkdirAll(strings.TrimSuffix(g.offboardFile(), "/dormeto-dev-europe-west1-offboard-shop.json"), 0o700); err != nil {
@@ -686,7 +775,7 @@ func TestWorkloadsOffboardRerunReadsAnOlderCLIsFile(t *testing.T) {
 }
 
 func TestUninstallForceSetsTheRequestLogsBack(t *testing.T) {
-	g := newWorkloadsRig(t)
+	g := newLogsRig(t)
 	g.onboardedWithLogs(t)
 	r := uninstallEurope
 	r.Force = true
@@ -724,7 +813,7 @@ func TestUninstallForceAsksTheRequestLogsStep(t *testing.T) {
 
 func TestWorkloadsShowSaysWhatTheIdleCheckReads(t *testing.T) {
 	for reads, want := range map[string]string{"request logs": "  idle check: request logs\n", "request count": "  idle check: request count\n", "": ""} {
-		g := newWorkloadsRig(t)
+		g := newLogsRig(t)
 		g.s.Workloads["shop"] = "AWAKE"
 		g.s.WorkloadDocs["shop"] = map[string]any{"backendService": "shop"}
 		if reads != "" {

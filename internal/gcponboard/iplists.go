@@ -106,11 +106,14 @@ func checkIPList(l IPList) error {
 	return nil
 }
 
-// belowMinRouter tells that a version is a release's number below minRouterVersion, its pre-releases being of that number. A
-// version that does not parse (a dev tag) is not below it.
-func belowMinRouter(version string) bool {
+// belowMinRouter tells that a version is a release's number below minRouterVersion (below).
+func belowMinRouter(version string) bool { return below(version, minRouterVersion) }
+
+// below tells that a version is a release's number below min, its pre-releases being of that number. A version that does not
+// parse (a dev tag) is not below it.
+func below(version, min string) bool {
 	number, _, _ := strings.Cut(version, "-")
-	return install.IsVersion(version) && install.CompareVersions(number, minRouterVersion) < 0
+	return install.IsVersion(version) && install.CompareVersions(number, min) < 0
 }
 
 // CheckIPLists refuses a bad set of lists, and --ip-list with --no-ip-lists.

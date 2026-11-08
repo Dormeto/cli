@@ -621,6 +621,19 @@ func (x *run) onboard() error {
 	}
 	now := service.setting()
 	logs.Before = now
+	// The router's version, read before any change where it decides something: one below requestLogsRouterVersion drops the
+	// onboarding's requestLogs, so --request-logs is refused there, and the warning that names the flag is not said.
+	older := false
+	if x.r.RequestLogs || (unread == nil && !now.everyRequest()) {
+		reads, err := x.readsRequestLogs()
+		switch {
+		case err != nil && x.r.RequestLogs:
+			return &stop{1, fmt.Sprintf("The version of router %s is not read, and --request-logs needs %s or later: %s\nNothing was changed.", x.n.router, requestLogsRouterVersion, refusal(err))}
+		case err == nil && !reads && x.r.RequestLogs:
+			return &stop{2, fmt.Sprintf("--request-logs needs router %s or later: dormeto gcp install --version %s\nNothing was changed.", requestLogsRouterVersion, embeddedRouterVersion())}
+		}
+		older = err == nil && !reads
+	}
 	// An earlier run of this onboarding that stopped after turning the logs on kept what it found: found on, they are Dormeto's.
 	earlier, kept := x.keptLogs(in.ID, logs)
 	inherited := unread == nil && kept && now.everyRequest()
@@ -631,7 +644,7 @@ func (x *run) onboard() error {
 	if x.r.DryRun {
 		if x.r.JSON {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
-			x.warnCount(logs.BackendService, now, unread)
+			x.warnCount(logs.BackendService, now, unread, older)
 			return nil
 		}
 		if labels := dry.labels(x.r.CloudSQL); len(labels) > 0 || dry.GKE == nil {
@@ -649,7 +662,7 @@ func (x *run) onboard() error {
 		if turnOn {
 			x.say("Onboarding would turn on the request logs of backend service %s: sample rate 1.0 (now: %s)", in.BackendService, logs.Before)
 		}
-		x.warnCount(logs.BackendService, now, unread)
+		x.warnCount(logs.BackendService, now, unread, older)
 		return nil
 	}
 	targets := dry.targets()
@@ -787,15 +800,16 @@ func (x *run) onboard() error {
 			x.say("  request logs: on, sample rate 1.0 (before: %s)", logs.Before)
 		}
 	})
-	x.warnCount(logs.BackendService, now, unread)
+	x.warnCount(logs.BackendService, now, unread, older)
 	return err
 }
 
 // warnCount says, after the onboarding's output, that the idle check counts every request of a backend service that does
-// not log each one (now), without --request-logs; a backend service that was not read (unread) is said instead. Under --json,
-// on the error stream, as warnStandard.
-func (x *run) warnCount(backendService string, now logSetting, unread error) {
-	if x.r.RequestLogs || (unread == nil && now.everyRequest()) {
+// not log each one (now), without --request-logs; a backend service that was not read (unread) is said instead. A router
+// older than requestLogsRouterVersion (older) counts every request whatever the logs, and has no use for the flag: nothing is
+// said of them. Under --json, on the error stream, as warnStandard.
+func (x *run) warnCount(backendService string, now logSetting, unread error, older bool) {
+	if x.r.RequestLogs || (unread == nil && (now.everyRequest() || older)) {
 		return
 	}
 	w := x.d.Out

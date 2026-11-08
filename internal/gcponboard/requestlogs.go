@@ -4,8 +4,9 @@ package gcponboard
 // service that logs every request (its logConfig on, sampleRate 1.0), and counts only the requests the waker would not ignore;
 // else the raw count decides. The onboarding reads the backend service's logConfig as the operator. With --request-logs, one
 // that does not log every request is set to log each one, after the dry run and before the onboarding, and the onboarding
-// sends what it found (requestLogs.before), which the controller keeps; a refused onboarding sets it back. Without the flag,
-// it warns. The offboarding sets it back after the controller's delete, if it is still what Dormeto set; changed since, it is
+// sends what it found (requestLogs.before), which the controller keeps; a refused onboarding sets it back. A router older than
+// requestLogsRouterVersion drops that field: the flag is refused there before any change. Without the flag, it warns (not on
+// such a router, which reads no logs). The offboarding sets it back after the controller's delete, if it is still what Dormeto set; changed since, it is
 // left and said. The router never holds the right to change a backend service: these are the operator's calls.
 
 import (
@@ -36,6 +37,20 @@ var backendServiceReads = []string{"compute.backendServices.get", "compute.regio
 
 // countWarning is said after an onboarding without --request-logs of a backend service that does not log every request.
 const countWarning = "! the idle check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past its free tier)"
+
+// requestLogsRouterVersion is the first router that keeps an onboarding's requestLogs and reads the request logs: an older one
+// drops the field, so its offboarding would never set back what --request-logs turned on.
+const requestLogsRouterVersion = "0.38.0"
+
+// readsRequestLogs tells whether the router reads the request logs, from the version its controller's health answers: one
+// below requestLogsRouterVersion does not; one whose version is no release's (a dev build) is taken to.
+func (x *run) readsRequestLogs() (bool, error) {
+	version, err := x.health()
+	if err != nil {
+		return false, err
+	}
+	return !below(version, requestLogsRouterVersion), nil
+}
 
 // logSetting is what a backend service's logConfig says of its request logs: on or off, and the share of the requests logged.
 type logSetting struct {

@@ -1607,6 +1607,9 @@ addresses.
   as it is. Without the flag, an onboarding of a backend service that does not log every request ends with `! the idle
   check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past
   its free tier)`.
+- **The router's version:** the request logs need router 0.38.0 or later, which the onboarding reads from the controller
+  before any change. On an older router, `--request-logs` stops with `--request-logs needs router 0.38.0 or later: dormeto
+  gcp install --version <default>`, and an onboarding without it says nothing of the request logs.
 - **The offboarding** sets the `logConfig` back when it is still what Dormeto set, and says so. If you changed it since,
   it is left, with a notice naming the backend service.
 - **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`.
