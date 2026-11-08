@@ -261,16 +261,36 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		"Not run: ten workloads on one URL map in one nap window",
 		"Ten workloads on one URL map in one nap window were not run in the acceptance",
 		"62 s after a `POST /_dormeto/wake`", "`AWAKE` 123 to 188 s and 287 s after the wake", "551 s",
+		// the router's image (vision docs/specs/2026-11-07-google-cloud-fixes-design.md, §4), in the words the CLI prints
+		"`<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>`", "`<name>@sha256:…`",
+		"Unlike `dormeto aws install`, whose default is the latest manager release because that release carries its own access, `dormeto gcp install` writes the router's IAM from the manifest this CLI embeds",
+		"`router <v> needs a newer CLI: brew upgrade dormeto`",
+		"`router <v> is newer than this CLI knows (<default>): brew upgrade dormeto`",
+		"`the router isn't installed: dormeto gcp install --version <default>`",
+		"`router <v> is available: dormeto gcp install --version <v>`",
+		"`--image`, `--version` and `--access-only` exclude each other",
+		// the request logs (§5) and the log view, in the words the CLI prints
+		"`! the idle check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past its free tier)`",
+		"`--request-logs needs router 0.38.0 or later: dormeto gcp install --version <default>`",
+		"`! the router's log view isn't created: the project's _Default log bucket isn't in global; the idle check counts every request`",
+		"log_config { enable = true sample_rate = 1.0 }",
+		"router 0.38.0 and CLI 0.12.0, which are not released yet",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)
 		}
 	}
 	// The warning that Cloud SQL and GKE never ran against Google is gone (CLI 564f41b).
-	for _, gone := range []string{"router:0.35.0", "Written, never run against Google", "acceptance not run yet", "prints one warning on stderr"} {
+	for _, gone := range []string{"router:0.35.0", "Written, never run against Google", "acceptance not run yet", "prints one warning on stderr",
+		// a one-line block takes one argument: not HCL
+		"log_config { enable = true, sample_rate = 1.0 }"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("the Google Cloud section still says %q", gone)
 		}
+	}
+	// G4 is the plan's name, not the user's.
+	if strings.Contains(readme(t), "G4") {
+		t.Error("the README names the plan G4")
 	}
 }
 

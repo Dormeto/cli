@@ -1580,10 +1580,13 @@ dormeto gcp uninstall --project my-project --region europe-west1
 reads the image without a token and deploys it by its digest (`<name>@sha256:…`), which the plan shows.
 
 - **The default version** is the router version this CLI's access describes. A first install takes it, and a later run
-  upgrades an older router of Dormeto's to it.
-- **`--version <v>`** installs another version, up to the default.
-- **A router newer than the CLI** stops the run before any change, with `router <v> needs a newer CLI: brew upgrade
-  dormeto`. Upgrade the CLI first.
+  upgrades an older router of Dormeto's to it. Unlike `dormeto aws install`, whose default is the latest manager release
+  because that release carries its own access, `dormeto gcp install` writes the router's IAM from the manifest this CLI
+  embeds, so its default is the router version of that manifest.
+- **`--version <v>`** installs another version, up to the default. A newer one is refused before any change: `router <v>
+  needs a newer CLI: brew upgrade dormeto`.
+- **A router of Dormeto's newer than the CLI**, installed by a newer CLI, stops every run before any change, with `router
+  <v> is newer than this CLI knows (<default>): brew upgrade dormeto`. Upgrade the CLI first.
 - **`--access-only`** installs the access without the router. The record says so (`accessOnly`), and later runs keep it
   until one with `--version` or `--image`. It says `the router isn't installed: dormeto gcp install --version <default>`.
 - **`--image <image>`** installs a router image of your own instead, such as a copy inside a VPC Service Controls
@@ -1614,8 +1617,15 @@ addresses.
   it is left, with a notice naming the backend service.
 - **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`.
 - **The cost** is Cloud Logging's: its ingestion is charged past 50 GiB a month and project, about 1 KB per request.
-- **Terraform:** if you write the backend service in Terraform, keep `log_config { enable = true, sample_rate = 1.0 }` in
-  it, so an apply does not turn the logs off.
+- **Terraform:** if you write the backend service in Terraform, keep this block in it, so an apply does not turn the logs
+  off:
+
+  ```hcl
+  log_config {
+    enable      = true
+    sample_rate = 1.0
+  }
+  ```
 - **The limit:** the view is created in the `global` location. In a project whose `_Default` bucket is elsewhere (an
   organization's default storage location), the install says `! the router's log view isn't created: the project's
   _Default log bucket isn't in global; the idle check counts every request` and goes on without the view and its grant.
@@ -1860,8 +1870,9 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   on a busy map are unit-tested only), an operator holding exactly the permissions `gcp check` lists for `onboard`, a
   Cloud SQL start refused for lack of capacity, and a nap cut short by a new revision of the controller.
 
-The public router image, the request logs and the other changes of this section's G4 parts come with router 0.38.0 and CLI 0.12.0, not released yet. Dormeto's public router image is the default; to build and push your own for `--image`, see `scripts/gcp-image.sh` in the
-router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). There is no dashboard or manager for
+The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
+CLI 0.12.0, which are not released yet. Dormeto's public router image is the default. To build and push your own for
+`--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). There is no dashboard or manager for
 Google Cloud yet, and the branded waiting page does not apply to it.
 
 ## Building from source
