@@ -258,8 +258,10 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		// docs/plans/2026-10-30-google-cloud-coverage.md, "Acceptance results"), with the acceptance's times
 		"router 0.37.0", "CLI 0.11.0",
 		"*Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both released on 2026-11-05",
-		"Not run: ten workloads on one URL map in one nap window",
-		"Ten workloads on one URL map in one nap window were not run in the acceptance",
+		"Not run: an operator holding exactly the permissions `gcp check` lists for `onboard`, and a Cloud SQL start refused for lack of capacity",
+		"*Accepted on a real project on 2026-11-08*, with router image 0.38.0-dev.2 and the CLI built from `main`",
+		"Ten workloads on one URL map in one nap window were accepted on 2026-11-08, global and regional",
+		"which are not released yet. Their acceptance passed on 2026-11-08",
 		"62 s after a `POST /_dormeto/wake`", "`AWAKE` 123 to 188 s and 287 s after the wake", "551 s",
 		// the router's image (vision docs/specs/2026-11-07-google-cloud-fixes-design.md, §4), in the words the CLI prints
 		"`<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>`", "`<name>@sha256:…`",
@@ -281,7 +283,7 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		}
 	}
 	// The warning that Cloud SQL and GKE never ran against Google is gone (CLI 564f41b).
-	for _, gone := range []string{"router:0.35.0", "Written, never run against Google", "acceptance not run yet", "prints one warning on stderr",
+	for _, gone := range []string{"router:0.35.0", "Written, never run against Google", "acceptance not run yet", "prints one warning on stderr", "were not run in the acceptance", "and a nap cut short by a new revision of the controller",
 		// a one-line block takes one argument: not HCL
 		"log_config { enable = true, sample_rate = 1.0 }"} {
 		if strings.Contains(text, gone) {

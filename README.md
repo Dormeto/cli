@@ -1777,8 +1777,8 @@ dormeto gcp workloads resume shop --project my-project --region europe-west1
 - The router's check asks at most 10 scheduled naps each run, every 5 minutes, oldest first: 30 workloads in one nap
   window nap within 15 minutes. Wakes are never held back. A scheduled nap's occurrence is spent once its task is
   accepted: a nap that a pause refuses, or whose task is lost, does not come back when the pause ends.
-- Ten workloads on one URL map in one nap window were not run in the acceptance. On a regional map, whose updates are
-  slow, only 2 or 3 of them may nap in that window, the others later by their idle window: give them different nap
+- Ten workloads on one URL map in one nap window were accepted on 2026-11-08, global and regional. On a regional map,
+  whose updates are slow, only 2 or 3 of them may nap in that window, the others later by their idle window: give them different nap
   windows, or maps of their own (the router's Compute Engine scenario page says why).
 - `pause <id> --reason <text>` (required, at most 256 characters) stops every nap, by the idle window, the schedule or
   `nap`, until `resume` or `--until` (RFC 3339, at most 366 days away). A workload asleep is woken. With `--keep-asleep`
@@ -1878,12 +1878,19 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   load balancers (`--load-balancer`), zonal network endpoint groups, schedules and pauses (`workloads schedule`, `pause`,
   `resume`), IP lists (`--ip-list`), Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and GKE (`--with gke`,
   `--gke-cluster`, `workloads access`), installed by `gcp install --with cloud-sql,gke` and removed by `gcp uninstall`.
-  Not run: ten workloads on one URL map in one nap window (the router's cap of 10 scheduled naps a check and its retries
-  on a busy map are unit-tested only), an operator holding exactly the permissions `gcp check` lists for `onboard`, a
-  Cloud SQL start refused for lack of capacity, and a nap cut short by a new revision of the controller.
+  Not run: an operator holding exactly the permissions `gcp check` lists for `onboard`, and a Cloud SQL start refused
+  for lack of capacity.
+- *Accepted on a real project on 2026-11-08*, with router image 0.38.0-dev.2 and the CLI built from `main`: the swap of
+  a Standard-tier classic load balancer. Ten workloads on one URL map, global and regional: ten naps asked at once, all
+  asleep, none failed, within 509 s global and 283 s regional. A check racing an offboarding, skipped. A VM added to an
+  unmanaged group, its nap given up as `backends-changed`. A request during a nap's wait, the nap given up as `traffic`.
+  A lost wake task, sent again by the waker after 102 s. The request logs, which kept a workload awake for a browser and
+  napped it for scanners alone. The waker reading the client's address behind global, regional and classic load
+  balancers. A nap through a new revision of the router. The uninstall, which left the policy as before. Not run: an
+  install interrupted while its database is being created (unit-tested).
 
 The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
-CLI 0.12.0, which are not released yet. Dormeto's public router image is the default. To build and push your own for
+CLI 0.12.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for
 `--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). There is no dashboard or manager for
 Google Cloud yet, and the branded waiting page does not apply to it.
 
