@@ -417,3 +417,24 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		}
 	}
 }
+
+// D1's fix round: which flags are the router command's alone, whose wakes fill the bar, which kinds swap, and what is Google's word.
+func TestReadmeGoogleCloudSettingsFlagsWakesAndSources(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	for _, want := range []string{
+		"`--join-minutes` is the router command's alone; `--dry-run` and `--yes` are on both",
+		"median of the workload's last 10 wakes",
+		"Behind a regional, classic or internal load balancer, a value of the swap's wait + 60 s or less (160 s regional or internal, 310 s classic)",
+		"The `databases` type's built-in is AWS's 1800 s, brought to Google Cloud's cap of 1700 s and shown `fixed`",
+		"share 5,000 queries a second (Google's documentation)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"are the router's command's", "the router's last 10 wakes", "The `databases` type's built-in wake timeout is 1700 s"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the Google Cloud section still says %q", gone)
+		}
+	}
+}
