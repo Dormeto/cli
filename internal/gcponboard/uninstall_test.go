@@ -155,6 +155,47 @@ func TestUninstallKeepsTheRolesOfAnotherRoutersInstallStoppedAtTheTag(t *testing
 	}
 }
 
+// The final review's Important 3, F10 on a resume: a run stopped during the database's creation leaves the record in the cache.
+// The rerun finds the database and writes the record there at its first write, so the roles it creates before a stop at the
+// tag are listed where another region's uninstall reads them.
+func TestUninstallKeepsTheRolesOfARunResumedAfterAStopDuringTheDatabasesCreation(t *testing.T) {
+	g := newInstallRig(t)
+	ctx, _ := stopAtPoll(t, g, "firestore.googleapis.com", pendingDatabase, "/v1/", 1)
+	g.out.Reset()
+	if code := Install(ctx, g.d, europe); code != 130 {
+		t.Fatalf("the first install: exit %d:\n%s", code, g.out)
+	}
+	g.s.FinishOperations()
+	if data := g.s.Field(recordDB, "install/record", "data"); data != "" {
+		t.Fatalf("the database holds a record already: %s", data)
+	}
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: "cloudresourcemanager.googleapis.com", Path: "/v3/tagKeys", Times: 1, Code: 403,
+		Status: "PERMISSION_DENIED", Message: "Permission 'resourcemanager.tagKeys.create' denied"})
+	if code, out := g.run(t, europe); code != 1 || !strings.Contains(out, "  ✗ tag: ") {
+		t.Fatalf("the rerun: exit %d:\n%s", code, out)
+	}
+	other := europe
+	other.Region = "europe-west4"
+	if code, out := g.run(t, other); code != 0 {
+		t.Fatalf("install 2: exit %d:\n%s", code, out)
+	}
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west4", Yes: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "= role dormetoRouter kept: used by router dmtr-europe-west1\n", "= role dormetoRouterBackends kept: used by router dmtr-europe-west1\n")
+	g.s.Lock()
+	for id, r := range g.s.Roles {
+		if r.Deleted {
+			t.Errorf("role %s is deleted", id)
+		}
+	}
+	g.s.Unlock()
+	if rec := g.record(t); !listsResource(rec, "role", "projects/dormeto-dev/roles/dormetoRouter") || rec.Running != "tag" {
+		t.Errorf("the database's record: running %q, resources %+v", rec.Running, rec.Resources)
+	}
+}
+
 func TestUninstallKeepsTheCustomRolesWhileAnotherRoutersRecordUsesThem(t *testing.T) {
 	g := newRouterRig(t)
 	other := withImage

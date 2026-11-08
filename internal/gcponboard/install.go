@@ -531,9 +531,11 @@ func (x *run) persist() {
 	}
 }
 
-// writeKept writes the record where it is kept: the database, else the cache.
+// writeKept writes the record where it is kept: the database once it exists, else the cache. A rerun after a stop between the
+// database's creation and the record's first write finds the database without the record: its first write puts the record
+// there, before any shared resource, for other regions' uninstalls to read.
 func (x *run) writeKept() error {
-	if x.recorded {
+	if x.recorded || x.database {
 		return x.writeRecord()
 	}
 	return x.writeCache()
