@@ -5,14 +5,15 @@
 //
 // Besides the project (its IAM policy, its permissions, its services, its billing), it holds what `dormeto gcp install`
 // creates: custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues,
-// Cloud Run services, serverless network endpoint groups, Cloud Scheduler jobs, the policies of service accounts, queues
-// and services, and long-running operations, done after OperationPolls polls; and the images of Artifact Registry and the
-// controller's health. A resource of an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's
-// side effects are played: enabling run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the
-// project, creating a Firestore database grants roles/firestore.serviceAgent to Firestore's, DefaultEditor grants Editor
-// to the Compute Engine default service account when compute.googleapis.com is enabled, GrantOnCreate grants what a test
-// says when a router's resource is created, and AccountLag refuses the first bindings naming a service account just
-// created ("does not exist", IAM's eventual consistency). Refuse makes any call fail before the handlers.
+// Cloud Run services, serverless network endpoint groups, Cloud Scheduler jobs, the log views of the _Default bucket, the
+// policies of service accounts, queues and services, and long-running operations, done after OperationPolls polls; the
+// images of Artifact Registry and the controller's health; and the backend services whose request logs an onboarding reads.
+// A resource of an API that is not enabled answers 403 SERVICE_DISABLED, as Google does. Google's side effects are played:
+// enabling run.googleapis.com grants roles/run.serviceAgent to Cloud Run's service agent on the project, creating a Firestore
+// database grants roles/firestore.serviceAgent to Firestore's, DefaultEditor grants Editor to the Compute Engine default
+// service account when compute.googleapis.com is enabled, GrantOnCreate grants what a test says when a router's resource is
+// created, and AccountLag refuses the first bindings naming a service account just created ("does not exist", IAM's eventual
+// consistency). Refuse makes any call fail before the handlers.
 package gcptest
 
 import (
@@ -141,6 +142,10 @@ type Server struct {
 	AnswerOnboarding func(w http.ResponseWriter)
 	// TagBindings are the tag values bound to resources.
 	TagBindings []TagBinding
+	// LogViews are the log views of the _Default bucket, by ID. BackendServices are the backend services an onboarding reads, by
+	// "global/<name>" or "<region>/<name>".
+	LogViews        map[string]*LogView
+	BackendServices map[string]*BackendService
 	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>; Digests the Docker-Content-Digest
 	// their HEAD answers, when set.
 	Images  map[string]bool
@@ -191,6 +196,7 @@ func New(t testing.TB) *Server {
 		Queues: map[string]*Queue{}, Policies: map[string]map[string]any{}, OperationPolls: 1, Propagating: map[string]int{},
 		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Digests: map[string]string{}, Workloads: map[string]string{},
 		WorkloadDocs: map[string]map[string]any{}, Schedules: map[string]map[string]any{}, WakeFails: map[string]bool{},
+		LogViews: map[string]*LogView{}, BackendServices: map[string]*BackendService{},
 		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -322,6 +328,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.cloudRun(w, r, body)
 	case r.Host == "compute.googleapis.com" || r.Host == "www.googleapis.com":
 		s.compute(w, r, body)
+	case r.Host == "logging.googleapis.com":
+		s.logging(w, r, body)
 	case r.Host == "cloudscheduler.googleapis.com":
 		s.cloudScheduler(w, r, body)
 	case strings.HasSuffix(r.Host, "-docker.pkg.dev"):

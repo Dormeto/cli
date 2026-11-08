@@ -33,8 +33,8 @@ var workloadsEurope = Request{Project: "dormeto-dev", Region: "europe-west1"}
 
 func ptr[T any](v T) *T { return &v }
 
-// workloadsRig is an installed router whose dry run names a VM and a regional group, with the audiences of the identity
-// tokens collected.
+// workloadsRig is an installed router whose dry run names a VM and a regional group, and whose backend service shop logs every
+// request (global and in the router's region), with the audiences of the identity tokens collected.
 type workloadsRig struct {
 	*installRig
 	audiences *[]string
@@ -61,6 +61,9 @@ func workloadsRigOf(g *installRig) *workloadsRig {
 	g.s.DryRun = gcptest.DryRun{
 		VMs:    []gcptest.Resource{{Location: "europe-west1-b", Name: "web-1", ID: "111"}},
 		Groups: []gcptest.Resource{{Kind: "regional", Location: "europe-west1", Name: "web-mig", ID: "222"}},
+	}
+	for _, location := range []string{"global", "europe-west1"} {
+		g.s.BackendServices[location+"/shop"] = &gcptest.BackendService{LogConfig: map[string]any{"enable": true, "sampleRate": 1.0}}
 	}
 	return &workloadsRig{g, aud}
 }
@@ -390,6 +393,7 @@ func TestWorkloadsOnboardNeedsAnIDForABackendServiceNameTooLongForOne(t *testing
 	}
 	// With --id, the workload takes it; the backend service keeps its name.
 	r.ID = "shop"
+	g.s.BackendServices["global/"+long] = &gcptest.BackendService{}
 	if code, out = g.call(t, WorkloadsOnboard, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -404,6 +408,7 @@ func TestWorkloadsOnboardAsksForTheIDOnATerminal(t *testing.T) {
 	g.d.Prompter = install.NewPrompter(strings.NewReader("shop\n"), g.out, true)
 	r := shopOnboarding
 	r.BackendService = "Shop_Backend"
+	g.s.BackendServices["global/Shop_Backend"] = &gcptest.BackendService{}
 	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}

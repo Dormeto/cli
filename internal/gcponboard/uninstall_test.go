@@ -50,8 +50,9 @@ func (g *installRig) nothingLeft(t *testing.T, region string) {
 	_, queue := g.s.Queues[region+"/"+name]
 	_, db := g.s.Databases[name]
 	_, account := g.s.ServiceAccounts[email]
-	if svc1 || svc2 || neg || job || queue || db || account {
-		t.Errorf("left: controller %v waker %v neg %v job %v queue %v database %v account %v", svc1, svc2, neg, job, queue, db, account)
+	_, view := g.s.LogViews[name+"-lb"]
+	if svc1 || svc2 || neg || job || queue || db || account || view {
+		t.Errorf("left: controller %v waker %v neg %v job %v queue %v database %v account %v log view %v", svc1, svc2, neg, job, queue, db, account, view)
 	}
 }
 
@@ -319,10 +320,12 @@ func TestUninstallDryRunPrintsThePlanAndChangesNothing(t *testing.T) {
 		"  - job dmtr-europe-west1-check\n", "  - network endpoint group dmtr-europe-west1-waker\n",
 		"  - service dmtr-europe-west1-waker\n", "  - service dmtr-europe-west1-controller\n", "  - queue dmtr-europe-west1\n",
 		"  - database dmtr-europe-west1 (and the install record)\n", "  - grant projects/dormeto-dev/roles/dormetoRouter to "+routerMember+" on the project\n",
+		"  - log view dmtr-europe-west1-lb\n",
 		"  - tag dormeto/managed\n", "  - service account "+routerSA+"\n", "  - role dormetoRouter\n", "  - role dormetoRouterBackends\n")
-	// In the order of the spec: job, NEG, services, queue, database, bindings, tag, service account, roles.
+	// In the order of the spec: job, NEG, services, queue, database, bindings, the log view (its grant gone first), tag, service
+	// account, roles.
 	order := []string{"- job ", "- network endpoint group", "- service dmtr-europe-west1-waker", "- service dmtr-europe-west1-controller", "- queue", "- database",
-		"- grant projects/dormeto-dev/roles/dormetoRouter ", "- tag ", "- service account", "- role "}
+		"- grant projects/dormeto-dev/roles/dormetoRouter ", "- grant roles/logging.viewAccessor ", "- log view ", "- tag ", "- service account", "- role "}
 	at := -1
 	for _, w := range order {
 		i := strings.Index(out, w)
@@ -658,12 +661,41 @@ func TestUninstallPrintsEveryIAMChange(t *testing.T) {
 		"      IAM - roles/run.invoker to "+routerMember+" on controller "+controllerName+" (Dormeto)\n",
 		"  ✓ queue: removed queue dmtr-europe-west1\n"+
 			"      IAM - roles/cloudtasks.enqueuer to "+routerMember+" on queue dmtr-europe-west1 (Dormeto)\n",
-		"  ✓ projectBindings: removed 3 grants from the project\n",
+		"  ✓ projectBindings: removed 4 grants from the project\n",
 		"      IAM - projects/dormeto-dev/roles/dormetoRouter to "+routerMember+" on the project (Dormeto)\n",
 		"      IAM - projects/dormeto-dev/roles/dormetoRouterBackends to "+routerMember+" on the project, if \"Dormeto-managed resources\": ",
 		"      IAM - roles/datastore.user to "+routerMember+" on the project, if \"The router's database\": ",
+		"      IAM - roles/logging.viewAccessor to "+routerMember+" on the project, if \"The router's log view\": resource.name == \""+logViewName+"\" (Dormeto)\n",
+		"  ✓ logView: removed log view dmtr-europe-west1-lb\n",
 		"  ✓ serviceAccount: removed service account "+routerSA+"\n"+
 			"      IAM - roles/iam.serviceAccountUser to "+routerMember+" on service account "+routerSA+" (Dormeto)\n")
+}
+
+// The design's §5: the uninstall removes the router's grant on its log view, then the view.
+func TestUninstallRemovesTheLogViewsGrantThenTheView(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	if code, out := g.uninstall(t, uninstallEurope); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	unbound, deleted := -1, -1
+	for i, c := range g.s.Calls()[mark:] {
+		switch {
+		case c.Method == "POST" && strings.HasSuffix(c.Path, "/projects/dormeto-dev:setIamPolicy"):
+			unbound = i
+		case c.Method == "DELETE" && c.Host == "logging.googleapis.com" && c.Path == logViewsPath+"/dmtr-europe-west1-lb":
+			deleted = i
+		}
+	}
+	if unbound < 0 || deleted < unbound {
+		t.Fatalf("the project's grants removed at %d, the view deleted at %d", unbound, deleted)
+	}
+	for _, k := range g.policyGrants(t) {
+		if strings.Contains(k, "roles/logging.viewAccessor") {
+			t.Errorf("still in the policy: %q", k)
+		}
+	}
+	g.nothingLeft(t, "europe-west1")
 }
 
 const uninstallVerified = "  ✓ verified: the project's IAM policy holds its bindings from before the install, and Google's\n"

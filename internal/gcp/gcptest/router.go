@@ -236,10 +236,11 @@ func (s *Server) withGoogleDefaults(t *RunTemplate) {
 	}
 }
 
-// compute serves the regional network endpoint groups and their operations, written and read on compute.googleapis.com,
-// the operations' selfLinks on www.googleapis.com. A creation's operation is done at its first poll.
+// compute serves the regional network endpoint groups, the global and regional backend services (logs.go) and their
+// operations, written and read on compute.googleapis.com, the operations' selfLinks on www.googleapis.com. A creation's
+// operation is done at its first poll.
 func (s *Server) compute(w http.ResponseWriter, r *http.Request, body []byte) {
-	rest, ok := strings.CutPrefix(r.URL.Path, "/compute/v1/projects/"+s.ProjectID+"/regions/")
+	rest, ok := strings.CutPrefix(r.URL.Path, "/compute/v1/projects/"+s.ProjectID+"/")
 	if !ok {
 		Fail(w, 403, "PERMISSION_DENIED", "The caller does not have permission")
 		return
@@ -247,9 +248,17 @@ func (s *Server) compute(w http.ResponseWriter, r *http.Request, body []byte) {
 	if s.disabled(w, "compute.googleapis.com") {
 		return
 	}
-	region, tail, _ := strings.Cut(rest, "/")
+	region, tail := "global", ""
+	if global, ok := strings.CutPrefix(rest, "global/"); ok {
+		tail = global
+	} else if regional, ok := strings.CutPrefix(rest, "regions/"); ok {
+		region, tail, _ = strings.Cut(regional, "/")
+	}
 	id, isNEG := strings.CutPrefix(tail, "networkEndpointGroups/")
+	service, isService := strings.CutPrefix(tail, "backendServices/")
 	switch {
+	case isService && service != "":
+		s.backendService(w, r, region, service, body)
 	case strings.HasPrefix(tail, "operations/") && r.Method == http.MethodGet:
 		Reply(w, map[string]any{"name": strings.TrimPrefix(tail, "operations/"), "status": "DONE"})
 	case tail == "networkEndpointGroups" && r.Method == http.MethodPost:

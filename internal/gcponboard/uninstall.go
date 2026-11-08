@@ -4,7 +4,8 @@ package gcponboard
 // the caller's permissions (with --force the offboard command's too: a ✗ stops it before any change), reads the record,
 // refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
 // removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
-// (the recorded grants that the project's bindings before the first install did not hold), tag, serviceAccount, roles —
+// (the recorded grants that the project's bindings before the first install did not hold), logView (once the grant naming it
+// is gone), tag, serviceAccount, roles —
 // and lists the APIs and the bindings Google added as left in place, and the Kubernetes access no offboarding removed as left
 // in the cluster, with the command to remove it (it reaches no other cluster), every IAM change printed, then reads the project's
 // policy and warns of what differs from its bindings before the install and Google's. The custom roles and the tag are the
@@ -158,7 +159,7 @@ func (x *run) planUninstall() error {
 		}
 	}
 	planners := []func() (*step, error){x.planJobRemoval, x.planNEGRemoval, x.planCloudRunRemoval, x.planQueueRemoval,
-		x.planDatabaseRemoval, x.planUnbind, x.planTagRemoval, x.planAccountRemoval, x.planRolesRemoval}
+		x.planDatabaseRemoval, x.planUnbind, x.planLogViewRemoval, x.planTagRemoval, x.planAccountRemoval, x.planRolesRemoval}
 	for _, plan := range planners {
 		s, err := plan()
 		if err != nil {

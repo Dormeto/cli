@@ -3,7 +3,7 @@ package gcponboard
 // `dormeto gcp install`: the access of a Dormeto router in a project and a region and the router itself (spec §5), from
 // Dormeto's public image by default or --image, the access alone with --access-only (image.go says which router a run
 // installs). It checks the caller's permissions (a ✗ stops it before any change) and the image, reads what is there,
-// prints the plan, asks (or takes --yes), applies the steps in order — apis, database (and the record), roles,
+// prints the plan, asks (or takes --yes), applies the steps in order — apis, database (and the record), logView, roles,
 // serviceAccount, tag, projectBindings, queue (and its binding), serviceAccountBinding, with the router cloudRun, neg and
 // job, then record — printing every IAM change after the steps that make one, Dormeto's and Google's, then verifies. Each
 // step's file reads what it changes and plans exactly what its apply does. Run again, it plans only the differences;
@@ -49,14 +49,15 @@ var regionPattern = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
 // names are the router's names in its project and region.
 type names struct {
 	project, region, router, email, member, database, queue string
-	controller, waker, neg, job                             string
+	controller, waker, neg, job, logView                    string
 }
 
 func newNames(project, region string) names {
 	router := "dmtr-" + region
 	email := router + "@" + project + ".iam.gserviceaccount.com"
 	return names{project: project, region: region, router: router, email: email, member: "serviceAccount:" + email,
-		database: router, queue: router, controller: router + "-controller", waker: router + "-waker", neg: router + "-waker", job: router + "-check"}
+		database: router, queue: router, controller: router + "-controller", waker: router + "-waker", neg: router + "-waker", job: router + "-check",
+		logView: router + "-lb"}
 }
 
 // step is one step of the install: its name, its lines in the plan, and its apply, which says what it did.
@@ -319,7 +320,8 @@ func (x *run) plan() error {
 		return err
 	}
 	x.resume()
-	planners := []func() (*step, error){x.planAPIs, x.planDatabase, x.planRoles, x.planServiceAccount, x.planTag,
+	// The log view before the project's bindings: the router's grant on it names it.
+	planners := []func() (*step, error){x.planAPIs, x.planDatabase, x.planLogView, x.planRoles, x.planServiceAccount, x.planTag,
 		x.planProjectBindings, x.planQueue, x.planAccountBinding}
 	if x.image != "" {
 		planners = append(planners, x.planCloudRun, x.planNEG, x.planJob)
@@ -466,7 +468,7 @@ func (x *run) apply() error {
 		x.warn(warnings)
 		return &stop{1, "Run the same command again to change what differs."}
 	}
-	x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue")
+	x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database, the queue and the log view")
 	if x.image != "" {
 		x.say("  ✓ verified: both Cloud Run services ready, the controller's URL among its URLs, the network endpoint group, the job, /v1/health answering version %s", x.version)
 	}

@@ -1,7 +1,8 @@
 package gcponboard
 
 // The verification after the apply, read only: the router's grants in the project's, the queue's and the service
-// account's policies, the custom roles' permissions, the service account, the database and the queue; with the router, the
+// account's policies, the custom roles' permissions, the service account, the database, the queue and the log view's
+// filter; with the router, the
 // grant on the controller and the router itself (verifyRouter). The project's
 // policy must hold exactly what it held at the start of this run, the grants this run added and those Google added
 // during it: any other difference is said as a warning (someone else's change during the run, not the install's to
@@ -84,6 +85,10 @@ func (x *run) verify() (warnings []string, err error) {
 			add("queue %s has other settings than %s", x.n.queue, queueAllSettings)
 		}
 		lacks(QueuePolicy(x.n.project, x.n.region, x.n.queue), "queue "+x.n.queue, x.grantOn("queue"))
+	}
+
+	if problem := x.verifyLogView(); problem != "" {
+		problems = append(problems, problem)
 	}
 
 	if x.image != "" {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -160,6 +161,7 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + API cloudresourcemanager.googleapis.com
   + API logging.googleapis.com
   + database dmtr-europe-west1 (Firestore Native, europe-west1)
+  + log view dmtr-europe-west1-lb (bucket _Default, the load balancers' request logs)
   + role dormetoRouter "Dormeto router" (32 permissions)
   + role dormetoRouterBackends "Dormeto router backends" (6 permissions)
   + service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
@@ -167,6 +169,7 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + grant projects/dormeto-dev/roles/dormetoRouter to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project
   + grant projects/dormeto-dev/roles/dormetoRouterBackends to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project, if "Dormeto-managed resources": resource.matchTag('dormeto-dev/dormeto', 'managed')
   + grant roles/datastore.user to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project, if "The router's database": resource.name == "projects/dormeto-dev/databases/dmtr-europe-west1"
+  + grant roles/logging.viewAccessor to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project, if "The router's log view": resource.name == "projects/dormeto-dev/locations/global/buckets/_Default/views/dmtr-europe-west1-lb"
   + queue dmtr-europe-west1 (3 attempts, backoff 5 to 60 s)
   + grant roles/cloudtasks.enqueuer to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on queue dmtr-europe-west1
   + grant roles/iam.serviceAccountUser to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
@@ -213,10 +216,11 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 			"      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
 			"  ✓ database: created dmtr-europe-west1 (Firestore Native, europe-west1), wrote install/record\n"+
 			"      IAM + roles/firestore.serviceAgent to "+firestoreAgent+" on the project (Google, after database)\n"+
+			"  ✓ logView: created dmtr-europe-west1-lb (bucket _Default, the load balancers' request logs)\n"+
 			"  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n"+
 			"  ✓ serviceAccount: created "+routerSA+"\n"+
 			"  ✓ tag: created dormeto/managed\n"+
-			"  ✓ projectBindings: granted 3 roles on the project\n",
+			"  ✓ projectBindings: granted 4 roles on the project\n",
 		"      IAM + projects/dormeto-dev/roles/dormetoRouter to "+routerMember+" on the project (Dormeto)\n",
 		"      IAM + roles/datastore.user to "+routerMember+` on the project, if "The router's database": resource.name == "projects/dormeto-dev/databases/dmtr-europe-west1" (Dormeto)`+"\n",
 		"  ✓ queue: created dmtr-europe-west1 (3 attempts, backoff 5 to 60 s), granted roles/cloudtasks.enqueuer on it\n"+
@@ -224,7 +228,7 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 			"  ✓ serviceAccountBinding: granted roles/iam.serviceAccountUser on "+routerSA+"\n"+
 			"      IAM + roles/iam.serviceAccountUser to "+routerMember+" on service account "+routerSA+" (Dormeto)\n"+
 			"  ✓ record: wrote install/record in database dmtr-europe-west1\n"+
-			"  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue\n"+
+			"  ✓ verified: the planned grants, the roles' permissions, the service account, the database, the queue and the log view\n"+
 			"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
 
 	s := g.s
@@ -313,7 +317,7 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 		kinds[r.Kind]++
 	}
 	if kinds["api"] != 9 || kinds["role"] != 2 || kinds["serviceAccount"] != 1 || kinds["tagKey"] != 1 || kinds["tagValue"] != 1 ||
-		kinds["database"] != 1 || kinds["queue"] != 1 || len(rec.Resources) != 16 {
+		kinds["database"] != 1 || kinds["queue"] != 1 || kinds["logView"] != 1 || len(rec.Resources) != 17 {
 		t.Errorf("resources %+v", rec.Resources)
 	}
 	for _, want := range []Resource{
@@ -323,6 +327,7 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 		{Kind: "tagValue", Name: value.Name},
 		{Kind: "database", Name: "projects/dormeto-dev/databases/dmtr-europe-west1"},
 		{Kind: "queue", Name: "projects/dormeto-dev/locations/europe-west1/queues/dmtr-europe-west1"},
+		{Kind: "logView", Name: logViewName},
 	} {
 		if !slices.Contains(rec.Resources, want) {
 			t.Errorf("record lacks %+v", want)
@@ -332,7 +337,7 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 	for _, gr := range rec.Grants {
 		grants[gr.Role+" "+gr.On] = gr
 	}
-	if len(rec.Grants) != 5 || grants["roles/cloudtasks.enqueuer queue"].Member != routerMember ||
+	if len(rec.Grants) != 6 || grants["roles/cloudtasks.enqueuer queue"].Member != routerMember ||
 		grants["roles/iam.serviceAccountUser serviceAccount"].Member != routerMember ||
 		grants["projects/dormeto-dev/roles/dormetoRouter project"].Condition != nil ||
 		grants["roles/datastore.user project"].Condition == nil ||
@@ -342,6 +347,129 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
 		t.Errorf("cache file left: %v", err)
 	}
+}
+
+const (
+	logViewName  = "projects/dormeto-dev/locations/global/buckets/_Default/views/dmtr-europe-west1-lb"
+	logViewsPath = "/v2/projects/dormeto-dev/locations/global/buckets/_Default/views"
+	lbLogsFilter = `resource.type="http_load_balancer" OR resource.type="http_external_regional_lb_rule"`
+)
+
+// The design's §5: the router reads the load balancers' request logs through its own view alone, the view created before the
+// conditional grant that names it.
+func TestInstallCreatesTheRoutersLogViewBeforeItsConditionalGrant(t *testing.T) {
+	g := newInstallRig(t)
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	viewGrant := Grant{Role: "roles/logging.viewAccessor", Member: routerMember,
+		Condition: &Condition{Title: "The router's log view", Expression: `resource.name == "` + logViewName + `"`}}
+	contains(t, out, "      IAM + roles/logging.viewAccessor to "+routerMember+` on the project, if "The router's log view": resource.name == "`+logViewName+`" (Dormeto)`+"\n")
+	g.s.Lock()
+	view := g.s.LogViews["dmtr-europe-west1-lb"]
+	g.s.Unlock()
+	if view == nil || view.Filter != lbLogsFilter || view.Description != "Dormeto: the load balancers' request logs, which router dmtr-europe-west1 reads" {
+		t.Fatalf("view %+v", view)
+	}
+	if !has(g.projectPolicy(t), viewGrant) {
+		t.Fatalf("the project's policy lacks %+v", viewGrant)
+	}
+	if !slices.ContainsFunc(g.record(t).Grants, func(r RecordGrant) bool {
+		return r.On == "project" && grantKey(Grant{Role: r.Role, Member: r.Member, Condition: r.Condition}) == grantKey(viewGrant)
+	}) {
+		t.Fatalf("grants %+v", g.record(t).Grants)
+	}
+	created, granted := -1, -1
+	for i, c := range g.s.Mutations() {
+		switch {
+		case c.Method == "POST" && c.URL == "https://logging.googleapis.com"+logViewsPath+"?viewId=dmtr-europe-west1-lb":
+			created = i
+		case c.Method == "POST" && strings.HasSuffix(c.Path, "/projects/dormeto-dev:setIamPolicy") && granted < 0:
+			granted = i
+		}
+	}
+	if created < 0 || granted < created {
+		t.Fatalf("the view's creation at %d, the project's grants at %d", created, granted)
+	}
+	// Run again: found, nothing planned.
+	if code, out := g.run(t, europe); code != 0 || !strings.Contains(out, "is up to date") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// The filter names the resource types of the router's logs.mjs (a sibling checkout, as the parity test): M2 may change them,
+// both together.
+func TestLogViewFilterNamesTheRoutersLoadBalancerTypes(t *testing.T) {
+	data, err := os.ReadFile("../../../router/gcp/src/logs.mjs")
+	if err != nil {
+		t.Skipf("the router repository is absent: %v", err)
+	}
+	_, block, _ := strings.Cut(string(data), "const LOG_RESOURCES = {")
+	block, _, _ = strings.Cut(block, "};")
+	var types []string
+	for _, m := range regexp.MustCompile(`type: '([^']+)'`).FindAllStringSubmatch(block, -1) {
+		types = append(types, `resource.type="`+m[1]+`"`)
+	}
+	if got := strings.Join(types, " OR "); len(types) == 0 || got != logViewFilter || logViewFilter != lbLogsFilter {
+		t.Fatalf("the router's types: %s\nthe view's filter: %s", got, logViewFilter)
+	}
+}
+
+// The install's logView step holds logging.views.update: a view whose filter is not the install's is updated, its filter alone.
+func TestInstallUpdatesALogViewOfAnotherFilter(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	view := g.s.LogViews["dmtr-europe-west1-lb"]
+	if view != nil {
+		view.Filter = `resource.type="http_load_balancer"`
+	}
+	g.s.Unlock()
+	if view == nil {
+		t.Fatal("no log view")
+	}
+	mark := len(g.s.Calls())
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ log view dmtr-europe-west1-lb: filter "+lbLogsFilter+"\n",
+		"  ✓ logView: updated dmtr-europe-west1-lb (filter "+lbLogsFilter+")\n", "  ✓ verified:")
+	if got := g.changes(mark); !slices.Contains(got, "PATCH logging.googleapis.com"+logViewsPath+"/dmtr-europe-west1-lb?updateMask=filter") {
+		t.Fatalf("changes %v", got)
+	}
+	g.s.Lock()
+	defer g.s.Unlock()
+	if v := g.s.LogViews["dmtr-europe-west1-lb"]; v.Filter != lbLogsFilter {
+		t.Fatalf("view %+v", v)
+	}
+}
+
+// A view whose filter changed after the install is a verification failure, which a rerun corrects.
+func TestInstallVerifiesTheLogViewsFilter(t *testing.T) {
+	g := newInstallRig(t)
+	g.s.Route("logging.googleapis.com", logViewsPath+"/dmtr-europe-west1-lb", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			gcptest.Fail(w, 404, "NOT_FOUND", "no route")
+			return
+		}
+		g.s.Lock()
+		_, there := g.s.LogViews["dmtr-europe-west1-lb"]
+		g.s.Unlock()
+		if !there {
+			gcptest.Fail(w, 404, "NOT_FOUND", "View dmtr-europe-west1-lb does not exist")
+			return
+		}
+		gcptest.Reply(w, map[string]any{"name": logViewName, "filter": "true"})
+	})
+	code, out := g.run(t, europe)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ verification: log view dmtr-europe-west1-lb filters true, not "+lbLogsFilter)
 }
 
 func TestInstallChangesInTheStepsOrder(t *testing.T) {
@@ -364,7 +492,8 @@ func TestInstallChangesInTheStepsOrder(t *testing.T) {
 	want := []string{
 		"POST services:batchEnable",
 		"POST databases",
-		record, // the database's first write
+		record,                                 // the database's first write
+		record, record, "POST " + logViewsPath, // the view, before the grant naming it
 		record, record, "POST roles", record, "POST roles",
 		record, record, "POST serviceAccounts",
 		record, record, "POST tagKeys", record, record, "POST tagValues",
@@ -504,7 +633,7 @@ func TestInstallGivesUpOnAServiceAccountIAMNeverKnows(t *testing.T) {
 		t.Fatalf("slept %v", *g.slept)
 	}
 	contains(t, out, "  ✗ projectBindings: google: 400 INVALID_ARGUMENT: Service account "+routerSA+" does not exist.\n",
-		"Done: apis, database, roles, serviceAccount, tag. Not done: projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
+		"Done: apis, database, logView, roles, serviceAccount, tag. Not done: projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
 }
 
 func TestInstallRetriesAnAPIJustTurnedOn(t *testing.T) {
@@ -553,7 +682,7 @@ func TestInstallStopsAtARefusedStepAndContinuesAfter(t *testing.T) {
 	}
 	contains(t, out, "  ✓ serviceAccount: created "+routerSA+"\n"+
 		"  ✗ tag: google: 403 PERMISSION_DENIED: Permission 'resourcemanager.tagKeys.create' denied\n"+
-		"Done: apis, database, roles, serviceAccount. Not done: tag, projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
+		"Done: apis, database, logView, roles, serviceAccount. Not done: tag, projectBindings, queue, serviceAccountBinding, record. Run the same command again to continue.\n")
 	// The database exists before any shared resource: the record is in it, listing the roles and the service account,
 	// and nothing waits in the cache.
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
@@ -589,7 +718,7 @@ func TestInstallStopsAtARefusedStepAndContinuesAfter(t *testing.T) {
 	if len(rec.Google) != 2 || rec.Google[0].Member != runAgent || rec.Google[0].Step != "apis" || rec.Google[1].Step != "database" {
 		t.Errorf("google %+v", rec.Google)
 	}
-	if len(rec.Resources) != 16 {
+	if len(rec.Resources) != 17 {
 		t.Errorf("resources %+v", rec.Resources)
 	}
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
@@ -749,7 +878,7 @@ func TestInstallInterruptedDuringAStepSaysWhatWasDone(t *testing.T) {
 	if code != 130 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ✗ tag: ", "Done: apis, database, roles, serviceAccount. Not done: tag, ")
+	contains(t, out, "  ✗ tag: ", "Done: apis, database, logView, roles, serviceAccount. Not done: tag, ")
 	if _, err := os.Stat(g.cacheFile()); !os.IsNotExist(err) {
 		t.Fatalf("the done part waits in the cache although the database holds the record: %v", err)
 	}
@@ -807,7 +936,7 @@ func TestVerifyWarnsOfAnIAMChangeNotMadeByThisInstall(t *testing.T) {
 	injected := false
 	g.s.Route("cloudresourcemanager.googleapis.com", "/v3/projects/dormeto-dev:getIamPolicy", func(w http.ResponseWriter, r *http.Request) {
 		// Someone grants a role after the install's last read, before its verification.
-		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 17 {
+		if !injected && len(callsOf(g.s.CallsTo("/documents/install/record"), "PATCH")) == 19 {
 			injected = true
 			grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
 		}
@@ -820,7 +949,7 @@ func TestVerifyWarnsOfAnIAMChangeNotMadeByThisInstall(t *testing.T) {
 	if code != 0 || !injected {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue\n"+
+	contains(t, out, "  ✓ verified: the planned grants, the roles' permissions, the service account, the database, the queue and the log view\n"+
 		"  ! IAM change not made by this install: + roles/viewer to user:someone@example.com on the project\n"+
 		"Installed the access of router dmtr-europe-west1 in project dormeto-dev.\n")
 	// Dormeto's grants, Google's recorded ones and the before are not warned of.
@@ -987,7 +1116,7 @@ func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "  ✓ apis: ", "  ✗ roles: google: 403 PERMISSION_DENIED (SERVICE_DISABLED): iam.googleapis.com has not been used",
-		"Done: apis, database. Not done: roles, ")
+		"Done: apis, database, logView. Not done: roles, ")
 	if len(*g.slept) != 60 || (*g.slept)[0] != 5*time.Second {
 		t.Fatalf("slept %d times: %v", len(*g.slept), *g.slept)
 	}
@@ -1059,7 +1188,7 @@ func TestInstallStoppedDuringAStepSaysGooglesChanges(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "context canceled\n      IAM + roles/run.serviceAgent to "+runAgent+" on the project (Google, after apis)\n"+
-		"Done: none. Not done: apis, database, roles, ")
+		"Done: none. Not done: apis, database, logView, roles, ")
 	rec := g.cached(t)
 	if len(rec.Google) != 1 || rec.Google[0] != (GoogleGrant{Role: "roles/run.serviceAgent", Member: runAgent, Step: "apis"}) {
 		t.Errorf("google %+v", rec.Google)
@@ -1137,7 +1266,7 @@ func TestInstallAfterAStoppedRunRecordsGooglesChangesSeenLater(t *testing.T) {
 	if !slices.Equal(rec.Google, want) {
 		t.Errorf("google %+v", rec.Google)
 	}
-	if apis(rec) != 9 || len(rec.Enabling) != 0 || rec.Running != "" || len(rec.Resources) != 16 {
+	if apis(rec) != 9 || len(rec.Enabling) != 0 || rec.Running != "" || len(rec.Resources) != 17 {
 		t.Errorf("resources %+v, enabling %v, running %q", rec.Resources, rec.Enabling, rec.Running)
 	}
 	// Recorded: the next run plans nothing (only the binding it does not record is shown again).
@@ -1327,7 +1456,7 @@ func TestInstallImageCreatesTheRouter(t *testing.T) {
 			"  ✓ neg: created "+wakerName+"\n"+
 			"  ✓ job: created "+jobName+"\n"+
 			"  ✓ record: wrote install/record in database dmtr-europe-west1\n"+
-			"  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue\n"+
+			"  ✓ verified: the planned grants, the roles' permissions, the service account, the database, the queue and the log view\n"+
 			"  ✓ verified: both Cloud Run services ready, the controller's URL among its URLs, the network endpoint group, the job, /v1/health answering version 0.34.0\n"+
 			"Installed router dmtr-europe-west1 in project dormeto-dev, version 0.34.0.\n")
 
@@ -1361,6 +1490,10 @@ func TestInstallImageCreatesTheRouter(t *testing.T) {
 		wantEnv := map[string]string{"DMT_ROLE": want.role, "DMT_PROJECT": "dormeto-dev", "DMT_PROJECT_NUMBER": "1034397096264",
 			"DMT_REGION": "europe-west1", "DMT_DATABASE": "dmtr-europe-west1", "DMT_QUEUE": "dmtr-europe-west1", "DMT_CONTROLLER_URL": controllerURL,
 			"DMT_SERVICE_ACCOUNT": routerSA, "DMT_WAKER_NEG": wakerName, "DMT_VERSION": "0.34.0"}
+		if want.role == "controller" {
+			// The idle check reads the request logs through the router's view.
+			wantEnv["DMT_LOG_VIEW"] = logViewName
+		}
 		if len(env) != len(wantEnv) {
 			t.Errorf("%s env %v", want.role, env)
 		}
@@ -1401,7 +1534,7 @@ func TestInstallImageCreatesTheRouter(t *testing.T) {
 			t.Errorf("record lacks %+v", want)
 		}
 	}
-	if !slices.Contains(rec.Grants, RecordGrant{Role: "roles/run.invoker", Member: routerMember, On: "controller"}) || len(rec.Grants) != 6 {
+	if !slices.Contains(rec.Grants, RecordGrant{Role: "roles/run.invoker", Member: routerMember, On: "controller"}) || len(rec.Grants) != 7 {
 		t.Errorf("grants %+v", rec.Grants)
 	}
 }

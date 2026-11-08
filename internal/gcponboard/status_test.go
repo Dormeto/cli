@@ -38,6 +38,7 @@ func TestStatusText(t *testing.T) {
 		"  ✓ grant projects/dormeto-dev/roles/dormetoRouter to " + routerMember + " on the project\n" +
 		"  ✓ grant projects/dormeto-dev/roles/dormetoRouterBackends to " + routerMember + " on the project, if \"Dormeto-managed resources\": resource.matchTag('dormeto-dev/dormeto', 'managed')\n" +
 		"  ✓ grant roles/datastore.user to " + routerMember + " on the project, if \"The router's database\": resource.name == \"projects/dormeto-dev/databases/dmtr-europe-west1\"\n" +
+		"  ✓ grant roles/logging.viewAccessor to " + routerMember + " on the project, if \"The router's log view\": resource.name == \"" + logViewName + "\"\n" +
 		"  ✓ grant roles/cloudtasks.enqueuer to " + routerMember + " on queue dmtr-europe-west1\n" +
 		"  ✓ grant roles/iam.serviceAccountUser to " + routerMember + " on service account " + routerSA + "\n" +
 		"  ✓ grant roles/run.invoker to " + routerMember + " on controller " + controllerName + "\n" +
@@ -92,7 +93,7 @@ func TestStatusJSON(t *testing.T) {
 	if router.Resources[0] != (ResourceStatus{Kind: "service", Name: controllerName, OK: true, State: "ready", Detail: "image " + routerImage + ", " + controllerURL}) {
 		t.Errorf("%+v", router.Resources[0])
 	}
-	if len(router.Grants) != 6 {
+	if len(router.Grants) != 7 {
 		t.Fatalf("%+v", router.Grants)
 	}
 	for _, g := range router.Grants {

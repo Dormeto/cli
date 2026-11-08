@@ -345,10 +345,18 @@ func (x *run) accessLines(id string) []string {
 }
 
 // endOffboarding is the end of an uninstall's offboarding: a tag left stops it, as Google refuses to delete a tag still bound; an
-// access left is said, and listed with what the uninstall leaves, so nothing waits in the cache for it.
+// access or request logs left are said, and listed with what the uninstall leaves, so nothing waits in the cache for them.
 func (x *run) endOffboarding(id string, out offboarding) error {
 	for _, r := range out.removed {
 		x.say("  workload %s: removed %s", id, r)
+	}
+	for _, r := range out.restored {
+		x.say("  workload %s: restored %s", id, r)
+	}
+	for _, l := range out.logsLeft {
+		line := fmt.Sprintf("workload %s: %s", id, l)
+		x.say("  ! %s", line)
+		x.notGivenBack = append(x.notGivenBack, line)
 	}
 	for _, k := range out.kept {
 		x.say("  workload %s: %s", id, k)

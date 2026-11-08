@@ -23,12 +23,12 @@ func TestCommandsInManifestOrder(t *testing.T) {
 func TestStepsFollowRuling1(t *testing.T) {
 	want := map[string][]string{
 		"check":          {"read"},
-		"install":        {"read", "apis", "roles", "serviceAccount", "projectBindings", "tag", "database", "queue"},
+		"install":        {"read", "apis", "roles", "serviceAccount", "projectBindings", "tag", "database", "queue", "logView"},
 		"install-router": {"image", "cloudRun", "neg", "job"},
-		"uninstall":      {"read", "job", "neg", "cloudRun", "queue", "database", "projectBindings", "tag", "serviceAccount", "roles"},
+		"uninstall":      {"read", "job", "neg", "cloudRun", "logView", "queue", "database", "projectBindings", "tag", "serviceAccount", "roles"},
 		"workloads":      {"invoke"},
-		"onboard":        {"invoke", "tag"},
-		"offboard":       {"invoke", "tag"},
+		"onboard":        {"invoke", "tag", "requestLogs"},
+		"offboard":       {"invoke", "tag", "requestLogs"},
 	}
 	for c, steps := range want {
 		if got := Steps(c); !reflect.DeepEqual(got, steps) {

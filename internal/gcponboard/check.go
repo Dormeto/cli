@@ -57,10 +57,12 @@ type Request struct {
 	Hibernate                  *bool
 
 	// The onboard command's load balancer (--load-balancer: global, regional or classic), wake timeout (--wake-timeout, nil:
-	// not given) and Cloud SQL companions (--cloud-sql); its GKE cluster is GKECluster.
+	// not given) and Cloud SQL companions (--cloud-sql); its GKE cluster is GKECluster. RequestLogs is --request-logs: the
+	// backend service's request logs turned on, every request, for the idle check to read (the G4 design's §5).
 	LoadBalancer string
 	WakeTimeout  *int
 	CloudSQL     []string
+	RequestLogs  bool
 
 	// The schedule and pause commands: the schedule's file (set), the pause's reason, --keep-asleep and --until (RFC 3339).
 	File, Reason, Until string

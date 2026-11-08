@@ -118,6 +118,7 @@ type workloadIn struct {
 	LoadBalancer   string         `json:"loadBalancer"`
 	CloudSQL       []string       `json:"cloudSql"`
 	GKE            map[string]any `json:"gke"`
+	RequestLogs    map[string]any `json:"requestLogs"`
 }
 
 // workloads serves /v1/workloads…, as the router's controller does.
@@ -307,6 +308,13 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,
 		"wakerBackendService": "dmtr-fake-" + id, "settings": in.Settings}
+	if in.LoadBalancer != "" && in.LoadBalancer != "global" {
+		s.WorkloadDocs[id]["lb"] = map[string]any{"kind": in.LoadBalancer}
+	}
+	// What the onboarding found of the backend service's request logs, kept for its offboarding (the design's §5).
+	if in.RequestLogs != nil {
+		s.WorkloadDocs[id]["requestLogs"] = in.RequestLogs
+	}
 	if s.AnswerOnboarding != nil {
 		s.AnswerOnboarding(w)
 		return

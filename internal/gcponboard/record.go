@@ -81,7 +81,8 @@ type RecordRbac struct {
 
 // Resource is one resource of the router's access. Kinds: api (an API the install turned on: never turned off), role
 // (projects/<id>/roles/<role>), serviceAccount (projects/<id>/serviceAccounts/<email>), tagKey (tagKeys/<n>, or
-// <id>/dormeto until its creation has named it), tagValue (tagValues/<n>, or <id>/dormeto/managed), database (projects/<id>/databases/<db>), queue (projects/<id>/locations/<region>/queues/<queue>), and
+// <id>/dormeto until its creation has named it), tagValue (tagValues/<n>, or <id>/dormeto/managed), database (projects/<id>/databases/<db>), queue (projects/<id>/locations/<region>/queues/<queue>), logView
+// (projects/<id>/locations/global/buckets/_Default/views/<view>), and
 // of the router part: service (projects/<id>/locations/<region>/services/<service>), neg
 // (projects/<id>/regions/<region>/networkEndpointGroups/<neg>), job (projects/<id>/locations/<region>/jobs/<job>).
 type Resource struct {

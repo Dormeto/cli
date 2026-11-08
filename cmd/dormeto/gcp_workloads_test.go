@@ -51,13 +51,21 @@ func TestGcpWorkloadsOnboardReadsTheFlags(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be")
-	if r := calls[0].r; r.IdleMinutes != nil || r.Hibernate != nil || r.ID != "" {
+	if r := calls[0].r; r.IdleMinutes != nil || r.Hibernate != nil || r.ID != "" || r.RequestLogs {
 		t.Fatalf("settings not given must stay nil: %+v", r)
 	}
 	// A zero is a value given, for the range check to refuse.
 	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", "--idle-minutes", "0")
 	if r := calls[0].r; r.IdleMinutes == nil || *r.IdleMinutes != 0 {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestGcpWorkloadsOnboardReadsRequestLogs(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m",
+		"--backend-service", "be", "--request-logs")
+	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.RequestLogs {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
 }
 

@@ -66,6 +66,43 @@ func TestOwnerHoldsEveryCommand(t *testing.T) {
 	}
 }
 
+// The design's §5: check tests what the router's log view and a workload's request logs need, by command.
+func TestCheckTestsTheLogViewsAndTheRequestLogsPermissions(t *testing.T) {
+	s := gcptest.New(t)
+	s.Enabled = access.Load().APIs
+	s.HoldsAll = false
+	s.Held = map[string]bool{}
+	withheld := []string{"logging.views.create", "logging.views.get", "logging.views.update", "logging.views.delete",
+		"compute.backendServices.get", "compute.backendServices.update", "compute.regionBackendServices.get",
+		"compute.regionBackendServices.update", "compute.globalOperations.get", "compute.regionOperations.get"}
+	for _, c := range access.Commands() {
+		for _, p := range access.NeedsWithout(c, nil, "image") {
+			s.Held[p] = !slices.Contains(withheld, p)
+		}
+	}
+	d, _ := deps(s)
+	r, err := Check(context.Background(), d, Request{Project: "dormeto-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestLogs := []string{"compute.backendServices.get", "compute.backendServices.update", "compute.globalOperations.get",
+		"compute.regionBackendServices.get", "compute.regionBackendServices.update", "compute.regionOperations.get"}
+	for name, missing := range map[string][]string{
+		"check":   {},
+		"install": {"logging.views.create", "logging.views.get", "logging.views.update"},
+		// The network endpoint group's steps wait for a regional operation too.
+		"install-router": {"compute.regionOperations.get"},
+		"uninstall":      {"compute.regionOperations.get", "logging.views.delete", "logging.views.get"},
+		"workloads":      {},
+		"onboard":        requestLogs,
+		"offboard":       requestLogs,
+	} {
+		if got := command(t, r, name).Missing; !slices.Equal(got, missing) {
+			t.Errorf("%s: missing %v, want %v", name, got, missing)
+		}
+	}
+}
+
 func TestParentIsPrinted(t *testing.T) {
 	s := gcptest.New(t)
 	s.Parent = "organizations/42"
