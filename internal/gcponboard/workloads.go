@@ -619,12 +619,19 @@ func (x *run) onboard() error {
 	if unread != nil && x.r.RequestLogs {
 		return &stop{1, fmt.Sprintf("The request logs of backend service %s are not read: %s\nNothing was changed.", in.BackendService, refusal(unread))}
 	}
-	logs.Before = service.setting()
-	turnOn := x.r.RequestLogs && !logs.Before.everyRequest()
+	now := service.setting()
+	logs.Before = now
+	// An earlier run of this onboarding that stopped after turning the logs on kept what it found: found on, they are Dormeto's.
+	earlier, kept := x.keptLogs(in.ID, logs)
+	inherited := unread == nil && kept && now.everyRequest()
+	if inherited {
+		logs = earlier
+	}
+	turnOn := x.r.RequestLogs && !now.everyRequest()
 	if x.r.DryRun {
 		if x.r.JSON {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
-			x.warnCount(logs, unread)
+			x.warnCount(logs.BackendService, now, unread)
 			return nil
 		}
 		if labels := dry.labels(x.r.CloudSQL); len(labels) > 0 || dry.GKE == nil {
@@ -642,7 +649,7 @@ func (x *run) onboard() error {
 		if turnOn {
 			x.say("Onboarding would turn on the request logs of backend service %s: sample rate 1.0 (now: %s)", in.BackendService, logs.Before)
 		}
-		x.warnCount(logs, unread)
+		x.warnCount(logs.BackendService, now, unread)
 		return nil
 	}
 	targets := dry.targets()
@@ -708,18 +715,44 @@ func (x *run) onboard() error {
 	if x.ctx.Err() != nil {
 		return x.ended(notSent + "\n" + x.undoOnboarding(grant, created, value, nil))
 	}
-	// Last before the onboarding, which a refusal undoes: the request logs, every request.
+	// Last before the onboarding, which a refusal undoes: the request logs, every request. Those an earlier run turned on are
+	// sent as it found them, and undone as this run's.
 	var turned *requestLogs
+	if inherited {
+		turned = &logs
+	}
 	if turnOn {
-		changed, err := x.turnOnLogs(logs, service)
-		if changed {
-			turned = &logs
-		}
+		// Read again: the tags and a cluster's prompt took their time, and the update names the fingerprint read.
+		fresh, err := x.readLogs(logs.BackendService, logs.Region)
 		if err != nil {
-			what := fmt.Sprintf("the request logs of backend service %s are not turned on: %s", in.BackendService, x.why(err))
-			return x.ended(what + "\n" + x.undoOnboarding(grant, created, value, turned))
+			what := fmt.Sprintf("the request logs of backend service %s are not turned on, they are not read again: %s", in.BackendService, x.why(err))
+			return x.ended(what + "\n" + x.undoOnboarding(grant, created, value, nil))
 		}
-		in.RequestLogs = &requestLogsIn{Before: &logs.Before}
+		// On meanwhile, not by Dormeto: nothing to change nor to set back.
+		if !fresh.setting().everyRequest() {
+			logs.Before = fresh.setting()
+			// Kept before the change: a run that stops after it leaves the rerun what was found.
+			if err := x.keepLogs(in.ID, &logs); err != nil {
+				what := fmt.Sprintf("the request logs of backend service %s are not turned on: what they are is not kept for a rerun: %s", in.BackendService, err)
+				return x.ended(what + "\n" + x.undoOnboarding(grant, created, value, nil))
+			}
+			changed, err := x.turnOnLogs(logs, fresh)
+			if changed {
+				turned = &logs
+			} else {
+				x.forgetLogs(&logs)
+			}
+			if err != nil {
+				what := fmt.Sprintf("the request logs of backend service %s are not turned on: %s", in.BackendService, x.why(err))
+				return x.ended(what + "\n" + x.undoOnboarding(grant, created, value, turned))
+			}
+		}
+	}
+	if turned != nil {
+		in.RequestLogs = &requestLogsIn{Before: &turned.Before}
+	}
+	if x.ctx.Err() != nil {
+		return x.ended(notSent + "\n" + x.undoOnboarding(grant, created, value, turned))
 	}
 	if err := x.controller(http.MethodPost, "/v1/workloads", in, &raw); err != nil {
 		if refused(err) {
@@ -742,6 +775,8 @@ func (x *run) onboard() error {
 		}
 		return x.ended(fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.%s", refusal(err), stays, x.showCommand(in.ID), again, giveUp))
 	}
+	// Onboarded: the controller holds what was found.
+	x.forgetLogs(&requestLogs{entry: x.onboardingPath(in.ID)})
 	err = x.print(raw, func(w workload) {
 		x.say("Onboarded workload %s: %s", w.ID, w.State)
 		x.details(w)
@@ -752,15 +787,15 @@ func (x *run) onboard() error {
 			x.say("  request logs: on, sample rate 1.0 (before: %s)", logs.Before)
 		}
 	})
-	x.warnCount(logs, unread)
+	x.warnCount(logs.BackendService, now, unread)
 	return err
 }
 
 // warnCount says, after the onboarding's output, that the idle check counts every request of a backend service that does
-// not log each one, without --request-logs; a backend service that was not read (unread) is said instead. Under --json, on the
-// error stream, as warnStandard.
-func (x *run) warnCount(logs requestLogs, unread error) {
-	if x.r.RequestLogs || (unread == nil && logs.Before.everyRequest()) {
+// not log each one (now), without --request-logs; a backend service that was not read (unread) is said instead. Under --json,
+// on the error stream, as warnStandard.
+func (x *run) warnCount(backendService string, now logSetting, unread error) {
+	if x.r.RequestLogs || (unread == nil && now.everyRequest()) {
 		return
 	}
 	w := x.d.Out
@@ -768,7 +803,7 @@ func (x *run) warnCount(logs requestLogs, unread error) {
 		w = x.d.Err
 	}
 	if unread != nil {
-		fmt.Fprintf(w, "  ! the request logs of backend service %s are not read: %s\n", logs.BackendService, refusal(unread))
+		fmt.Fprintf(w, "  ! the request logs of backend service %s are not read: %s\n", backendService, refusal(unread))
 		return
 	}
 	fmt.Fprintf(w, "  %s\n", countWarning)
@@ -1143,6 +1178,8 @@ func (x *run) afterController(id string, p pendingOffboarding, force bool) (offb
 	}
 	if path := x.pendingPath(id); path != "" && len(out.tagsLeft) == 0 && len(out.accessLeft) == 0 && len(out.logsLeft) == 0 {
 		os.Remove(path)
+		// What an onboarding whose answer was lost kept of the request logs: the controller held it, and it is done with.
+		x.forgetLogs(&requestLogs{entry: x.onboardingPath(id)})
 	}
 	return out, nil
 }

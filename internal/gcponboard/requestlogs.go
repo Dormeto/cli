@@ -9,9 +9,14 @@ package gcponboard
 // left and said. The router never holds the right to change a backend service: these are the operator's calls.
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -61,11 +66,69 @@ func rate(r float64) string {
 }
 
 // requestLogs is what an onboarding turned on of a backend service's request logs, which its offboarding sets back: the
-// backend service, its region ("" for a global one) and its logConfig before.
+// backend service, its region ("" for a global one) and its logConfig before. entry is the cache's file that keeps it while the
+// onboarding is not done ("" for none).
 type requestLogs struct {
 	BackendService string     `json:"backendService"`
 	Region         string     `json:"region,omitempty"`
 	Before         logSetting `json:"before"`
+	entry          string
+}
+
+// onboardingPath is where what an onboarding found of the request logs waits, from before its update until the onboarding
+// answers or is undone: a rerun after a stop between the two sends it ("" without a cache directory).
+func (x *run) onboardingPath(id string) string {
+	if x.d.Cache == "" {
+		return ""
+	}
+	return filepath.Join(x.d.Cache, "dormeto", "gcp", x.n.project+"-"+x.n.region+"-onboard-"+id+".json")
+}
+
+// keptLogs is what an earlier run of the onboarding of workload id kept of the same backend service's request logs.
+func (x *run) keptLogs(id string, l requestLogs) (requestLogs, bool) {
+	path := x.onboardingPath(id)
+	if path == "" {
+		return l, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return l, false
+	}
+	var kept requestLogs
+	if json.Unmarshal(data, &kept) != nil || kept.BackendService != l.BackendService || kept.Region != l.Region {
+		return l, false
+	}
+	kept.entry = path
+	return kept, true
+}
+
+// keepLogs writes what was found before the update that turns the logs on.
+func (x *run) keepLogs(id string, l *requestLogs) error {
+	path := x.onboardingPath(id)
+	if path == "" {
+		return nil
+	}
+	data, err := json.Marshal(l)
+	if err == nil {
+		if err = os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+			err = os.WriteFile(path, data, 0o600)
+		}
+	}
+	if err == nil {
+		l.entry = path
+	}
+	return err
+}
+
+// forgetLogs removes what the cache kept: the onboarding answered, or its undo is done.
+func (x *run) forgetLogs(l *requestLogs) {
+	if l == nil || l.entry == "" {
+		return
+	}
+	if err := os.Remove(l.entry); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintf(x.d.Err, "  ! %s is not removed: %s\n", l.entry, err)
+	}
+	l.entry = ""
 }
 
 // requestLogsIn is the onboarding's field, and the controller's Workload's.
@@ -182,6 +245,9 @@ func (x *run) undoLogs(l *requestLogs) []string {
 		return nil
 	}
 	done, err := x.restoreLogs(*l)
+	if err == nil {
+		x.forgetLogs(l)
+	}
 	switch {
 	case err != nil:
 		return []string{fmt.Sprintf("The request logs of backend service %s are not set back (%s): %s", l.BackendService, l.Before, refusal(err))}
