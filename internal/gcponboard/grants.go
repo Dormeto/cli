@@ -189,8 +189,8 @@ func (x *run) policyChanged(step string) error {
 	return nil
 }
 
-// catchUp reads the project's policy again when a step that may change it ran since the last read (roles,
-// serviceAccount, tag, database, queue, serviceAccountBinding: Google may grant its service agents at first use), the
+// catchUp reads the project's policy again when a step that may change it ran since the last read (database,
+// roles, serviceAccount, tag, queue, serviceAccountBinding: Google may grant its service agents at first use), the
 // difference attributed to the last step that ran.
 func (x *run) catchUp() error {
 	if !x.stale {

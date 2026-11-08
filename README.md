@@ -364,7 +364,7 @@ dormeto aws install --profile <manager-account-profile> --management-profile <ma
 
 Without the management account's credentials, organization access is disabled: the manager is installed all the same,
 but it cannot list the accounts until the delegation policy exists, nor read an account without its roles. Deploy them
-with the procedure, <https://dormeto.com/organization-access.html>, and check them with
+with the procedure on the website's Access page, <https://dormeto.com/organization-access.html>, and check them with
 `dormeto aws install check --management-profile <profile>`.
 
 Without a terminal, `dormeto aws install apply --management-profile <profile>` deploys organization access: after the
@@ -389,7 +389,7 @@ be applied again.
 4. If you say so, the install's bucket (its state and answers), role, log group and project are removed.
 
 Organization access is kept: its roles keep working for a reinstall. To remove them and Dormeto's statement of the
-delegation policy, see <https://dormeto.com/organization-access.html>.
+delegation policy, see the website's Access page, <https://dormeto.com/organization-access.html>.
 
 Without a terminal, `dormeto aws uninstall` stops after each plan: `dormeto aws install apply` applies the deletion protection's,
 `dormeto aws uninstall apply` the destroy plan, which keeps the bootstrap (a run with a terminal removes it on request).
@@ -1522,7 +1522,7 @@ or a missing answer (an `--yes` without a terminal); 128 and the signal's number
 
 ```sh
 dormeto gcp check --project my-project --region europe-west1
-dormeto gcp install --project my-project --region europe-west1 --image <registry>/router:0.37.0
+dormeto gcp install --project my-project --region europe-west1
 dormeto gcp workloads onboard --project my-project --region europe-west1 \
   --url-map shop-map --backend-service shop --idle-minutes 30
 dormeto gcp workloads list --project my-project --region europe-west1
@@ -1531,30 +1531,38 @@ dormeto gcp uninstall --project my-project --region europe-west1
 
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
   otherwise, then the project's parent, the APIs already on and the warnings (the Compute Engine default service
-  account's Editor grant). `--with <features>` also tests the [optional access](#optional-access-cloud-sql-and-gke) of
+  account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:
+  Google refuses to turn APIs on otherwise. `--image <image>` also tests what a router image of your own needs (see
+  [the router's image](#the-routers-image)). `--with <features>` also tests the [optional access](#optional-access-cloud-sql-and-gke) of
   those features; with `--region`, those of the install record are tested too. `--json` prints the report.
 - **`gcp install`** checks your permissions first (a ✗ stops it with nothing changed), prints the plan (the APIs to turn
   on, every IAM binding to add with its role, member, resource and condition, every resource to create), asks for
   confirmation (`--yes` without a terminal, `--dry-run` prints the plan only), applies it, prints the IAM policy
-  difference after each step and verifies. It adds the APIs, the custom roles `dormetoRouter` and
-  `dormetoRouterBackends`, the service account `dmtr-<region>`, its grants, the secure tag `dormeto=managed` (the router
-  stops only VMs that carry it), the Firestore database and the Cloud Tasks queue `dmtr-<region>`, and records all of it,
-  and the bindings Google adds by itself, in the document `install/record` of the database. With `--image` it also
-  installs the router: the Cloud Run services `dmtr-<region>-controller`, with the controller's invoker binding
+  difference after each step and verifies. It adds, in this order: the APIs; the Firestore database, so that the install
+  record is there before anything else is created; the router's [log view](#request-logs); the custom roles
+  `dormetoRouter` and `dormetoRouterBackends`; the service account `dmtr-<region>`; the secure tag `dormeto=managed` (the
+  router stops only VMs that carry it); the project's bindings, its grants among them; and the Cloud Tasks queue
+  `dmtr-<region>`. It records all of it, and the bindings Google adds by itself, in the document `install/record` of
+  the database. A run that stops at any step leaves what it created listed in the record. Unless you pass
+  `--access-only`, it also installs [the router](#the-routers-image): the Cloud Run services `dmtr-<region>-controller`, with the controller's invoker binding
   (`roles/run.invoker`, to the router's service account only), and `dmtr-<region>-waker`, with the waker's invoker check off
   (its ingress admits only the load balancer), the waker's network endpoint group and the check job `dmtr-<region>-check`
   (every 5 minutes). Run again, it plans only the differences, and shows the project's bindings its record does not
   explain, recording those of Google's service agents. It never changes or removes a binding it did not add. `--with`
   adds the [optional access](#optional-access-cloud-sql-and-gke), `--ip-list` the router's [IP lists](#ip-lists-on-google-cloud).
 - **`gcp status`** (read-only, `--json`) shows the router's record and live state: version, services, controller
-  health, queue, job, database and grants, and the record's features, IP lists and Kubernetes access. Exit 1 when
+  health, queue, job, database and grants, and the record's features, IP lists and Kubernetes access. Without
+  `--region` it shows every router of the project. Exit 1 when
   something differs from the record, such as `DMT_IP_LISTS` on a service after an interrupted run.
 - **`gcp uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while workloads are
   onboarded (`--force` offboards each first, tag bindings included), keeps the roles and the tag while another router of
   the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place. It removes every
   feature the record lists (their roles and grants; their APIs are left too), and lists the Kubernetes access no
   offboarding removed as left in its cluster. It prints every IAM change and warns of what the project's policy holds at
-  the end beyond its bindings from before the install and Google's.
+  the end beyond its bindings from before the install and Google's. `--with <features>` is only validated, and with
+  `--force` it tests those features' offboard permissions too: the uninstall always removes every feature the record lists.
+  When an install stopped while a database or a tag was still being created, the record holds the creation, and the
+  uninstall waits for it to end before it deletes the resource.
   A tag Google refuses to delete, still bound, is left and the record kept: run the same command again to finish. To
   reinstall in the same region, wait: Google may keep a deleted queue's name blocked for up to 3 days (a create can appear
   to succeed in that window, and `gcp install` then says so), and a deleted database's ID for about 5 minutes.
@@ -1563,6 +1571,50 @@ dormeto gcp uninstall --project my-project --region europe-west1
   service account only, so ask for `roles/run.invoker` on the controller if you lack it.
   If Terraform writes the load balancer, the VMs, the databases or the Deployments, it must ignore what the router
   changes: the fields are on the website's [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
+
+### The router's image
+
+`gcp install` installs Dormeto's public image by default,
+`<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>`. The multi-region follows `--region`:
+`europe-*` uses `europe`; `us-*`, `northamerica-*` and `southamerica-*` use `us`; every other region uses `asia`. The CLI
+reads the image without a token and deploys it by its digest (`<name>@sha256:…`), which the plan shows.
+
+- **The default version** is the router version this CLI's access describes. A first install takes it, and a later run
+  upgrades an older router of Dormeto's to it.
+- **`--version <v>`** installs another version, up to the default.
+- **A router newer than the CLI** stops the run before any change, with `router <v> needs a newer CLI: brew upgrade
+  dormeto`. Upgrade the CLI first.
+- **`--access-only`** installs the access without the router. The record says so (`accessOnly`), and later runs keep it
+  until one with `--version` or `--image`. It says `the router isn't installed: dormeto gcp install --version <default>`.
+- **`--image <image>`** installs a router image of your own instead, such as a copy inside a VPC Service Controls
+  perimeter. Its tag is its version. Only an image of your own needs Artifact Registry's API in the project and your
+  permissions on the image: `gcp check --image <image>` tests them before a first install. An image in another project
+  needs Artifact Registry Reader for this project's Cloud Run service agent, which you give yourself. A later run
+  keeps your image and says which public version is available: `router <v> is available: dormeto gcp install --version <v>`.
+- `--image`, `--version` and `--access-only` exclude each other.
+
+### Request logs
+
+By default the idle check counts every request the backend service answers, scanners included. With the router's request
+logs, it counts only the requests the waker would not ignore: not scanners, not `HEAD` requests, not an IP list's
+addresses.
+
+- **The install** creates the log view `dmtr-<region>-lb` on the project's `_Default` bucket, filtered to the load
+  balancers' request logs. It grants the router `roles/logging.viewAccessor` on the condition that the resource is that
+  view, never the project's other logs. The plan shows both, and `uninstall` removes the grant, then the view.
+- **`workloads onboard --request-logs`** sets the backend service's `logConfig` to every request (enabled, sample rate
+  1.0, its other fields kept), as you, before the onboarding. A backend service that already logs every request is left
+  as it is. Without the flag, an onboarding of a backend service that does not log every request ends with `! the idle
+  check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past
+  its free tier)`.
+- **The offboarding** sets the `logConfig` back when it is still what Dormeto set, and says so. If you changed it since,
+  it is left, with a notice naming the backend service.
+- **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`.
+- **The cost** is Cloud Logging's: its ingestion is charged past 50 GiB a month and project, about 1 KB per request.
+- **Terraform:** if you write the backend service in Terraform, keep `log_config { enable = true, sample_rate = 1.0 }` in
+  it, so an apply does not turn the logs off.
+- **The limit:** the view is created in the `global` location. A project that stores its `_Default` bucket elsewhere gets
+  no view, and the request count decides.
 
 ### Optional access: Cloud SQL and GKE
 
@@ -1624,7 +1676,7 @@ browsers and scanners on those addresses, not a client that means to wake.
 | Command | What it does |
 |---|---|
 | `workloads list` | the router's workloads and their states |
-| `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, and a Cloud SQL instance that no longer exists |
+| `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, what the idle check reads, and a Cloud SQL instance that no longer exists |
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
 | `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed) |
 | `workloads nap <id>`, `workloads wake <id>` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends) |
@@ -1656,6 +1708,8 @@ The onboarding's other flags:
   600 s for VMs, 300 s for pods and 1700 s with a Cloud SQL companion, plus the swap's wait on regional (100 s) and classic
   (250 s), up to 1700. If you set it, give a regional load balancer about 250 s or more, and a classic one about 340 s
   or more.
+- `--request-logs`: turns the backend service's request logs on, for the idle check to read ([request logs](#request-logs)).
+  Its warning, the offboarding's set-back and the cost are there.
 - `--cloud-sql <instance>`, repeatable: a Cloud SQL instance of the project that naps with the workload, stopped after the
   application and started before it. The tag is bound to it as you, and unbound at the offboarding.
 - `--gke-cluster <location>/<name>`: the workload's pods are in this GKE cluster, behind standalone network endpoint groups
@@ -1734,7 +1788,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   refused, nothing changed. The binding's other subjects stay; another router's service account (`dmtr-*@…`) among them
   is refused. Kubernetes lets no one grant rights they do not hold: without them, you need `container.roles.escalate`
   (Google lists it as testing in custom roles) and `container.roles.bind`.
-- `access revoke` removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
+- `access revoke` prints what it removes and asks (`--yes` without a terminal and with `--json`), then removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
   name without the label is left and said. While another subject holds the binding, only the router's subject goes, and
   both objects stay. It works after `dormeto gcp uninstall`, which lists what it leaves in a cluster.
 - The CLI and the router reach the cluster on its DNS endpoint, which must be open to traffic from outside its network:
@@ -1750,11 +1804,14 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   page with a `503` and `Retry-After`, whatever the method: an API client reads it as asleep, sends
   `POST /_dormeto/wake`, then retries. A plain request (a `curl`, a webhook) gets the page and does not wake the workload.
   A visitor at a nap's start may wait up to twice the swap's wait with the VMs still running, and a nap that dies while
-  swapped holds visitors at the waker for up to 15 minutes, until the router's check fails it. Right after a classic
+  swapped holds visitors at the waker only for minutes: a nap that stops beating is called stuck by the router's check (22
+  minutes at the latest under a swap). Right after a classic
   map's change first routes a path to the waker, Cloud Run answered plain HTTP with a `302` to `https://` for about 40 s
   (measured): an HTTP-only classic front end gets that error for that moment.
 - **A zonal network endpoint group's VMs**: a nap acts only on what still is the group. A membership changed, or a group
-  gone, aborts every nap until you offboard and onboard the workload again; a wake still starts what was recorded. A VM
+  gone, aborts every nap until you offboard and onboard the workload again; a wake still starts what was recorded. A
+  nap also checks an unmanaged instance group's VMs and the backend service's backends against the onboarding
+  (`backends-changed`). A VM
   of a managed group, an empty group and the other types are refused at the onboarding.
 - **A database belongs to one router**: two routers on one instance flip it at each check, and offboarding one unbinds
   the tag the other needs.
@@ -1773,6 +1830,13 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 - **GKE's own load balancers are refused**: a URL map named `k8s2-`, `gkegw1-` or `gkemcg1-` belongs to an Ingress or a
   Gateway, whose controller writes it back. One measured case: GKE removed a policy written on a Gateway's map 48 s after
   its routes changed, without a word. Use a standalone network endpoint group on a load balancer you own.
+- **KEDA at zero is refused**: an owner whose ScaledObject has `minReplicaCount: 0`, set or left to KEDA's default, is
+  refused. Set it to 1 or more.
+- **A classic load balancer on the Standard network tier** is found by the onboarding. Whether Google accepts it for the
+  swap is unmeasured.
+- **Many naps on one regional map**: the naps share the map's updates, and one that finds it busy gives up (`map-busy`)
+  and leaves the workload awake. A router has at most 20 naps in flight; the others nap at a later check.
+- **Stats** (wakes, ignored requests) are kept 35 days, and an offboarding deletes its workload's.
 - **GKE pods**: a workload at 0 replicas cannot be onboarded. A nap needs the owner's pods behind the network endpoint
   group, and may wait a window for a new pod's endpoint; one aborted for an empty group or a foreign endpoint shows only
   in the router's logs. A wake with no recorded replicas, after a scale to 0 by hand, brings 1 replica. An onboarding
@@ -1790,8 +1854,8 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   on a busy map are unit-tested only), an operator holding exactly the permissions `gcp check` lists for `onboard`, a
   Cloud SQL start refused for lack of capacity, and a nap cut short by a new revision of the controller.
 
-There is no public router image: you build and push your own (`scripts/gcp-image.sh` in the router's repository; the
-website's [Google Cloud page](https://dormeto.com/google-cloud.html) has the steps). There is no dashboard or manager for
+Dormeto's public router image is the default; to build and push your own for `--image`, see `scripts/gcp-image.sh` in the
+router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). There is no dashboard or manager for
 Google Cloud yet, and the branded waiting page does not apply to it.
 
 ## Building from source
