@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/kubernetes"
 )
@@ -122,6 +123,31 @@ type workload struct {
 	// its last check that counted a request: "request logs" or "request count".
 	RequestLogs *requestLogsIn `json:"requestLogs"`
 	IdleReads   string         `json:"idleReads"`
+	// The levels (a router with the settings levels): where each setting comes from, the type, the rules of every level, the resolved
+	// hibernation, the fallback machine types and the types a VM runs on.
+	SettingsFrom          map[string]string  `json:"settingsFrom"`
+	Type                  *typeRef           `json:"type"`
+	NoWakeRules           []describedRule    `json:"noWakeRules"`
+	WakeRules             []describedRule    `json:"wakeRules"`
+	Hibernation           *fleet.Hibernation `json:"hibernation"`
+	FallbackInstanceTypes []string           `json:"fallbackInstanceTypes"`
+	InstanceTypes         map[string]struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	} `json:"instanceTypes"`
+}
+
+// typeRef is a workload's type and why: set on it, from its tags or from its backends.
+type typeRef struct {
+	Name *string `json:"name"`
+	From *string `json:"from"`
+}
+
+// describedRule is a rule as the controller describes it, with its level (`from` for a wake rule).
+type describedRule struct {
+	fleet.NoWake
+	Level string `json:"level"`
+	From  string `json:"from"`
 }
 
 // dryRun is the controller's answer to an onboarding dry run.
@@ -419,12 +445,16 @@ func (x *run) details(w workload) {
 	line("backend service", w.BackendService)
 	line("waker backend service", w.WakerBackendService)
 	line("hosts", strings.Join(w.Hosts, ", "))
-	var settings []string
-	for k, v := range w.Settings {
-		settings = append(settings, fmt.Sprintf("%s %v", k, v))
+	if len(w.SettingsFrom) > 0 {
+		x.levelDetails(w)
+	} else {
+		var settings []string
+		for k, v := range w.Settings {
+			settings = append(settings, fmt.Sprintf("%s %v", k, v))
+		}
+		sort.Strings(settings)
+		line("settings", strings.Join(settings, ", "))
 	}
-	sort.Strings(settings)
-	line("settings", strings.Join(settings, ", "))
 	for _, b := range w.Backends {
 		x.say("  backend: %s", b)
 	}

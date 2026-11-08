@@ -64,6 +64,12 @@ type Request struct {
 	CloudSQL     []string
 	RequestLogs  bool
 
+	// The settings commands: the workloads' IDs (the argument of settings is one or more), and the flat body the level flags
+	// give: each key a value, or null to give it back to the levels. A router's: hibernate, joinMinutes and defaults.
+	// Empty for the router's: its level is shown.
+	IDs    []string
+	Levels map[string]any
+
 	// The schedule and pause commands: the schedule's file (set), the pause's reason, --keep-asleep and --until (RFC 3339).
 	File, Reason, Until string
 	KeepAsleep          bool

@@ -120,6 +120,12 @@ type Server struct {
 	NextEvents      []any
 	ScheduleProblem string
 	ScheduleJoin    map[string]any
+	// ControllerBeforeSettings plays a router before G5: no route for the settings levels (a workload's settings, the router's).
+	// SettingsProblem, when set, makes a PUT of settings refuse with a 400 saying it; RouterLevel is the router's level as
+	// GET /v1/settings answers it.
+	ControllerBeforeSettings bool
+	SettingsProblem          string
+	RouterLevel              map[string]any
 	// SQLInstances are the project's Cloud SQL instances, by name, with their region.
 	SQLInstances map[string]string
 	// SQLReplicas are the read replicas of a Cloud SQL instance, by its name, as the dry run names them.

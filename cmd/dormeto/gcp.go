@@ -28,16 +28,16 @@ type gcpRun func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) i
 
 // gcpRuns are the runs of the gcp commands: internal/gcponboard's, or a test's.
 type gcpRuns struct {
-	check, install, status, uninstall gcpRun
-	workloads                         gcpWorkloadRuns
+	check, install, status, uninstall, routerSettings gcpRun
+	workloads                                         gcpWorkloadRuns
 }
 
 // theGcpRuns are internal/gcponboard's.
-var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, workloads: theGcpWorkloadRuns}
+var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, workloads: theGcpWorkloadRuns}
 
 func newGcp(runs gcpRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version))
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs.routerSettings, version))
 	return cmd
 }
 

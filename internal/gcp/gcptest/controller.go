@@ -125,7 +125,7 @@ type workloadIn struct {
 func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/v1/workloads"), "/")
 	id, verb, _ := strings.Cut(rest, "/")
-	if s.ControllerBelow035 && slices.Contains([]string{"schedule", "pause", "resume"}, verb) {
+	if (s.ControllerBelow035 && slices.Contains([]string{"schedule", "pause", "resume"}, verb)) || (s.ControllerBeforeSettings && verb == "settings") {
 		controllerFail(w, 404, "not-found", "no route for "+r.Method+" "+r.URL.Path)
 		return
 	}
@@ -177,6 +177,8 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 			Reply(w, map[string]any{})
 		case verb == "schedule":
 			s.schedule(w, r, id)
+		case verb == "settings" && r.Method == http.MethodPut:
+			s.workloadSettings(w, r, id)
 		case verb == "pause" && r.Method == http.MethodPost:
 			s.pause(w, r, id)
 		case verb == "resume" && r.Method == http.MethodPost:
@@ -454,4 +456,85 @@ func (s *Server) pause(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	s.WorkloadDocs[id]["paused"] = record
 	Reply(w, s.workloadBody(id))
+}
+
+// workloadSettings serves PUT /v1/workloads/<id>/settings: the flat body is merged into the workload's settings (a null removes
+// the key); SettingsProblem, when set, refuses it with a 400 saying it. The answer is the router's: the settings written, the
+// hibernation and what resolves.
+func (s *Server) workloadSettings(w http.ResponseWriter, r *http.Request, id string) {
+	var in map[string]any
+	body, _ := io.ReadAll(r.Body)
+	if s.SettingsProblem != "" || json.Unmarshal(body, &in) != nil {
+		controllerFail(w, 400, "bad-request", s.SettingsProblem)
+		return
+	}
+	delete(in, "by")
+	if s.WorkloadDocs[id] == nil {
+		s.WorkloadDocs[id] = map[string]any{}
+	}
+	stored, _ := s.WorkloadDocs[id]["ownSettings"].(map[string]any)
+	if stored == nil {
+		stored = map[string]any{}
+	}
+	for k, v := range in {
+		if v == nil {
+			delete(stored, k)
+		} else {
+			stored[k] = v
+		}
+	}
+	s.WorkloadDocs[id]["ownSettings"] = stored
+	hibernation := map[string]any{"hibernate": false, "from": "default"}
+	if h, ok := stored["hibernate"].(bool); ok {
+		hibernation = map[string]any{"hibernate": h, "from": "workload"}
+	}
+	Reply(w, map[string]any{"level": "workload", "settings": in, "hibernation": hibernation,
+		"resolved": map[string]any{"settings": stored, "settingsFrom": map[string]any{}, "type": map[string]any{"name": "instance", "from": "backends"}}})
+}
+
+// routerSettings serves GET and PUT /v1/settings: the router level, its flat body merged as the router merges it (a null removes a
+// key, defaults merged key by key).
+func (s *Server) routerSettings(w http.ResponseWriter, r *http.Request) {
+	if s.ControllerBeforeSettings {
+		controllerFail(w, 404, "not-found", "no route for "+r.Method+" "+r.URL.Path)
+		return
+	}
+	if s.RouterLevel == nil {
+		s.RouterLevel = map[string]any{"hibernate": nil, "joinMinutes": nil, "defaults": nil}
+	}
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodPut:
+		var in map[string]any
+		body, _ := io.ReadAll(r.Body)
+		if s.SettingsProblem != "" || json.Unmarshal(body, &in) != nil {
+			controllerFail(w, 400, "bad-request", s.SettingsProblem)
+			return
+		}
+		for k, v := range in {
+			switch k {
+			case "by":
+				s.RouterLevel["by"], s.RouterLevel["at"] = v, "2026-11-01T10:00:00.000Z"
+			case "defaults":
+				held, _ := s.RouterLevel["defaults"].(map[string]any)
+				if held == nil {
+					held = map[string]any{}
+				}
+				for dk, dv := range v.(map[string]any) {
+					if dv == nil {
+						delete(held, dk)
+					} else {
+						held[dk] = dv
+					}
+				}
+				s.RouterLevel["defaults"] = held
+			default:
+				s.RouterLevel[k] = v
+			}
+		}
+	default:
+		noRoute(w, r)
+		return
+	}
+	Reply(w, map[string]any{"level": "router", "settings": s.RouterLevel})
 }

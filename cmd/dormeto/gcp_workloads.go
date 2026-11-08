@@ -15,18 +15,18 @@ import (
 
 // gcpWorkloadRuns are the runs of the gcp workloads commands.
 type gcpWorkloadRuns struct {
-	list, show, onboard, offboard, nap, wake, scheduleShow, scheduleSet, scheduleClear, pause, resume, accessShow, accessGrant, accessRevoke gcpRun
+	list, show, onboard, offboard, nap, wake, scheduleShow, scheduleSet, scheduleClear, pause, resume, accessShow, accessGrant, accessRevoke, settings gcpRun
 }
 
 var theGcpWorkloadRuns = gcpWorkloadRuns{list: gcponboard.WorkloadsList, show: gcponboard.WorkloadsShow, onboard: gcponboard.WorkloadsOnboard,
 	offboard: gcponboard.WorkloadsOffboard, nap: gcponboard.WorkloadsNap, wake: gcponboard.WorkloadsWake,
 	scheduleShow: gcponboard.WorkloadsScheduleShow, scheduleSet: gcponboard.WorkloadsScheduleSet, scheduleClear: gcponboard.WorkloadsScheduleClear,
 	pause: gcponboard.WorkloadsPause, resume: gcponboard.WorkloadsResume,
-	accessShow: gcponboard.WorkloadsAccessShow, accessGrant: gcponboard.WorkloadsAccessGrant, accessRevoke: gcponboard.WorkloadsAccessRevoke}
+	accessShow: gcponboard.WorkloadsAccessShow, accessGrant: gcponboard.WorkloadsAccessGrant, accessRevoke: gcponboard.WorkloadsAccessRevoke, settings: gcponboard.WorkloadsSettings}
 
 func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "workloads", Short: "Workloads of a Dormeto router in Google Cloud", Args: noArgs, SilenceErrors: true,
-		Long: "List, show, onboard, offboard, nap, wake, schedule, pause and resume the workloads of the router dmtr-<region>, through its controller\n" +
+		Long: "List, show, onboard, offboard, nap, wake, schedule, pause, resume and settings the workloads of the router dmtr-<region>, through its controller\n" +
 			"with your identity token (the Cloud Run invoker role on it). 'access' writes a GKE workload's Kubernetes RBAC, in the cluster."}
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
@@ -45,6 +45,7 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 		newGcpWorkloadsSchedule(runs, version),
 		newGcpWorkloadsPause(runs.pause, version),
 		newGcpWorkloadsOne("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false),
+		newGcpWorkloadsSettings(runs.settings, version),
 		newGcpWorkloadsAccess(runs, version))
 	return cmd
 }

@@ -400,6 +400,10 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 			s.workloads(w, r)
 			return
 		}
+		if r.URL.Path == "/v1/settings" {
+			s.routerSettings(w, r)
+			return
+		}
 		if r.URL.Path != "/v1/health" || r.Method != http.MethodGet {
 			noRoute(w, r)
 			return

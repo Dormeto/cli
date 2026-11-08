@@ -20,21 +20,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// levelSetting is a numeric setting: its flag, its key in the manager's words and its range.
-type levelSetting struct {
-	flag, key, label string
-	min, max         int
-	format           func(int) string
-}
-
-var levelSettings3 = []levelSetting{
-	{"idle-minutes", "idleMinutes", "idle window", 5, 1440, func(v int) string { return fmt.Sprintf("%d min", v) }},
-	{"wait-seconds", "waitSeconds", "hold", 5, 120, fleet.Seconds},
-	{"drain-seconds", "drainSeconds", "drain", 0, 300, fleet.Seconds},
-	{"wake-timeout-seconds", "wakeTimeoutSeconds", "wake timeout", 60, 3600, fleet.Seconds},
-	{"max-holders", "maxHolders", "held requests", 1, 500, func(v int) string { return fmt.Sprintf("≤ %d", v) }},
-	{"failed-retry-seconds", "failedRetrySeconds", "retry after a failed wake", 10, 600, fleet.Seconds},
-}
+// levelSettings3 are the numeric settings of a level (shared with the Google Cloud commands through fleet).
+var levelSettings3 = fleet.LevelSettings
 
 // builtInTypes are the types derived from a workload's backends.
 var builtInTypes = []string{"instance", "asg", "ecs", "k8s", "databases"}
@@ -54,8 +41,8 @@ func bindLevelFlags(cmd *cobra.Command, unset string) *levelFlags {
 	l := &levelFlags{unset: unset, numbers: map[string]*string{}}
 	for _, s := range levelSettings3 {
 		v := new(string)
-		l.numbers[s.flag] = v
-		cmd.Flags().StringVar(v, s.flag, "", fmt.Sprintf("the %s, %d to %d, or %s", s.label, s.min, s.max, unset))
+		l.numbers[s.Flag] = v
+		cmd.Flags().StringVar(v, s.Flag, "", fmt.Sprintf("the %s, %d to %d, or %s", s.Label, s.Min, s.Max, unset))
 	}
 	cmd.Flags().StringVar(&l.wakeMode, "wake-mode", "", "any, browser, or "+unset)
 	cmd.Flags().StringVar(&l.noWake, "no-wake-rules-file", "", "a JSON list of no-wake rules (a path, - for the standard input), or "+unset)
@@ -67,19 +54,19 @@ func bindLevelFlags(cmd *cobra.Command, unset string) *levelFlags {
 func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 	out := map[string]any{}
 	for _, s := range levelSettings3 {
-		if !c.Flags().Changed(s.flag) {
+		if !c.Flags().Changed(s.Flag) {
 			continue
 		}
-		v := strings.TrimSpace(*l.numbers[s.flag])
+		v := strings.TrimSpace(*l.numbers[s.Flag])
 		if v == l.unset {
-			out[s.key] = nil
+			out[s.Key] = nil
 			continue
 		}
 		n, err := strconv.Atoi(v)
-		if err != nil || n < s.min || n > s.max {
-			return nil, usagef("--%s: give a whole number from %d to %d, or %s", s.flag, s.min, s.max, l.unset)
+		if err != nil || n < s.Min || n > s.Max {
+			return nil, usagef("--%s: give a whole number from %d to %d, or %s", s.Flag, s.Min, s.Max, l.unset)
 		}
-		out[s.key] = n
+		out[s.Key] = n
 	}
 	if c.Flags().Changed("wake-mode") {
 		switch l.wakeMode {
@@ -128,23 +115,7 @@ func readRules(c *cobra.Command, path string) ([]any, error) {
 }
 
 // levelLines says the settings a level sets, one each, in the order of the flags.
-func levelLines(d map[string]any) []string {
-	var lines []string
-	for _, s := range levelSettings3 {
-		if n, ok := d[s.key].(float64); ok {
-			lines = append(lines, s.label+" "+s.format(int(n)))
-		}
-	}
-	if m, ok := d["wakeMode"].(string); ok {
-		lines = append(lines, "wake mode "+m)
-	}
-	for _, r := range []struct{ key, label string }{{"noWakeRules", "no-wake rules"}, {"wakeRules", "wake rules"}} {
-		if list, ok := d[r.key].([]any); ok && len(list) > 0 {
-			lines = append(lines, fmt.Sprintf("%s %d", r.label, len(list)))
-		}
-	}
-	return lines
-}
+func levelLines(d map[string]any) []string { return fleet.LevelLines(d) }
 
 // defaultsLine is the organization's workload settings in `settings show|set`.
 func defaultsLine(raw json.RawMessage) string {

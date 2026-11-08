@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -273,6 +276,144 @@ func TestGcpWorkloadsAccessIsWiredInTheRoot(t *testing.T) {
 	for _, want := range []string{"--gke-cluster", "--namespace", "--workload", "--yes", "--json", "--project", "--region", "--gcloud-configuration", "dormeto-<workload>", "container.roles.escalate"} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Errorf("%d %s lacks %s", code, out, want)
+		}
+	}
+}
+
+// sameJSON compares what is sent: a body is what it marshals to.
+func sameJSON(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+const gcpSettingsArgs = "--project p --region europe-west1"
+
+func settingsArgs(rest ...string) []string {
+	return append(strings.Fields(gcpSettingsArgs), rest...)
+}
+
+func TestGcpWorkloadsSettingsReadTheFlagsIntoTheBody(t *testing.T) {
+	args := append([]string{"gcp", "workloads", "settings", "shop", "web"}, settingsArgs("--idle-minutes", "30", "--wake-timeout-seconds", "900",
+		"--failed-retry-seconds", "120", "--wake-mode", "browser", "--hibernate", "true", "--type", "batch")...)
+	calls, errs, exit := gcpRan(t, 0, args...)
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads settings" {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	r := calls[0].r
+	want := map[string]any{"idleMinutes": 30, "wakeTimeoutSeconds": 900, "failedRetrySeconds": 120, "wakeMode": "browser", "hibernate": true, "type": "batch"}
+	if !slices.Equal(r.IDs, []string{"shop", "web"}) || !sameJSON(r.Levels, want) || r.Project != "p" || r.Region != "europe-west1" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestGcpWorkloadsSettingsInheritSendsNull(t *testing.T) {
+	args := append([]string{"gcp", "workloads", "settings", "shop"}, settingsArgs("--idle-minutes", "inherit", "--wake-mode", "inherit", "--hibernate", "inherit",
+		"--type", "inherit", "--wake-timeout-seconds", "inherit", "--wait-seconds", "inherit", "--no-wake-rules-file", "inherit", "--wake-rules-file", "inherit")...)
+	calls, errs, exit := gcpRan(t, 0, args...)
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	want := map[string]any{"idleMinutes": nil, "wakeMode": nil, "hibernate": (*bool)(nil), "type": nil, "wakeTimeoutSeconds": nil, "waitSeconds": nil, "noWakeRules": nil, "wakeRules": nil}
+	if !sameJSON(calls[0].r.Levels, want) {
+		t.Fatalf("%#v", calls[0].r.Levels)
+	}
+}
+
+func TestGcpWorkloadsSettingsPassWakeModeAnyOn(t *testing.T) {
+	// The router decides by the workload's load balancer.
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings", "shop"}, settingsArgs("--wake-mode", "any")...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].r.Levels["wakeMode"] != "any" {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+}
+
+func TestGcpWorkloadsSettingsReadTheRulesFiles(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "rules.json")
+	if err := os.WriteFile(file, []byte(`[{"name":"probe","pathPrefixes":["/health"]}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings", "shop"}, settingsArgs("--no-wake-rules-file", file)...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	rules, _ := calls[0].r.Levels["noWakeRules"].([]any)
+	if len(rules) != 1 {
+		t.Fatalf("%#v", calls[0].r.Levels)
+	}
+}
+
+// The reasons are the router's (REASONS of gcp/src/levels.mjs), word for word.
+var gcpRouterReasons = map[string]string{
+	"--wait-seconds":  "waitSeconds is 0 on Google Cloud: the waker holds no request (behind a swap the switch back takes longer than any hold; behind the policy it receives only the error fetch)",
+	"--max-holders":   "maxHolders is 0 on Google Cloud: no request is held",
+	"--drain-seconds": "drainSeconds is 0 on Google Cloud: the nap's switch is a URL map change, and the backend service's own connection draining applies",
+}
+
+func TestGcpFixedSettingsAreRefusedBeforeAnyCallWithTheRoutersReasons(t *testing.T) {
+	for flag, reason := range gcpRouterReasons {
+		for _, command := range [][]string{{"gcp", "workloads", "settings", "shop"}, {"gcp", "routers", "settings"}} {
+			calls, errs, exit := gcpRan(t, 0, append(slices.Clone(command), settingsArgs(flag, "30")...)...)
+			if exit != 2 || len(calls) != 0 || !strings.Contains(errs, reason) {
+				t.Errorf("%v %s: exit %d calls %v stderr %q", command, flag, exit, calls, errs)
+			}
+		}
+	}
+	// Given back to the levels, they are not refused.
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings", "shop"}, settingsArgs("--wait-seconds", "inherit", "--max-holders", "inherit", "--drain-seconds", "inherit")...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+}
+
+func TestGcpWorkloadsSettingsRefuseWhatAwsRefuses(t *testing.T) {
+	for _, rest := range [][]string{
+		{"--idle-minutes", "2"},
+		{"--idle-minutes", "x"},
+		{"--wake-mode", "sometimes"},
+		{"--hibernate", "maybe"},
+		{"--type", "Not A Type"},
+		{},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings", "shop"}, settingsArgs(rest...)...)...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d calls %v stderr %q", rest, exit, calls, errs)
+		}
+	}
+	if calls, _, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings"}, settingsArgs("--idle-minutes", "30")...)...); exit != 2 || len(calls) != 0 {
+		t.Errorf("no workload: exit %d calls %v", exit, calls)
+	}
+}
+
+func TestGcpRoutersSettingsReadTheFlagsIntoTheBody(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "settings"}, settingsArgs("--hibernate", "true", "--join-minutes", "30", "--idle-minutes", "45",
+		"--wake-timeout-seconds", "inherit", "--yes", "--json")...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "routers settings" {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	r := calls[0].r
+	want := map[string]any{"hibernate": true, "joinMinutes": 30, "defaults": map[string]any{"idleMinutes": 45, "wakeTimeoutSeconds": nil}}
+	if !sameJSON(r.Levels, want) || !r.Yes || !r.JSON || r.DryRun {
+		t.Fatalf("%#v", r)
+	}
+	calls, _, _ = gcpRan(t, 0, append([]string{"gcp", "routers", "settings"}, settingsArgs("--hibernate", "inherit", "--join-minutes", "inherit", "--dry-run")...)...)
+	if r := calls[0].r; !r.DryRun || !sameJSON(r.Levels, map[string]any{"hibernate": nil, "joinMinutes": nil}) {
+		t.Fatalf("%#v", r)
+	}
+}
+
+func TestGcpRoutersSettingsWithNoFlagShowTheLevel(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "settings"}, settingsArgs()...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 || len(calls[0].r.Levels) != 0 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+}
+
+func TestGcpRoutersSettingsRefuseABadValueBeforeAnyCall(t *testing.T) {
+	for _, rest := range [][]string{{"--hibernate", "maybe"}, {"--join-minutes", "7"}, {"--idle-minutes", "2"}} {
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "settings"}, settingsArgs(rest...)...)...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d calls %v stderr %q", rest, exit, calls, errs)
 		}
 	}
 }
