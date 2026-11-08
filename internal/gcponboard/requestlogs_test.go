@@ -62,28 +62,31 @@ func newLogsRig(t *testing.T) *workloadsRig {
 }
 
 // The final review's Important 1: a router below 0.38.0 drops the onboarding's requestLogs, so the offboarding would never
-// set the logs back. --request-logs is refused there before any change, the dry run's too.
+// set the logs back. --request-logs is refused there before any change, the dry run's too. The version's core decides: a
+// 0.37.9 and its dev builds are below.
 func TestWorkloadsOnboardRequestLogsOnARouterBelow038IsRefusedBeforeAnyChange(t *testing.T) {
-	for _, dry := range []bool{false, true} {
-		g := newWorkloadsRig(t)
-		g.s.HealthVersion = "0.37.0"
-		g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
-		r := shopWithLogs
-		r.DryRun = dry
-		mark := len(g.s.Calls())
-		code, out := g.call(t, WorkloadsOnboard, r)
-		if code != 2 {
-			t.Fatalf("dry run %t: exit %d:\n%s", dry, code, out)
-		}
-		contains(t, out, "--request-logs needs router 0.38.0 or later: dormeto gcp install --version "+embeddedRouterVersion()+"\n", "Nothing was changed.\n")
-		if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 || len(g.patches(mark)) != 0 {
-			t.Errorf("dry run %t: changes %v, bindings %v", dry, m, g.bindings())
-		}
-		if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/workloads?dryRun=true", "GET /v1/health"}) {
-			t.Errorf("dry run %t: controller calls %v", dry, got)
-		}
-		if got := g.logConfig("global"); !jsonEqual(got, map[string]any{"enable": true, "sampleRate": 0.5}) {
-			t.Errorf("dry run %t: logConfig %v", dry, got)
+	for _, version := range []string{"0.37.0", "0.37.9", "0.37.9-dev.2"} {
+		for _, dry := range []bool{false, true} {
+			g := newWorkloadsRig(t)
+			g.s.HealthVersion = version
+			g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})
+			r := shopWithLogs
+			r.DryRun = dry
+			mark := len(g.s.Calls())
+			code, out := g.call(t, WorkloadsOnboard, r)
+			if code != 2 {
+				t.Fatalf("%s, dry run %t: exit %d:\n%s", version, dry, code, out)
+			}
+			contains(t, out, "--request-logs needs router 0.38.0 or later: dormeto gcp install --version "+embeddedRouterVersion()+"\n", "Nothing was changed.\n")
+			if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 || len(g.patches(mark)) != 0 {
+				t.Errorf("%s, dry run %t: changes %v, bindings %v", version, dry, m, g.bindings())
+			}
+			if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/workloads?dryRun=true", "GET /v1/health"}) {
+				t.Errorf("%s, dry run %t: controller calls %v", version, dry, got)
+			}
+			if got := g.logConfig("global"); !jsonEqual(got, map[string]any{"enable": true, "sampleRate": 0.5}) {
+				t.Errorf("%s, dry run %t: logConfig %v", version, dry, got)
+			}
 		}
 	}
 }
@@ -128,9 +131,11 @@ func TestWorkloadsOnboardRequestLogsStopsWhenTheRoutersVersionIsNotRead(t *testi
 	}
 }
 
-// A router at 0.38.0 or later, its pre-releases included, takes the flag; one whose version is no release's is not refused.
+// A router at 0.38.0 or later takes the flag. The version's core decides, so the dev builds and release candidates of 0.38.0
+// (package.json 0.38.0-dev.<n>, 0.38.0-rc.<n>), which SemVer orders below 0.38.0, take it too; one whose version is no
+// release's is not refused.
 func TestWorkloadsOnboardRequestLogsOnARouterAt038OrLaterTurnsTheLogsOn(t *testing.T) {
-	for _, version := range []string{"0.38.0", "0.38.0-rc.1", "0.39.2", "dev"} {
+	for _, version := range []string{"0.38.0", "0.38.0-dev.3", "0.38.0-rc.1", "0.39.2", "dev"} {
 		g := newWorkloadsRig(t)
 		g.s.HealthVersion = version
 		g.logging("global", map[string]any{"enable": true, "sampleRate": 0.5})

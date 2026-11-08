@@ -43,7 +43,8 @@ const countWarning = "! the idle check counts every request, scanners included: 
 const requestLogsRouterVersion = "0.38.0"
 
 // readsRequestLogs tells whether the router reads the request logs, from the version its controller's health answers: one
-// below requestLogsRouterVersion does not; one whose version is no release's (a dev build) is taken to.
+// whose core (X.Y.Z, its pre-release dropped) is below requestLogsRouterVersion does not, so 0.38.0's dev builds and release
+// candidates (0.38.0-dev.<n>, 0.38.0-rc.<n>) do; one whose version is no release's is taken to.
 func (x *run) readsRequestLogs() (bool, error) {
 	version, err := x.health()
 	if err != nil {
