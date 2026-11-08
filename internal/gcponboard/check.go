@@ -243,6 +243,8 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 			r.Image = rec.Image
 		}
 	}
+	// It takes no onboarding flag: it tests the whole onboard list, --request-logs's too.
+	r.RequestLogs = true
 	rep, err := check(ctx, d, r, access.Commands())
 	if err == nil && warning != "" {
 		rep.Warnings = append(rep.Warnings, warning)
@@ -252,14 +254,25 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 
 // check is Check for some commands only: their permissions alone are asked (install asks exactly what its steps need).
 // install-router's image step and Artifact Registry's API are asked for an image of the customer's own (r.Image: --image,
-// or the recorded one) only.
+// or the recorded one) only; onboard's requestLogs step whole with --request-logs only, else its backend service's reads.
 func check(ctx context.Context, d Deps, r Request, commands []string) (Report, error) {
 	ownImage := r.Image != ""
 	needs := func(command string) []string {
-		if ownImage {
-			return access.NeedsWith(command, r.With)
+		var skip []string
+		if !ownImage {
+			skip = append(skip, imageStep)
 		}
-		return access.NeedsWithout(command, r.With, imageStep)
+		if command != "onboard" || r.RequestLogs {
+			return access.NeedsWithout(command, r.With, skip...)
+		}
+		out := access.NeedsWithout(command, r.With, append(skip, requestLogsStep)...)
+		for _, p := range backendServiceReads {
+			if slices.Contains(access.Needs(command), p) {
+				out = append(out, p)
+			}
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
 	}
 	account, err := d.Google.Tokens.Account(ctx)
 	if err != nil {

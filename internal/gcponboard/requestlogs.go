@@ -21,6 +21,13 @@ import (
 // logsTimeout bounds the wait for a backend service's update.
 const logsTimeout = 2 * time.Minute
 
+// requestLogsStep is onboard's step of the manifest for the request logs: --request-logs needs all of it, an onboarding without
+// it only backendServiceReads, which decide the warning. The manifest lists the step whole: the condition is the CLI's, as
+// imageStep's.
+const requestLogsStep = "requestLogs"
+
+var backendServiceReads = []string{"compute.backendServices.get", "compute.regionBackendServices.get"}
+
 // countWarning is said after an onboarding without --request-logs of a backend service that does not log every request.
 const countWarning = "! the idle check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past its free tier)"
 

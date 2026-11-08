@@ -110,7 +110,9 @@ func newGcpCheck(run gcpRun, version string) *cobra.Command {
 			"a command lacks a permission or the project has no billing.\n\n"+
 			"The permissions on the router's image (install-router's step image) and the API artifactregistry.googleapis.com\n"+
 			"are tested only for a router of --image, a router image of your own: give --image before a first install with\n"+
-			"it; with --region, the install record's image of --image is tested too. Dormeto's public image needs neither.",
+			"it; with --region, the install record's image of --image is tested too. Dormeto's public image needs neither.\n"+
+			"The onboard list is the whole of what 'workloads onboard --request-logs' needs, the backend services' updates and\n"+
+			"the operations' reads included; an onboarding without --request-logs needs only the backend services' reads.",
 		&f, []string{"project"}, version, run)
 	cmd.Flags().StringVar(&f.region, "region", "", "the router's region")
 	cmd.Flags().StringVar(&f.image, "image", "", "a router image of your own: also test its permissions and Artifact Registry's API, needed only for a router of --image")

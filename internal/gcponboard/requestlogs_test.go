@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
 )
 
@@ -202,6 +203,54 @@ func TestWorkloadsOnboardStopsBeforeAnyChangeWhenTheBackendServiceIsNotRead(t *t
 	contains(t, out, "The request logs of backend service shop are not read: ", "compute.backendServices.get", "Nothing was changed.")
 	if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 {
 		t.Fatalf("changes %v", m)
+	}
+}
+
+// Without the flag, the read decides the warning alone: a failed read is a notice, and the onboarding goes on.
+func TestWorkloadsOnboardWithoutRequestLogsGoesOnWhenTheBackendServiceIsNotRead(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "compute.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/backendServices/shop",
+		Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 0 || g.s.Workloads["shop"] != "AWAKE" {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !strings.HasSuffix(out, "  ! the request logs of backend service shop are not read: google: 500 INTERNAL: boom\n") || strings.Contains(out, "! the idle check") {
+		t.Fatalf("%s", out)
+	}
+}
+
+// The design's §5 and the controller's ruling: an onboarding without --request-logs asks the backend service's read alone of
+// the step, as install-router's image step is asked with --image alone; with the flag, the whole step.
+func TestWorkloadsOnboardAsksTheRequestLogsUpdateWithItsFlagAlone(t *testing.T) {
+	update := []string{"compute.backendServices.update", "compute.globalOperations.get", "compute.regionBackendServices.update", "compute.regionOperations.get"}
+	for _, flag := range []bool{false, true} {
+		g := newWorkloadsRig(t)
+		g.logging("global", nil)
+		g.s.HoldsAll = false
+		g.s.Held = map[string]bool{}
+		for _, p := range access.Needs("onboard") {
+			g.s.Held[p] = !slices.Contains(update, p)
+		}
+		r := shopOnboarding
+		r.RequestLogs = flag
+		code, out := g.call(t, WorkloadsOnboard, r)
+		switch {
+		case !flag && (code != 0 || g.s.Workloads["shop"] != "AWAKE"):
+			t.Errorf("without the flag: exit %d:\n%s", code, out)
+		case flag && (code != 1 || !strings.Contains(out, "  ✗ onboard: missing "+strings.Join(update, ", ")+"\n") || len(g.s.Workloads) != 0):
+			t.Errorf("with the flag: exit %d:\n%s", code, out)
+		}
+	}
+	// The read is asked without the flag too: it decides the warning.
+	g := newWorkloadsRig(t)
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, p := range access.Needs("onboard") {
+		g.s.Held[p] = p != "compute.regionBackendServices.get"
+	}
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 1 || !strings.Contains(out, "  ✗ onboard: missing compute.regionBackendServices.get\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
 

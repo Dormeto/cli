@@ -612,18 +612,19 @@ func (x *run) onboard() error {
 	}
 	x.warnStandard(dry)
 	x.warnReplicas(dry)
-	// Read before any change: whether the idle check reads the logs, and what --request-logs sets back.
+	// Read before any change: what --request-logs sets back, which stops on a failed read; without it, whether the idle check
+	// reads the logs, which decides the warning alone.
 	logs := requestLogs{BackendService: in.BackendService, Region: x.regionOf(dry.LB)}
-	service, err := x.readLogs(logs.BackendService, logs.Region)
-	if err != nil {
-		return &stop{1, fmt.Sprintf("The request logs of backend service %s are not read: %s\nNothing was changed.", in.BackendService, refusal(err))}
+	service, unread := x.readLogs(logs.BackendService, logs.Region)
+	if unread != nil && x.r.RequestLogs {
+		return &stop{1, fmt.Sprintf("The request logs of backend service %s are not read: %s\nNothing was changed.", in.BackendService, refusal(unread))}
 	}
 	logs.Before = service.setting()
 	turnOn := x.r.RequestLogs && !logs.Before.everyRequest()
 	if x.r.DryRun {
 		if x.r.JSON {
 			fmt.Fprintf(x.d.Out, "%s\n", raw)
-			x.warnCount(logs.Before)
+			x.warnCount(logs, unread)
 			return nil
 		}
 		if labels := dry.labels(x.r.CloudSQL); len(labels) > 0 || dry.GKE == nil {
@@ -641,7 +642,7 @@ func (x *run) onboard() error {
 		if turnOn {
 			x.say("Onboarding would turn on the request logs of backend service %s: sample rate 1.0 (now: %s)", in.BackendService, logs.Before)
 		}
-		x.warnCount(logs.Before)
+		x.warnCount(logs, unread)
 		return nil
 	}
 	targets := dry.targets()
@@ -751,19 +752,24 @@ func (x *run) onboard() error {
 			x.say("  request logs: on, sample rate 1.0 (before: %s)", logs.Before)
 		}
 	})
-	x.warnCount(logs.Before)
+	x.warnCount(logs, unread)
 	return err
 }
 
 // warnCount says, after the onboarding's output, that the idle check counts every request of a backend service that does
-// not log each one, without --request-logs. Under --json, on the error stream, as warnStandard.
-func (x *run) warnCount(found logSetting) {
-	if x.r.RequestLogs || found.everyRequest() {
+// not log each one, without --request-logs; a backend service that was not read (unread) is said instead. Under --json, on the
+// error stream, as warnStandard.
+func (x *run) warnCount(logs requestLogs, unread error) {
+	if x.r.RequestLogs || (unread == nil && logs.Before.everyRequest()) {
 		return
 	}
 	w := x.d.Out
 	if x.r.JSON {
 		w = x.d.Err
+	}
+	if unread != nil {
+		fmt.Fprintf(w, "  ! the request logs of backend service %s are not read: %s\n", logs.BackendService, refusal(unread))
+		return
 	}
 	fmt.Fprintf(w, "  %s\n", countWarning)
 }
