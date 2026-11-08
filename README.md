@@ -1514,7 +1514,7 @@ From CLI 0.8.0, `dormeto gcp` installs and runs a Dormeto router in a Google Clo
 router naps the backends of a global, regional or classic external Application Load Balancer, and a visitor's first
 request wakes them: Compute Engine VMs and managed instance groups, VMs in zonal network endpoint groups, GKE pods behind
 standalone network endpoint groups, and Cloud SQL instances as their companions. Everything but VMs and groups behind a
-global load balancer comes with router 0.37.0 and CLI 0.11.0, not released yet, which carry what the measures of
+global load balancer comes with router 0.37.0 and CLI 0.11.0, released on 2026-11-05, which carry what the measures of
 2026-11-04 changed and were accepted the same day ([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
 Every command takes `--project` (required) and, but `check` and `status`, `--region` (required: the router is
 `dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google refuses; 2 for a bad flag
@@ -1846,7 +1846,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 
 - *Accepted on a real project* (2026-10-30): `gcp check`, `install`, `uninstall`, `status` and `workloads`, and Compute
   Engine VMs (unmanaged and managed groups, suspended when possible) behind a global external Application Load Balancer.
-- *Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both unreleased: regional and classic
+- *Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both released on 2026-11-05: regional and classic
   load balancers (`--load-balancer`), zonal network endpoint groups, schedules and pauses (`workloads schedule`, `pause`,
   `resume`), IP lists (`--ip-list`), Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and GKE (`--with gke`,
   `--gke-cluster`, `workloads access`), installed by `gcp install --with cloud-sql,gke` and removed by `gcp uninstall`.
@@ -1854,7 +1854,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   on a busy map are unit-tested only), an operator holding exactly the permissions `gcp check` lists for `onboard`, a
   Cloud SQL start refused for lack of capacity, and a nap cut short by a new revision of the controller.
 
-Dormeto's public router image is the default; to build and push your own for `--image`, see `scripts/gcp-image.sh` in the
+The public router image, the request logs and the other changes of this section's G4 parts come with router 0.38.0 and CLI 0.12.0, not released yet. Dormeto's public router image is the default; to build and push your own for `--image`, see `scripts/gcp-image.sh` in the
 router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). There is no dashboard or manager for
 Google Cloud yet, and the branded waiting page does not apply to it.
 

@@ -257,7 +257,7 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		// the versions and how far it was tried: accepted on 2026-11-04 but for ten workloads on one URL map (vision
 		// docs/plans/2026-10-30-google-cloud-coverage.md, "Acceptance results"), with the acceptance's times
 		"router 0.37.0", "CLI 0.11.0",
-		"*Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both unreleased",
+		"*Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both released on 2026-11-05",
 		"Not run: ten workloads on one URL map in one nap window",
 		"Ten workloads on one URL map in one nap window were not run in the acceptance",
 		"62 s after a `POST /_dormeto/wake`", "`AWAKE` 123 to 188 s and 287 s after the wake", "551 s",
