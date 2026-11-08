@@ -1627,7 +1627,7 @@ addresses.
   gcp install --version <default>`, and an onboarding without it says nothing of the request logs.
 - **The offboarding** sets the `logConfig` back when it is still what Dormeto set, and says so. If you changed it since,
   it is left, with a notice naming the backend service.
-- **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`.
+- **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`. It also says why the last nap was given up, `nap given up: backends-changed, 2026-11-08T04:55:57Z`, until a nap succeeds (`--json` carries it as `napAborted`).
 - **The cost** is Cloud Logging's: its ingestion is charged past 50 GiB a month and project, about 1 KB per request.
 - **Terraform:** if you write the backend service in Terraform, keep this block in it, so an apply does not turn the logs
   off:
@@ -1704,7 +1704,7 @@ browsers and scanners on those addresses, not a client that means to wake.
 | Command | What it does |
 |---|---|
 | `workloads list` | the router's workloads and their states |
-| `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, what the idle check reads, and a Cloud SQL instance that no longer exists |
+| `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, what the idle check reads, why the last nap was given up (`nap given up: <reason>, <time>`, until a nap succeeds), and a Cloud SQL instance that no longer exists |
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
 | `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed) |
 | `workloads nap <id>`, `workloads wake <id>` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends) |

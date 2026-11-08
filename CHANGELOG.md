@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto gcp workloads show` prints why the last nap was given up, `nap given up: <reason>, <time>` (`backends-changed`, `traffic`, `traffic-unread`, `map-busy`, …), until a nap succeeds; only `--json` carried it (`napAborted`).
+
 `dormeto gcp install` installs the router from Dormeto's public image, `<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>` in the multi-region of `--region`, read without a token and deployed by its digest (`<name>@sha256:…`), which the plan shows: a first install takes the router version this CLI's access describes, a later run upgrades an older router of Dormeto's to it and keeps an image of `--image` (saying which public version is available), and a router newer than this CLI's stops the install before any change (`brew upgrade dormeto`). `--version` installs another version, up to that one. `--access-only` installs the access without the router, as a run without `--image` did: the record says so (`accessOnly`), later runs keep it, and an older CLI's install without an image is read as such. `--image` stays, for an image of your own, and only it needs Artifact Registry's API and the image's permissions: `gcp check --image` tests them before a first install with it.
 
 `dormeto gcp uninstall` no longer orphans a database or a tag whose creation was still running when an install stopped: the install records the creation's operation, and the uninstall waits for it before it deletes the resource.

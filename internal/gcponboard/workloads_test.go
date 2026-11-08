@@ -3246,3 +3246,25 @@ func TestWorkloadsHintsOnARouterOfThePublicImageNameTheVersion(t *testing.T) {
 		contains(t, out, "installing the router again brings it back: "+upgrade)
 	})
 }
+
+func TestWorkloadsShowSaysWhyTheLastNapWasGivenUp(t *testing.T) {
+	for name, aborted := range map[string]any{
+		"given up":  map[string]any{"reason": "backends-changed", "at": "2026-11-08T04:55:57Z"},
+		"not given": nil,
+	} {
+		g := newWorkloadsRig(t)
+		g.s.Workloads["shop"] = "AWAKE"
+		g.s.WorkloadDocs["shop"] = map[string]any{"backendService": "shop"}
+		if aborted != nil {
+			g.s.WorkloadDocs["shop"]["napAborted"] = aborted
+		}
+		code, out := g.call(t, WorkloadsShow, offboardShop)
+		if code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", name, code, out)
+		}
+		has := strings.Contains(out, "  nap given up: backends-changed, 2026-11-08T04:55:57Z\n")
+		if has != (aborted != nil) || aborted == nil && strings.Contains(out, "nap given up") {
+			t.Errorf("%s:\n%s", name, out)
+		}
+	}
+}

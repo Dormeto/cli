@@ -109,8 +109,13 @@ type workload struct {
 		DurationMs int `json:"durationMs"`
 	} `json:"lastWake"`
 	Failure json.RawMessage `json:"failure"`
-	Paused  *pausedOf       `json:"paused"`
-	LB      *lbRef          `json:"lb"`
+	// Why the last nap was given up, as the router names it, and when; absent until one is, and again once a nap commits.
+	NapAborted *struct {
+		Reason string `json:"reason"`
+		At     string `json:"at"`
+	} `json:"napAborted"`
+	Paused *pausedOf `json:"paused"`
+	LB     *lbRef    `json:"lb"`
 	// The Cloud SQL instances named at its onboarding that no longer exist, as the router last read them.
 	CompanionsGone []string `json:"companionsGone"`
 	// What its onboarding found of the backend service's request logs, when it turned them on; and what the idle check read at
@@ -387,6 +392,9 @@ func (x *run) show() error {
 		}
 		if w.IdleReads != "" {
 			x.say("  idle check: %s", w.IdleReads)
+		}
+		if w.NapAborted != nil {
+			x.say("  nap given up: %s, %s", w.NapAborted.Reason, w.NapAborted.At)
 		}
 		if len(w.Failure) > 0 && string(w.Failure) != "null" {
 			x.say("  failure: %s", w.Failure)
