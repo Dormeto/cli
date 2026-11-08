@@ -138,6 +138,9 @@ type Server struct {
 	WakeFails map[string]bool
 	// NotGivenBack is what ?force=true answers it could not give back, by ID; none, no field.
 	NotGivenBack map[string][]string
+	// OnFallback is what the delete answers of the VMs a workload leaves on a fallback machine type ({<vm>: {from, to}}), by ID,
+	// plain or forced; none, no field.
+	OnFallback map[string]map[string]map[string]string
 	// DryRun is what the controller's onboarding dry run answers: the reasons it refuses (none: eligible), the VMs and
 	// the groups it would tag. The onboarding itself is refused (400) while one of them carries no tag binding.
 	DryRun DryRun

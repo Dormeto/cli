@@ -37,11 +37,12 @@ func gcpFixedRefusal(c *cobra.Command, levels *levelFlags) error {
 }
 
 // gcpLevelFlagsHelp tells the truth of the level flags for Google Cloud: three are fixed, and the wake timeout stops at 1700.
-func gcpLevelFlagsHelp(cmd *cobra.Command) {
+func gcpLevelFlagsHelp(cmd *cobra.Command, levels *levelFlags) {
+	levels.max = map[string]int{"wake-timeout-seconds": gcponboard.MaxWakeTimeout}
 	for _, f := range gcpFixedReasons {
 		cmd.Flags().Lookup(f.flag).Usage = "fixed at 0 on Google Cloud, so only inherit is accepted (" + f.why + ")"
 	}
-	cmd.Flags().Lookup("wake-timeout-seconds").Usage = "the wake timeout, 60 to 1700, or inherit (one controller request lasts at most 1800 s)"
+	cmd.Flags().Lookup("wake-timeout-seconds").Usage = fmt.Sprintf("the wake timeout, %d to %d, or inherit (one controller request lasts at most 1800 s)", gcponboard.MinWakeTimeout, gcponboard.MaxWakeTimeout)
 }
 
 func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
@@ -62,7 +63,7 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 			return run(ctx, d, r)
 		})
 	levels = bindLevelFlags(cmd, "inherit")
-	gcpLevelFlagsHelp(cmd)
+	gcpLevelFlagsHelp(cmd, levels)
 	cmd.Args = func(c *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprintln(c.ErrOrStderr(), "name at least one workload, as the argument")
@@ -138,7 +139,7 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 			return run(ctx, d, r)
 		})
 	levels = bindLevelFlags(cmd, "inherit")
-	gcpLevelFlagsHelp(cmd)
+	gcpLevelFlagsHelp(cmd, levels)
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {

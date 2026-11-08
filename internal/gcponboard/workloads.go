@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -35,8 +36,12 @@ const (
 	// The idle window's range is the router's: AWS's onboarding (router/lambda/src/lib/onboarding.mjs).
 	minIdleMinutes, maxIdleMinutes = 5, 1440
 
-	// The wake's fits the controller's request: its range is the router's too (router/gcp/src/onboarding.mjs).
-	minWakeTimeout, maxWakeTimeout = 60, 1700
+	// MinWakeTimeout and MaxWakeTimeout are the wake timeout's range on Google Cloud, for every command that takes one (onboard and
+	// the settings): a wake fits the controller's request, whose range is the router's (router/gcp/src/onboarding.mjs).
+	MinWakeTimeout, MaxWakeTimeout = 60, 1700
+
+	// maxFallbackTypes is the most fallback machine types a workload takes, as AWS's.
+	maxFallbackTypes = 5
 
 	// maxBackendServiceName is what Compute Engine allows of a backend service's name; the workload's waker backend service
 	// is dmtr-<region>-<workload>.
@@ -55,6 +60,8 @@ var (
 	workloadIDPattern = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$`)
 	// databaseNamePattern is the name of a Cloud SQL instance, the router's INSTANCE_NAME (router/gcp/src/cloudsql.mjs).
 	databaseNamePattern = regexp.MustCompile(`^[a-z]([-a-z0-9]{0,96}[a-z0-9])?$`)
+	// machineTypePattern is the name of a machine type such as e2-medium or n2-standard-4, the router's MACHINE_TYPE (router/gcp/src/onboarding.mjs).
+	machineTypePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)+$`)
 )
 
 const workloadIDRule = "lowercase letters, digits and dashes, starting with a letter and ending with a letter or a digit, at most 40 characters"
@@ -505,7 +512,12 @@ type onboardingIn struct {
 	CloudSQL       []string       `json:"cloudSql,omitempty"`
 	GKE            *onboardingGKE `json:"gke,omitempty"`
 	RequestLogs    *requestLogsIn `json:"requestLogs,omitempty"`
+	// The machine types a VM of an unmanaged group may run on, a field of the body, not of the settings.
+	FallbackInstanceTypes []string `json:"fallbackInstanceTypes,omitempty"`
 }
+
+// loadBalancerKinds are the kinds --load-balancer takes: internal is a regional map, cross-region-internal a global one.
+var loadBalancerKinds = []string{"global", "regional", "classic", "internal", "cross-region-internal"}
 
 // onboardingGKE is a GKE workload in the controller's request: the dry run names the cluster alone, and answers the namespace
 // and the Service; the onboarding names them all, with the owner the CLI read.
@@ -534,8 +546,18 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 		return onboardingIn{}, &stop{2, "--backend-service: needed"}
 	}
 	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, LoadBalancer: r.LoadBalancer, CloudSQL: r.CloudSQL, Settings: map[string]any{}}
-	if v := r.LoadBalancer; v != "" && !slices.Contains([]string{"global", "regional", "classic"}, v) {
-		return in, &stop{2, fmt.Sprintf("--load-balancer: %q is not global, regional or classic", v)}
+	if v := r.LoadBalancer; v != "" && !slices.Contains(loadBalancerKinds, v) {
+		return in, &stop{2, fmt.Sprintf("--load-balancer: %q is not global, regional, classic, internal or cross-region-internal", v)}
+	}
+	if err := CheckFallbackTypes(r.FallbackTypes); err != nil {
+		return in, &stop{2, err.Error()}
+	}
+	in.FallbackInstanceTypes = r.FallbackTypes
+	if v := r.WakeMode; v != "" {
+		if v != "any" && v != "browser" {
+			return in, &stop{2, fmt.Sprintf("--wake-mode: %q is not any or browser", v)}
+		}
+		in.Settings["wakeMode"] = v
 	}
 	if err := checkDatabaseNames(r.CloudSQL); err != nil {
 		return in, err
@@ -551,8 +573,8 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 		in.GKE = &onboardingGKE{Cluster: gkeCluster{location, name}}
 	}
 	if v := r.WakeTimeout; v != nil {
-		if *v < minWakeTimeout || *v > maxWakeTimeout {
-			return in, &stop{2, fmt.Sprintf("--wake-timeout: %d is not from %d to %d", *v, minWakeTimeout, maxWakeTimeout)}
+		if *v < MinWakeTimeout || *v > MaxWakeTimeout {
+			return in, &stop{2, fmt.Sprintf("--wake-timeout-seconds: %d is not from %d to %d", *v, MinWakeTimeout, MaxWakeTimeout)}
 		}
 		in.Settings["wakeTimeoutSeconds"] = *v
 	}
@@ -571,6 +593,23 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 	id, err := x.workloadID()
 	in.ID = id
 	return in, err
+}
+
+// CheckFallbackTypes validates --fallback-type: at most 5, each a machine type's name, none twice. The router checks each against
+// the VMs' zones.
+func CheckFallbackTypes(types []string) error {
+	if len(types) > maxFallbackTypes {
+		return fmt.Errorf("--fallback-type: at most %d (%d given)", maxFallbackTypes, len(types))
+	}
+	for i, t := range types {
+		if !machineTypePattern.MatchString(t) {
+			return fmt.Errorf("--fallback-type: %q is not a machine type such as e2-medium", t)
+		}
+		if slices.Contains(types[:i], t) {
+			return fmt.Errorf("--fallback-type: %s is named twice", t)
+		}
+	}
+	return nil
 }
 
 // checkDatabaseNames validates --cloud-sql: exit 2 for a name that is no Cloud SQL instance's, or one named twice.
@@ -997,6 +1036,9 @@ func (x *run) offboard() error {
 	left := slices.Concat(out.tagsLeft, out.accessLeft, out.logsLeft)
 	if x.r.JSON {
 		answer := map[string]any{"id": id, "offboarded": true, "untagged": out.untagged, "left": leftDown(forced.Left)}
+		if len(forced.InstanceTypes) > 0 {
+			answer["instanceTypes"] = forced.InstanceTypes
+		}
 		for key, value := range map[string][]string{"removed": out.removed, "restored": out.restored, "kept": out.kept, "notRemoved": left, "notGivenBack": forced.NotGivenBack} {
 			if len(value) > 0 {
 				answer[key] = value
@@ -1011,6 +1053,9 @@ func (x *run) offboard() error {
 		}
 		for _, l := range forced.NotGivenBack {
 			x.say("  ! %s", l)
+		}
+		for _, l := range forced.onFallbackLines() {
+			x.say("  %s", l)
 		}
 		for _, u := range out.untagged {
 			x.say("  untagged: %s", u)
@@ -1051,18 +1096,35 @@ func leftDown(left []backend) []string {
 type forcedOff struct {
 	Left         []backend `json:"left"`
 	NotGivenBack []string  `json:"notGivenBack"`
+	// The VMs left on a fallback machine type, plain or forced: {<vm>: {from: its own, to: the one it runs on}}.
+	InstanceTypes map[string]struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	} `json:"instanceTypes"`
+}
+
+// onFallbackLines say each VM that keeps a fallback machine type, by name: no stop of the router's gives it its own back once it
+// is offboarded.
+func (f forcedOff) onFallbackLines() []string {
+	var lines []string
+	for _, vm := range slices.Sorted(maps.Keys(f.InstanceTypes)) {
+		t := f.InstanceTypes[vm]
+		lines = append(lines, fmt.Sprintf("VM %s is on %s, its own is %s: it keeps %s until you change it by hand", vm, t.To, t.From, t.To))
+	}
+	return lines
 }
 
 // deleteWorkload offboards a workload at the controller, which wakes it first. One that cannot wake is refused
 // (wake-failed); with force it is offboarded anyway, its backends left down, and what it left is returned.
 func (x *run) deleteWorkload(path string, force bool) (forcedOff, error) {
-	err := x.controller(http.MethodDelete, path, nil, nil)
+	var plain forcedOff
+	err := x.controller(http.MethodDelete, path, nil, &plain)
 	var e *gcp.Error
 	if !errors.As(err, &e) || e.Reason != "wake-failed" {
 		if workloadNotThere(err) {
 			return forcedOff{}, nil
 		}
-		return forcedOff{}, err
+		return plain, err
 	}
 	if !force {
 		return forcedOff{}, &stop{1, fmt.Sprintf("%s\nOffboard it anyway with --force: its backends are then left down.", e.Message)}

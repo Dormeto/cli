@@ -98,8 +98,8 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var idle, wakeTimeout int
 	var hibernating *bool
 	var idleGiven, wakeGiven bool
-	var loadBalancer, cluster string
-	var databases []string
+	var loadBalancer, cluster, wakeMode string
+	var databases, fallbackTypes []string
 	var requestLogs bool
 	cmd := gcpCommand("onboard", "Onboard a backend service as a workload",
 		"Onboard a backend service of a global, regional or classic external Application Load Balancer as a workload. The\n"+
@@ -118,6 +118,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		&f, []string{"project", "region", "url-map", "backend-service"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.URLMap, r.BackendService, r.ID, r.Hibernate = urlMap, backendService, id, hibernating
 			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, databases, cluster, requestLogs
+			r.WakeMode, r.FallbackTypes = wakeMode, fallbackTypes
 			if idleGiven {
 				r.IdleMinutes = &idle
 			}
@@ -131,11 +132,25 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout")
+		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout-seconds") || c.Flags().Changed("wake-timeout")
+		// The old name of --wake-timeout-seconds, AWS's.
+		if c.Flags().Changed("wake-timeout") {
+			fmt.Fprintln(c.ErrOrStderr(), "--wake-timeout is now --wake-timeout-seconds")
+		}
 		// Given empty, as a variable with no value: read as not given, it would onboard something else.
 		for _, name := range []string{"load-balancer", "gke-cluster"} {
 			if v, _ := c.Flags().GetString(name); v == "" && c.Flags().Changed(name) {
 				fmt.Fprintf(c.ErrOrStderr(), "--%s: empty\n", name)
+				return exitCode(2)
+			}
+		}
+		if wakeMode != "" && wakeMode != "any" && wakeMode != "browser" {
+			fmt.Fprintf(c.ErrOrStderr(), "--wake-mode: %q is not any or browser\n", wakeMode)
+			return exitCode(2)
+		}
+		if c.Flags().Changed("fallback-type") {
+			if err := gcponboard.CheckFallbackTypes(fallbackTypes); err != nil {
+				fmt.Fprintln(c.ErrOrStderr(), err)
 				return exitCode(2)
 			}
 		}
@@ -155,8 +170,12 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
 	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the router's, 15)")
 	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
-	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional or classic (default: read from Google)")
-	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "how long a wake may take, 60 to 1700 seconds (default: the router's, by what the workload holds)")
+	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional, classic, internal (a regional map) or cross-region-internal (default: read from Google)")
+	fl.IntVar(&wakeTimeout, "wake-timeout-seconds", 0, fmt.Sprintf("how long a wake may take, %d to %d seconds (default: the router's, by what the workload holds)", gcponboard.MinWakeTimeout, gcponboard.MaxWakeTimeout))
+	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "the old name of --wake-timeout-seconds")
+	fl.MarkHidden("wake-timeout")
+	fl.StringVar(&wakeMode, "wake-mode", "", "what wakes the workload: any request that passes the filters, or browser (default: the router's; the global load balancer's waiting page wakes by browser alone)")
+	fl.StringArrayVar(&fallbackTypes, "fallback-type", nil, "a fallback machine type such as e2-medium (repeatable, at most 5; for the VMs of unmanaged instance groups, which a wake out of capacity runs on it)")
 	fl.StringArrayVar(&databases, "cloud-sql", nil, "a Cloud SQL instance to nap with the workload: tagged as you, down after the application, up before it; repeatable")
 	fl.BoolVar(&requestLogs, "request-logs", false, "turn the backend service's request logs on, every request, for the idle check to read them (set back at the offboarding)")
 	fl.StringVar(&cluster, "gke-cluster", "", "the workload's pods are in this GKE cluster, as <location>/<name>: its Kubernetes RBAC is printed, asked and applied")

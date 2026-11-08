@@ -23,8 +23,8 @@ const (
 	loggingV2  = "https://logging.googleapis.com/v2/"
 
 	// logViewFilter names the resource types of the load balancers' request logs, as LOG_RESOURCES of the router's logs.mjs:
-	// global and classic ones, then regional ones (a test compares them).
-	logViewFilter = `resource.type="http_load_balancer" OR resource.type="http_external_regional_lb_rule"`
+	// global and classic ones, then regional ones, then internal ones, regional or cross-region (a test compares them).
+	logViewFilter = `resource.type="http_load_balancer" OR resource.type="http_external_regional_lb_rule" OR resource.type="internal_http_lb_rule"`
 )
 
 type googleLogView struct {

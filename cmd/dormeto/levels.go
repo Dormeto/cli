@@ -35,6 +35,16 @@ type levelFlags struct {
 	wakeMode  string
 	noWake    string
 	wakeRules string
+	// max overrides a numeric setting's upper end by its flag: Google Cloud's wake timeout stops at 1700.
+	max map[string]int
+}
+
+// rangeOf is a numeric setting's range as this command takes it.
+func (l *levelFlags) rangeOf(s fleet.LevelSetting) (int, int) {
+	if m, ok := l.max[s.Flag]; ok {
+		return s.Min, m
+	}
+	return s.Min, s.Max
 }
 
 func bindLevelFlags(cmd *cobra.Command, unset string) *levelFlags {
@@ -63,8 +73,9 @@ func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 			continue
 		}
 		n, err := strconv.Atoi(v)
-		if err != nil || n < s.Min || n > s.Max {
-			return nil, usagef("--%s: give a whole number from %d to %d, or %s", s.Flag, s.Min, s.Max, l.unset)
+		lo, hi := l.rangeOf(s)
+		if err != nil || n < lo || n > hi {
+			return nil, usagef("--%s: give a whole number from %d to %d, or %s", s.Flag, lo, hi, l.unset)
 		}
 		out[s.Key] = n
 	}

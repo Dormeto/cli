@@ -168,10 +168,11 @@ func (b googleBackendService) setting() logSetting {
 	return logSetting{Enable: on, SampleRate: r}
 }
 
-// regionOf is the region of a workload's backend service: "" for a global or classic load balancer (also when the dry run of a
-// router below 0.35.0 says nothing of it), else the load balancer's region, the router's when it names none.
+// regionOf is the region of a workload's backend service: "" for a global, classic or cross-region-internal load balancer (also
+// when the dry run of a router below 0.35.0 says nothing of it), else the regional or internal one's region, the router's when it
+// names none.
 func (x *run) regionOf(lb *lbRef) string {
-	if lb == nil || lb.Kind != "regional" {
+	if lb == nil || (lb.Kind != "regional" && lb.Kind != "internal") {
 		return ""
 	}
 	if lb.Region != "" {

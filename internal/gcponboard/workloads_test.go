@@ -423,16 +423,22 @@ func TestWorkloadsOnboardRefusesBadIDsAndSettingsBeforeAnyCall(t *testing.T) {
 		change func(*Request)
 		want   []string
 	}{
-		"id with capitals":          {func(r *Request) { r.ID = "Shop" }, []string{"--id", "Shop"}},
-		"id ending in dash":         {func(r *Request) { r.ID = "shop-" }, []string{"--id"}},
-		"router name too long":      {func(r *Request) { r.ID = strings.Repeat("a", 40); r.Region = "northamerica-northeast1" }, []string{"--id", "63"}},
-		"idle too short":            {func(r *Request) { r.IdleMinutes = ptr(4) }, []string{"--idle-minutes", "5 to 1440"}},
-		"idle too long":             {func(r *Request) { r.IdleMinutes = ptr(1441) }, []string{"--idle-minutes", "5 to 1440"}},
-		"no url map":                {func(r *Request) { r.URLMap = "" }, []string{"--url-map"}},
-		"no backend service":        {func(r *Request) { r.BackendService = "" }, []string{"--backend-service"}},
-		"wake too short":            {func(r *Request) { r.WakeTimeout = ptr(59) }, []string{"--wake-timeout", "60 to 1700"}},
-		"wake too long":             {func(r *Request) { r.WakeTimeout = ptr(1701) }, []string{"--wake-timeout", "60 to 1700"}},
-		"load balancer":             {func(r *Request) { r.LoadBalancer = "internal" }, []string{"--load-balancer", "internal", "global, regional or classic"}},
+		"id with capitals":     {func(r *Request) { r.ID = "Shop" }, []string{"--id", "Shop"}},
+		"id ending in dash":    {func(r *Request) { r.ID = "shop-" }, []string{"--id"}},
+		"router name too long": {func(r *Request) { r.ID = strings.Repeat("a", 40); r.Region = "northamerica-northeast1" }, []string{"--id", "63"}},
+		"idle too short":       {func(r *Request) { r.IdleMinutes = ptr(4) }, []string{"--idle-minutes", "5 to 1440"}},
+		"idle too long":        {func(r *Request) { r.IdleMinutes = ptr(1441) }, []string{"--idle-minutes", "5 to 1440"}},
+		"no url map":           {func(r *Request) { r.URLMap = "" }, []string{"--url-map"}},
+		"no backend service":   {func(r *Request) { r.BackendService = "" }, []string{"--backend-service"}},
+		"wake too short":       {func(r *Request) { r.WakeTimeout = ptr(59) }, []string{"--wake-timeout", "60 to 1700"}},
+		"wake too long":        {func(r *Request) { r.WakeTimeout = ptr(1701) }, []string{"--wake-timeout", "60 to 1700"}},
+		"load balancer":        {func(r *Request) { r.LoadBalancer = "private" }, []string{"--load-balancer", "private", "global, regional, classic, internal or cross-region-internal"}},
+		"wake mode":            {func(r *Request) { r.WakeMode = "never" }, []string{"--wake-mode", "any or browser"}},
+		"six fallback types": {func(r *Request) {
+			r.FallbackTypes = []string{"e2-small", "e2-medium", "n1-standard-1", "n2-standard-2", "n2-standard-4", "c2-standard-4"}
+		}, []string{"--fallback-type", "at most 5"}},
+		"fallback type, EC2's":      {func(r *Request) { r.FallbackTypes = []string{"t3a.medium"} }, []string{"--fallback-type", "t3a.medium", "machine type"}},
+		"fallback type twice":       {func(r *Request) { r.FallbackTypes = []string{"e2-small", "e2-small"} }, []string{"--fallback-type", "e2-small", "twice"}},
 		"cluster, no slash":         {func(r *Request) { r.GKECluster = "shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
 		"cluster, bad name":         {func(r *Request) { r.GKECluster = "europe-west1-b/Shop" }, []string{"--gke-cluster", "<location>/<name>"}},
 		"cluster, no location":      {func(r *Request) { r.GKECluster = "/shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
@@ -3266,5 +3272,122 @@ func TestWorkloadsShowSaysWhyTheLastNapWasGivenUp(t *testing.T) {
 		if has != (aborted != nil) || aborted == nil && strings.Contains(out, "nap given up") {
 			t.Errorf("%s:\n%s", name, out)
 		}
+	}
+}
+
+// The wake mode is a setting of the workload's level, the fallback machine types a field of the body: both calls get them, the
+// dry run too (it checks each VM against them).
+func TestWorkloadsOnboardSendsTheWakeModeAndTheFallbackTypesToBothCalls(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := shopOnboarding
+	r.WakeMode, r.FallbackTypes = "browser", []string{"e2-medium", "n2-standard-2"}
+	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, query := range []string{"/v1/workloads?dryRun=true", "/v1/workloads"} {
+		in := g.body(t, "POST", controllerHost, query)
+		if !jsonEqual(in["settings"], map[string]any{"wakeMode": "browser"}) || !jsonEqual(in["fallbackInstanceTypes"], []string{"e2-medium", "n2-standard-2"}) {
+			t.Errorf("%s: %v", query, in)
+		}
+	}
+	g = newWorkloadsRig(t)
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	in := g.body(t, "POST", controllerHost, "/v1/workloads")
+	if _, there := in["fallbackInstanceTypes"]; there || in["settings"] != nil {
+		t.Errorf("sent when not given: %v", in)
+	}
+}
+
+func TestWorkloadsOnboardTakesTheInternalKinds(t *testing.T) {
+	for _, kind := range []string{"internal", "cross-region-internal"} {
+		g := newWorkloadsRig(t)
+		r := shopOnboarding
+		r.LoadBalancer = kind
+		if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", kind, code, out)
+		}
+		if in := g.body(t, "POST", controllerHost, "/v1/workloads"); in["loadBalancer"] != kind {
+			t.Errorf("%s: %v", kind, in)
+		}
+	}
+}
+
+// internal is a regional map (the router's region when it names none), cross-region-internal a global one: an older CLI read
+// internal as global, and with --request-logs would change a global backend service of the same name.
+func TestRegionOfTheInternalKinds(t *testing.T) {
+	x := &run{n: names{region: "europe-west1"}}
+	for _, c := range []struct {
+		lb   *lbRef
+		want string
+	}{
+		{nil, ""}, {&lbRef{Kind: "global"}, ""}, {&lbRef{Kind: "classic"}, ""},
+		{&lbRef{Kind: "regional"}, "europe-west1"}, {&lbRef{Kind: "regional", Region: "europe-west4"}, "europe-west4"},
+		{&lbRef{Kind: "internal"}, "europe-west1"}, {&lbRef{Kind: "internal", Region: "europe-west4"}, "europe-west4"},
+		{&lbRef{Kind: "cross-region-internal"}, ""}, {&lbRef{Kind: "cross-region-internal", Region: "europe-west4"}, ""},
+	} {
+		if got := x.regionOf(c.lb); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.lb, got, c.want)
+		}
+	}
+}
+
+// What --request-logs changes is the backend service of the map's own place.
+func TestWorkloadsOnboardRequestLogsOfTheInternalKindsPatchTheirOwnBackendService(t *testing.T) {
+	for kind, want := range map[string]string{"internal": regionalService, "cross-region-internal": globalService} {
+		g := newLogsRig(t)
+		g.logging("europe-west1", nil)
+		g.logging("global", nil)
+		r := shopWithLogs
+		r.LoadBalancer = kind
+		mark := len(g.s.Calls())
+		if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", kind, code, out)
+		}
+		if got := g.patches(mark); !slices.Equal(got, []string{want}) {
+			t.Errorf("%s: patches %v, want %s", kind, got, want)
+		}
+	}
+}
+
+// The router names each VM that runs on a fallback type, in the plain offboarding and in the forced one; no VM, no line.
+func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
+	onFallback := map[string]map[string]string{"web-1": {"from": "e2-small", "to": "e2-medium"}, "web-2": {"from": "n2-standard-2", "to": "n2-standard-4"}}
+	for _, force := range []bool{false, true} {
+		g := newWorkloadsRig(t)
+		if force {
+			g.failingToWake(t)
+		}
+		g.s.Workloads["shop"] = map[bool]string{false: "AWAKE", true: "FAILED"}[force]
+		g.s.OnFallback = map[string]map[string]map[string]string{"shop": onFallback}
+		r := workloadsEurope
+		r.ID, r.Force = "shop", force
+		code, out := g.call(t, WorkloadsOffboard, r)
+		if code != 0 {
+			t.Fatalf("force %v: exit %d:\n%s", force, code, out)
+		}
+		contains(t, out, "  VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand\n",
+			"  VM web-2 is on n2-standard-4, its own is n2-standard-2: it keeps n2-standard-4 until you change it by hand\n")
+		if strings.Index(out, "web-1") > strings.Index(out, "web-2") {
+			t.Errorf("not in order:\n%s", out)
+		}
+		// As JSON, the controller's own field.
+		g = newWorkloadsRig(t)
+		g.s.OnFallback = map[string]map[string]map[string]string{"shop": onFallback}
+		g.s.Workloads["shop"] = "AWAKE"
+		r.Force, r.JSON = false, true
+		code, out = g.call(t, WorkloadsOffboard, r)
+		var answer map[string]any
+		if err := json.Unmarshal([]byte(out), &answer); err != nil || code != 0 || !jsonEqual(answer["instanceTypes"], onFallback) {
+			t.Errorf("force %v json: %d %s", force, code, out)
+		}
+	}
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.ID = "shop"
+	g.s.Workloads["shop"] = "AWAKE"
+	if _, out := g.call(t, WorkloadsOffboard, r); strings.Contains(out, "fallback") || strings.Contains(out, "by hand") {
+		t.Errorf("a line with no VM on a fallback type:\n%s", out)
 	}
 }

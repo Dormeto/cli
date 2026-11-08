@@ -74,7 +74,7 @@ func TestGcpWorkloadsOnboardReadsRequestLogs(t *testing.T) {
 
 func TestGcpWorkloadsOnboardReadsTheFeaturesFlags(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be",
-		"--load-balancer", "regional", "--wake-timeout", "900", "--cloud-sql", "db-1", "--cloud-sql", "db-2", "--gke-cluster", "europe-west1-b/c", "--yes")
+		"--load-balancer", "regional", "--wake-timeout-seconds", "900", "--cloud-sql", "db-1", "--cloud-sql", "db-2", "--gke-cluster", "europe-west1-b/c", "--yes")
 	if exit != 0 || errs != untriedWarning || len(calls) != 1 {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
@@ -88,7 +88,7 @@ func TestGcpWorkloadsOnboardReadsTheFeaturesFlags(t *testing.T) {
 		t.Fatalf("flags not given must stay empty: %+v", r)
 	}
 	// A zero is a value given, for the range check to refuse.
-	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", "--wake-timeout", "0")
+	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", "--wake-timeout-seconds", "0")
 	if r := calls[0].r; r.WakeTimeout == nil || *r.WakeTimeout != 0 {
 		t.Fatalf("%+v", r)
 	}
@@ -463,5 +463,79 @@ func TestGcpWorkloadsSettingsReadDryRunAndYes(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings", "shop", "web"}, settingsArgs("--idle-minutes", "30", "--dry-run", "--yes")...)...)
 	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.DryRun || !calls[0].r.Yes {
 		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+}
+
+const onboardArgs = "gcp workloads onboard --project p --region europe-west1 --url-map m --backend-service be"
+
+// AWS's names: --wake-timeout-seconds, --wake-mode and --fallback-type (repeatable), each read into the request when given.
+func TestGcpWorkloadsOnboardReadsTheWakeModeAndTheFallbackTypes(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--wake-mode", "browser", "--fallback-type", "e2-medium", "--fallback-type", "n2-standard-2", "--wake-timeout-seconds", "1700")...)
+	if exit != 0 || errs != untriedWarning || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	r := calls[0].r
+	if r.WakeMode != "browser" || !slices.Equal(r.FallbackTypes, []string{"e2-medium", "n2-standard-2"}) || r.WakeTimeout == nil || *r.WakeTimeout != 1700 {
+		t.Fatalf("%+v", r)
+	}
+	calls, _, _ = gcpRan(t, 0, strings.Fields(onboardArgs)...)
+	if r := calls[0].r; r.WakeMode != "" || r.FallbackTypes != nil || r.WakeTimeout != nil {
+		t.Fatalf("flags not given must stay empty: %+v", r)
+	}
+}
+
+func TestGcpWorkloadsOnboardRefusesABadWakeModeOrFallbackType(t *testing.T) {
+	six := []string{"--fallback-type", "e2-medium", "--fallback-type", "e2-small", "--fallback-type", "n1-standard-1", "--fallback-type", "n2-standard-2", "--fallback-type", "n2-standard-4", "--fallback-type", "c2-standard-4"}
+	for name, c := range map[string]struct {
+		args []string
+		want string
+	}{
+		"six types":       {six, "at most 5"},
+		"wake mode":       {[]string{"--wake-mode", "never"}, "--wake-mode"},
+		"an EC2 type":     {[]string{"--fallback-type", "t3a.medium"}, "machine type"},
+		"a type twice":    {[]string{"--fallback-type", "e2-small", "--fallback-type", "e2-small"}, "twice"},
+		"an empty type":   {[]string{"--fallback-type", ""}, "--fallback-type"},
+		"inherit on wake": {[]string{"--wake-mode", "inherit"}, "--wake-mode"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), c.args...)...)
+		if exit != 2 || len(calls) != 0 || !strings.Contains(errs, c.want) {
+			t.Errorf("%s: exit %d calls %v stderr %q", name, exit, calls, errs)
+		}
+	}
+	calls, _, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), six[:10]...)...)
+	if exit != 0 || len(calls[0].r.FallbackTypes) != 5 {
+		t.Fatalf("five types: %d %v", exit, calls)
+	}
+}
+
+// The old name is a hidden alias that says what it is now.
+func TestGcpWorkloadsOnboardTakesTheOldWakeTimeoutAndWarns(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--wake-timeout", "900")...)
+	if exit != 0 || len(calls) != 1 || calls[0].r.WakeTimeout == nil || *calls[0].r.WakeTimeout != 900 || !strings.Contains(errs, "--wake-timeout is now --wake-timeout-seconds\n") {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	out, _, _ := executed(t, build{}, "gcp", "workloads", "onboard", "--help")
+	if strings.Contains(out, "--wake-timeout ") || !strings.Contains(out, "--wake-timeout-seconds") || !strings.Contains(out, "--wake-mode") || !strings.Contains(out, "--fallback-type") {
+		t.Fatalf("%s", out)
+	}
+	if _, errs, _ := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--wake-timeout-seconds", "900")...); strings.Contains(errs, "is now") {
+		t.Fatalf("warned of the new flag: %q", errs)
+	}
+}
+
+// One range for the wake timeout on Google Cloud: 60 to 1700, onboard and settings alike.
+func TestGcpWakeTimeoutRangeIsOneForOnboardAndSettings(t *testing.T) {
+	for _, command := range [][]string{{"gcp", "workloads", "settings", "shop"}, {"gcp", "routers", "settings"}} {
+		for _, n := range []string{"59", "1701", "3600"} {
+			calls, errs, exit := gcpRan(t, 0, append(slices.Clone(command), settingsArgs("--wake-timeout-seconds", n)...)...)
+			if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "60 to 1700") {
+				t.Errorf("%v %s: exit %d calls %v stderr %q", command, n, exit, calls, errs)
+			}
+		}
+		for _, n := range []string{"60", "1700"} {
+			if calls, errs, exit := gcpRan(t, 0, append(slices.Clone(command), settingsArgs("--wake-timeout-seconds", n)...)...); exit != 0 || len(calls) != 1 {
+				t.Errorf("%v %s: exit %d calls %v stderr %q", command, n, exit, calls, errs)
+			}
+		}
 	}
 }

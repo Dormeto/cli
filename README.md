@@ -1723,7 +1723,7 @@ any call. A binding of the `dormeto=managed` tag that was on a VM or group befor
 
 The onboarding's other flags:
 
-- `--load-balancer global|regional|classic`: the load balancer's kind, read from Google by default (the URL map found
+- `--load-balancer global|regional|classic|internal|cross-region-internal`: the load balancer's kind, read from Google by default (the URL map found
   globally or in the router's region, its forwarding rules' scheme telling global from classic). A map of that name in
   both places is refused, asking for the flag, and a regional load balancer must be in the router's region. Regional and
   classic load balancers have no custom error response, so a nap swaps the map's references from the application to the
@@ -1731,11 +1731,13 @@ The onboarding's other flags:
   application's service for good: it keeps that service health checked through a swap, and the application sees that
   path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (measured: visitors reached
   the application 62 s after a `POST /_dormeto/wake` on regional and 2 min 16 s after one on classic; the router reads the
-  workload `AWAKE` 123 to 188 s and 287 s after the wake, its unswap's wait included). Google advises moving a classic load balancer to the global external one.
-- `--wake-timeout <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call). The router's default is
+  workload `AWAKE` 123 to 188 s and 287 s after the wake, its unswap's wait included). Google advises moving a classic load balancer to the global external one. `internal` is an internal Application Load Balancer on a regional map in the router's region, `cross-region-internal` one on a global map; a `--request-logs` change reaches the backend service of the map's own place, regional for `internal` and global for `cross-region-internal`.
+- `--wake-timeout-seconds <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call; `gcp workloads settings` and `gcp routers settings` take the same range). `--wake-timeout` is its old name, which still works and says `--wake-timeout is now --wake-timeout-seconds`. The router's default is
   600 s for VMs, 300 s for pods and 1700 s with a Cloud SQL companion, plus the swap's wait on regional (100 s) and classic
   (250 s), up to 1700. If you set it, give a regional load balancer about 250 s or more, and a classic one about 340 s
   or more.
+- `--wake-mode any|browser`: what wakes the workload, as AWS's; not given, the router's level decides (behind the global policy, `browser`).
+- `--fallback-type <machine type>`, repeatable, at most 5 (such as `e2-medium`): the machine types a VM of an unmanaged instance group may run on when its own is out of capacity, as AWS's `--fallback-type`. The router checks them against each VM's zone. At the offboarding a VM that still runs on a fallback type is named, one line each (`VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand`), and `--json` carries the router's `instanceTypes`.
 - `--request-logs`: turns the backend service's request logs on, for the idle check to read ([request logs](#request-logs)).
   Its warning, the offboarding's set-back and the cost are there.
 - `--cloud-sql <instance>`, repeatable: a Cloud SQL instance of the project that naps with the workload, stopped after the

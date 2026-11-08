@@ -119,6 +119,8 @@ type workloadIn struct {
 	CloudSQL       []string       `json:"cloudSql"`
 	GKE            map[string]any `json:"gke"`
 	RequestLogs    map[string]any `json:"requestLogs"`
+
+	FallbackInstanceTypes []string `json:"fallbackInstanceTypes"`
 }
 
 // workloads serves /v1/workloads…, as the router's controller does.
@@ -166,12 +168,20 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 			}
 			delete(s.Workloads, id)
 			delete(s.WorkloadDocs, id)
+			onFallback := s.OnFallback[id]
 			if force {
 				answer := map[string]any{"id": id, "left": left}
+				if len(onFallback) > 0 {
+					answer["instanceTypes"] = onFallback
+				}
 				if notGivenBack := s.NotGivenBack[id]; len(notGivenBack) > 0 {
 					answer["notGivenBack"] = notGivenBack
 				}
 				Reply(w, answer)
+				return
+			}
+			if len(onFallback) > 0 {
+				Reply(w, map[string]any{"instanceTypes": onFallback})
 				return
 			}
 			Reply(w, map[string]any{})

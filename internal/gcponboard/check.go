@@ -56,13 +56,17 @@ type Request struct {
 	IdleMinutes                *int
 	Hibernate                  *bool
 
-	// The onboard command's load balancer (--load-balancer: global, regional or classic), wake timeout (--wake-timeout, nil:
+	// The onboard command's load balancer (--load-balancer: global, regional, classic, internal or cross-region-internal), wake timeout (--wake-timeout-seconds, nil:
 	// not given) and Cloud SQL companions (--cloud-sql); its GKE cluster is GKECluster. RequestLogs is --request-logs: the
 	// backend service's request logs turned on, every request, for the idle check to read (the G4 design's §5).
 	LoadBalancer string
 	WakeTimeout  *int
-	CloudSQL     []string
-	RequestLogs  bool
+	// WakeMode is --wake-mode (any or browser) and FallbackTypes --fallback-type, the machine types a VM of an unmanaged group may
+	// run on while its own is out of capacity; none given, none sent.
+	WakeMode      string
+	FallbackTypes []string
+	CloudSQL      []string
+	RequestLogs   bool
 
 	// The settings commands: the workloads' IDs (the argument of settings is one or more), and the flat body the level flags
 	// give: each key a value, or null to give it back to the levels. A router's: hibernate, joinMinutes and defaults.

@@ -352,7 +352,10 @@ func TestInstallAppliesTheAccessOfAFreshProject(t *testing.T) {
 const (
 	logViewName  = "projects/dormeto-dev/locations/global/buckets/_Default/views/dmtr-europe-west1-lb"
 	logViewsPath = "/v2/projects/dormeto-dev/locations/global/buckets/_Default/views"
-	lbLogsFilter = `resource.type="http_load_balancer" OR resource.type="http_external_regional_lb_rule"`
+	lbLogsFilter = `resource.type="http_load_balancer" OR resource.type="http_external_regional_lb_rule" OR resource.type="internal_http_lb_rule"`
+
+	// oldLbLogsFilter is the view's filter before the internal kinds.
+	oldLbLogsFilter = `resource.type="http_load_balancer" OR resource.type="http_external_regional_lb_rule"`
 )
 
 // The design's §5: the router reads the load balancers' request logs through its own view alone, the view created before the
@@ -409,7 +412,10 @@ func TestLogViewFilterNamesTheRoutersLoadBalancerTypes(t *testing.T) {
 	block, _, _ = strings.Cut(block, "};")
 	var types []string
 	for _, m := range regexp.MustCompile(`type: '([^']+)'`).FindAllStringSubmatch(block, -1) {
-		types = append(types, `resource.type="`+m[1]+`"`)
+		// Two kinds (internal, cross-region-internal) log to one type.
+		if t := `resource.type="` + m[1] + `"`; !slices.Contains(types, t) {
+			types = append(types, t)
+		}
 	}
 	if got := strings.Join(types, " OR "); len(types) == 0 || got != logViewFilter || logViewFilter != lbLogsFilter {
 		t.Fatalf("the router's types: %s\nthe view's filter: %s", got, logViewFilter)
@@ -445,6 +451,25 @@ func TestInstallUpdatesALogViewOfAnotherFilter(t *testing.T) {
 	defer g.s.Unlock()
 	if v := g.s.LogViews["dmtr-europe-west1-lb"]; v.Filter != lbLogsFilter {
 		t.Fatalf("view %+v", v)
+	}
+}
+
+// A view installed before the internal kinds, with their two types, is planned as an update.
+func TestInstallPlansAnInstalledViewOfTheOldFilterAsAnUpdate(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	g.s.LogViews["dmtr-europe-west1-lb"].Filter = oldLbLogsFilter
+	g.s.Unlock()
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ log view dmtr-europe-west1-lb: filter "+lbLogsFilter+"\n", "  ✓ logView: updated dmtr-europe-west1-lb (filter "+lbLogsFilter+")\n")
+	if !strings.Contains(lbLogsFilter, "internal_http_lb_rule") {
+		t.Fatal("the filter does not name internal_http_lb_rule")
 	}
 }
 
