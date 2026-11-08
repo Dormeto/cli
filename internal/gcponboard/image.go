@@ -77,7 +77,7 @@ func (x *run) deployed() string { return byDigest(x.image, x.digest) }
 func (r Record) deployedImage() string { return byDigest(r.Image, r.Digest) }
 
 // routerFlags is the refusal of flags that contradict one another ("" when none do): --image, --version and
-// --access-only each pick the router, and the IP lists' flags need one.
+// --access-only each pick the router, and the IP lists' and the custom pages' flags need one.
 func (x *run) routerFlags() string {
 	var given []string
 	for _, f := range []struct {
@@ -95,6 +95,8 @@ func (x *run) routerFlags() string {
 		return given[0] + " and " + given[1] + ": one or the other"
 	case x.r.AccessOnly && x.ipListsFlag() != "":
 		return x.ipListsFlag() + " and --access-only: one or the other"
+	case x.r.AccessOnly && x.customPagesFlag() != "":
+		return x.customPagesFlag() + " and --access-only: one or the other"
 	}
 	return ""
 }

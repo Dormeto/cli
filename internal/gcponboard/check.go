@@ -92,6 +92,10 @@ type Request struct {
 	// IPLists are the router's IP lists (--ip-list); NoIPLists clears them (--no-ip-lists).
 	IPLists   []IPList
 	NoIPLists bool
+
+	// CustomPages is --custom-pages: the router's custom waiting pages on, or off with --custom-pages=false; nil when not
+	// given, the install record's switch kept.
+	CustomPages *bool
 }
 
 // ProjectInfo is the project as the report names it; Number is empty when the caller cannot see it.

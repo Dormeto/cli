@@ -163,7 +163,7 @@ const freshPlan = `Plan for project dormeto-dev, router dmtr-europe-west1:
   + database dmtr-europe-west1 (Firestore Native, europe-west1)
   + log view dmtr-europe-west1-lb (bucket _Default, the load balancers' request logs)
   + role dormetoRouter "Dormeto router" (32 permissions)
-  + role dormetoRouterBackends "Dormeto router backends" (6 permissions)
+  + role dormetoRouterBackends "Dormeto router backends" (7 permissions)
   + service account dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com
   + tag dormeto/managed
   + grant projects/dormeto-dev/roles/dormetoRouter to serviceAccount:dmtr-europe-west1@dormeto-dev.iam.gserviceaccount.com on the project
@@ -3136,5 +3136,197 @@ func TestParseIPList(t *testing.T) {
 		if _, err := ParseIPList(in); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v, want %q", in, err, want)
 		}
+	}
+}
+
+// The router's custom pages switch (--custom-pages, --custom-pages=false).
+
+const (
+	customPagesOn  = "  custom pages on: a custom waiting page's HTML is served on its application's address\n"
+	customPagesOff = "  custom pages off: a custom waiting page is refused, and one already stored is not served\n"
+)
+
+func withCustomPages(r Request, on bool) Request {
+	r.CustomPages = &on
+	return r
+}
+
+// hasEnv tells that a service's container sets the variable, whatever its value.
+func hasEnv(svc *gcptest.RunService, name string) bool {
+	return slices.ContainsFunc(svc.Template.Containers[0].Env, func(e gcptest.RunEnv) bool { return e.Name == name })
+}
+
+func TestInstallCustomPagesSetsTheSwitchOnBothServicesAndInTheRecord(t *testing.T) {
+	g := newRouterRig(t)
+	code, out := g.run(t, withCustomPages(withImage, true))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + service "+wakerName+" (image "+routerImage+", ingress internal and Cloud Load Balancing, ",
+		"CPU during requests only, as "+routerSA+")\n"+customPagesOn+"  + network endpoint group "+wakerName+" ")
+	for _, name := range []string{controllerName, wakerName} {
+		if got := g.s.RunServices["europe-west1/"+name].Env("DMT_CUSTOM_PAGES"); got != "1" {
+			t.Errorf("%s: DMT_CUSTOM_PAGES %q", name, got)
+		}
+	}
+	if rec := g.record(t); !rec.CustomPages {
+		t.Errorf("record %+v", rec)
+	}
+	if data := g.s.Field(recordDB, "install/record", "data"); !strings.Contains(data, `"customPages":true`) {
+		t.Errorf("record %s", data)
+	}
+}
+
+func TestInstallCustomPagesOnAnInstalledRouterPlansTheChange(t *testing.T) {
+	g := routerInstalled(t)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withCustomPages(plain, true))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  ~ service "+controllerName+": environment DMT_CUSTOM_PAGES\n"+
+		"  ~ service "+wakerName+": environment DMT_CUSTOM_PAGES\n"+
+		customPagesOn+
+		"  ~ record install/record in database dmtr-europe-west1\n")
+	mask := "?updateMask=ingress,invokerIamDisabled,template"
+	var patches []string
+	for _, c := range g.changes(mark) {
+		if !strings.Contains(c, "install/record") {
+			patches = append(patches, c)
+		}
+	}
+	want := []string{"PATCH run.googleapis.com" + servicesPath + controllerName + mask, "PATCH run.googleapis.com" + servicesPath + wakerName + mask}
+	if !slices.Equal(patches, want) {
+		t.Fatalf("%v", patches)
+	}
+	for _, name := range []string{controllerName, wakerName} {
+		if got := g.s.RunServices["europe-west1/"+name].Env("DMT_CUSTOM_PAGES"); got != "1" {
+			t.Errorf("%s: DMT_CUSTOM_PAGES %q", name, got)
+		}
+	}
+	if rec := g.record(t); !rec.CustomPages || rec.Image != routerImage {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+// A run without the flag keeps the record's switch: up to date, then through a new image.
+func TestInstallWithoutCustomPagesKeepsTheRecordedSwitch(t *testing.T) {
+	g := newRouterRig(t)
+	if code, out := g.run(t, withCustomPages(withImage, true)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	mark := len(g.s.Calls())
+	code, out := g.run(t, plain)
+	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	r := withImage
+	r.Image = nextImage
+	code, out = g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ service "+controllerName+": image "+nextImage+", environment DMT_VERSION\n",
+		"  ~ service "+wakerName+": image "+nextImage+", environment DMT_VERSION\n"+customPagesOn)
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc.Env("DMT_CUSTOM_PAGES") != "1" || svc.Template.Containers[0].Image != nextImage {
+			t.Errorf("%s: %+v", name, svc.Template.Containers[0])
+		}
+	}
+	if rec := g.record(t); !rec.CustomPages || rec.Image != nextImage {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+func TestInstallCustomPagesFalseRemovesTheSwitch(t *testing.T) {
+	g := newRouterRig(t)
+	if code, out := g.run(t, withCustomPages(withImage, true)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.run(t, withCustomPages(plain, false))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  ~ service "+controllerName+": environment DMT_CUSTOM_PAGES\n"+
+		"  ~ service "+wakerName+": environment DMT_CUSTOM_PAGES\n"+
+		customPagesOff+
+		"  ~ record install/record in database dmtr-europe-west1\n")
+	for _, name := range []string{controllerName, wakerName} {
+		if svc := g.s.RunServices["europe-west1/"+name]; hasEnv(svc, "DMT_CUSTOM_PAGES") {
+			t.Errorf("%s keeps DMT_CUSTOM_PAGES %q", name, svc.Env("DMT_CUSTOM_PAGES"))
+		}
+	}
+	if rec := g.record(t); rec.CustomPages {
+		t.Errorf("record %+v", rec)
+	}
+	if data := g.s.Field(recordDB, "install/record", "data"); strings.Contains(data, "customPages") {
+		t.Errorf("record %s", data)
+	}
+	mark := len(g.s.Calls())
+	code, out = g.run(t, withCustomPages(plain, false))
+	if code != 0 || !strings.Contains(out, "is up to date") || len(g.changes(mark)) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// The switch changes the two services, as the IP lists' flags do: with the access only, it is refused before any change.
+func TestInstallCustomPagesOnTheAccessOnlyStopsBeforeAnyChange(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		flag := "--custom-pages"
+		if !on {
+			flag += "=false"
+		}
+		t.Run(flag, func(t *testing.T) {
+			g := newRouterRig(t)
+			r := withCustomPages(europe, on)
+			if code, out := g.run(t, r); code != 2 || out != flag+" and --access-only: one or the other\n" {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if c := g.s.Calls(); len(c) != 0 {
+				t.Fatalf("calls: %v", c)
+			}
+			if code, out := g.run(t, europe); code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			mark := len(g.s.Calls())
+			code, out := g.run(t, withCustomPages(plain, on))
+			if code != 2 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			contains(t, out, flag+": changes the router's two Cloud Run services, and no router is installed in europe-west1: give --version or --image.\nNothing was changed.\n")
+			if c := g.changes(mark); len(c) != 0 {
+				t.Fatalf("changes: %v", c)
+			}
+		})
+	}
+}
+
+// The manifest's dormetoRouterBackends gained compute.instances.setMachineType, for the router's fallback machine types:
+// a role installed before it is updated, the plan naming the permission and the new description.
+func TestInstallAddsSetMachineTypeToABackendsRoleInstalledBeforeIt(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.s.Lock()
+	role := g.s.Roles["dormetoRouterBackends"]
+	role.Permissions = slices.DeleteFunc(slices.Clone(role.Permissions), func(p string) bool { return p == "compute.instances.setMachineType" })
+	role.Description = "Dormeto 0.8.0: Lets a Dormeto router start, stop, suspend and resume its workloads' VMs and managed instance groups. Granted on the condition that the resource has the tag dormeto=managed."
+	g.s.Unlock()
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	want := access.Load().Roles["dormetoRouterBackends"].Description
+	if !strings.Contains(want, "and change the machine type of a stopped VM") {
+		t.Errorf("description %q", want)
+	}
+	contains(t, out, `  ~ role dormetoRouterBackends: description "Dormeto 0.8.0: `+want+`", + compute.instances.setMachineType`+"\n",
+		"  ✓ roles: updated dormetoRouterBackends\n", "  ✓ verified:")
+	if got := g.s.Roles["dormetoRouterBackends"].Permissions; !slices.Contains(got, "compute.instances.setMachineType") {
+		t.Fatal(got)
 	}
 }

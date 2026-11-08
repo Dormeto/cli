@@ -50,6 +50,7 @@ type gcpFlags struct {
 	with                                           []string
 	ipLists                                        []string
 	noIPLists                                      bool
+	customPages                                    bool
 }
 
 // gcpCommand is a gcp command calling run with the flags' request; a bad flag, an argument or a missing required flag
@@ -73,9 +74,15 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 			}
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
-			code := run(ctx, gcpDeps(c, f.configuration, version), gcponboard.Request{
+			r := gcponboard.Request{
 				Project: f.project, Region: f.region, Image: f.image, Version: f.version, AccessOnly: f.accessOnly, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with,
-				IPLists: lists, NoIPLists: f.noIPLists})
+				IPLists: lists, NoIPLists: f.noIPLists}
+			// Omitted, the switch is the install record's: only a given --custom-pages, =false included, sets it.
+			if c.Flags().Changed("custom-pages") {
+				on := f.customPages
+				r.CustomPages = &on
+			}
+			code := run(ctx, gcpDeps(c, f.configuration, version), r)
 			if s := signalled(); s != nil {
 				code = signalCode(s)
 			}
@@ -164,7 +171,13 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"printed in the plan, and one with credentials is refused. The set is replaced by each run with --ip-list, cleared by\n"+
 			"--no-ip-lists, and kept by a run with neither (a later --version or --image included). Either flag changes the two\n"+
 			"services, so it needs the router: it is refused with --access-only, and on a router below 0.35.0, which does not\n"+
-			"read the lists. The waker runs at 512 MiB with a list, else 256 MiB.",
+			"read the lists. The waker runs at 512 MiB with a list, else 256 MiB.\n\n"+
+			"With --custom-pages the router serves custom waiting pages, your HTML on the application's address (waiting-page\n"+
+			"set --html): anyone who can invoke the controller sets a page, so they are off unless an administrator's install\n"+
+			"turns them on. It sets DMT_CUSTOM_PAGES=1 on both Cloud Run services and customPages in the install record, which\n"+
+			"the plan shows. --custom-pages=false turns them off: the router then refuses a custom page and serves none already\n"+
+			"stored. A run without the flag keeps the record's. It changes the two services, so it needs the router: it is refused\n"+
+			"with --access-only.",
 		&f, []string{"project", "region"}, version, run)
 	fl := cmd.Flags()
 	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
@@ -175,6 +188,7 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
 	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh=<hours, default 24>], repeatable; replaces the set; needs the router")
 	fl.BoolVar(&f.noIPLists, "no-ip-lists", false, "clear the router's IP lists")
+	fl.BoolVar(&f.customPages, "custom-pages", false, "serve custom waiting pages, your HTML on the application's address (--custom-pages=false turns them off; a run without it keeps the record's); needs the router")
 	withFlag(cmd, &f, "also install the optional access of these features (a later run adds more and a run without --with keeps the record's; only uninstall removes them)")
 	return cmd
 }

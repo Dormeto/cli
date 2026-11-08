@@ -291,6 +291,34 @@ func TestGcpInstallIPListFlagsReadIntoTheRequest(t *testing.T) {
 	}
 }
 
+// --custom-pages is the switch as given: on, off with =false, nil when omitted (the record's is kept).
+func TestGcpInstallCustomPagesReadIntoTheRequest(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		flags []string
+		want  *bool
+	}{
+		{nil, nil},
+		{[]string{"--custom-pages"}, &on},
+		{[]string{"--custom-pages=true"}, &on},
+		{[]string{"--custom-pages=false"}, &off},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "install", "--project", "p", "--region", "europe-west1"}, tc.flags...)...)
+		if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.CustomPages, tc.want) {
+			t.Fatalf("%v: %d %q %+v", tc.flags, exit, errs, calls)
+		}
+	}
+}
+
+func TestGcpInstallHelpNamesCustomPages(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	for _, want := range []string{"--custom-pages", "DMT_CUSTOM_PAGES", "--custom-pages=false"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%d: lacks %q in:\n%s", code, want, out)
+		}
+	}
+}
+
 func TestGcpInstallRefusesABadIPListBeforeAnyRun(t *testing.T) {
 	for _, args := range [][]string{
 		{"--ip-list", "name=a,url=s3://x/y"},

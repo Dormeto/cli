@@ -229,7 +229,8 @@ func (x *run) serviceName(service string) string {
 }
 
 // environment is what the router reads, for one of its roles. PORT is Cloud Run's own (containerPort). The controller's idle
-// check reads the request logs through the router's log view, DMT_LOG_VIEW, when there is one.
+// check reads the request logs through the router's log view, DMT_LOG_VIEW, when there is one. Both roles read the IP lists
+// and the custom pages switch.
 func (x *run) environment(role string) []runEnv {
 	env := []runEnv{
 		{"DMT_ROLE", role},
@@ -248,6 +249,9 @@ func (x *run) environment(role string) []runEnv {
 	}
 	if len(x.lists) > 0 {
 		env = append(env, runEnv{ipListsEnv, ipListsValue(x.lists)})
+	}
+	if x.customPages {
+		env = append(env, runEnv{customPagesEnv, "1"})
 	}
 	return env
 }
@@ -375,7 +379,7 @@ func (x *run) writeService(s serviceSettings, create bool) (string, error) {
 	return done, nil
 }
 
-// noteImage records the image the two services run, its digest, and their IP lists.
+// noteImage records the image the two services run, its digest, their IP lists and their custom pages switch.
 func (x *run) noteImage() {
 	if x.rec.Image != x.image || x.rec.RouterVersion != x.version || x.rec.Digest != x.digest {
 		x.rec.Image, x.rec.RouterVersion, x.rec.Digest = x.image, x.version, x.digest
@@ -383,6 +387,10 @@ func (x *run) noteImage() {
 	}
 	if lists := recordLists(x.lists); !slices.Equal(x.rec.IPLists, lists) {
 		x.rec.IPLists = lists
+		x.recChanged = true
+	}
+	if x.rec.CustomPages != x.customPages {
+		x.rec.CustomPages = x.customPages
 		x.recChanged = true
 	}
 }
@@ -420,6 +428,7 @@ func (x *run) planCloudRun() (*step, error) {
 		return nil, nil
 	}
 	lines = append(lines, listLines(x.lists)...)
+	lines = append(lines, x.customPagesLines()...)
 	return &step{name: "cloudRun", lines: lines, apply: func() (string, error) {
 		if err := x.catchUp(); err != nil {
 			return "", err

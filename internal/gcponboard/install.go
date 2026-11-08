@@ -92,6 +92,7 @@ type run struct {
 	joining          []string // the features whose APIs the apis step turns on: in the record once it has
 	features         []string // the optional features of this run: --with's and the record's, sorted
 	lists            []IPList // the router's IP lists of this run: --ip-list's, none with --no-ip-lists, else the record's
+	customPages      bool     // the router's custom pages switch of this run: --custom-pages's, else the record's
 
 	turningOn []string        // the APIs off at the start: the apis step turns them on
 	turnedOn  bool            // the apis step ran: its APIs are on, though they may answer SERVICE_DISABLED for a while
@@ -319,6 +320,9 @@ func (x *run) plan() error {
 		return err
 	}
 	if err := x.useIPLists(); err != nil {
+		return err
+	}
+	if err := x.useCustomPages(); err != nil {
 		return err
 	}
 	x.resume()

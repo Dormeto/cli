@@ -57,6 +57,9 @@ type Record struct {
 	// IPLists are the router's IP lists, as DMT_IP_LISTS holds them on both services; a run without --ip-list nor
 	// --no-ip-lists keeps them.
 	IPLists []RecordIPList `json:"ipLists,omitempty"`
+	// CustomPages is the router's custom waiting pages switch, as DMT_CUSTOM_PAGES=1 holds it on both services; a run without
+	// --custom-pages keeps it.
+	CustomPages bool `json:"customPages,omitempty"`
 	// Rbac is the Kubernetes access written in clusters for the workloads, listed before it is applied and until it is
 	// removed. The uninstall says what is left of it: it does not reach clusters.
 	Rbac []RecordRbac `json:"rbac,omitempty"`
