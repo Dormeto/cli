@@ -1603,14 +1603,16 @@ logs, it counts only the requests the waker would not ignore: not scanners, not 
 addresses.
 
 - **The logs decide.** On a backend service that logs every request, any entry in the window makes the logs decide
-  alone, whatever Monitoring counts: its `request_count` is sampled and batched, and cannot tell whether the logs are
-  complete. The count decides only when the logs hold none. That also catches a log excluded upstream, such as a
-  `_Default` sink excluding the load balancers' logs. A log lost only in part is not caught.
+  alone, whatever Monitoring counts. Its `request_count` is sampled and batched, and cannot tell whether the logs are
+  complete. The count decides when the logs hold no entry, when a read fails, and past 1,000 entries (or 10 pages).
+  An empty log also catches a log excluded upstream, such as a `_Default` sink excluding the load balancers' logs. A log
+  lost only in part is not caught.
 - **Scanners with a browser's user agent count.** One that sends such an agent to the application's own paths (`/`,
   `/favicon.ico`) looks like a visitor to these filters, and keeps the workload awake. IP lists catch known scanner
   networks.
-- **A regional load balancer's logging** begins 2 to 5 minutes after `--request-logs` (measured): a request in those
-  minutes is not in the logs, and the first idle window after the onboarding may not see it.
+- **A regional load balancer's logging** begins 2 to 5 minutes after `--request-logs` (measured). A request in those
+  minutes is not in the logs. The count decides while the window's logs are empty. Once they hold an entry, the first
+  idle window after the onboarding does not see that request.
 
 - **The install** creates the log view `dmtr-<region>-lb` on the project's `_Default` bucket, filtered to the load
   balancers' request logs. It grants the router `roles/logging.viewAccessor` on the condition that the resource is that
