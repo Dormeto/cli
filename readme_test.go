@@ -355,3 +355,65 @@ func TestReadmeRecurrencesShowEachPatternInTheCLIsWords(t *testing.T) {
 		}
 	}
 }
+
+// Google Cloud's AWS features (vision docs/specs/2026-11-08-google-cloud-router-features-design.md, sections 3 to 8 and 10): the README
+// names each command and flag, the values Google Cloud fixes with their reasons, what each request lets a rule see, the page's
+// custom switch, the fallback machine types, the internal kinds and GKE's exact refusal, in the words the router and the CLI print.
+func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInternalKinds(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	for _, want := range []string{
+		// the levels and the commands
+		"### Google Cloud settings and their levels",
+		"dormeto gcp workloads settings", "dormeto gcp routers settings", "`--idle-minutes`", "`--failed-retry-seconds`", "`--no-wake-rules-file`", "`--wake-rules-file`", "`--hibernate`", "`--type`", "`--join-minutes`",
+		"The organization level and the custom types are the manager's",
+		"`instance` is a VM of an unmanaged instance group or of a zonal network endpoint group, `asg` a managed instance group, `k8s` GKE pods and `databases` a Cloud SQL companion",
+		"`router <version> doesn't have the settings levels: dormeto gcp install --version <this CLI's>`",
+		"`set on this workload`, `type <name>`, `router`, `built-in` or `fixed on Google Cloud`",
+		// what Google Cloud fixes, and why
+		"| `--wait-seconds` | 0 | The waker holds no request.",
+		"| `--max-holders` | 0 | No request is held. |",
+		"| `--drain-seconds` | 0 | The nap's switch is a URL map change, and the backend service's own connection draining applies. |",
+		"| `--wake-mode` | `browser` behind the global load balancer's policy |",
+		"| `--wake-timeout-seconds` | at most 1700 | One controller request lasts at most 1800 s. |",
+		"more than the swap's wait + 60 s behind a swap",
+		"An explicit workload value outside these bounds is refused; an inherited one is brought into them and shown as `fixed`",
+		"`the global load balancer's waiting page can't see the visitor's request, so only the page's probe, an explicit wake or a wake rule wakes it (wake mode browser)`",
+		// the wake mode and the rules
+		"Behind a swap (a regional, classic or internal load balancer), the wake mode is `any` unless you set `browser`",
+		"a request the filters let through wakes the workload and is answered with the waiting page at once",
+		"at most 20 rules per list and level",
+		"the first match decides",
+		"| the page's probe | the client's address | the browser's request | the visitor's path, which the page sends in `x-dormeto-path` |",
+		"| the global load balancer's error fetch | the client's address | what the fetch carries: `Host`, `User-Agent`, `Referer` | none: a path condition never matches |",
+		"| an explicit `POST /_dormeto/wake` | the client's address | the request's own | `/_dormeto/wake` |",
+		"A visitor on a `.php` URL or on a path a no-wake rule keeps gets a page whose probe never wakes the workload",
+		// the page
+		"### The waiting page on Google Cloud", "dormeto gcp workloads waiting-page", "dormeto gcp routers waiting-page",
+		"`custom pages are off on this router: an administrator turns them on with dormeto gcp install --custom-pages`",
+		"anyone who can invoke the controller sets a page",
+		"`--custom-pages=false`",
+		"A custom page stored while they are off is shown as `off`",
+		"`DMT_CUSTOM_PAGES=1`",
+		// the capacity and the fallback machine types
+		"### Capacity and fallback machine types", "30 s, 60 s, then every 120 s until the wake's deadline",
+		"`fallback machine types are for VMs of unmanaged instance groups: a managed group's machine type is its template's`",
+		"`compute.instances.setMachineType`", "`the router's role lacks compute.instances.setMachineType: run dormeto gcp install again`",
+		"`InstanceTypeNotReverted`",
+		// the internal kinds
+		"### Internal load balancers", "`cross-region-internal`", "`loadbalancing.googleapis.com/https/internal/request_count`", "`internal_http_lb_rule`",
+		"`INTERNAL_SELF_MANAGED`",
+		// GKE's refusal
+		"`k8s-um-`", "`mci-`", "`k8sResource`", "`kubernetes.io/ingress-name`", "a standalone network endpoint group",
+		// the wake timeout's default
+		"The router's default is 600 s for every kind of workload but one with a Cloud SQL companion",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"600 s for VMs, 300 s for pods", "A plain request (a `curl`, a webhook) gets the page and does not wake the workload", "and the branded waiting page does not apply to it"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the Google Cloud section still says %q", gone)
+		}
+	}
+}

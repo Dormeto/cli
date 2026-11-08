@@ -1549,7 +1549,9 @@ dormeto gcp uninstall --project my-project --region europe-west1
   (its ingress admits only the load balancer), the waker's network endpoint group and the check job `dmtr-<region>-check`
   (every 5 minutes). Run again, it plans only the differences, and shows the project's bindings its record does not
   explain, recording those of Google's service agents. It never changes or removes a binding it did not add. `--with`
-  adds the [optional access](#optional-access-cloud-sql-and-gke), `--ip-list` the router's [IP lists](#ip-lists-on-google-cloud).
+  adds the [optional access](#optional-access-cloud-sql-and-gke), `--ip-list` the router's [IP lists](#ip-lists-on-google-cloud), and
+  `--custom-pages` turns on [custom waiting pages](#the-waiting-page-on-google-cloud). A router installed before the fallback machine types
+  needs a run of `gcp install` again: it adds `compute.instances.setMachineType` to the role `dormetoRouterBackends`.
 - **`gcp status`** (read-only, `--json`) shows the router's record and live state: version, services, controller
   health, queue, job, database and grants, and the record's features, IP lists and Kubernetes access. Without
   `--region` it shows every router of the project. Exit 1 when
@@ -1711,6 +1713,8 @@ browsers and scanners on those addresses, not a client that means to wake.
 | `workloads schedule show`, `set` or `clear <id>` | its nap and awake windows ([schedules and pauses](#google-cloud-schedules-and-pauses)) |
 | `workloads pause <id> --reason <text>`, `workloads resume <id>` | hold its naps, then let them run again |
 | `workloads access show`, `grant` or `revoke` | a GKE workload's [Kubernetes access](#kubernetes-access-of-gke-workloads), alone |
+| `workloads settings <id>...`, `routers settings` | the [settings](#google-cloud-settings-and-their-levels) of a workload, and of the router's level |
+| `workloads waiting-page show`, `set` or `clear <id>`, `routers waiting-page show`, `set` or `clear` | the [waiting page](#the-waiting-page-on-google-cloud) of a workload and of the router |
 
 `--json` prints the controller's answer as it is. `onboard` first asks the controller for a dry run: a workload that is
 not eligible is refused with the reasons and nothing is changed (`--dry-run` stops there). Then it binds the tag
@@ -1731,13 +1735,13 @@ The onboarding's other flags:
   application's service for good: it keeps that service health checked through a swap, and the application sees that
   path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (measured: visitors reached
   the application 62 s after a `POST /_dormeto/wake` on regional and 2 min 16 s after one on classic; the router reads the
-  workload `AWAKE` 123 to 188 s and 287 s after the wake, its unswap's wait included). Google advises moving a classic load balancer to the global external one. `internal` is an internal Application Load Balancer on a regional map in the router's region, `cross-region-internal` one on a global map; a `--request-logs` change reaches the backend service of the map's own place, regional for `internal` and global for `cross-region-internal`.
-- `--wake-timeout-seconds <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call; `gcp workloads settings` and `gcp routers settings` take the same range). `--wake-timeout` is its old name, which still works and says `--wake-timeout is now --wake-timeout-seconds`. The router's default is
-  600 s for VMs, 300 s for pods and 1700 s with a Cloud SQL companion, plus the swap's wait on regional (100 s) and classic
-  (250 s), up to 1700. If you set it, give a regional load balancer about 250 s or more, and a classic one about 340 s
-  or more.
-- `--wake-mode any|browser`: what wakes the workload, as AWS's; not given, the router's level decides (behind the global policy, `browser`).
-- `--fallback-type <machine type>`, repeatable, at most 5 (such as `e2-medium`): the machine types a VM of an unmanaged instance group may run on when its own is out of capacity, as AWS's `--fallback-type`. The router checks them against each VM's zone. At the offboarding a VM that still runs on a fallback type is named, one line each (`VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand`), and `--json` carries the router's `instanceTypes`.
+  workload `AWAKE` 123 to 188 s and 287 s after the wake, its unswap's wait included). Google advises moving a classic load balancer to the global external one. `internal` is an internal Application Load Balancer on a regional map in the router's region, `cross-region-internal` one on a global map ([internal load balancers](#internal-load-balancers)).
+- `--wake-timeout-seconds <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call; `gcp workloads settings` and `gcp routers settings` take the same range). `--wake-timeout` is its old name, which still works and says `--wake-timeout is now --wake-timeout-seconds`. The router's default is 600 s for every kind of workload but one with a Cloud SQL companion, which is 1700 s ([the settings'
+  levels](#google-cloud-settings-and-their-levels)). Behind a regional or classic load balancer, a value of the swap's wait + 60 s or less (160 s
+  regional, 310 s classic) is refused, as a wake would always fail; if you set it, give a regional load balancer about 250 s or
+  more, and a classic one about 340 s or more.
+- `--wake-mode any|browser`: what wakes the workload, as AWS's; not given, the router's level decides, and behind the global load balancer's policy it is `browser` ([the wake mode](#google-cloud-settings-and-their-levels)).
+- `--fallback-type <machine type>`, repeatable, at most 5 (such as `e2-medium`): the machine types a VM of an unmanaged instance group may run on when its own is out of capacity, as AWS's `--fallback-type`. The router checks them against each VM's zone ([capacity and fallback machine types](#capacity-and-fallback-machine-types)). At the offboarding a VM that still runs on a fallback type is named, one line each (`VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand`), and `--json` carries the router's `instanceTypes`.
 - `--request-logs`: turns the backend service's request logs on, for the idle check to read ([request logs](#request-logs)).
   Its warning, the offboarding's set-back and the cost are there.
 - `--cloud-sql <instance>`, repeatable: a Cloud SQL instance of the project that naps with the workload, stopped after the
@@ -1756,6 +1760,153 @@ give back, `notGivenBack` in its answer, is printed with a `!` and the command e
 workload is offboarded and no rerun reaches it. A GKE workload asleep keeps its owner at 0 replicas, and `notGivenBack`
 names a paused `ScaledObject` and the annotation to remove. When the controller does not answer, it names what is left and
 removes nothing.
+
+### Google Cloud settings and their levels
+
+```sh
+dormeto gcp workloads settings shop --project my-project --region europe-west1 --idle-minutes 10 --wake-mode browser
+dormeto gcp workloads settings shop shop-eu --project my-project --region europe-west1 --idle-minutes inherit --type inherit
+dormeto gcp routers settings --project my-project --region europe-west1 --idle-minutes 30 --no-wake-rules-file rules.json
+dormeto gcp routers settings --project my-project --region europe-west1
+dormeto gcp workloads show shop --project my-project --region europe-west1     # each setting says where it comes from
+```
+
+A Google Cloud router has AWS's settings, on AWS's names, flags and lines. A workload's idle window, wake timeout,
+retry after a failed wake and wake mode each come from the first level that sets them: the workload, its type, its router,
+then the built-in value. `inherit` gives a value back to the levels. The no-wake and wake rules add up across the levels,
+the router's first. The organization level and the custom types are the manager's, which Google Cloud does not have yet:
+the organization level reads as unset, and only the built-in types exist. `routers settings` with no flag shows the
+router's level. A router without the levels answers 404, which the CLI says as `router <version> doesn't have the settings
+levels: dormeto gcp install --version <this CLI's>`.
+
+| Setting | Flag | Range | Built-in |
+|---|---|---|---|
+| idle window | `--idle-minutes` | 5 to 1440 | 15 |
+| wake timeout | `--wake-timeout-seconds` | 60 to 1700 | 600 |
+| retry after a failed wake | `--failed-retry-seconds` | 10 to 600 | 60 |
+| wake mode | `--wake-mode` | `any` or `browser` | `any` |
+| hibernation | `--hibernate` | `true` or `false` | the router's, else on (off with fallback machine types) |
+| no-wake and wake rules | `--no-wake-rules-file`, `--wake-rules-file` | a JSON list each, at most 20 rules per list and level | none |
+| type | `--type` | a name | from the backends |
+
+`--join-minutes`, `--dry-run` and `--yes` are the router's command's, as on AWS. A rules file is a JSON list (`-` for the standard
+input), and a file the router would refuse is refused before any call (exit 2) with AWS's words.
+
+- **The types** keep AWS's names. `instance` is a VM of an unmanaged instance group or of a zonal network endpoint group,
+  `asg` a managed instance group, `k8s` GKE pods and `databases` a Cloud SQL companion (on AWS: an EC2 instance, an Auto
+  Scaling group, Kubernetes on EKS, and RDS or Aurora). A workload takes its type from its primary backends, databases first;
+  `--type` names another. The `databases` type's built-in wake timeout is 1700 s.
+- **What Google Cloud fixes.** Some values can't be chosen here. The router resolves them to the value Google imposes, and
+  `show` says so: each setting is printed with the level it comes from, `set on this workload`, `type <name>`, `router`,
+  `built-in` or `fixed on Google Cloud` (`--json`: `workload`, `type`, `router`, `default` or `fixed`).
+
+  | Setting | On Google Cloud | Why |
+  |---|---|---|
+  | `--wait-seconds` | 0 | The waker holds no request. Behind a swap, the switch back takes longer than any hold (regional 100 s, classic 250 s). Behind the global load balancer's policy, the waker receives only the error fetch. |
+  | `--max-holders` | 0 | No request is held. |
+  | `--drain-seconds` | 0 | The nap's switch is a URL map change, and the backend service's own connection draining applies. |
+  | `--wake-mode` | `browser` behind the global load balancer's policy | The error fetch carries neither the visitor's path nor its method: waking on it would let every scanner wake the workload. |
+  | `--wake-timeout-seconds` | at most 1700 | One controller request lasts at most 1800 s. |
+  | `--wake-timeout-seconds` | more than the swap's wait + 60 s behind a swap | The wake waits for the map's change to spread: more than 160 s on a regional or internal load balancer, more than 310 s on a classic one. |
+
+  An explicit workload value outside these bounds is refused; an inherited one is brought into them and shown as `fixed`, so a
+  router's value never makes a workload unwakeable. `--wait-seconds`, `--max-holders` and `--drain-seconds` are refused before
+  any call (exit 2) with the reason, and `inherit` is accepted. `--wake-mode any` on a workload behind the global load
+  balancer is refused by the router: `the global load balancer's waiting page can't see the visitor's request, so only the page's probe,
+  an explicit wake or a wake rule wakes it (wake mode browser)`. At the router's level `any` is accepted: it applies to the
+  workloads behind a swap.
+- **The wake mode, by load balancer.** Behind a swap (a regional, classic or internal load balancer), the wake mode is `any`
+  unless you set `browser`: a request the filters let through wakes the workload and is answered with the waiting page at once, as on
+  AWS. In `browser`, only the page's probe, an explicit wake or a wake rule wakes it. Behind the global load balancer's policy
+  the waker receives only the error fetch, so the wake mode is `browser`, whatever the levels say: the page's probe, an explicit
+  `POST /_dormeto/wake`, the wake header `x-dormeto-wake: 1` or a wake rule wakes it, and any other request counts in the stats as
+  `deferred:browser mode`, scanners included. A visitor on a `.php` URL or on a path a no-wake rule keeps gets a page whose probe
+  never wakes the workload, as on AWS.
+- **The rules, as on AWS.** A rule has a name and one or more conditions (`sourceIps`, `userAgentPattern`, `headers`,
+  `pathPrefixes`, `pathPattern`), and matches when all of them do. There are at most 20 rules per list and level; the levels add up, the
+  most general first, and the first match decides; a level's list replaces that level's list as a whole. The no-wake rules come
+  first, then `HEAD`, declared bots and scanner paths, the wake header, the wake rules, the IP lists, the probe and the wake
+  mode. What a condition sees depends on the request the waker gets:
+
+  | The request | `sourceIps` | `userAgentPattern`, `headers` | `pathPrefixes`, `pathPattern` |
+  |---|---|---|---|
+  | a visitor's, behind a swap | the client's address | the request's own | the visitor's path |
+  | the page's probe | the client's address | the browser's request | the visitor's path, which the page sends in `x-dormeto-path` |
+  | the global load balancer's error fetch | the client's address | what the fetch carries: `Host`, `User-Agent`, `Referer` | none: a path condition never matches |
+  | an explicit `POST /_dormeto/wake` | the client's address | the request's own | `/_dormeto/wake` |
+
+  The client's address is read as the IP lists read it ([IP lists](#ip-lists-on-google-cloud)). A forged `x-dormeto-path` bypasses
+  nothing a client couldn't bypass by asking for another path. Router-wide rules go at the router's level: there is no Terraform level.
+- **`workloads show`** prints the type, each setting with its level, the hibernation, the fallback machine types, and the no-wake
+  and wake rules of every level, each with its level. `--json` prints the controller's answer, with `settings`, `settingsFrom`,
+  `type`, `noWakeRules` and `wakeRules`.
+
+### The waiting page on Google Cloud
+
+```sh
+dormeto gcp routers waiting-page set --project my-project --region europe-west1 --title "Acme portal" --icon ./logo.svg
+dormeto gcp workloads waiting-page set shop --project my-project --region europe-west1 --description "Our test environments sleep at night."
+dormeto gcp workloads waiting-page show shop --project my-project --region europe-west1
+dormeto gcp workloads waiting-page clear shop --project my-project --region europe-west1
+```
+
+The page a visitor sees while a workload wakes can carry your name, icon and words, or be your own HTML, with AWS's flags
+(`--icon auto|none|<file>`, `--title`, `--description`, `--html <file or ->`, `--json`), checks and limits (an icon of 64 KiB at
+most, a title of 80 characters, a description of 500, HTML of 256 KiB; the checks run before any call, exit 2) and lines:
+[Waiting page](#waiting-page) has them. One document is kept per level, the workload's and the router's; the organization's
+comes with the manager. The most specific level with a document decides the mode, and a template takes each field from the most
+specific template that has it. The page is in the visitor's language, English or French, and its progress bar is filled from the
+median of the router's last 10 wakes. A router without the page says so, with the version to install.
+
+- **Custom pages are off.** Custom HTML runs on the application's address, and on Google Cloud anyone who can invoke the
+  controller sets a page. So a router serves custom pages only when an administrator's install turns them on:
+  `dormeto gcp install --custom-pages`, which sets `DMT_CUSTOM_PAGES=1` on both Cloud Run services and `customPages` in the
+  install record, and a run without the flag keeps the record's. `--custom-pages=false` turns them off. Setting one while they are off is
+  refused with the router's words, `custom pages are off on this router: an administrator turns them on with dormeto gcp install
+  --custom-pages`. A custom page stored while they are off is shown as `off`, with the router's warning, and never served: the template
+  levels or the built-in page show instead. It stays stored until you `clear` it or the switch comes back, so turning
+  the switch off stops customer HTML at once.
+- **The icon `auto`** is the favicon the router reads from the application at a nap, at most once a day, in 3 seconds, while the
+  workload is awake. It reads the host of the URL map's first host rule that sends the whole of `/` to the workload's backend
+  service; a map with no such host (a wildcard host, or a `/` that goes elsewhere or depends on more than the path) gives no
+  icon, and the internal load balancers get none.
+
+### Capacity and fallback machine types
+
+A start or a resume that Compute Engine refuses for lack of capacity (`ZONE_RESOURCE_POOL_EXHAUSTED`, `POOL_CAPACITY_INSUFFICIENT`)
+is tried again within the wake: after 30 s, 60 s, then every 120 s until the wake's deadline, for VMs and managed groups.
+A quota error is never retried this way.
+
+`--fallback-type <machine type>` at the onboarding gives a VM more to try, as on AWS: each VM starts on its own type, and on a
+capacity error the router sets the next type of its own and the list on the stopped VM and starts it again. A suspended VM only
+resumes, as Google changes no type while a VM is suspended. The next stop gives each VM its own type back.
+
+- **Only for VMs of unmanaged instance groups and zonal network endpoint groups.** A managed group is refused,
+  `fallback machine types are for VMs of unmanaged instance groups: a managed group's machine type is its template's`, and so
+  are the pods of a GKE workload. A list turns hibernation off unless the workload says `true`.
+- **The onboarding checks each type** against each VM: at most 5, none of them the VM's own, each in the VM's zone, with no GPU
+  and no local SSD, and of the VM's series or between first and second generation series (N1, N2, N2D, E2, C2, C2D, M1, M2 and T2D): any other
+  is refused with Google's rule. The list is set at the onboarding and can't be changed later.
+- **The permission.** The router changes a type with `compute.instances.setMachineType`, which `dormeto gcp install` adds to the
+  role `dormetoRouterBackends`, under its `dormeto=managed` condition: run it again on a router installed before. Without it a wake
+  that needs a fallback fails with `the router's role lacks compute.instances.setMachineType: run dormeto gcp install again`.
+- **What you see.** `workloads show` lists the fallback types and the VMs running on one (`running on a fallback type: web-1 e2-medium
+  (was e2-small)`); the log says `InstanceTypeFallback`, and `InstanceTypeNotReverted` when a VM could not be given its own type back
+  (the next stop tries again). An offboarding names each VM that keeps a fallback type.
+
+### Internal load balancers
+
+`--load-balancer internal` is an internal Application Load Balancer on a regional map in the router's region (forwarding rules
+`INTERNAL_MANAGED`); `--load-balancer cross-region-internal` is one on a global map (rules `INTERNAL_MANAGED` too), which any router
+can onboard, as it can a global map. The CLI tells them from Google by the rules' scheme, as it tells the other kinds. Both are
+napped by the swap, like a regional one: Google documents no custom error response on them. `INTERNAL_SELF_MANAGED` (Cloud
+Service Mesh) is still refused.
+
+- **The idle check** reads `loadbalancing.googleapis.com/https/internal/request_count`, and with `--request-logs` the logs of the
+  resource `internal_http_lb_rule`: `gcp install` updates a log view filtered before to include it.
+- **The limits.** The visitors' addresses are private, so an IP list is for private ranges. A project's regional serverless
+  network endpoint groups share 5,000 queries a second. A cross-region internal load balancer's waker is in one region. The
+  swap's wait is a regional load balancer's, 100 s, until it is measured on these kinds. The page has no favicon.
 
 ### Google Cloud schedules and pauses
 
@@ -1831,9 +1982,10 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 - **A pause with `--keep-asleep` does not keep visitors out**: a visitor still wakes it. Only scheduled and maintenance
   wakes wait.
 - **An IP list does not stop an explicit wake**: a listed address's `POST /_dormeto/wake` still wakes the workload.
-- **Under a swap** (regional and classic), the waker gets every request while the workload sleeps and answers the waiting
-  page with a `503` and `Retry-After`, whatever the method: an API client reads it as asleep, sends
-  `POST /_dormeto/wake`, then retries. A plain request (a `curl`, a webhook) gets the page and does not wake the workload.
+- **Under a swap** (regional, classic and the internal kinds), the waker gets every request while the workload sleeps and
+  answers the waiting page with a `503` and `Retry-After`, whatever the method: an API client reads it as asleep, sends
+  `POST /_dormeto/wake`, then retries. In the wake mode `any`, the default, a plain request (a `curl`, a webhook) the filters
+  let through wakes the workload too, as on AWS, and still gets the page; set `browser` to keep the waker from waking on it.
   A visitor at a nap's start may wait up to twice the swap's wait with the VMs still running, and a nap that dies while
   swapped holds visitors at the waker only for minutes: a nap that stops beating is called stuck by the router's check (22
   minutes at the latest under a swap). Right after a classic
@@ -1858,9 +2010,11 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   offboarding of an awake workload whose database is stopped leaves it stopped.
 - **A GKE Standard cluster's nodes are paid all the same**: scaling pods saves money only on Autopilot, or with the node
   autoscaler freeing a node. The onboarding warns of a Standard cluster.
-- **GKE's own load balancers are refused**: a URL map named `k8s2-`, `gkegw1-` or `gkemcg1-` belongs to an Ingress or a
-  Gateway, whose controller writes it back. One measured case: GKE removed a policy written on a Gateway's map 48 s after
-  its routes changed, without a word. Use a standalone network endpoint group on a load balancer you own.
+- **GKE's own load balancers are refused**: a URL map named `k8s2-`, `k8s-um-`, `gkegw1-`, `gkemcg1-` or `mci-` belongs to an
+  Ingress, a Gateway or a Multi Cluster Ingress, whose controller writes it back, and so is a map whose description names
+  `k8sResource` or whose proxy or forwarding rule carries `kubernetes.io/ingress-name`, whatever its name. One measured case:
+  GKE removed a policy written on a Gateway's map 48 s after its routes changed, without a word. Use a standalone network
+  endpoint group on a load balancer you own.
 - **KEDA at zero is refused**: an owner whose ScaledObject has `minReplicaCount: 0`, set or left to KEDA's default, is
   refused. Set it to 1 or more.
 - **A classic load balancer on the Standard network tier** is found by the onboarding, and Google accepts it for the swap
@@ -1894,8 +2048,9 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 
 The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
 CLI 0.12.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for
-`--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). There is no dashboard or manager for
-Google Cloud yet, and the branded waiting page does not apply to it.
+`--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). The settings levels, the waiting page, the fallback machine types and the internal load balancers
+are newer still and tested against the code only: their measures and their acceptance on Google have not run. There is no dashboard or manager for
+Google Cloud yet: the organization level of the settings and of the waiting page, and the custom types, come with it.
 
 ## Building from source
 
