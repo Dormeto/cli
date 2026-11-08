@@ -3272,6 +3272,140 @@ func TestInstallCustomPagesFalseRemovesTheSwitch(t *testing.T) {
 	}
 }
 
+// refuseWaker makes the next write of the waker fail, after the controller's has succeeded: the cloudRun step stops
+// between the two services.
+func refuseWaker(g *installRig) {
+	g.s.Refuse(gcptest.Refusal{Method: http.MethodPatch, Host: "run.googleapis.com", Path: servicesPath + wakerName, Times: 1, Code: 403,
+		Status: "PERMISSION_DENIED", Message: "Permission 'run.services.update' denied"})
+}
+
+// Turning the pages off fails closed: the record says off before either service is written, so a run stopped between the
+// controller and the waker is finished by any later run, with or without the flag, and the switch never comes back on.
+func TestInstallCustomPagesFalseStoppedBetweenTheServicesIsFinishedByARunWithoutTheFlag(t *testing.T) {
+	g := newRouterRig(t)
+	if code, out := g.run(t, withCustomPages(withImage, true)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	refuseWaker(g)
+	code, out := g.run(t, withCustomPages(plain, false))
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ cloudRun: ")
+	controller, waker := g.s.RunServices["europe-west1/"+controllerName], g.s.RunServices["europe-west1/"+wakerName]
+	if hasEnv(controller, "DMT_CUSTOM_PAGES") || waker.Env("DMT_CUSTOM_PAGES") != "1" {
+		t.Fatalf("not stopped between the services: controller %q, waker %q", controller.Env("DMT_CUSTOM_PAGES"), waker.Env("DMT_CUSTOM_PAGES"))
+	}
+	if rec := g.record(t); rec.CustomPages {
+		t.Errorf("the stopped turn-off left the record on: %+v", rec)
+	}
+
+	mark := len(g.s.Calls())
+	code, out = g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  ~ service "+wakerName+": environment DMT_CUSTOM_PAGES\n"+
+		customPagesOff+
+		"  ~ record install/record in database dmtr-europe-west1\n")
+	if strings.Contains(out, "custom pages on") || strings.Contains(out, "~ service "+controllerName) {
+		t.Errorf("the rerun turns the controller back on:\n%s", out)
+	}
+	for _, c := range g.changes(mark) {
+		if strings.Contains(c, controllerName) {
+			t.Errorf("the controller written again: %s", c)
+		}
+	}
+	for _, name := range []string{controllerName, wakerName} {
+		if svc := g.s.RunServices["europe-west1/"+name]; hasEnv(svc, "DMT_CUSTOM_PAGES") {
+			t.Errorf("%s keeps DMT_CUSTOM_PAGES %q", name, svc.Env("DMT_CUSTOM_PAGES"))
+		}
+	}
+	if rec := g.record(t); rec.CustomPages {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+// Only an applied run records the turn-off: a dry run plans it and writes nothing.
+func TestInstallCustomPagesFalseDryRunRecordsNothing(t *testing.T) {
+	g := newRouterRig(t)
+	if code, out := g.run(t, withCustomPages(withImage, true)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	mark := len(g.s.Calls())
+	r := withCustomPages(plain, false)
+	r.DryRun = true
+	code, out := g.run(t, r)
+	if code != 0 || !strings.Contains(out, customPagesOff+"  ~ record install/record in database dmtr-europe-west1\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if c := g.changes(mark); len(c) != 0 {
+		t.Fatalf("changes: %v", c)
+	}
+	if rec := g.record(t); !rec.CustomPages {
+		t.Errorf("record %+v", rec)
+	}
+}
+
+// Turning the pages on keeps the record for after the services: a run stopped between them stays off, and a later run
+// without the flag takes the variable back from the controller, the plan saying which way the switch moves.
+func TestInstallCustomPagesStoppedBetweenTheServicesStaysOff(t *testing.T) {
+	g := routerInstalled(t)
+	refuseWaker(g)
+	code, out := g.run(t, withCustomPages(plain, true))
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if got := g.s.RunServices["europe-west1/"+controllerName].Env("DMT_CUSTOM_PAGES"); got != "1" {
+		t.Fatalf("not stopped between the services: controller %q", got)
+	}
+	if rec := g.record(t); rec.CustomPages {
+		t.Errorf("the stopped turn-on recorded on: %+v", rec)
+	}
+	code, out = g.run(t, plain)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
+		"  ~ service "+controllerName+": environment DMT_CUSTOM_PAGES\n"+
+		customPagesOff)
+	for _, name := range []string{controllerName, wakerName} {
+		if svc := g.s.RunServices["europe-west1/"+name]; hasEnv(svc, "DMT_CUSTOM_PAGES") {
+			t.Errorf("%s keeps DMT_CUSTOM_PAGES %q", name, svc.Env("DMT_CUSTOM_PAGES"))
+		}
+	}
+}
+
+// An upgrade with --version deploys the public image with the recorded switch, as one with --image does.
+func TestInstallUpgradeWithVersionKeepsTheRecordedSwitch(t *testing.T) {
+	def := embeddedRouterVersion()
+	const older = "0.36.0"
+	g := publicRig(t, older, def)
+	r := withCustomPages(plain, true)
+	r.Version = older
+	if code, out := g.run(t, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	r = plain
+	r.Version = def
+	code, out := g.run(t, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ~ service "+controllerName+": image "+deployedOf(def)+", environment DMT_VERSION\n",
+		"  ~ service "+wakerName+": image "+deployedOf(def)+", environment DMT_VERSION\n"+customPagesOn)
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		if svc.Env("DMT_CUSTOM_PAGES") != "1" || svc.Template.Containers[0].Image != deployedOf(def) {
+			t.Errorf("%s: %+v", name, svc.Template.Containers[0])
+		}
+	}
+	if rec := g.record(t); !rec.CustomPages || rec.RouterVersion != def {
+		t.Errorf("record %+v", rec)
+	}
+}
+
 // The switch changes the two services, as the IP lists' flags do: with the access only, it is refused before any change.
 func TestInstallCustomPagesOnTheAccessOnlyStopsBeforeAnyChange(t *testing.T) {
 	for _, on := range []bool{true, false} {

@@ -327,29 +327,29 @@ func envDifferences(got, want runService) []string {
 	return append(names, extra...)
 }
 
-// planService reads a service and plans what the cloudRun step does to it: its lines, its write (nil for none) and
-// whether the service exists.
-func (x *run) planService(s serviceSettings) (lines []string, write func() (string, error), exists bool, err error) {
-	var got runService
-	found, err := x.get(runAPI, x.servicesURL()+"/"+esc(s.name), &got)
+// planService reads a service and plans what the cloudRun step does to it: its lines, its write (nil for none) and the
+// service as read (nil when it does not exist).
+func (x *run) planService(s serviceSettings) (lines []string, write func() (string, error), got *runService, err error) {
+	var read runService
+	found, err := x.get(runAPI, x.servicesURL()+"/"+esc(s.name), &read)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, nil, err
 	}
 	if !found {
 		line := fmt.Sprintf("+ service %s (image %s, %s, %s, %s, %s, %s, %s, %s, as %s)", s.name, x.deployed(), s.ingressWords, s.invokerWords(),
 			s.instanceWords(), s.requestWords(), s.timeoutWords(), s.memoryWords(), cpuWords, x.n.email)
-		return []string{line}, func() (string, error) { return x.writeService(s, true) }, false, nil
+		return []string{line}, func() (string, error) { return x.writeService(s, true) }, nil, nil
 	}
-	differences := x.serviceDifferences(s, got)
-	if why := got.notReady(); why != "" {
+	differences := x.serviceDifferences(s, read)
+	if why := read.notReady(); why != "" {
 		differences = append(differences, why)
 	}
 	if len(differences) == 0 {
 		x.found("service", x.serviceName(s.name))
-		return nil, nil, true, nil
+		return nil, nil, &read, nil
 	}
 	line := "~ service " + s.name + ": " + strings.Join(differences, ", ")
-	return []string{line}, func() (string, error) { return x.writeService(s, false) }, true, nil
+	return []string{line}, func() (string, error) { return x.writeService(s, false) }, &read, nil
 }
 
 // writeService creates or updates a service and waits for it to serve its new revision.
@@ -398,14 +398,14 @@ func (x *run) noteImage() {
 // planCloudRun plans the cloudRun step: the controller, its invoker binding, the waker.
 func (x *run) planCloudRun() (*step, error) {
 	controller, waker := x.controllerSettings(), x.wakerSettings()
-	lines, writeController, exists, err := x.planService(controller)
+	lines, writeController, gotController, err := x.planService(controller)
 	if err != nil {
 		return nil, err
 	}
 	g := x.grantOn("controller")
 	rp := RunPolicy(x.n.project, x.n.region, x.n.controller)
 	grant := true
-	if exists {
+	if gotController != nil {
 		p, err := x.readPolicy(rp)
 		if err != nil {
 			return nil, err
@@ -418,7 +418,7 @@ func (x *run) planCloudRun() (*step, error) {
 	if grant {
 		lines = append(lines, "+ grant "+x.describe(g.Grant, g.On))
 	}
-	wakerLines, writeWaker, _, err := x.planService(waker)
+	wakerLines, writeWaker, gotWaker, err := x.planService(waker)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +428,7 @@ func (x *run) planCloudRun() (*step, error) {
 		return nil, nil
 	}
 	lines = append(lines, listLines(x.lists)...)
-	lines = append(lines, x.customPagesLines()...)
+	lines = append(lines, x.customPagesLines(x.movesCustomPages(controller, gotController) || x.movesCustomPages(waker, gotWaker))...)
 	return &step{name: "cloudRun", lines: lines, apply: func() (string, error) {
 		if err := x.catchUp(); err != nil {
 			return "", err
