@@ -15,6 +15,13 @@ import (
 	"github.com/Dormeto/cli/internal/schedule"
 )
 
+// WorkloadType is a workload's type and why (set on it, from its tags or from its backends).
+type WorkloadType struct {
+	Name    *string `json:"name"`
+	From    *string `json:"from"`
+	Missing string  `json:"missing"`
+}
+
 // WorkloadDetails is the answer of GET /iam/workloads/{router}/{id}: the router's `status` action spread with the
 // manager's fields; what the CLI prints of it (the rest is in --json).
 type WorkloadDetails struct {
@@ -45,14 +52,10 @@ type WorkloadDetails struct {
 	} `json:"settings"`
 	// Settings at scale (routers 0.37.0): the level each setting comes from, and the workload's type.
 	SettingsFrom map[string]string `json:"settingsFrom"`
-	Type         *struct {
-		Name    *string `json:"name"`
-		From    *string `json:"from"`
-		Missing string  `json:"missing"`
-	} `json:"type"`
-	Description *Description `json:"description"`
-	Hibernation *Hibernation `json:"hibernation"`
-	Backends    *[]struct {
+	Type         *WorkloadType     `json:"type"`
+	Description  *Description      `json:"description"`
+	Hibernation  *Hibernation      `json:"hibernation"`
+	Backends     *[]struct {
 		Kind string `json:"kind"`
 	} `json:"backends"`
 	Pauses   []Pause         `json:"pauses"`
@@ -170,41 +173,55 @@ func (d WorkloadDetails) settingsText() string {
 
 // sourceText is a level in a few words, as the dashboard says it.
 func (d WorkloadDetails) sourceText(level string) string {
+	var name *string
+	if d.Type != nil {
+		name = d.Type.Name
+	}
+	return SourceText(level, name)
+}
+
+// SourceText is a level in a few words: the type's name for "type", and fixed on Google Cloud for "fixed" (AWS fixes none).
+func SourceText(level string, typeName *string) string {
 	switch level {
 	case "workload":
 		return "set on this workload"
 	case "type":
-		if d.Type != nil && d.Type.Name != nil {
-			return "type " + *d.Type.Name
+		if typeName != nil {
+			return "type " + *typeName
 		}
 		return "its type"
 	case "default":
 		return "built-in"
+	case "fixed":
+		return "fixed on Google Cloud"
 	}
 	return level
 }
 
 // typeText is the workload's type and why, empty from a router before 0.37.0.
-func (d WorkloadDetails) typeText() string {
-	if d.Type == nil {
+func (d WorkloadDetails) typeText() string { return d.Type.Text() }
+
+// Text is a type and why, empty for none given (a router before 0.37.0).
+func (t *WorkloadType) Text() string {
+	if t == nil {
 		return ""
 	}
 	lost := ""
-	if d.Type.Missing != "" {
-		lost = " (its type " + d.Type.Missing + " no longer exists)"
+	if t.Missing != "" {
+		lost = " (its type " + t.Missing + " no longer exists)"
 	}
-	if d.Type.Name == nil {
+	if t.Name == nil {
 		return "none" + lost
 	}
 	why := map[string]string{"workload": "set on this workload", "tags": "from its tags", "backends": "from its backends"}
 	from := ""
-	if d.Type.From != nil {
-		from = why[*d.Type.From]
+	if t.From != nil {
+		from = why[*t.From]
 	}
 	if from == "" {
-		return *d.Type.Name + lost
+		return *t.Name + lost
 	}
-	return *d.Type.Name + " (" + from + ")" + lost
+	return *t.Name + " (" + from + ")" + lost
 }
 
 // hasInstanceBackend is whether the workload has a standalone EC2 instance, the only backend that hibernates. A router

@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Dormeto/cli/internal/install"
 )
 
 func settingsRig(t *testing.T) (*workloadsRig, Request) {
@@ -40,7 +42,7 @@ func TestWorkloadsSettingsSendTheFlatBodyAsTheOperator(t *testing.T) {
 
 func TestWorkloadsSettingsSayInheritAndGoOnPastARefusal(t *testing.T) {
 	g, r := settingsRig(t)
-	r.IDs = []string{"shop", "missing", "web"}
+	r.IDs, r.Yes = []string{"shop", "missing", "web"}, true
 	r.Levels = map[string]any{"hibernate": (*bool)(nil), "type": nil}
 	code, out := g.call(t, WorkloadsSettings, r)
 	if code != 1 {
@@ -66,7 +68,7 @@ func TestWorkloadsSettingsSayTheRoutersProblems(t *testing.T) {
 
 func TestWorkloadsSettingsJSONPrintsTheAnswersByWorkload(t *testing.T) {
 	g, r := settingsRig(t)
-	r.IDs, r.JSON = []string{"shop", "web"}, true
+	r.IDs, r.JSON, r.Yes = []string{"shop", "web"}, true, true
 	r.Levels = map[string]any{"idleMinutes": 30}
 	code, out := g.call(t, WorkloadsSettings, r)
 	if code != 0 {
@@ -163,12 +165,60 @@ func TestWorkloadsShowPrintsEachSettingWithItsOriginThenTheTypeAndTheRules(t *te
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "idle window: 30 min (router)", "hold: 0 s (fixed)", "wake timeout: 15 min (workload)", "retry after a failed wake: 1 min (default)",
-		"wake mode: browser (fixed)", "type: instance (from its backends)", "hibernate: on, from the router",
+	// AWS's words for its origins, and one for fixed.
+	contains(t, out, "idle window: 30 min (router)", "hold: 0 s (fixed on Google Cloud)", "wake timeout: 15 min (set on this workload)", "retry after a failed wake: 1 min (built-in)",
+		"wake mode: browser (fixed on Google Cloud)", "type: instance (from its backends)", "hibernate: on, from the router",
 		"no-wake rules", "scanners", "(router)", "wake rules", "cron", "(workload)")
 	// A workload of a router before the levels keeps its settings line.
 	g.s.WorkloadDocs["web"] = map[string]any{"settings": map[string]any{"idleMinutes": 15}}
 	r.ID = "web"
 	_, out = g.call(t, WorkloadsShow, r)
 	contains(t, out, "settings: idleMinutes 15")
+}
+
+func TestWorkloadsSettingsDryRunSendsNothingAndSaysWhatItWouldSet(t *testing.T) {
+	g, r := settingsRig(t)
+	r.IDs, r.DryRun = []string{"shop", "web"}, true
+	r.Levels = map[string]any{"idleMinutes": 30}
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsSettings, r)
+	if code != 0 || len(g.controllerCalls(mark)) != 0 {
+		t.Fatalf("exit %d %v:\n%s", code, g.controllerCalls(mark), out)
+	}
+	contains(t, out, "dry run: its settings: would act on", "nothing sent", "  shop", "  web")
+}
+
+func TestWorkloadsSettingsAskForSeveralWorkloadsOnly(t *testing.T) {
+	g, r := settingsRig(t)
+	r.Levels = map[string]any{"idleMinutes": 30}
+	// Several, without a terminal: --yes is needed.
+	r.IDs = []string{"shop", "web"}
+	mark := len(g.s.Calls())
+	code, out := g.call(t, WorkloadsSettings, r)
+	if code != 2 || len(g.controllerCalls(mark)) != 0 || !strings.Contains(out, "confirmation needed: pass --yes to act on 2 workloads without a terminal") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// On a terminal: asked, declined, nothing sent.
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+	code, out = g.call(t, WorkloadsSettings, r)
+	if code != 0 || len(g.controllerCalls(mark)) != 0 || !strings.Contains(out, "Set its settings for shop, web? [y/N]: ") || !strings.Contains(out, "not confirmed: nothing sent") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g.d.Prompter = install.NewPrompter(strings.NewReader("y\n"), g.out, true)
+	code, out = g.call(t, WorkloadsSettings, r)
+	if code != 0 || !strings.Contains(out, "shop: its settings") || !strings.Contains(out, "web: its settings") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// --yes skips the question; one workload asks nothing.
+	g.d.Prompter = install.NewPrompter(strings.NewReader(""), g.out, true)
+	r.Yes = true
+	if code, out = g.call(t, WorkloadsSettings, r); code != 0 || strings.Contains(out, "[y/N]") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	r.Yes, r.IDs = false, []string{"shop"}
+	g.d.Terminal = false
+	if code, out = g.call(t, WorkloadsSettings, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
 }

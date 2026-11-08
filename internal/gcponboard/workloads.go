@@ -125,22 +125,16 @@ type workload struct {
 	IdleReads   string         `json:"idleReads"`
 	// The levels (a router with the settings levels): where each setting comes from, the type, the rules of every level, the resolved
 	// hibernation, the fallback machine types and the types a VM runs on.
-	SettingsFrom          map[string]string  `json:"settingsFrom"`
-	Type                  *typeRef           `json:"type"`
-	NoWakeRules           []describedRule    `json:"noWakeRules"`
-	WakeRules             []describedRule    `json:"wakeRules"`
-	Hibernation           *fleet.Hibernation `json:"hibernation"`
-	FallbackInstanceTypes []string           `json:"fallbackInstanceTypes"`
+	SettingsFrom          map[string]string   `json:"settingsFrom"`
+	Type                  *fleet.WorkloadType `json:"type"`
+	NoWakeRules           []describedRule     `json:"noWakeRules"`
+	WakeRules             []describedRule     `json:"wakeRules"`
+	Hibernation           *fleet.Hibernation  `json:"hibernation"`
+	FallbackInstanceTypes []string            `json:"fallbackInstanceTypes"`
 	InstanceTypes         map[string]struct {
 		From string `json:"from"`
 		To   string `json:"to"`
 	} `json:"instanceTypes"`
-}
-
-// typeRef is a workload's type and why: set on it, from its tags or from its backends.
-type typeRef struct {
-	Name *string `json:"name"`
-	From *string `json:"from"`
 }
 
 // describedRule is a rule as the controller describes it, with its level (`from` for a wake rule).

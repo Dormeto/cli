@@ -17,6 +17,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/install"
 	"github.com/Dormeto/cli/internal/schedule"
 )
 
@@ -66,6 +67,28 @@ func (x *run) workloadsSettings() error {
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
+	said := workloadSaid(x.r.Levels)
+	if x.r.DryRun {
+		x.say("dry run: %s: would act on, nothing sent", said)
+		for _, id := range x.r.IDs {
+			x.say("  %s", id)
+		}
+		return nil
+	}
+	// As AWS's: several workloads are confirmed on a terminal, and need --yes without one.
+	if n := len(x.r.IDs); n > 1 && !x.r.Yes {
+		if !x.d.Terminal {
+			return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on %d workloads without a terminal", n)}
+		}
+		question := fmt.Sprintf("Set %s for %s?", said, strings.Join(x.r.IDs, ", "))
+		ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return &stop{0, "not confirmed: nothing sent"}
+		}
+	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
 	if err != nil {
 		return err
@@ -74,7 +97,6 @@ func (x *run) workloadsSettings() error {
 	for k, v := range x.r.Levels {
 		in[k] = v
 	}
-	said := workloadSaid(x.r.Levels)
 	answers := map[string]json.RawMessage{}
 	failed := false
 	for _, id := range x.r.IDs {
@@ -115,13 +137,13 @@ func (x *run) workloadsSettings() error {
 	return nil
 }
 
-// hibernateWord is a --hibernate value as it is said: on, off, or inherit for none.
+// hibernateWord is a --hibernate value of a body as it is said: on, off, or inherit for none.
 func hibernateWord(v any) string {
-	if b, ok := v.(*bool); ok && b != nil {
-		return fleet.OnOff(*b)
-	}
-	if b, ok := v.(bool); ok {
-		return fleet.OnOff(b)
+	switch b := v.(type) {
+	case *bool:
+		return fleet.HibernateWord(b)
+	case bool:
+		return fleet.HibernateWord(&b)
 	}
 	return "inherit"
 }
@@ -273,16 +295,16 @@ func (x *run) showRouterSettings() error {
 
 // levelDetails prints a workload's settings each with the level it comes from, then its type, hibernation and rules.
 func (x *run) levelDetails(w workload) {
-	if t := typeWords(w.Type); t != "" {
+	if t := w.Type.Text(); t != "" {
 		x.say("  type: %s", t)
 	}
 	for _, s := range fleet.LevelSettings {
 		if n, ok := w.Settings[s.Key].(float64); ok {
-			x.say("  %s: %s (%s)", s.Label, s.Format(int(n)), w.SettingsFrom[s.Key])
+			x.say("  %s: %s (%s)", s.Label, s.Format(int(n)), w.sourceText(s.Key))
 		}
 	}
 	if m, ok := w.Settings["wakeMode"].(string); ok {
-		x.say("  wake mode: %s (%s)", m, w.SettingsFrom["wakeMode"])
+		x.say("  wake mode: %s (%s)", m, w.sourceText("wakeMode"))
 	}
 	if w.Hibernation != nil {
 		x.say("  hibernate: %s", w.Hibernation.Text())
@@ -317,17 +339,11 @@ func (x *run) levelDetails(w workload) {
 	}
 }
 
-// typeWords is a workload's type and why, as the AWS commands say it.
-func typeWords(t *typeRef) string {
-	if t == nil {
-		return ""
+// sourceText is the level a setting comes from, in AWS's words (fleet.SourceText).
+func (w workload) sourceText(key string) string {
+	var name *string
+	if w.Type != nil {
+		name = w.Type.Name
 	}
-	if t.Name == nil {
-		return "none"
-	}
-	why := map[string]string{"workload": "set on this workload", "tags": "from its tags", "backends": "from its backends"}
-	if t.From != nil && why[*t.From] != "" {
-		return *t.Name + " (" + why[*t.From] + ")"
-	}
-	return *t.Name
+	return fleet.SourceText(w.SettingsFrom[key], name)
 }

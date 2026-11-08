@@ -44,6 +44,14 @@ type Hibernation struct {
 	} `json:"instances"`
 }
 
+// HibernateWord is a value as it is printed: on, off, or inherit for nil.
+func HibernateWord(b *bool) string {
+	if b == nil {
+		return "inherit"
+	}
+	return OnOff(*b)
+}
+
 // OnOff is "on" or "off".
 func OnOff(b bool) string { return map[bool]string{true: "on", false: "off"}[b] }
 

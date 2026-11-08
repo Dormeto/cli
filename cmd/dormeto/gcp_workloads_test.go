@@ -417,3 +417,51 @@ func TestGcpRoutersSettingsRefuseABadValueBeforeAnyCall(t *testing.T) {
 		}
 	}
 }
+
+func TestGcpFixedSettingsAreRefusedWhateverTheirValueBeforeTheRangeCheck(t *testing.T) {
+	for flag, reason := range gcpRouterReasons {
+		for _, value := range []string{"0", "200", "5", "x"} {
+			for _, command := range [][]string{{"gcp", "workloads", "settings", "shop"}, {"gcp", "routers", "settings"}} {
+				calls, errs, exit := gcpRan(t, 0, append(slices.Clone(command), settingsArgs(flag, value)...)...)
+				if exit != 2 || len(calls) != 0 || !strings.Contains(errs, reason) || strings.Contains(errs, "whole number") {
+					t.Errorf("%v %s %s: exit %d calls %v stderr %q", command, flag, value, exit, calls, errs)
+				}
+			}
+		}
+	}
+}
+
+func TestGcpSettingsFlagsHelpTellsTheTruthForTheCloud(t *testing.T) {
+	for _, command := range [][]string{{"gcp", "workloads", "settings"}, {"gcp", "routers", "settings"}} {
+		out, _, code := executed(t, build{}, append(slices.Clone(command), "--help")...)
+		if code != 0 {
+			t.Fatalf("%v: %d", command, code)
+		}
+		for _, flag := range []string{"--wait-seconds", "--max-holders", "--drain-seconds"} {
+			line := helpLine(out, flag)
+			if !strings.Contains(line, "fixed at 0 on Google Cloud") || strings.Contains(line, "to 120") || strings.Contains(line, "to 500") || strings.Contains(line, "to 300") {
+				t.Errorf("%v %s: %q", command, flag, line)
+			}
+		}
+		if line := helpLine(out, "--wake-timeout-seconds"); !strings.Contains(line, "60 to 1700") {
+			t.Errorf("%v: %q", command, line)
+		}
+	}
+}
+
+// helpLine is the line of a flag in a command's help.
+func helpLine(out, flag string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), flag+" ") {
+			return l
+		}
+	}
+	return ""
+}
+
+func TestGcpWorkloadsSettingsReadDryRunAndYes(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "settings", "shop", "web"}, settingsArgs("--idle-minutes", "30", "--dry-run", "--yes")...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.DryRun || !calls[0].r.Yes {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+}

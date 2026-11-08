@@ -15,17 +15,18 @@ import (
 )
 
 // gcpFixedReasons are what Google Cloud fixes at 0 whatever the level says, and why: the router's own words.
-var gcpFixedReasons = []struct{ flag, key, reason string }{
-	{"wait-seconds", "waitSeconds", "waitSeconds is 0 on Google Cloud: the waker holds no request (behind a swap the switch back takes longer than any hold; behind the policy it receives only the error fetch)"},
-	{"max-holders", "maxHolders", "maxHolders is 0 on Google Cloud: no request is held"},
-	{"drain-seconds", "drainSeconds", "drainSeconds is 0 on Google Cloud: the nap's switch is a URL map change, and the backend service's own connection draining applies"},
+var gcpFixedReasons = []struct{ flag, key, reason, why string }{
+	{"wait-seconds", "waitSeconds", "waitSeconds is 0 on Google Cloud: the waker holds no request (behind a swap the switch back takes longer than any hold; behind the policy it receives only the error fetch)", "the waker holds no request"},
+	{"max-holders", "maxHolders", "maxHolders is 0 on Google Cloud: no request is held", "no request is held"},
+	{"drain-seconds", "drainSeconds", "drainSeconds is 0 on Google Cloud: the nap's switch is a URL map change, and the backend service's own connection draining applies", "the nap's switch is a URL map change"},
 }
 
-// gcpFixedRefusal refuses a fixed setting given a value (inherit is allowed: it gives nothing a value), naming each.
-func gcpFixedRefusal(body map[string]any) error {
+// gcpFixedRefusal refuses a fixed setting given anything but inherit, whatever its value and before any range check (the range
+// is AWS's, and no value is right here), naming each with the router's reason.
+func gcpFixedRefusal(c *cobra.Command, levels *levelFlags) error {
 	var reasons []string
 	for _, f := range gcpFixedReasons {
-		if v, ok := body[f.key]; ok && v != nil {
+		if c.Flags().Changed(f.flag) && strings.TrimSpace(*levels.numbers[f.flag]) != levels.unset {
 			reasons = append(reasons, fmt.Sprintf("--%s: %s", f.flag, f.reason))
 		}
 	}
@@ -33,6 +34,14 @@ func gcpFixedRefusal(body map[string]any) error {
 		return nil
 	}
 	return usagef("%s", strings.Join(reasons, "\n"))
+}
+
+// gcpLevelFlagsHelp tells the truth of the level flags for Google Cloud: three are fixed, and the wake timeout stops at 1700.
+func gcpLevelFlagsHelp(cmd *cobra.Command) {
+	for _, f := range gcpFixedReasons {
+		cmd.Flags().Lookup(f.flag).Usage = "fixed at 0 on Google Cloud, so only inherit is accepted (" + f.why + ")"
+	}
+	cmd.Flags().Lookup("wake-timeout-seconds").Usage = "the wake timeout, 60 to 1700, or inherit (one controller request lasts at most 1800 s)"
 }
 
 func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
@@ -47,12 +56,13 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 			"--wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files) and its --type (a name, or inherit),\n"+
 			"inherit giving each back to its router, then its type's. --wait-seconds, --max-holders and --drain-seconds are 0 on\n"+
 			"Google Cloud, so any value is refused; inherit is accepted. --wake-mode any is passed on: the router decides by the\n"+
-			"workload's load balancer. A refusal is printed for that workload, the others go on (exit 1). A router without the settings levels says so, with the version to install.",
+			"workload's load balancer. Several workloads are confirmed on a terminal (--yes without one; --dry-run lists them). A refusal is printed for that workload, the others go on (exit 1). A router without the settings levels says so, with the version to install.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.IDs, r.Levels = ids, body
 			return run(ctx, d, r)
 		})
 	levels = bindLevelFlags(cmd, "inherit")
+	gcpLevelFlagsHelp(cmd)
 	cmd.Args = func(c *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprintln(c.ErrOrStderr(), "name at least one workload, as the argument")
@@ -66,9 +76,10 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		own, err := levels.body(c)
+		err := gcpFixedRefusal(c, levels)
+		var own map[string]any
 		if err == nil {
-			err = gcpFixedRefusal(own)
+			own, err = levels.body(c)
 		}
 		body = own
 		if err == nil && c.Flags().Changed("hibernate") {
@@ -98,6 +109,8 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 	gcpRouterFlags(cmd, &f)
 	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the router's)")
 	cmd.Flags().StringVar(&kind, "type", "", "a type's name, or inherit (its backends')")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "list the workloads and stop")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation of several workloads (needed without a terminal)")
 	return cmd
 }
 
@@ -125,14 +138,16 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 			return run(ctx, d, r)
 		})
 	levels = bindLevelFlags(cmd, "inherit")
+	gcpLevelFlagsHelp(cmd)
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		defaults, err := levels.body(c)
+		err := gcpFixedRefusal(c, levels)
+		var defaults map[string]any
 		if err == nil {
-			err = gcpFixedRefusal(defaults)
+			defaults, err = levels.body(c)
 		}
 		settings := levelSettings{body: map[string]any{}}
 		if err == nil && (c.Flags().Changed("hibernate") || c.Flags().Changed("join-minutes")) {

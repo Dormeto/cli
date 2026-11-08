@@ -36,12 +36,7 @@ func parseHibernate(s string, inherit bool) (*bool, error) {
 }
 
 // hibernateWord is a value as it is printed: on, off, or inherit for nil.
-func hibernateWord(b *bool) string {
-	if b == nil {
-		return "inherit"
-	}
-	return fleet.OnOff(*b)
-}
+func hibernateWord(b *bool) string { return fleet.HibernateWord(b) }
 
 // levelSettings is what --hibernate and --join-minutes ask of a level. Only what is given is sent: an absent key stays as
 // it was, so there is always a key, and never a {} that changes nothing.
