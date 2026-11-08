@@ -32,6 +32,10 @@ func (s *Server) logging(w http.ResponseWriter, r *http.Request, body []byte) {
 	if s.disabled(w, "logging.googleapis.com") {
 		return
 	}
+	if s.LogBucketElsewhere {
+		Fail(w, 404, "NOT_FOUND", "Bucket projects/"+s.ProjectID+"/locations/global/buckets/_Default does not exist")
+		return
+	}
 	name := func(id string) string {
 		return "projects/" + s.ProjectID + "/locations/global/buckets/_Default/views/" + id
 	}

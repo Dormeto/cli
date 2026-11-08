@@ -312,6 +312,9 @@ func PrintStatus(w io.Writer, rep StatusReport) error {
 			for _, e := range r.Record.Rbac {
 				fmt.Fprintf(&b, "  Kubernetes access: Role and RoleBinding dormeto-%s, namespace %s, cluster %s\n", e.Workload, e.Namespace, e.Cluster)
 			}
+			if r.Record.NoLogView {
+				fmt.Fprintf(&b, "  ! %s\n", noLogViewNotice)
+			}
 		}
 		for _, res := range r.Resources {
 			kind := res.Kind

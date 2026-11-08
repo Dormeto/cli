@@ -472,6 +472,159 @@ func TestInstallVerifiesTheLogViewsFilter(t *testing.T) {
 	contains(t, out, "  ✗ verification: log view dmtr-europe-west1-lb filters true, not "+lbLogsFilter)
 }
 
+// The controller's ruling on the final review's Important 2, verbatim.
+const noLogViewLine = "  ! the router's log view isn't created: the project's _Default log bucket isn't in global; the idle check counts every request\n"
+
+var logViewGrant = Grant{Role: "roles/logging.viewAccessor", Member: routerMember,
+	Condition: &Condition{Title: "The router's log view", Expression: `resource.name == "` + logViewName + `"`}}
+
+// recordsNoLogView fails unless the record says there is no view, and lists neither the view nor its grant.
+func recordsNoLogView(t *testing.T, rec Record) {
+	t.Helper()
+	if !rec.NoLogView || listsResource(rec, "logView", logViewName) ||
+		slices.ContainsFunc(rec.Grants, func(r RecordGrant) bool { return r.Role == logViewGrant.Role }) {
+		t.Fatalf("record: noLogView %t, resources %+v, grants %+v", rec.NoLogView, rec.Resources, rec.Grants)
+	}
+}
+
+func (g *installRig) controllerEnv(t *testing.T, name string) string {
+	t.Helper()
+	g.s.Lock()
+	defer g.s.Unlock()
+	svc := g.s.RunServices["europe-west1/"+controllerName]
+	if svc == nil {
+		t.Fatal("no controller")
+	}
+	return svc.Env(name)
+}
+
+// The final review's Important 2: an organization's default storage location can put a project's _Default bucket out of
+// global, and the view's creation then answers 404. The install goes on without the view, its grant and DMT_LOG_VIEW, and
+// records it: status says so, and the uninstall removes neither and finds nothing missing.
+func TestInstallGoesOnWithoutTheLogViewWhenTheDefaultBucketIsNotInGlobal(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.LogBucketElsewhere = true
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✓ logView: not created\n"+noLogViewLine,
+		"  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue\n",
+		"Installed router dmtr-europe-west1 in project dormeto-dev, version 0.34.0.\n")
+	if strings.Contains(out, "IAM + roles/logging.viewAccessor") || strings.Contains(out, "✗") {
+		t.Fatalf("%s", out)
+	}
+	if has(g.projectPolicy(t), logViewGrant) {
+		t.Fatal("the view's grant is given")
+	}
+	recordsNoLogView(t, g.record(t))
+	if v := g.controllerEnv(t, "DMT_LOG_VIEW"); v != "" {
+		t.Fatalf("DMT_LOG_VIEW %q", v)
+	}
+	code, out = g.status(t, europeStatus)
+	if code != 0 {
+		t.Fatalf("status: exit %d:\n%s", code, out)
+	}
+	contains(t, out, noLogViewLine)
+	mark := len(g.s.Calls())
+	code, out = g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("uninstall: exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "log view") || strings.Contains(out, "viewAccessor") || strings.Contains(out, "missing") || strings.Contains(out, "! IAM") {
+		t.Fatalf("uninstall:\n%s", out)
+	}
+	contains(t, out, "  ✓ verified: the project's IAM policy holds its bindings from before the install, and Google's\n")
+	for _, c := range g.s.Calls()[mark:] {
+		if c.Host == "logging.googleapis.com" && c.Method != http.MethodGet {
+			t.Errorf("%s %s", c.Method, c.URL)
+		}
+	}
+	g.nothingLeft(t, "europe-west1")
+}
+
+// A later run tries the view again, planning neither its grant nor DMT_LOG_VIEW; once it is created, the run says to run
+// again, and that run gives both.
+func TestInstallTriesTheLogViewAgainAtTheNextRun(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.LogBucketElsewhere = true
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + log view dmtr-europe-west1-lb (bucket _Default, the load balancers' request logs; tried again: the last run found no _Default bucket in global)\n",
+		"  ✓ logView: not created\n"+noLogViewLine)
+	if strings.Contains(out, "+ grant") || strings.Contains(out, "~ service") {
+		t.Fatalf("%s", out)
+	}
+	for _, c := range g.changes(mark) {
+		if !strings.Contains(c, "install/record") && c != "POST logging.googleapis.com"+logViewsPath+"?viewId=dmtr-europe-west1-lb" {
+			t.Errorf("change %s", c)
+		}
+	}
+	recordsNoLogView(t, g.record(t))
+	// The bucket answers in global now: the view is created, and the next run gives its grant and DMT_LOG_VIEW.
+	g.s.Lock()
+	g.s.LogBucketElsewhere = false
+	g.s.Unlock()
+	code, out = g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✓ logView: created dmtr-europe-west1-lb (bucket _Default, the load balancers' request logs)\n"+
+		"  ! the router's log view is created: run the same command again to grant it to the router\n")
+	if rec := g.record(t); rec.NoLogView || !listsResource(rec, "logView", logViewName) {
+		t.Fatalf("record %+v", rec)
+	}
+	code, out = g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + grant roles/logging.viewAccessor to ", "  ~ service "+controllerName+": environment DMT_LOG_VIEW\n")
+	if !has(g.projectPolicy(t), logViewGrant) || g.controllerEnv(t, "DMT_LOG_VIEW") != logViewName {
+		t.Fatalf("no grant or no DMT_LOG_VIEW:\n%s", out)
+	}
+	if code, out := g.run(t, withImage); code != 0 || !strings.Contains(out, "is up to date") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// An install from before the view (an older CLI's record, the grant and DMT_LOG_VIEW unknown to it) upgraded in such a
+// project: the plan's grant and DMT_LOG_VIEW are left out with the view.
+func TestInstallUpgradeWithoutTheLogViewGivesNeitherItsGrantNorDMTLogView(t *testing.T) {
+	g := newRouterRig(t)
+	g.s.LogBucketElsewhere = true
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	rec := g.record(t)
+	rec.NoLogView = false
+	g.writeRecord(t, rec)
+	mark := len(g.s.Calls())
+	code, out := g.run(t, withImage)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + grant roles/logging.viewAccessor to ", "  ✓ logView: not created\n"+noLogViewLine,
+		"  ✓ projectBindings: granted no role on the project: the log view's grant goes with the view\n", "  ✓ verified:")
+	if strings.Contains(out, "✗") {
+		t.Fatalf("%s", out)
+	}
+	for _, c := range g.changes(mark) {
+		if strings.Contains(c, ":setIamPolicy") {
+			t.Errorf("change %s", c)
+		}
+	}
+	if has(g.projectPolicy(t), logViewGrant) || g.controllerEnv(t, "DMT_LOG_VIEW") != "" {
+		t.Fatal("the view's grant or DMT_LOG_VIEW is given")
+	}
+	recordsNoLogView(t, g.record(t))
+}
+
 func TestInstallChangesInTheStepsOrder(t *testing.T) {
 	g := newInstallRig(t)
 	if code, out := g.run(t, europe); code != 0 {

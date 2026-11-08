@@ -66,6 +66,10 @@ type Record struct {
 	// AccessOnly is an install of the access without the router (--access-only): later runs keep it until one with
 	// --version or --image. An older CLI's record without an image is read as such.
 	AccessOnly bool `json:"accessOnly,omitempty"`
+	// NoLogView says that the logView step found no _Default bucket in the global location (the view's creation answered 404):
+	// the router has no log view, nor its grant, nor DMT_LOG_VIEW, and its idle check counts every request. A later run tries
+	// the view again.
+	NoLogView bool `json:"noLogView,omitempty"`
 	// Operations are the names of the Google operations that create a resource, by "<kind>/<name>" as Resources lists it:
 	// written when the install starts the creation, removed once the resource is seen. The uninstall waits for one before
 	// it deletes a resource that answers 404 meanwhile, so a creation still running is not orphaned.
@@ -126,6 +130,16 @@ func (r *Record) addResource(kind, name string) bool {
 		}
 	}
 	r.Resources = append(r.Resources, Resource{Kind: kind, Name: name})
+	return true
+}
+
+// removeResource takes a resource out of the record, and tells whether it was listed.
+func (r *Record) removeResource(kind, name string) bool {
+	i := slices.Index(r.Resources, Resource{Kind: kind, Name: name})
+	if i < 0 {
+		return false
+	}
+	r.Resources = slices.Delete(r.Resources, i, i+1)
 	return true
 }
 

@@ -1616,8 +1616,11 @@ addresses.
 - **The cost** is Cloud Logging's: its ingestion is charged past 50 GiB a month and project, about 1 KB per request.
 - **Terraform:** if you write the backend service in Terraform, keep `log_config { enable = true, sample_rate = 1.0 }` in
   it, so an apply does not turn the logs off.
-- **The limit:** the view is created in the `global` location. A project that stores its `_Default` bucket elsewhere gets
-  no view, and the request count decides.
+- **The limit:** the view is created in the `global` location. In a project whose `_Default` bucket is elsewhere (an
+  organization's default storage location), the install says `! the router's log view isn't created: the project's
+  _Default log bucket isn't in global; the idle check counts every request` and goes on without the view and its grant.
+  The record says so, `gcp status` shows the same line, the uninstall has neither to remove, and a later run tries the
+  view again. The request count decides there.
 
 ### Optional access: Cloud SQL and GKE
 

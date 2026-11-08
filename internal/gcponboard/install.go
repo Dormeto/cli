@@ -115,6 +115,8 @@ type run struct {
 	database      bool     // the router's database exists
 	accountExists bool     // the router's service account exists
 	tagKey        string   // the tag key dormeto's name, tagKeys/<n>, once known
+	noLogView     bool     // the router goes without its log view, its grant and DMT_LOG_VIEW: as recorded, or as its creation found
+	notes         []string // what the running step says after its line, as "!" lines
 
 	steps        []step
 	kept         []string          // the uninstall's plan lines of what it keeps
@@ -456,6 +458,8 @@ func (x *run) apply() error {
 		x.say("  ✓ %s: %s", s.name, done)
 		x.printIAM()
 		x.warnEditor()
+		x.warn(x.notes)
+		x.notes = nil
 		// The others read the project's policy again themselves.
 		if !slices.Contains([]string{"apis", "projectBindings", "cloudRun", "neg", "job", "record"}, s.name) {
 			x.stale = true
@@ -468,7 +472,11 @@ func (x *run) apply() error {
 		x.warn(warnings)
 		return &stop{1, "Run the same command again to change what differs."}
 	}
-	x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database, the queue and the log view")
+	if x.noLogView {
+		x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database and the queue")
+	} else {
+		x.say("  ✓ verified: the planned grants, the roles' permissions, the service account, the database, the queue and the log view")
+	}
 	if x.image != "" {
 		x.say("  ✓ verified: both Cloud Run services ready, the controller's URL among its URLs, the network endpoint group, the job, /v1/health answering version %s", x.version)
 	}

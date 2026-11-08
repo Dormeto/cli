@@ -229,7 +229,7 @@ func (x *run) serviceName(service string) string {
 }
 
 // environment is what the router reads, for one of its roles. PORT is Cloud Run's own (containerPort). The controller's idle
-// check reads the request logs through the router's log view, DMT_LOG_VIEW.
+// check reads the request logs through the router's log view, DMT_LOG_VIEW, when there is one.
 func (x *run) environment(role string) []runEnv {
 	env := []runEnv{
 		{"DMT_ROLE", role},
@@ -243,7 +243,7 @@ func (x *run) environment(role string) []runEnv {
 		{"DMT_WAKER_NEG", x.n.neg},
 		{"DMT_VERSION", x.version},
 	}
-	if role == "controller" {
+	if role == "controller" && !x.noLogView {
 		env = append(env, runEnv{"DMT_LOG_VIEW", x.logViewName()})
 	}
 	if len(x.lists) > 0 {

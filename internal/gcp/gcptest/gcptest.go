@@ -146,6 +146,9 @@ type Server struct {
 	// "global/<name>" or "<region>/<name>".
 	LogViews        map[string]*LogView
 	BackendServices map[string]*BackendService
+	// LogBucketElsewhere plays a project whose _Default bucket is not in the global location (an organization's default storage
+	// location): every call on the views of locations/global/buckets/_Default answers 404, a create's too.
+	LogBucketElsewhere bool
 	// Images are the manifests of Artifact Registry, by <host>/<path>:<tag or digest>; Digests the Docker-Content-Digest
 	// their HEAD answers, when set.
 	Images  map[string]bool

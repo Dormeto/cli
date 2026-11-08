@@ -48,6 +48,9 @@ func (x *run) accessGrants() []accessGrant {
 		if g.Condition != nil {
 			ag.Condition = &Condition{Title: x.fill(g.Condition.Title), Expression: x.fill(g.Condition.Expression)}
 		}
+		if x.noLogView && x.namesLogView(ag.Grant) {
+			continue // the grant goes with the view
+		}
 		out = append(out, ag)
 	}
 	return out
@@ -125,6 +128,11 @@ func (x *run) planProjectBindings() (*step, error) {
 	return &step{name: "projectBindings", lines: lines, apply: func() (string, error) {
 		if err := x.catchUp(); err != nil {
 			return "", err
+		}
+		// The logView step, after the plan, may have found no bucket for the view.
+		missing := slices.DeleteFunc(slices.Clone(missing), func(g accessGrant) bool { return x.noLogView && x.namesLogView(g.Grant) })
+		if len(missing) == 0 {
+			return "granted no role on the project: the log view's grant goes with the view", nil
 		}
 		grants := make([]Grant, len(missing))
 		for i, g := range missing {
