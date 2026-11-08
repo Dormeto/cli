@@ -187,6 +187,8 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 			Reply(w, map[string]any{})
 		case verb == "schedule":
 			s.schedule(w, r, id)
+		case verb == "waiting-page":
+			s.waitingPage(w, r, id)
 		case verb == "settings" && r.Method == http.MethodPut:
 			s.workloadSettings(w, r, id)
 		case verb == "pause" && r.Method == http.MethodPost:
@@ -547,4 +549,79 @@ func (s *Server) routerSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	Reply(w, map[string]any{"level": "router", "settings": s.RouterLevel})
+}
+
+// NotServed is the router's warning for a custom page stored while its custom pages are off.
+const NotServed = "custom pages are off on this router: this page is not served"
+
+// waitingPage serves GET, PUT and DELETE /v1/waiting-page and /v1/workloads/<id>/waiting-page, with AWS's answer: own, effective,
+// from, warnings, by and at. CustomPagesOff refuses a custom page with the router's words and warns of one already stored;
+// SettingsProblem-like refusals are PageProblem's.
+func (s *Server) waitingPage(w http.ResponseWriter, r *http.Request, level string) {
+	if s.ControllerBeforeWaitingPage {
+		controllerFail(w, 404, "not-found", "no route for "+r.Method+" "+r.URL.Path)
+		return
+	}
+	if s.WaitingPages == nil {
+		s.WaitingPages = map[string]map[string]any{}
+	}
+	var in struct {
+		Page map[string]any `json:"page"`
+		By   string         `json:"by"`
+	}
+	body, _ := io.ReadAll(r.Body)
+	_ = json.Unmarshal(body, &in)
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodPut:
+		if in.Page["mode"] == "custom" && s.CustomPagesOff {
+			controllerFail(w, 400, "bad-request", "custom pages are off on this router: an administrator turns them on with dormeto gcp install --custom-pages")
+			return
+		}
+		doc := map[string]any{}
+		for k, v := range in.Page {
+			doc[k] = v
+		}
+		doc["by"], doc["at"] = in.By, "2026-11-08T10:00:00.000Z"
+		s.WaitingPages[level] = doc
+	case http.MethodDelete:
+		delete(s.WaitingPages, level)
+	default:
+		noRoute(w, r)
+		return
+	}
+	stored := s.WaitingPages[level]
+	kind := "workload"
+	if level == "router" {
+		kind = "router"
+	}
+	effective := map[string]any{"mode": "template", "icon": "auto", "title": "", "description": ""}
+	from := map[string]any{"mode": "default", "icon": "default"}
+	effective["from"] = from
+	answer := map[string]any{"own": nil, "effective": effective, "from": from, "favicon": nil, "warnings": []any{}, "terraform": false, "by": "", "at": ""}
+	if stored != nil {
+		own := map[string]any{}
+		for k, v := range stored {
+			if k != "by" && k != "at" {
+				own[k] = v
+			}
+		}
+		answer["own"], answer["by"], answer["at"] = own, stored["by"], stored["at"]
+		switch {
+		case own["mode"] == "custom" && s.CustomPagesOff:
+			answer["warnings"] = []any{NotServed}
+		case own["mode"] == "custom":
+			from = map[string]any{"mode": kind, "html": kind}
+			answer["effective"], answer["from"] = map[string]any{"mode": "custom", "html": own["html"], "from": from}, from
+		default:
+			for _, k := range []string{"icon", "title", "description"} {
+				if v, ok := own[k]; ok {
+					effective[k], from[k] = v, kind
+				}
+			}
+			from["mode"] = kind
+		}
+	}
+	answer["from"] = from
+	Reply(w, answer)
 }

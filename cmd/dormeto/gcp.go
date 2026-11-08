@@ -30,14 +30,16 @@ type gcpRun func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) i
 type gcpRuns struct {
 	check, install, status, uninstall, routerSettings gcpRun
 	workloads                                         gcpWorkloadRuns
+	routerPage                                        gcpPageRuns
 }
 
 // theGcpRuns are internal/gcponboard's.
-var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, workloads: theGcpWorkloadRuns}
+var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, workloads: theGcpWorkloadRuns,
+	routerPage: gcpPageRuns{gcponboard.RouterPageShow, gcponboard.RouterPageSet, gcponboard.RouterPageClear}}
 
 func newGcp(runs gcpRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs.routerSettings, version))
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs.routerSettings, runs.routerPage, version))
 	return cmd
 }
 

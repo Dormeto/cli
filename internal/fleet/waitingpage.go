@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -172,6 +173,9 @@ type EffectivePage struct {
 	From        map[string]string `json:"from"`
 }
 
+// CustomPageOff is the warning of a Google Cloud router whose custom pages are off, for a custom page it holds: stored, not served.
+const CustomPageOff = "custom pages are off on this router: this page is not served"
+
 // PageView is the manager's answer for a level, as a router 0.35.0 reports it. The organization's carries its document as
 // Page (and no effective page).
 type PageView struct {
@@ -302,6 +306,9 @@ func (v PageView) Text(label, level string, loc *time.Location) string {
 		if e.Description != "" {
 			rows = append(rows, [2]string{"description", e.Description + from("description")})
 		}
+	}
+	if own != nil && own.Mode == "custom" && slices.Contains(v.Warnings, CustomPageOff) {
+		rows = append(rows, [2]string{"page", "off: custom page, " + sizeText(len(derefOr(own.HTML)))})
 	}
 	if level == "workload" {
 		rows = append(rows, [2]string{"favicon", v.faviconText(loc)})

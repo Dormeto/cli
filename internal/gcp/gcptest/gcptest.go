@@ -126,6 +126,12 @@ type Server struct {
 	ControllerBeforeSettings bool
 	SettingsProblem          string
 	RouterLevel              map[string]any
+	// ControllerBeforeWaitingPage plays a router before G5's page: no route for the waiting page. CustomPagesOff plays the router's
+	// custom pages switch off: a custom page is refused, and one stored answers with the not-served warning. WaitingPages are the
+	// documents by level (a workload's ID, or "router"); the fake answers with AWS's shape, effective being the default page's.
+	ControllerBeforeWaitingPage bool
+	CustomPagesOff              bool
+	WaitingPages                map[string]map[string]any
 	// SQLInstances are the project's Cloud SQL instances, by name, with their region.
 	SQLInstances map[string]string
 	// SQLReplicas are the read replicas of a Cloud SQL instance, by its name, as the dry run names them.

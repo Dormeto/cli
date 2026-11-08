@@ -39,6 +39,11 @@ const levelsRouter = "the settings levels"
 // withLevels is a call of the controller that a router before the levels does not route: its 404 "no route" is said with the
 // router's version and the one to install, unlike the 404 of a workload it does not know.
 func (x *run) withLevels(method, path string, in, out any) error {
+	return x.withRoutes(levelsRouter, method, path, in, out)
+}
+
+// withRoutes is withLevels for the routes of another part of the router, named by words in the older router's refusal.
+func (x *run) withRoutes(words, method, path string, in, out any) error {
 	err := x.controller(method, path, in, out)
 	var e *gcp.Error
 	if errors.As(err, &e) && e.Code == http.StatusNotFound && strings.HasPrefix(e.Message, "no route for ") {
@@ -46,7 +51,7 @@ func (x *run) withLevels(method, path string, in, out any) error {
 		if herr != nil || version == "" {
 			version = "of " + x.n.router
 		}
-		return &stop{1, fmt.Sprintf("router %s doesn't have %s: dormeto gcp install --version %s", version, levelsRouter, embeddedRouterVersion())}
+		return &stop{1, fmt.Sprintf("router %s doesn't have %s: dormeto gcp install --version %s", version, words, embeddedRouterVersion())}
 	}
 	return err
 }

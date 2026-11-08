@@ -539,3 +539,88 @@ func TestGcpWakeTimeoutRangeIsOneForOnboardAndSettings(t *testing.T) {
 		}
 	}
 }
+
+func pageArgs(rest ...string) []string {
+	return append(strings.Fields(gcpSettingsArgs), rest...)
+}
+
+func TestGcpWaitingPageSetReadsATemplateIntoThePage(t *testing.T) {
+	icon := filepath.Join(t.TempDir(), "i.png")
+	if err := os.WriteFile(icon, append([]byte("\x89PNG\r\n\x1a\n"), 1, 2, 3), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		command []string
+		run     string
+	}{
+		{[]string{"gcp", "workloads", "waiting-page", "set", "shop"}, "workloads waiting-page set"},
+		{[]string{"gcp", "routers", "waiting-page", "set"}, "routers waiting-page set"}} {
+		calls, errs, exit := gcpRan(t, 0, append(slices.Clone(c.command), pageArgs("--title", "Back soon", "--description", "A minute", "--icon", icon)...)...)
+		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != c.run {
+			t.Fatalf("%v: %d %q %v", c.command, exit, errs, calls)
+		}
+		p := calls[0].r.Page
+		if p == nil || p.Mode != "template" || *p.Title != "Back soon" || *p.Description != "A minute" || !strings.HasPrefix(*p.Icon, "data:image/png;base64,") || p.HTML != nil {
+			t.Fatalf("%+v", p)
+		}
+	}
+	calls, _, _ := gcpRan(t, 0, append([]string{"gcp", "workloads", "waiting-page", "set", "shop"}, pageArgs("--icon", "none")...)...)
+	if r := calls[0].r; r.ID != "shop" || r.Page == nil || *r.Page.Icon != "none" || r.Page.Title != nil {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestGcpWaitingPageSetReadsACustomPage(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "p.html")
+	if err := os.WriteFile(file, []byte("<h1>zzz</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "waiting-page", "set"}, pageArgs("--html", file)...)...)
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].r.Page == nil || calls[0].r.Page.Mode != "custom" || *calls[0].r.Page.HTML != "<h1>zzz</h1>" {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+}
+
+func TestGcpWaitingPageSetRefusesWhatAwsRefusesBeforeAnyCall(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.png")
+	if err := os.WriteFile(big, append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 70<<10)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	html := filepath.Join(dir, "p.html")
+	if err := os.WriteFile(html, []byte("<p>x</p>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		rest []string
+		want string
+	}{
+		{[]string{"--html", html, "--title", "x"}, "--html writes a custom page: it cannot go with --title"},
+		{[]string{"--html", html, "--icon", "none"}, "cannot go with --icon"},
+		{[]string{"--icon", big}, "the icon is larger than 64 KiB"},
+		{[]string{}, "give --title, --description or --icon for a template, or --html for a custom page"},
+	} {
+		for _, command := range [][]string{{"gcp", "workloads", "waiting-page", "set", "shop"}, {"gcp", "routers", "waiting-page", "set"}} {
+			calls, errs, exit := gcpRan(t, 0, append(slices.Clone(command), pageArgs(c.rest...)...)...)
+			if exit != 2 || len(calls) != 0 || !strings.Contains(errs, c.want) {
+				t.Errorf("%v %v: exit %d calls %v stderr %q", command, c.rest, exit, calls, errs)
+			}
+		}
+	}
+}
+
+func TestGcpWaitingPageShowAndClearReadTheTarget(t *testing.T) {
+	for _, verb := range []string{"show", "clear"} {
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "workloads", "waiting-page", verb, "shop"}, pageArgs("--json")...)...)
+		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads waiting-page "+verb || calls[0].r.ID != "shop" || !calls[0].r.JSON {
+			t.Fatalf("%s: %d %q %v", verb, exit, errs, calls)
+		}
+		calls, _, exit = gcpRan(t, 0, append([]string{"gcp", "routers", "waiting-page", verb}, pageArgs()...)...)
+		if exit != 0 || len(calls) != 1 || calls[0].run != "routers waiting-page "+verb {
+			t.Fatalf("%s: %d %v", verb, exit, calls)
+		}
+		if _, _, exit = gcpRan(t, 0, append([]string{"gcp", "workloads", "waiting-page", verb}, pageArgs()...)...); exit != 2 {
+			t.Fatalf("%s without a workload: exit %d", verb, exit)
+		}
+	}
+}

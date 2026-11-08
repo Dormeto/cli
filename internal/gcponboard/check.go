@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/install"
@@ -73,6 +74,9 @@ type Request struct {
 	// Empty for the router's: its level is shown.
 	IDs    []string
 	Levels map[string]any
+
+	// The waiting-page commands: the document `set` writes, checked by the command before any call (ID is the workload's).
+	Page *fleet.PageDoc
 
 	// The schedule and pause commands: the schedule's file (set), the pause's reason, --keep-asleep and --until (RFC 3339).
 	File, Reason, Until string
