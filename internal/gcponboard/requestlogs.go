@@ -21,8 +21,9 @@ import (
 // logsTimeout bounds the wait for a backend service's update.
 const logsTimeout = 2 * time.Minute
 
-// requestLogsStep is onboard's step of the manifest for the request logs: --request-logs needs all of it, an onboarding without
-// it only backendServiceReads, which decide the warning. The manifest lists the step whole: the condition is the CLI's, as
+// requestLogsStep is the onboard and offboard step of the manifest for the request logs: --request-logs needs all of it, an
+// onboarding without it only backendServiceReads, which decide the warning; an offboarding needs all of it for a workload whose
+// onboarding turned the logs on, else none of it. The manifest lists the step whole: the condition is the CLI's, as
 // imageStep's.
 const requestLogsStep = "requestLogs"
 

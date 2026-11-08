@@ -330,6 +330,48 @@ var offboardShop = func() Request {
 	return r
 }()
 
+// The controller's ruling: the offboarding asks the requestLogs step only of a workload whose onboarding turned the logs on,
+// as read from the controller before any change; another is offboarded without those permissions, and its backend service is
+// not read.
+func TestWorkloadsOffboardAsksTheRequestLogsStepOfAWorkloadWhoseLogsDormetoTurnedOnAlone(t *testing.T) {
+	step := []string{"compute.backendServices.get", "compute.backendServices.update", "compute.globalOperations.get",
+		"compute.regionBackendServices.get", "compute.regionBackendServices.update", "compute.regionOperations.get"}
+	withheld := func(g *workloadsRig) {
+		g.s.HoldsAll = false
+		g.s.Held = map[string]bool{}
+		for _, p := range access.Needs("offboard") {
+			g.s.Held[p] = !slices.Contains(step, p)
+		}
+	}
+	// Onboarded without --request-logs: offboarded, nothing of the step asked nor read.
+	g := newWorkloadsRig(t)
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	withheld(g)
+	mark := len(g.s.Calls())
+	if code, out := g.call(t, WorkloadsOffboard, offboardShop); code != 0 || len(g.s.Workloads) != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, c := range g.s.Calls()[mark:] {
+		if strings.Contains(c.Path, "/backendServices/") {
+			t.Fatalf("the backend service is read: %s %s", c.Method, c.URL)
+		}
+	}
+	// Onboarded with --request-logs: refused before any change, the step's permissions named.
+	g = newWorkloadsRig(t)
+	g.onboardedWithLogs(t)
+	withheld(g)
+	mark = len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOffboard, offboardShop)
+	if code != 1 || !strings.Contains(out, "  ✗ offboard: missing "+strings.Join(step, ", ")+"\n") || !strings.Contains(out, "Nothing was changed.") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m := g.changes(mark); len(m) != 0 || g.s.Workloads["shop"] != "AWAKE" {
+		t.Fatalf("changes %v", m)
+	}
+}
+
 func TestWorkloadsOffboardSetsTheRequestLogsBackAfterTheController(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.onboardedWithLogs(t)
@@ -448,6 +490,28 @@ func TestUninstallForceSetsTheRequestLogsBack(t *testing.T) {
 		t.Fatalf("logConfig %v", got)
 	}
 	contains(t, out, "  workload shop: restored the request logs of backend service shop (sample rate 0.5)\n")
+}
+
+// The workloads an uninstall --force offboards are read after its checks: it asks the whole requestLogs step.
+func TestUninstallForceAsksTheRequestLogsStep(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.HoldsAll = false
+	g.s.Held = map[string]bool{}
+	for _, c := range []string{"uninstall", "offboard"} {
+		for _, p := range access.Needs(c) {
+			g.s.Held[p] = p != "compute.backendServices.update"
+		}
+	}
+	mark := len(g.s.Calls())
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  ✗ offboard: missing compute.backendServices.update\n", "Nothing was changed.\n")
+	if m := g.changes(mark); len(m) != 0 {
+		t.Fatalf("changes: %v", m)
+	}
 }
 
 func TestWorkloadsShowSaysWhatTheIdleCheckReads(t *testing.T) {

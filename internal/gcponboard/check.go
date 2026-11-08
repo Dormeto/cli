@@ -254,7 +254,8 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 
 // check is Check for some commands only: their permissions alone are asked (install asks exactly what its steps need).
 // install-router's image step and Artifact Registry's API are asked for an image of the customer's own (r.Image: --image,
-// or the recorded one) only; onboard's requestLogs step whole with --request-logs only, else its backend service's reads.
+// or the recorded one) only; the requestLogs step whole with RequestLogs only: --request-logs of onboard, else its backend
+// services' reads; of offboard, a workload whose onboarding turned the logs on, else nothing of it.
 func check(ctx context.Context, d Deps, r Request, commands []string) (Report, error) {
 	ownImage := r.Image != ""
 	needs := func(command string) []string {
@@ -262,8 +263,11 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 		if !ownImage {
 			skip = append(skip, imageStep)
 		}
-		if command != "onboard" || r.RequestLogs {
+		switch {
+		case r.RequestLogs || (command != "onboard" && command != "offboard"):
 			return access.NeedsWithout(command, r.With, skip...)
+		case command == "offboard":
+			return access.NeedsWithout(command, r.With, append(skip, requestLogsStep)...)
 		}
 		out := access.NeedsWithout(command, r.With, append(skip, requestLogsStep)...)
 		for _, p := range backendServiceReads {

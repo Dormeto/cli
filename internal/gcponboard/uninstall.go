@@ -87,6 +87,8 @@ func (x *run) uninstallChecks() error {
 			return fmt.Errorf("the install record is not read, so its features' offboard permissions are not tested: %w", err)
 		}
 		r.With = featureSet(x.r.With, recorded)
+		// Its offboardings may set request logs back, and the workloads are read after the checks.
+		r.RequestLogs = true
 	}
 	rep, err := check(x.ctx, x.d, r, commands)
 	if err != nil {

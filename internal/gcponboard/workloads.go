@@ -892,8 +892,10 @@ func (x *run) offboard() error {
 	if err != nil {
 		return x.controllerFailure(id, nil, err, false)
 	}
-	// What the workload holds says which features' permissions it asks: nothing has changed yet.
-	if features := x.offboardFeatures(id, p.Backends); len(features) > 0 {
+	// What the workload holds says which features' permissions it asks, and the request logs' when its onboarding turned them
+	// on: nothing has changed yet.
+	x.r.RequestLogs = p.RequestLogs != nil
+	if features := x.offboardFeatures(id, p.Backends); len(features) > 0 || x.r.RequestLogs {
 		if err := x.require("offboard", features...); err != nil {
 			return err
 		}
