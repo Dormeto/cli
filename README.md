@@ -1777,9 +1777,10 @@ dormeto gcp workloads resume shop --project my-project --region europe-west1
 - The router's check asks at most 10 scheduled naps each run, every 5 minutes, oldest first: 30 workloads in one nap
   window nap within 15 minutes. Wakes are never held back. A scheduled nap's occurrence is spent once its task is
   accepted: a nap that a pause refuses, or whose task is lost, does not come back when the pause ends.
-- Ten workloads on one URL map in one nap window were accepted on 2026-11-08, global and regional. On a regional map,
-  whose updates are slow, only 2 or 3 of them may nap in that window, the others later by their idle window: give them different nap
-  windows, or maps of their own (the router's Compute Engine scenario page says why).
+- Ten workloads on one URL map in one nap window were accepted on 2026-11-08, global and regional. The naps of
+  one map share its updates, and a router runs at most 20 naps at once. Ten naps on one regional map were all asleep
+  within 283 s, none failed. A nap that finds the map busy gives up and tries again at a later check (the router's
+  Compute Engine scenario page says why).
 - `pause <id> --reason <text>` (required, at most 256 characters) stops every nap, by the idle window, the schedule or
   `nap`, until `resume` or `--until` (RFC 3339, at most 366 days away). A workload asleep is woken. With `--keep-asleep`
   it is not, but a visitor still wakes it: only scheduled and maintenance wakes wait for the pause to end.
