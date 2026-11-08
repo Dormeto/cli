@@ -1602,6 +1602,16 @@ By default the idle check counts every request the backend service answers, scan
 logs, it counts only the requests the waker would not ignore: not scanners, not `HEAD` requests, not an IP list's
 addresses.
 
+- **The logs decide.** On a backend service that logs every request, any entry in the window makes the logs decide
+  alone, whatever Monitoring counts: its `request_count` is sampled and batched, and cannot tell whether the logs are
+  complete. The count decides only when the logs hold none. That also catches a log excluded upstream, such as a
+  `_Default` sink excluding the load balancers' logs. A log lost only in part is not caught.
+- **Scanners with a browser's user agent count.** One that sends such an agent to the application's own paths (`/`,
+  `/favicon.ico`) looks like a visitor to these filters, and keeps the workload awake. IP lists catch known scanner
+  networks.
+- **A regional load balancer's logging** begins 2 to 5 minutes after `--request-logs` (measured): a request in those
+  minutes is not in the logs, and the first idle window after the onboarding may not see it.
+
 - **The install** creates the log view `dmtr-<region>-lb` on the project's `_Default` bucket, filtered to the load
   balancers' request logs. It grants the router `roles/logging.viewAccessor` on the condition that the resource is that
   view, never the project's other logs. The plan shows both, and `uninstall` removes the grant, then the view.
@@ -1848,8 +1858,8 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   its routes changed, without a word. Use a standalone network endpoint group on a load balancer you own.
 - **KEDA at zero is refused**: an owner whose ScaledObject has `minReplicaCount: 0`, set or left to KEDA's default, is
   refused. Set it to 1 or more.
-- **A classic load balancer on the Standard network tier** is found by the onboarding. Whether Google accepts it for the
-  swap is unmeasured.
+- **A classic load balancer on the Standard network tier** is found by the onboarding, and Google accepts it for the swap
+  (measured on 2026-11-08, at classic's times).
 - **Many naps on one regional map**: the naps share the map's updates, and one that finds it busy gives up (`map-busy`)
   and leaves the workload awake. A router has at most 20 naps in flight; the others nap at a later check.
 - **Stats** (wakes, ignored requests) are kept 35 days, and an offboarding deletes its workload's.
