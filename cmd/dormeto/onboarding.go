@@ -58,8 +58,8 @@ func opItems(api *fleet.Client, labels []string, start func(ctx context.Context,
 }
 
 // checkCandidateFlags refuses (exit 2) a flag value that is not the candidate's cloud's: Cloud SQL instance names and
-// Compute Engine machine types for a Google Cloud candidate, RDS identifiers and EC2 instance types for an AWS one, and
-// --router for a Google Cloud candidate only.
+// Compute Engine machine types for a Google Cloud candidate, EC2 instance types for an AWS one (RDS identifiers are
+// left to the manager), and --router for a Google Cloud candidate only.
 func checkCandidateFlags(cand fleet.Candidate, router string, databases, fallbacks []string) error {
 	if !cand.IsGoogle() {
 		if router != "" {
@@ -98,19 +98,20 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "onboard <candidate>", Short: "Onboard a discovery candidate: Dormeto starts managing its workload", SilenceErrors: true,
-		Long: "Start the manager's onboarding of a candidate pending onboarding, given by its id (the target group's ARN) or\n" +
-			"the name of its target group (an unknown or ambiguous name exits 2, its ARNs listed, nothing sent), and follow\n" +
-			"it; then print the workload as <router>/<workload id>. It sends what the dashboard's dialog sends: --name (the\n" +
-			"workload's display name, up to 64 characters; empty, the target group's name), --idle-minutes (5 to 1440, 15 by\n" +
-			"default), --wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an\n" +
-			"RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name; stopped\n" +
-			"after the application, started before it),\n" +
-			"--fallback-type (an EC2 instance type such as t3a.medium, or for a Google Cloud candidate a Compute Engine machine\n" +
-			"type such as e2-medium; at most 5; for the instances of a workload),\n" +
-			"--router (a Google Cloud candidate: the manager's router to use, when several serve its region), --set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernate its instances launched\n" +
-			"with hibernation at a nap; routers 0.32.0 and later; without it the workload inherits the router's or the\n" +
-			"manager's). --no-wait only starts it; Ctrl-C and --timeout stop following, the operation goes on in the\n" +
-			"manager: `dormeto aws operations watch <id>`. Needs an operator.",
+		Long: "Start the manager's onboarding of a candidate pending onboarding, given by its id (an AWS target group's ARN,\n" +
+			"or a Google Cloud backend service's path) or the name of its target group or backend service (an unknown or\n" +
+			"ambiguous name exits 2, its ids listed, nothing sent), and follow it; then print the workload as\n" +
+			"<router>/<workload id>. It sends what the dashboard's dialog sends: --name (the workload's display name, up to\n" +
+			"64 characters; empty, the target group's or backend service's name), --idle-minutes (5 to 1440, 15 by default),\n" +
+			"--wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an RDS instance\n" +
+			"identifier or cluster:<identifier>, or for a Google Cloud candidate a Cloud SQL instance name: stopped after the\n" +
+			"application, started before it), --fallback-type (an EC2 instance type such as t3a.medium, or for a Google Cloud\n" +
+			"candidate a Compute Engine machine type such as e2-medium; at most 5; for the instances of a workload), --router\n" +
+			"(a Google Cloud candidate only: the manager's router to onboard it on), --set-tag (Dormeto tags k=v;\n" +
+			"administrators) and --hibernate (true or false: hibernate its instances launched with hibernation at a nap;\n" +
+			"routers 0.32.0 and later; without it the workload inherits the router's or the manager's). --no-wait only\n" +
+			"starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
+			"`dormeto aws operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
 			var tags map[string]string
@@ -191,11 +192,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's name)")
 	fl.IntVar(&idle, "idle-minutes", 15, "the idle window, 5 to 1440 minutes")
 	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser")
-	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier> (repeatable)")
-	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium (repeatable, at most 5; for the EC2 instances of a workload)")
+	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name (repeatable)")
+	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium, or Compute Engine machine type such as e2-medium (repeatable, at most 5)")
 	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the manager's router to onboard it on (one is chosen when there is only one)")
 	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
-	fl.StringVar(&hibernate, "hibernate", "", "hibernate the EC2 instances at a nap: true or false (default: inherit)")
+	fl.StringVar(&hibernate, "hibernate", "", "hibernate the instances at a nap: true or false (default: inherit)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd
@@ -297,8 +298,40 @@ func exclusionBody(target map[string]any, reason string, end time.Time, set bool
 	return body
 }
 
+// excludeWording names what an exclusion leaves out as the targets' routers' clouds call it: a target group on AWS, a
+// backend service on Google Cloud, both when mixed or when the routers cannot be read.
+func excludeWording(ctx context.Context, api *fleet.Client, targets []fleet.Target, what, question string) (string, string) {
+	var rs fleet.Routers
+	known := api.Get(ctx, "/routers", nil, &rs) == nil
+	cloud := map[string]string{}
+	for _, r := range rs.Rows {
+		cloud[r.Name] = fleet.CloudName(r.Cloud)
+	}
+	aws, gcp := false, false
+	for _, t := range targets {
+		switch cloud[t.Router] {
+		case "gcp":
+			gcp = true
+		case "aws":
+			aws = true
+		default:
+			known = false
+		}
+	}
+	noun := ""
+	switch {
+	case known && !gcp:
+		return what, question
+	case known && !aws:
+		noun = "backend service"
+	default:
+		noun = "target group or backend service"
+	}
+	return "exclude the " + noun + " of", "Exclude the " + noun + " of %s from discovery?"
+}
+
 func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	w := &writeCommand{f: f, deps: deps, always: true}
+	w := &writeCommand{f: f, deps: deps, always: true, wording: excludeWording}
 	var (
 		reason, dur, until string
 		wait               waitFlags
@@ -306,7 +339,7 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "exclude (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude the target groups of workloads from discovery",
-		Long: "Exclude each workload's target group from discovery, with a reason: the manager pauses its managed workloads\n" +
+		Long: "Exclude each workload's target group (a Google Cloud workload's backend service) from discovery, with a reason: the manager pauses its managed workloads\n" +
 			"(an operation, followed). --reason is 1 to 246 characters; --for is a duration up to 366 days (90m, 2h, 3d) and\n" +
 			"--until an RFC 3339 time or HH:MM today in the local time zone, within 366 days; without either the exclusion\n" +
 			"lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal (--yes without one; --dry-run lists\n" +
@@ -337,8 +370,15 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				ops, err := runOperations(ctx, c, deps, opItems(api, labels, func(ctx context.Context, i int) (fleet.Operation, error) {
 					t := targets[i]
 					var st struct {
+						Cloud          string `json:"cloud"`
+						Account        string `json:"account"`
+						Region         string `json:"region"`
 						TargetGroupARN string `json:"targetGroupArn"`
 						BackendService string `json:"backendService"`
+						LB             *struct {
+							Kind   string `json:"kind"`
+							Region string `json:"region"`
+						} `json:"lb"`
 					}
 					if err := api.Get(ctx, t.Path(""), nil, &st); err != nil {
 						if ctx.Err() != nil {
@@ -348,12 +388,20 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					target := map[string]any{"kind": "target-group", "arn": st.TargetGroupARN}
 					switch {
-					case st.TargetGroupARN != "":
-					case st.BackendService != "" && fleet.IsBackendServicePath(st.BackendService): // a Google Cloud workload's
-						target = map[string]any{"kind": "target-group", "path": st.BackendService}
-					case st.BackendService != "":
-						return fleet.Operation{}, notStarted{errors.New("the workload has no backend service path to exclude")}
-					default:
+					case st.Cloud == "gcp": // the router answers the backend service's name: its path is built here
+						if st.BackendService == "" {
+							return fleet.Operation{}, notStarted{errors.New("the workload has no backend service to exclude")}
+						}
+						path := st.BackendService
+						if !strings.HasPrefix(path, "projects/") {
+							where := "global"
+							if st.LB != nil && (st.LB.Kind == "regional" || st.LB.Kind == "internal") {
+								where = "regions/" + orDefault(st.LB.Region, st.Region)
+							}
+							path = "projects/" + st.Account + "/" + where + "/backendServices/" + st.BackendService
+						}
+						target = map[string]any{"kind": "target-group", "path": path}
+					case st.TargetGroupARN == "":
 						return fleet.Operation{}, notStarted{errors.New("the workload has no target group to exclude")}
 					}
 					body := exclusionBody(target, r, end, set)

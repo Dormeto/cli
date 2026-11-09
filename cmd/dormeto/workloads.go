@@ -216,6 +216,8 @@ type writeCommand struct {
 	dryRun  bool
 	yes     bool
 	always  bool // ask even for one target (offboard, exclude)
+	// wording, when set, words what is asked and said after the targets are known (the clouds of their routers).
+	wording func(ctx context.Context, api *fleet.Client, targets []fleet.Target, what, question string) (string, string)
 }
 
 func (w *writeCommand) bindShared(cmd *cobra.Command) {
@@ -253,6 +255,9 @@ func (w *writeCommand) run(c *cobra.Command, args []string, what, question strin
 		}
 		if len(targets) == 0 { // none resolved, a router did not answer: act on none, so that --json prints its empty shape
 			return report(act(ctx, api, nil))
+		}
+		if w.wording != nil {
+			what, question = w.wording(ctx, api, targets, what, question)
 		}
 		if done, err := confirmWorkloads(ctx, c, w.deps, targets, what, question, w.always, w.dryRun, w.yes); done || err != nil {
 			return report(err)

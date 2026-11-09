@@ -544,6 +544,11 @@ func TestDiscoveryCandidatesPrintsACloudColumnAndTakesAProject(t *testing.T) {
 	if r.exit != 0 || len(lines) != 3 {
 		t.Fatalf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
+	for _, h := range []string{"TARGET GROUP OR BACKEND SERVICE", "ACCOUNT OR PROJECT"} {
+		if !strings.Contains(lines[0], h) {
+			t.Errorf("header %q lacks %q", lines[0], h)
+		}
+	}
 	col := strings.Index(lines[0], "CLOUD")
 	if col < 0 || !strings.HasPrefix(lines[1][col:], "aws ") || !strings.HasPrefix(lines[2][col:], "gcp ") {
 		t.Errorf("table %q", lines)

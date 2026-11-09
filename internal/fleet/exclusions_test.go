@@ -29,6 +29,19 @@ func TestExclusionTargetText(t *testing.T) {
 	if got := (ExclusionTarget{Kind: "account", Account: "1", Name: "sandbox"}).Text(); got != "account sandbox (1)" {
 		t.Error(got)
 	}
+	for _, c := range []struct {
+		t    ExclusionTarget
+		want string
+	}{
+		{ExclusionTarget{Kind: "target-group", Path: "projects/p-dev1/global/backendServices/web", Name: "web"}, "backend service web"},
+		{ExclusionTarget{Kind: "load-balancer", Path: "projects/p-dev1/global/urlMaps/shop", Name: "shop"}, "URL map shop"},
+		{ExclusionTarget{Kind: "account", Path: "", Account: "dormeto-dev", Name: "dormeto-dev"}, "project dormeto-dev"},
+		{ExclusionTarget{Kind: "target-group", Name: "api"}, "target group api"},
+	} {
+		if got := c.t.Text(); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.t, got, c.want)
+		}
+	}
 	if got := (ExclusionTarget{Kind: "load-balancer", Name: "lb"}).Text(); got != "load balancer lb" {
 		t.Error(got)
 	}

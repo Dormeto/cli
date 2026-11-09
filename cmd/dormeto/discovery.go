@@ -195,8 +195,8 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "candidates", Short: "List the discovery candidates of a status", Args: noArgs, SilenceErrors: true,
-		Long: "List the candidates of one status (default pending-onboarding): target group or backend service, cloud, account, region, hosts, idle\n" +
-			"hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
+		Long: "List the candidates of one status (default pending-onboarding): target group or backend service, cloud, account\n" +
+			"or project, region, hosts, idle hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
 			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
 			"manager's). --json prints the manager's answer, {candidates}, every page in it.",
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -250,7 +250,7 @@ func candidatesText(cs []fleet.Candidate, status string) string {
 	if len(cs) == 0 {
 		return "no candidates in " + status + "\n"
 	}
-	rows := [][]string{{"TARGET GROUP", "CLOUD", "ACCOUNT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
+	rows := [][]string{{"TARGET GROUP OR BACKEND SERVICE", "CLOUD", "ACCOUNT OR PROJECT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
 	for _, c := range cs {
 		hosts := strings.Join(c.Hosts, ",")
 		if hosts == "" {

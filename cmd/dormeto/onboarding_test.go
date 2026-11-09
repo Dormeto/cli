@@ -64,7 +64,7 @@ func (a *obAPI) handler(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && path == "/iam/discovery/candidates":
 		io.WriteString(w, `{"candidates":[`+strings.Join(a.pending, ",")+`],"cursor":null}`)
 	case r.Method == http.MethodGet && path == "/iam/routers":
-		io.WriteString(w, `{"routers":[{"name":"prod-eu","account":"111111111111","region":"eu-west-1","source":"manager"}]}`)
+		io.WriteString(w, `{"routers":[{"name":"prod-eu","account":"111111111111","region":"eu-west-1","source":"manager","cloud":"aws"},{"name":"gcp-dev","account":"dormeto-dev","region":"europe-west1","source":"manager","cloud":"gcp"}]}`)
 	case r.Method == http.MethodPost && path == "/iam/operations":
 		var req struct{ Type, WorkloadID, Router, CandidateID string }
 		_ = json.Unmarshal(body, &req)
@@ -90,16 +90,12 @@ func (a *obAPI) handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"id":%q,"type":%q,"status":"succeeded","target":{"account":"111111111111","region":"eu-west-1"},"steps":[]%s}`, id, a.types[id], extra)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/iam/workloads/"):
 		id := path[strings.LastIndex(path, "/")+1:]
-		if a.noTG[id] && !strings.HasPrefix(id, "g-") {
-			io.WriteString(w, `{"workloadId":"`+id+`","state":"AWAKE"}`)
+		if rowJSON, ok := gcpWorkloads[id]; ok { // a Google Cloud workload, as the router's row has it
+			io.WriteString(w, rowJSON)
 			return
 		}
-		if strings.HasPrefix(id, "g-") { // a Google Cloud workload
-			bs := "projects/dormeto-dev/global/backendServices/" + id
-			if a.noTG[id] {
-				bs = "api"
-			}
-			fmt.Fprintf(w, `{"workloadId":%q,"state":"AWAKE","targetGroupArn":null,"backendService":%q}`, id, bs)
+		if a.noTG[id] {
+			io.WriteString(w, `{"workloadId":"`+id+`","state":"AWAKE"}`)
 			return
 		}
 		fmt.Fprintf(w, `{"workloadId":%q,"state":"AWAKE","targetGroupArn":%q}`, id, tgARN("111111111111", "tg-"+id))
@@ -495,6 +491,17 @@ func TestExclusionsListJSONKeepsTheRows(t *testing.T) {
 	}
 }
 
+// gcpWorkloads are the answers for Google Cloud workloads: backendService and urlMap are names, lb is absent for a
+// global load balancer, else {kind, region?} (router gcp/src/rows.mjs).
+var gcpWorkloads = map[string]string{
+	"g-1": `{"workloadId":"g-1","cloud":"gcp","account":"dormeto-dev","region":"europe-west1","state":"AWAKE","targetGroupArn":null,"backendService":"web","urlMap":"shop"}`,
+	"g-2": `{"workloadId":"g-2","cloud":"gcp","account":"dormeto-dev","region":"europe-west1","state":"AWAKE","targetGroupArn":null}`,
+	"g-3": `{"workloadId":"g-3","cloud":"gcp","account":"dormeto-dev","region":"europe-west1","state":"AWAKE","backendService":"api","lb":{"kind":"regional","region":"europe-west4"}}`,
+	"g-4": `{"workloadId":"g-4","cloud":"gcp","account":"dormeto-dev","region":"europe-west1","state":"AWAKE","backendService":"old","lb":{"kind":"classic"}}`,
+	"g-5": `{"workloadId":"g-5","cloud":"gcp","account":"dormeto-dev","region":"europe-west1","state":"AWAKE","backendService":"int","lb":{"kind":"internal"}}`,
+	"g-6": `{"workloadId":"g-6","cloud":"gcp","account":"dormeto-dev","region":"europe-west1","state":"AWAKE","backendService":"projects/dormeto-dev/global/backendServices/given"}`,
+}
+
 const gcpBS = "projects/dormeto-dev/global/backendServices/web"
 
 func gcpCandidate() string {
@@ -538,17 +545,33 @@ func TestOffboardGoogleCloudRouterPostsTheSameBody(t *testing.T) {
 	}
 }
 
-func TestExcludeGoogleCloudWorkloadSendsItsBackendServicePath(t *testing.T) {
-	a := &obAPI{}
-	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--yes", "--no-wait")
-	want := `POST /iam/exclusions {"reason":"r","target":{"kind":"target-group","path":"projects/dormeto-dev/global/backendServices/g-1"},"workload":{"id":"g-1","router":"gcp-dev"}}`
-	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
-		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+func TestExcludeGoogleCloudWorkloadBuildsItsBackendServicePath(t *testing.T) {
+	for _, c := range []struct{ id, path string }{
+		{"g-1", "projects/dormeto-dev/global/backendServices/web"},
+		{"g-3", "projects/dormeto-dev/regions/europe-west4/backendServices/api"},
+		{"g-4", "projects/dormeto-dev/global/backendServices/old"},
+		{"g-5", "projects/dormeto-dev/regions/europe-west1/backendServices/int"}, // no lb.region: the workload's region
+		{"g-6", "projects/dormeto-dev/global/backendServices/given"},             // a path is sent as it is
+	} {
+		a := &obAPI{}
+		r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/"+c.id, "--reason", "r", "--yes", "--no-wait")
+		want := `POST /iam/exclusions {"reason":"r","target":{"kind":"target-group","path":"` + c.path + `"},"workload":{"id":"` + c.id + `","router":"gcp-dev"}}`
+		if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+			t.Errorf("%s: exit %d, writes %q, stderr %q", c.id, r.exit, a.writes, r.stderr)
+		}
 	}
-	a = &obAPI{noTG: map[string]bool{"g-2": true}}
-	r = runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-2", "--reason", "r", "--yes", "--no-wait")
-	if r.exit != 1 || len(a.writes) != 0 || !strings.Contains(r.stderr, "the workload has no backend service path to exclude") {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-2", "--reason", "r", "--yes", "--no-wait")
+	if r.exit != 1 || len(a.writes) != 0 || !strings.Contains(r.stderr, "the workload has no backend service to exclude") {
 		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestExcludeConfirmationNamesBothCloudsResources(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--dry-run")
+	if !strings.Contains(r.stdout, "dry run: exclude the backend service of 1 workload") {
+		t.Errorf("a dry run names only the AWS resource: %q %q", r.stdout, r.stderr)
 	}
 }
 
@@ -574,6 +597,7 @@ func TestExclusionsAddTakesEitherCloudsValues(t *testing.T) {
 		{"--target-group", "projects/dormeto-dev/global/urlMaps/shop"},
 		{"--load-balancer", gcpBS},
 		{"--account", "Dormeto"},
+		{"--target-group", "projects/dormeto-dev/regions/europe-west1/urlMaps/shop"},
 		{"--target-group", "projects//global/backendServices/x"},
 	} {
 		a := &obAPI{}

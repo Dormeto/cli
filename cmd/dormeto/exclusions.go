@@ -85,9 +85,9 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			case given != 1:
 				err = usagef("give exactly one of --target-group, --load-balancer and --account")
 			case tg != "" && !fleet.IsTargetGroupARN(tg) && !fleet.IsBackendServicePath(tg):
-				err = usagef("--target-group: %q is neither the ARN of an application target group nor the path of a backend service (projects/<project>/global/backendServices/<name>)", tg)
+				err = usagef("--target-group: %q is neither the ARN of an application target group nor the path of a backend service (projects/<project>/global|regions/<region>/backendServices/<name>)", tg)
 			case lb != "" && !fleet.IsLoadBalancerARN(lb) && !fleet.IsURLMapPath(lb):
-				err = usagef("--load-balancer: %q is neither the ARN of an application load balancer nor the path of a URL map (projects/<project>/global/urlMaps/<name>)", lb)
+				err = usagef("--load-balancer: %q is neither the ARN of an application load balancer nor the path of a URL map (projects/<project>/global|regions/<region>/urlMaps/<name>)", lb)
 			case account != "" && !discover.IsAccountID(account) && !projectID.MatchString(account):
 				err = usagef("--account: %q is neither 12 digits nor a project ID", account)
 			}

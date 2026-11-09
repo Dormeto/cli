@@ -26,6 +26,14 @@ type ExclusionTarget struct {
 // Text is the target as the manager words it: "target group api", "account sandbox (123456789012)".
 func (t ExclusionTarget) Text() string {
 	kind := strings.ReplaceAll(t.Kind, "-", " ")
+	switch { // Google Cloud's words: a backend service, a URL map, a project
+	case t.Kind == "target-group" && t.Path != "":
+		kind = "backend service"
+	case t.Kind == "load-balancer" && t.Path != "":
+		kind = "URL map"
+	case t.Kind == "account" && t.Path == "" && t.Account != "" && !isNumeric(t.Account):
+		kind = "project"
+	}
 	if t.Kind == "account" && t.Name != "" && t.Name != t.Account {
 		return fmt.Sprintf("%s %s (%s)", kind, t.Name, t.Account)
 	}
@@ -130,6 +138,9 @@ var (
 // the manager accepts one to exclude.
 func IsTargetGroupARN(s string) bool  { return targetGroupARN.MatchString(s) }
 func IsLoadBalancerARN(s string) bool { return loadBalancerARN.MatchString(s) }
+
+// isNumeric tells whether s is digits only, as an AWS account id is (a Google Cloud project's ID starts with a letter).
+func isNumeric(s string) bool { return strings.Trim(s, "0123456789") == "" }
 
 // IsBackendServicePath and IsURLMapPath tell whether s is the path of a Google Cloud backend service or URL map.
 func IsBackendServicePath(s string) bool { return backendServicePath.MatchString(s) }
