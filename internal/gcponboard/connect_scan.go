@@ -250,7 +250,7 @@ func (x *link) routersIn(project string) ([]fleet.GoogleRouter, error) {
 // findTagValues reads each router project's tag value: one missing stops connect (required) with the install that creates
 // it; disconnect has nothing to remove there.
 func (x *link) findTagValues(required bool) error {
-	for _, p := range x.routerProjects() {
+	for _, p := range x.commandProjects() {
 		name, found, err := x.tag("tagValues", p+"/dormeto/managed")
 		if err != nil {
 			return err

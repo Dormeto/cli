@@ -358,11 +358,15 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 		roles, parent, rest, ok = s.orgRoles(org), "organizations/"+org, tail, true
 		defer s.keepOrgRoles(org, roles)
 	}
+	if other, tail, found := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v1/projects/"), "/"); !ok && found && s.OtherProjects[other] != nil && strings.HasPrefix(tail, "roles") {
+		roles, parent, rest, ok = s.otherRoles(other), "projects/"+other, tail, true
+		defer s.keepOtherRoles(other, roles)
+	}
 	if !ok {
 		Fail(w, 403, "PERMISSION_DENIED", "The caller does not have permission")
 		return
 	}
-	if strings.HasPrefix(parent, "projects/") && s.disabled(w, "iam.googleapis.com") {
+	if parent == "projects/"+s.ProjectID && s.disabled(w, "iam.googleapis.com") {
 		return
 	}
 	if pools, found := strings.CutPrefix(rest, "locations/global/workloadIdentityPools"); found {
@@ -500,6 +504,23 @@ func (s *Server) orgRoles(org string) map[string]*Role {
 func (s *Server) keepOrgRoles(org string, roles map[string]*Role) {
 	for id, role := range roles {
 		s.OrgRoles[org+"/"+id] = role
+	}
+}
+
+// otherRoles are another project's custom roles, by ID, from OtherRoles; keepOtherRoles writes them back.
+func (s *Server) otherRoles(project string) map[string]*Role {
+	out := map[string]*Role{}
+	for key, role := range s.OtherRoles {
+		if p, id, _ := strings.Cut(key, "/"); p == project {
+			out[id] = role
+		}
+	}
+	return out
+}
+
+func (s *Server) keepOtherRoles(project string, roles map[string]*Role) {
+	for id, role := range roles {
+		s.OtherRoles[project+"/"+id] = role
 	}
 }
 

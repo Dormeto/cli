@@ -146,6 +146,8 @@ type link struct {
 	routers  []fleet.GoogleRouter // the routers at the scopes, by project and region
 	tagValue map[string]string    // a router project's tag value <project>/dormeto/managed, tagValues/<n>
 	gone     []string             // connect: the projects of the record's routers that hold none any more
+	former   []string             // disconnect: the projects at the scopes holding a dormetoCommand but no router of the record
+	removing map[string]bool      // the grants this run takes out, by place and grantKey
 
 	tested      map[string][]string // the steps tested, by resource
 	testedOrder []string
@@ -174,7 +176,8 @@ func newLink(ctx context.Context, d Deps, r ConnectRequest, command string) *lin
 	}
 	x := &link{run: newRun(ctx, d, Request{Project: r.Project, Configuration: r.Configuration, Yes: r.Yes, DryRun: r.DryRun, JSON: r.JSON}),
 		c: r, command: command, jsonOut: out, host: r.Project, orgOf: map[string]string{}, tagValue: map[string]string{},
-		tested: map[string][]string{}, accounts: map[string]bool{}, google: map[string]bool{}, left: map[string]planned{}}
+		tested: map[string][]string{}, accounts: map[string]bool{}, google: map[string]bool{}, left: map[string]planned{},
+		removing: map[string]bool{}}
 	return x
 }
 
@@ -196,6 +199,9 @@ func (x *link) connect() error {
 	if x.rec != nil && x.rec.Project != x.host {
 		return &stop{1, fmt.Sprintf("manager %s is connected to Google Cloud through project %s: disconnect it first (%s)\nNothing was changed.",
 			x.m.Env, x.rec.Project, x.commandLine("disconnect", x.rec.Project))}
+	}
+	if err := x.recordNames(); err != nil {
+		return err
 	}
 	x.useScopes()
 	if err := x.checkHostAndScopes(); err != nil {
@@ -232,6 +238,16 @@ func (x *link) connect() error {
 	x.printConnectPlan()
 	if done, err := x.confirm("Connect manager " + x.m.Env + " to Google Cloud through project " + x.host + "?"); done || err != nil {
 		return err
+	}
+	// A first connect is recorded before its first step, without its routers (the manager would call them before their
+	// grants): a run that stops partway leaves what it made known to disconnect.
+	if x.rec == nil {
+		first := x.record()
+		first.Routers = []fleet.GoogleRouter{}
+		if _, err := x.c.Manager.PutGoogleConnection(x.ctx, first); err != nil {
+			return &stop{1, fmt.Sprintf("the manager's record is not written: %s\nNothing was changed.", err)}
+		}
+		x.say("  ✓ record: wrote the connection in manager %s before any change, its routers to come at the end", x.m.Env)
 	}
 	return x.applyConnect()
 }
@@ -274,6 +290,22 @@ func (x *link) readManager() error {
 	}
 	x.rec = rec
 	return nil
+}
+
+// recordNames refuses a record whose pool, provider or accounts are not this environment's: acting under the names of
+// another --env would find nothing, and a disconnect would then clear the record of the real connection. With them equal,
+// every name a run acts on is the record's.
+func (x *link) recordNames() error {
+	if x.rec == nil {
+		return nil
+	}
+	pool, provider, discovery, command := x.poolID(), x.providerID(), x.email("discovery"), x.email("command")
+	r := x.rec
+	if r.Pool == pool && r.Provider == provider && r.ServiceAccounts == (fleet.GoogleServiceAccounts{Discovery: discovery, Command: command}) {
+		return nil
+	}
+	return &stop{2, fmt.Sprintf("--env: the manager's connection names pool %s and the accounts %s and %s, not those of environment %s (%s, %s and %s)\nNothing was changed.",
+		r.Pool, r.ServiceAccounts.Discovery, r.ServiceAccounts.Command, x.m.Env, pool, discovery, command)}
 }
 
 // commandLine is a dormeto gcp command for this manager, as the runs tell to run it.
@@ -456,7 +488,8 @@ func customRoles(bs []binding) []roleAt {
 // hostSteps are the steps of the command that act on the host project; scopeSteps those that act on a scope.
 func (x *link) hostSteps() []string {
 	if x.command == "disconnect" {
-		return []string{"read", "serviceAccounts", "federation"}
+		// It sweeps the host's bindings and deletes a dormetoCommand there.
+		return []string{"read", "projectBindings", "roles", "serviceAccounts", "federation"}
 	}
 	return []string{"read", "apis", "federation", "serviceAccounts"}
 }
@@ -509,6 +542,9 @@ func (x *link) checkRest() error {
 	}
 	for _, p := range x.gone {
 		needs = append(needs, need{"projects/" + p, []string{"tag", "projectBindings"}})
+	}
+	for _, p := range x.former {
+		needs = append(needs, need{"projects/" + p, []string{"controller", "tag", "roles", "projectBindings"}})
 	}
 	if err := x.test(needs); err != nil {
 		return err
@@ -1328,7 +1364,9 @@ func (x *link) verifyConnect() (warnings []string, err error) {
 			}
 		}
 		for _, g := range removed {
-			warnings = append(warnings, "IAM change not made by this connect: - "+describeOn(g, host))
+			if !x.removing[host+"\x00"+grantKey(g)] {
+				warnings = append(warnings, "IAM change not made by this connect: - "+describeOn(g, host))
+			}
 		}
 	}
 	if len(problems) > 0 {

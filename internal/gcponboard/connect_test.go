@@ -168,7 +168,8 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 			t.Errorf("no line %d %q", i, w)
 		}
 	}
-	for _, w := range []string{"  ✓ apis: turned on iam.googleapis.com, iamcredentials.googleapis.com, sts.googleapis.com, cloudbilling.googleapis.com",
+	for _, w := range []string{"  ✓ record: wrote the connection in manager dev before any change, its routers to come at the end",
+		"  ✓ apis: turned on iam.googleapis.com, iamcredentials.googleapis.com, sts.googleapis.com, cloudbilling.googleapis.com",
 		"  ✓ verified: the pool and its provider, the two service accounts, the roles' permissions and every planned grant",
 		"  ✓ record: wrote the connection in manager dev: 1 router registered",
 		"Connected manager dev to Google Cloud through project dormeto-dev: 1 router, 1 scope."} {
@@ -210,10 +211,11 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 		}
 	}
 
-	if len(m.puts) != 1 {
+	// The record first, before any change and without its routers, then whole.
+	if len(m.puts) != 2 || len(m.puts[0].Routers) != 0 || m.puts[0].Pool != "dmt-dev" || m.puts[0].ServiceAccounts.Command != commandEmail {
 		t.Fatalf("puts %+v", m.puts)
 	}
-	rec := m.puts[0]
+	rec := m.puts[1]
 	if rec.Project != "dormeto-dev" || rec.ProjectNumber != "1034397096264" || rec.Pool != "dmt-dev" || rec.Provider != "aws" ||
 		!slices.Equal(rec.Scopes, []string{"projects/dormeto-dev"}) ||
 		rec.ServiceAccounts != (fleet.GoogleServiceAccounts{Discovery: discoveryEmail, Command: commandEmail}) ||
@@ -241,7 +243,7 @@ func TestConnectAgainIsUpToDate(t *testing.T) {
 		strings.Contains(out, "Plan for") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if after := s.Mutations(); len(after) != before || len(m.puts) != 1 {
+	if after := s.Mutations(); len(after) != before || len(m.puts) != 2 {
 		t.Fatalf("changes: %+v, puts %d", after[before:], len(m.puts))
 	}
 }
@@ -515,8 +517,9 @@ func TestConnectStopsAtABlockedRoleIDWithTheDateItFrees(t *testing.T) {
 		!strings.Contains(out, "Done: apis. Not done: roles, federation, serviceAccounts, impersonation, projectBindings, controller, tag. Run the same command again to continue.\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if len(m.puts) != 0 {
-		t.Fatal("record written")
+	// Recorded before the first step, without routers: what the stopped run made is disconnect's to remove.
+	if len(m.puts) != 1 || len(m.puts[0].Routers) != 0 {
+		t.Fatalf("puts %+v", m.puts)
 	}
 }
 
@@ -563,7 +566,7 @@ func TestConnectAtAFolderDefinesTheRoleInItsOrganization(t *testing.T) {
 	if p := tested["/v3/projects/dormeto-dev:testIamPermissions"]; strings.Contains(p, "folders.") || strings.Contains(p, "organizations.") {
 		t.Errorf("project tested for %s", p)
 	}
-	if rec := m.puts[0]; !slices.Equal(rec.Scopes, []string{"folders/7"}) || len(rec.Routers) != 1 {
+	if rec := m.puts[len(m.puts)-1]; !slices.Equal(rec.Scopes, []string{"folders/7"}) || len(rec.Routers) != 1 {
 		t.Fatalf("record %+v", rec)
 	}
 }
@@ -605,5 +608,130 @@ func TestConnectAgainRemovesTheGrantsOfAProjectWhoseRouterIsGone(t *testing.T) {
 	}
 	if len(m.rec.Routers) != 0 || s.Roles["dormetoCommand"].Deleted {
 		t.Fatalf("routers %+v role %+v", m.rec.Routers, s.Roles["dormetoCommand"])
+	}
+	// The removals are this run's own: the verification does not call them someone else's change.
+	if strings.Contains(out, "  ! ") {
+		t.Fatalf("a warning:\n%s", out)
+	}
+}
+
+// A first connect writes the manager's record (without its routers) before its first step: one that stops partway leaves
+// what it made recorded, and disconnect removes it.
+func TestAConnectStoppedPartwayIsRecordedAndDisconnectRemovesWhatItMade(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	s.Refuse(gcptest.Refusal{Method: http.MethodPost, Host: "iam.googleapis.com", Path: "/v1/projects/dormeto-dev/serviceAccounts/" + discoveryEmail + ":setIamPolicy",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 1 || !strings.Contains(out, "Done: apis, roles, federation, serviceAccounts. Not done: impersonation,") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m.rec == nil || len(m.puts) != 1 || m.rec.Pool != "dmt-dev" || len(m.rec.Routers) != 0 || !strings.Contains(out, "  ✓ record: wrote the connection in manager dev before any change") ||
+		m.rec.ServiceAccounts != (fleet.GoogleServiceAccounts{Discovery: discoveryEmail, Command: commandEmail}) {
+		t.Fatalf("record %+v", m.rec)
+	}
+	if s.ServiceAccounts[discoveryEmail] == nil || s.Pools["dmt-dev"] == nil || s.Roles["dormetoCommand"] == nil {
+		t.Fatal("not made")
+	}
+	code, out = runDisconnect(t, s, connectRequest(m))
+	t.Logf("\n%s", out)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if !s.Roles["dormetoDiscovery"].Deleted || !s.Roles["dormetoCommand"].Deleted || len(s.ServiceAccounts) != 0 ||
+		s.Pools["dmt-dev"].State != "DELETED" || s.Providers["dmt-dev/aws"].State != "DELETED" || m.rec != nil {
+		t.Fatalf("left: roles %+v accounts %v pool %+v\n%s", s.Roles, s.ServiceAccounts, s.Pools["dmt-dev"], out)
+	}
+}
+
+// otherProject adds shop-prod to the fake: under folder 7 of organization 42 unless ancestors say otherwise.
+func otherProject(s *gcptest.Server, ancestors ...string) {
+	s.Lock()
+	defer s.Unlock()
+	s.OtherProjects["shop-prod"] = &gcptest.OtherProject{Number: "222", Ancestors: ancestors}
+	s.Policies["projects/shop-prod"] = map[string]any{"version": 1, "etag": "BwX"}
+}
+
+// A former router project at a folder scope (its router gone, its role dormetoCommand left, a grant of the command account
+// left by a stopped run): disconnect looks for dormetoCommand in every project at the scopes, takes the command account's
+// grants out of that project and deletes the role.
+func TestDisconnectDeletesDormetoCommandInAFormerRouterProjectAtTheScopes(t *testing.T) {
+	s := connectServer(t)
+	s.Parent, s.Ancestors = "folders/7", []string{"folders/7", "organizations/42"}
+	s.Scopes = map[string]bool{"folders/7": true, "organizations/42": true}
+	otherProject(s, "folders/7", "organizations/42")
+	m := newFakeManager()
+	r := connectRequest(m)
+	r.Scopes = []string{"folders/7"}
+	if code, out := runConnect(t, s, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	s.OtherRoles["shop-prod/dormetoCommand"] = &gcptest.Role{Title: "Dormeto manager command", Stage: "GA"}
+	s.Policies["projects/shop-prod"]["bindings"] = []any{map[string]any{"role": "projects/shop-prod/roles/dormetoCommand", "members": []any{"serviceAccount:" + commandEmail}}}
+	s.Unlock()
+	code, out := runDisconnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, w := range []string{
+		"  - grant projects/shop-prod/roles/dormetoCommand to serviceAccount:" + commandEmail + " on project shop-prod",
+		"  - role dormetoCommand in project shop-prod",
+	} {
+		if !slices.Contains(lines(out), w) {
+			t.Errorf("no line %q in\n%s", w, out)
+		}
+	}
+	if role := s.OtherRoles["shop-prod/dormetoCommand"]; !role.Deleted {
+		t.Fatalf("role %+v", role)
+	}
+	if got := rolesOf(s.Policies["projects/shop-prod"], "serviceAccount:"+commandEmail); len(got) != 0 {
+		t.Fatalf("left %v", got)
+	}
+}
+
+// disconnect sweeps the host's bindings and deletes a dormetoCommand there: it tests the host for those steps first, and a
+// permission missing there stops it before any change.
+func TestDisconnectTestsTheHostsBindingsAndRolesBeforeAnyChange(t *testing.T) {
+	s := connectServer(t)
+	otherProject(s)
+	m := newFakeManager()
+	m.rec = &fleet.GoogleConnection{Project: "dormeto-dev", ProjectNumber: "1034397096264", Pool: "dmt-dev", Provider: "aws", Scopes: []string{"projects/shop-prod"},
+		ServiceAccounts: fleet.GoogleServiceAccounts{Discovery: discoveryEmail, Command: commandEmail}, Routers: []fleet.GoogleRouter{}, GoogleAdded: []string{}}
+	s.Lock()
+	s.Enabled = append(s.Enabled, access.Load().Manager.APIs...)
+	s.Roles["dormetoCommand"] = &gcptest.Role{Title: "Dormeto manager command", Stage: "GA"}
+	s.Withheld["projects/dormeto-dev"] = map[string]bool{"iam.roles.delete": true}
+	s.Unlock()
+	code, out := runDisconnect(t, s, connectRequest(m))
+	if code != 1 || !strings.Contains(out, "  ✗ disconnect in project dormeto-dev: missing iam.roles.delete\nNothing was changed.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if mut := s.Mutations(); len(mut) != 0 || m.deletes != 0 || s.Roles["dormetoCommand"].Deleted {
+		t.Fatalf("mutations %+v", mut)
+	}
+}
+
+// A record made for another environment than the one given: disconnect, and connect, refuse it (exit 2) and change
+// nothing, the record kept, instead of finding nothing under the other names and clearing it.
+func TestARecordOfAnotherEnvironmentIsRefused(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	before := len(s.Mutations())
+	m.info.Env = ""
+	r := connectRequest(m)
+	r.Env = "prod"
+	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){runDisconnect, runConnect} {
+		code, out := run(t, s, r)
+		if code != 2 || !strings.Contains(out, "--env: the manager's connection names pool dmt-dev and the accounts "+discoveryEmail+" and "+commandEmail+
+			", not those of environment prod (dmt-prod, dmt-prod-discovery@dormeto-dev.iam.gserviceaccount.com and dmt-prod-command@dormeto-dev.iam.gserviceaccount.com)\nNothing was changed.\n") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+	}
+	if after := s.Mutations(); len(after) != before || m.deletes != 0 || m.rec == nil || len(m.puts) != 2 {
+		t.Fatalf("changes %+v, deletes %d, puts %d", after[before:], m.deletes, len(m.puts))
 	}
 }

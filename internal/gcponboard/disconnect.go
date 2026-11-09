@@ -44,14 +44,18 @@ func (x *link) disconnect() error {
 		return &stop{1, fmt.Sprintf("manager %s is connected to Google Cloud through project %s, not %s: %s\nNothing was changed.",
 			x.m.Env, x.rec.Project, x.host, x.commandLine("disconnect", x.rec.Project))}
 	}
+	if err := x.recordNames(); err != nil {
+		return err
+	}
 	x.scopes, x.routers = slices.Clone(x.rec.Scopes), slices.Clone(x.rec.Routers)
 	if err := x.checkHostAndScopes(); err != nil {
 		return err
 	}
-	if slices.ContainsFunc(x.scopes, func(s string) bool { return strings.HasPrefix(s, "folders/") }) {
-		if err := x.findProjects(); err != nil {
-			return err
-		}
+	if err := x.findProjects(); err != nil {
+		return err
+	}
+	if err := x.findFormerRouterProjects(); err != nil {
+		return err
 	}
 	if err := x.findTagValues(false); err != nil {
 		return err
@@ -69,6 +73,57 @@ func (x *link) disconnect() error {
 	return x.applyDisconnect()
 }
 
+// findFormerRouterProjects finds the projects at the scopes, and the host, that hold a dormetoCommand but no router of the
+// record: a router there once (its role is connect's alone), or a first connect that stopped before its record named its
+// routers. Their command grants and role go too, with the grants on the controllers they hold now.
+func (x *link) findFormerRouterProjects() error {
+	var candidates []string
+	for _, p := range append(slices.Clone(x.projects), x.host) {
+		if !slices.Contains(x.routerProjects(), p) && !slices.Contains(candidates, p) {
+			candidates = append(candidates, p)
+		}
+	}
+	held := make([]bool, len(candidates))
+	err := x.each(len(candidates), func(i int) error {
+		var got googleRole
+		err := x.d.Google.Do(x.ctx, http.MethodGet, roleAt{"dormetoCommand", "projects/" + candidates[i]}.url(), nil, &got)
+		switch {
+		case gcp.IsNotFound(err), serviceDisabled(err):
+			return nil
+		case err != nil:
+			return fmt.Errorf("the role dormetoCommand of project %s is not read: %w", candidates[i], err)
+		}
+		held[i] = !got.Deleted
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for i, p := range candidates {
+		if held[i] {
+			x.former = append(x.former, p)
+		}
+	}
+	routers, err := x.findRouters(x.former)
+	if err != nil {
+		return err
+	}
+	x.routers = append(x.routers, routers...)
+	x.former = slices.DeleteFunc(x.former, func(p string) bool { return slices.Contains(x.routerProjects(), p) })
+	return nil
+}
+
+// commandProjects are the projects where the command account may hold grants: the routers' and the former ones'.
+func (x *link) commandProjects() []string {
+	out := x.routerProjects()
+	for _, p := range x.former {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // members are the two accounts' members.
 func (x *link) members() []string { return []string{x.member("discovery"), x.member("command")} }
 
@@ -79,7 +134,7 @@ func (x *link) planDisconnect() error {
 	for _, r := range x.routers {
 		controllers = append(controllers, x.controllerPlace(r))
 	}
-	for _, p := range x.routerProjects() {
+	for _, p := range x.commandProjects() {
 		if x.tagValue[p] != "" {
 			tags = append(tags, x.tagPlace(p))
 		}
@@ -91,6 +146,7 @@ func (x *link) planDisconnect() error {
 		}
 	}
 	projects = append(projects, x.routerProjects()...)
+	projects = append(projects, x.former...)
 	projects = append(projects, x.host)
 	byStep := map[string][]place{"controller": controllers, "tag": tags}
 	seen := map[string]bool{}
@@ -170,6 +226,7 @@ func (x *link) planRemovals(name string, places []place, members []string, note 
 		}
 		groups = append(groups, group{pl, grants})
 		for _, g := range grants {
+			x.removing[pl.what+"\x00"+grantKey(g)] = true
 			line := "- grant " + describeOn(g, pl.what)
 			if note != "" {
 				line += " (" + note + ")"

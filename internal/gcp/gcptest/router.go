@@ -110,6 +110,10 @@ func (s *Server) created(kind string) {
 
 // cloudRun serves services, their policies and the operations of their creations and updates.
 func (s *Server) cloudRun(w http.ResponseWriter, r *http.Request, body []byte) {
+	if other, tail, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/projects/"), "/"); s.OtherProjects[other] != nil && r.Method == http.MethodGet && strings.HasSuffix(tail, "/services") {
+		Reply(w, map[string]any{"services": []any{}})
+		return
+	}
 	rest, ok := strings.CutPrefix(r.URL.Path, "/v2/projects/"+s.ProjectID+"/locations/")
 	if !ok {
 		Fail(w, 403, "PERMISSION_DENIED", "The caller does not have permission")

@@ -221,7 +221,7 @@ func (s *Server) scopePolicy(w http.ResponseWriter, r *http.Request, resource st
 		json.Unmarshal(body, &in)
 		held := []string{}
 		for _, p := range in.Permissions {
-			if s.HoldsAll || s.Held[p] {
+			if s.holds(name, p) {
 				held = append(held, p)
 			}
 		}
@@ -233,12 +233,49 @@ func (s *Server) scopePolicy(w http.ResponseWriter, r *http.Request, resource st
 	}
 }
 
+// holds tells whether the caller holds a permission at a resource: held (HoldsAll or Held) and not Withheld there.
+func (s *Server) holds(resource, permission string) bool {
+	return (s.HoldsAll || s.Held[permission]) && !s.Withheld[resource][permission]
+}
+
+// otherProject serves one of OtherProjects: its read, testIamPermissions and its policy (in Policies).
+func (s *Server) otherProject(w http.ResponseWriter, r *http.Request, id, verb string, body []byte) {
+	switch {
+	case verb == "" && r.Method == http.MethodGet:
+		p := s.OtherProjects[id]
+		Reply(w, map[string]any{"name": "projects/" + p.Number, "projectId": id, "parent": firstOf(p.Ancestors), "state": "ACTIVE"})
+	case verb == "testIamPermissions" && r.Method == http.MethodPost:
+		var in struct {
+			Permissions []string `json:"permissions"`
+		}
+		json.Unmarshal(body, &in)
+		held := []string{}
+		for _, p := range in.Permissions {
+			if s.holds("projects/"+id, p) {
+				held = append(held, p)
+			}
+		}
+		Reply(w, map[string]any{"permissions": held})
+	case (verb == "getIamPolicy" || verb == "setIamPolicy") && r.Method == http.MethodPost:
+		s.resourcePolicy(w, "projects/"+id, verb, body)
+	default:
+		noRoute(w, r)
+	}
+}
+
+func firstOf(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	return list[0]
+}
+
 // search answers projects:search: the project, and the ones of OtherProjects.
 func (s *Server) search(w http.ResponseWriter) {
 	projects := []map[string]any{{"name": "projects/" + s.ProjectNumber, "projectId": s.ProjectID, "parent": s.Parent, "state": s.State}}
 	for _, id := range sortedKeys(s.OtherProjects) {
 		p := s.OtherProjects[id]
-		projects = append(projects, map[string]any{"name": "projects/" + p.Number, "projectId": id, "parent": p.Ancestors[0], "state": "ACTIVE"})
+		projects = append(projects, map[string]any{"name": "projects/" + p.Number, "projectId": id, "parent": firstOf(p.Ancestors), "state": "ACTIVE"})
 	}
 	Reply(w, map[string]any{"projects": projects})
 }

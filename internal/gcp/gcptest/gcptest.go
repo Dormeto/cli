@@ -198,9 +198,14 @@ type Server struct {
 	Scopes   map[string]bool
 	OrgRoles map[string]*Role
 	// Ancestors are the project's folders and organization, parent first (projects.getAncestry); OtherProjects the other
-	// projects the project search finds, by ID.
+	// projects the project search finds, by ID: their policies are in Policies (projects/<id>), their custom roles in
+	// OtherRoles (by <project>/<role ID>), and they hold no Cloud Run service.
 	Ancestors     []string
 	OtherProjects map[string]*OtherProject
+	OtherRoles    map[string]*Role
+	// Withheld are permissions the caller lacks at one resource (projects/<id>, folders/<n>, organizations/<n>) though
+	// held elsewhere.
+	Withheld map[string]map[string]bool
 
 	routes   []route
 	calls    []Call
@@ -229,7 +234,8 @@ func New(t testing.TB) *Server {
 		WorkloadDocs: map[string]map[string]any{}, Schedules: map[string]map[string]any{}, WakeFails: map[string]bool{},
 		LogViews: map[string]*LogView{}, BackendServices: map[string]*BackendService{},
 		Pools: map[string]*Pool{}, Providers: map[string]*Provider{}, Scopes: map[string]bool{}, OrgRoles: map[string]*Role{},
-		OtherProjects: map[string]*OtherProject{}, ops: map[string]*operation{}, lag: map[string]int{},
+		OtherProjects: map[string]*OtherProject{}, OtherRoles: map[string]*Role{}, Withheld: map[string]map[string]bool{},
+		ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -381,6 +387,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resourceManager(w http.ResponseWriter, r *http.Request, rest string, body []byte) {
 	id, verb, _ := strings.Cut(rest, ":")
+	if s.OtherProjects[id] != nil {
+		s.otherProject(w, r, id, verb, body)
+		return
+	}
 	if id != s.ProjectID {
 		Fail(w, 403, "PERMISSION_DENIED", "The caller does not have permission")
 		return
@@ -412,7 +422,7 @@ func (s *Server) resourceManager(w http.ResponseWriter, r *http.Request, rest st
 		}
 		held := []string{}
 		for _, p := range in.Permissions {
-			if !s.NoRole && (s.HoldsAll || s.Held[p]) {
+			if !s.NoRole && s.holds("projects/"+id, p) {
 				held = append(held, p)
 			}
 		}

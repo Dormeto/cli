@@ -1616,26 +1616,31 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   folder for its bindings, an organization for its role and bindings, a router project for its grants (a ✗ stops the run
   with nothing changed). Then the plan is printed and confirmed (`--yes` without a terminal, `--dry-run` prints it only).
   It is applied in the order apis, roles, federation, serviceAccounts, impersonation, projectBindings, folderBindings,
-  organizationBindings, controller, tag, every IAM change printed (Dormeto's and Google's), and verified. Last, the
-  connection's record is written in the manager (`PUT /iam/discovery/google`): the host, its number, the pool, the
-  provider, the scopes, the two accounts, the routers with their controller's URL and version, the bindings Google added,
-  and who connected with which CLI. The manager registers the record's routers at once. Run again, connect plans only the
-  differences (a router installed since gets its grants), or says `up to date`. A router of the record no longer found is
-  dropped from it. When its project holds no router any more, the command account's grants there are taken back, and its
-  role `dormetoCommand` is left, granted to no one. `--json` prints the record on stdout (`{"connection": …}`; a dry run's
-  `{"dryRun": true, "plan": […]}`) and the words on stderr.
+  organizationBindings, controller, tag, every IAM change printed (Dormeto's and Google's), and verified. The connection's
+  record is written in the manager (`PUT /iam/discovery/google`): the host, its number, the pool, the provider, the scopes,
+  the two accounts, the routers with their controller's URL and version, the bindings Google added, and who connected with
+  which CLI. A first connect writes it before its first step, without its routers, so that a run stopped partway leaves
+  what it made for `gcp disconnect`; then whole at the end, once verified. The manager registers the record's routers at
+  once. Run again, connect plans only the differences (a router installed since gets its grants), or says `up to date`. A
+  router of the record no longer found is dropped from it. When its project holds no router any more, the command
+  account's grants there are taken back, and its role `dormetoCommand` is left, granted to no one, for disconnect to
+  delete. A record made for another environment (its pool and accounts not `dmt-<env>`'s) is refused, exit 2. `--json`
+  prints the record on stdout (`{"connection": …}`; a dry run's `{"dryRun": true, "plan": […]}`) and the words on stderr.
 - **What Google keeps:** a connect after a disconnect undeletes the pool and its provider (Google keeps them 30 days) and
   the custom roles (7 days), then updates them. A custom role deleted more than 7 days ago can't be undeleted, and Google
   blocks its ID until its permanent deletion ends, at the latest 44 days after the deletion. Connect then stops with
   `Google blocks the ID of role <id> in <where>: …; Google frees it by <date>`, the date counted from the manager's last
   disconnect in its audit. A deleted service account is created again: its name is free at once.
-- **`gcp disconnect`** reads the record back. It removes every binding of the two accounts on the recorded routers'
-  controllers and tag values, on the projects (the project scopes, the router projects and the host), and on the folders
-  and organizations of the scopes. Then it deletes the two custom roles where connect defines them (one still granted to
-  another member is kept, and said), the two accounts with their impersonation grants, the provider and the pool. It
-  verifies that no binding of the accounts is left, then clears the record (`DELETE /iam/discovery/google`), which
-  unregisters the manager's Google Cloud routers. It turns no API off, and lists the APIs and the bindings Google added as
-  left in place.
+- **`gcp disconnect`** reads the record back, under its names: a record whose pool and accounts are not `dmt-<env>`'s is
+  refused (exit 2, the record kept). It tests the host for its bindings and roles too. It removes every binding of the two
+  accounts on the recorded routers' controllers and tag values, on the projects (the project scopes, the router projects
+  and the host), and on the folders and organizations of the scopes. A project at the scopes, or the host, that holds a
+  `dormetoCommand` without a router of the record (a router there once, or a first connect that stopped before naming
+  its routers) is a router project too: its command grants go, on its project, its tag value and the controllers it
+  holds. Then it deletes the two custom roles where connect defines them (one still granted to another member is kept,
+  and said), the two accounts with their impersonation grants, the provider and the pool. It verifies that no binding of
+  the accounts is left, then clears the record (`DELETE /iam/discovery/google`), which unregisters the manager's Google
+  Cloud routers. It turns no API off, and lists the APIs and the bindings Google added as left in place.
 - **Exit codes** as `gcp install`: 0; 1 when the manager or a check refuses, a permission is missing or Google refuses;
   2 for a bad flag (`--project` not a project ID, a `--scope` of another form) or `--yes` missing without a terminal;
   128 and the signal's number when stopped.
