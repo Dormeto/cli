@@ -111,7 +111,7 @@ func TestManagerSectionIsLoaded(t *testing.T) {
 		t.Fatalf("apis %v", m.APIs)
 	}
 	f := m.Federation
-	if f.Pool != "dmt-{env}" || f.Provider != "aws" ||
+	if f.Pool != "dmt-{env}" || f.Provider != "aws-{account}" ||
 		f.Condition != "assertion.arn.startsWith('arn:aws:sts::{account}:assumed-role/dmt-{env}-manager-')" {
 		t.Fatalf("federation %+v", f)
 	}

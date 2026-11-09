@@ -8,9 +8,13 @@ package gcptest
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 )
+
+// providerIDPattern is what Google accepts as a workload identity provider's ID.
+var providerIDPattern = regexp.MustCompile(`^[a-z0-9-]{4,32}$`)
 
 // Pool is a workload identity pool; State is ACTIVE or DELETED.
 type Pool struct {
@@ -125,7 +129,11 @@ func (s *Server) pools(w http.ResponseWriter, r *http.Request, rest string, body
 	}
 	if len(parts) == 2 && r.Method == http.MethodPost && verb == "" {
 		pid := r.URL.Query().Get("workloadIdentityPoolProviderId")
-		if _, ok := s.Providers[id+"/"+pid]; ok || pid == "" {
+		if !providerIDPattern.MatchString(pid) {
+			Fail(w, 400, "INVALID_ARGUMENT", "The provider ID must be 4 to 32 characters of lowercase letters, digits and hyphens.")
+			return
+		}
+		if _, ok := s.Providers[id+"/"+pid]; ok {
 			Fail(w, 409, "ALREADY_EXISTS", "Requested entity already exists")
 			return
 		}

@@ -153,7 +153,7 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 		`  + role dormetoDiscovery "Dormeto manager discovery" (32 permissions) in project dormeto-dev`,
 		`  + role dormetoCommand "Dormeto manager command" (10 permissions) in project dormeto-dev`,
 		"  + workload identity pool dmt-dev",
-		"  + provider aws of pool dmt-dev: AWS account 121014831971, condition assertion.arn.startsWith('arn:aws:sts::121014831971:assumed-role/dmt-dev-manager-'), mapping google.subject=assertion.arn, attribute.aws_role=assertion.arn.extract('assumed-role/{role}/')",
+		"  + provider aws-121014831971 of pool dmt-dev: AWS account 121014831971, condition assertion.arn.startsWith('arn:aws:sts::121014831971:assumed-role/dmt-dev-manager-'), mapping google.subject=assertion.arn, attribute.aws_role=assertion.arn.extract('assumed-role/{role}/')",
 		"  + service account " + discoveryEmail,
 		"  + service account " + commandEmail,
 		"  + grant roles/iam.workloadIdentityUser to " + principal("dmt-dev-manager-discovery") + " on service account " + discoveryEmail,
@@ -184,7 +184,7 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 		}
 	}
 
-	pool, provider := s.Pools["dmt-dev"], s.Providers["dmt-dev/aws"]
+	pool, provider := s.Pools["dmt-dev"], s.Providers["dmt-dev/aws-121014831971"]
 	if pool == nil || pool.State != "ACTIVE" || provider == nil || provider.AccountID != "121014831971" ||
 		provider.Condition != "assertion.arn.startsWith('arn:aws:sts::121014831971:assumed-role/dmt-dev-manager-')" ||
 		!reflect.DeepEqual(provider.Mapping, map[string]string{"google.subject": "assertion.arn", "attribute.aws_role": "assertion.arn.extract('assumed-role/{role}/')"}) {
@@ -222,7 +222,7 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 		t.Fatalf("puts %+v", m.puts)
 	}
 	rec := m.puts[1]
-	if rec.Project != "dormeto-dev" || rec.ProjectNumber != "1034397096264" || rec.Pool != "dmt-dev" || rec.Provider != "aws" ||
+	if rec.Project != "dormeto-dev" || rec.ProjectNumber != "1034397096264" || rec.Pool != "dmt-dev" || rec.Provider != "aws-121014831971" ||
 		!slices.Equal(rec.Scopes, []string{"projects/dormeto-dev"}) ||
 		rec.ServiceAccounts != (fleet.GoogleServiceAccounts{Discovery: discoveryEmail, Command: commandEmail}) ||
 		!reflect.DeepEqual(rec.Routers, []fleet.GoogleRouter{{Project: "dormeto-dev", Region: "europe-west1", Controller: "https://dmtr-europe-west1-controller-abcdefghij-ew.a.run.app", Version: "0.40.0"}}) ||
@@ -387,7 +387,7 @@ func TestConnectRefusesABadProjectOrScope(t *testing.T) {
 func TestConnectRefusesAnotherHostProject(t *testing.T) {
 	s := connectServer(t)
 	m := newFakeManager()
-	m.rec = &fleet.GoogleConnection{Project: "other-host", ProjectNumber: "1", Pool: "dmt-dev", Provider: "aws"}
+	m.rec = &fleet.GoogleConnection{Project: "other-host", ProjectNumber: "1", Pool: "dmt-dev", Provider: "aws-121014831971"}
 	code, out := runConnect(t, s, connectRequest(m))
 	if code != 1 || !strings.Contains(out, "manager dev is connected to Google Cloud through project other-host: disconnect it first (dormeto gcp disconnect --project other-host --profile kloudy --env dev)") {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -401,7 +401,7 @@ func TestConnectRefusesAnotherHostProject(t *testing.T) {
 func TestConnectsCommandLinesKeepTheManagersRegionAndAPIURL(t *testing.T) {
 	s := connectServer(t)
 	m := newFakeManager()
-	m.rec = &fleet.GoogleConnection{Project: "other-host", ProjectNumber: "1", Pool: "dmt-dev", Provider: "aws"}
+	m.rec = &fleet.GoogleConnection{Project: "other-host", ProjectNumber: "1", Pool: "dmt-dev", Provider: "aws-121014831971"}
 	r := connectRequest(m)
 	r.ManagerRegion, r.APIURL, r.Configuration = "eu-west-1", "https://abc123.execute-api.eu-west-1.amazonaws.com", "dormeto-dev"
 	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){runConnect, runDisconnect} {
@@ -444,7 +444,7 @@ func TestDisconnectRemovesEveryBindingOfTheTwoAccountsAndLeavesTheAPIs(t *testin
 		"  - service account " + discoveryEmail,
 		"  - grant roles/iam.workloadIdentityUser to " + principal("dmt-dev-manager-discovery") + " on service account " + discoveryEmail + " (goes with it)",
 		"  - service account " + commandEmail,
-		"  - provider aws of pool dmt-dev",
+		"  - provider aws-121014831971 of pool dmt-dev",
 		"  - workload identity pool dmt-dev",
 		"  - record of the connection in manager dev (the manager's Google Cloud routers unregistered)",
 		"  ✓ verified: no binding of " + discoveryEmail + " or " + commandEmail + " is left at the scopes and router projects",
@@ -470,8 +470,8 @@ func TestDisconnectRemovesEveryBindingOfTheTwoAccountsAndLeavesTheAPIs(t *testin
 		t.Errorf("someone else's grant: %v", got)
 	}
 	if !s.Roles["dormetoDiscovery"].Deleted || !s.Roles["dormetoCommand"].Deleted || len(s.ServiceAccounts) != 0 ||
-		s.Pools["dmt-dev"].State != "DELETED" || s.Providers["dmt-dev/aws"].State != "DELETED" || m.deletes != 1 || m.rec != nil {
-		t.Fatalf("roles %+v accounts %v pool %+v provider %+v deletes %d", s.Roles, s.ServiceAccounts, s.Pools["dmt-dev"], s.Providers["dmt-dev/aws"], m.deletes)
+		s.Pools["dmt-dev"].State != "DELETED" || s.Providers["dmt-dev/aws-121014831971"].State != "DELETED" || m.deletes != 1 || m.rec != nil {
+		t.Fatalf("roles %+v accounts %v pool %+v provider %+v deletes %d", s.Roles, s.ServiceAccounts, s.Pools["dmt-dev"], s.Providers["dmt-dev/aws-121014831971"], m.deletes)
 	}
 	for _, api := range access.Load().Manager.APIs {
 		if !slices.Contains(s.Enabled, api) {
@@ -511,7 +511,7 @@ func TestConnectAfterADisconnectUndeletesThePoolTheProviderAndTheRoles(t *testin
 	}
 	for _, w := range []string{
 		"  ↺ workload identity pool dmt-dev: undelete",
-		"  ↺ provider aws of pool dmt-dev: undelete",
+		"  ↺ provider aws-121014831971 of pool dmt-dev: undelete",
 		"  ↺ role dormetoDiscovery in project dormeto-dev: undelete, then update",
 		"  ↺ role dormetoCommand in project dormeto-dev: undelete, then update",
 	} {
@@ -519,8 +519,8 @@ func TestConnectAfterADisconnectUndeletesThePoolTheProviderAndTheRoles(t *testin
 			t.Errorf("no line %q in\n%s", w, out)
 		}
 	}
-	if s.Pools["dmt-dev"].State != "ACTIVE" || s.Providers["dmt-dev/aws"].State != "ACTIVE" || s.Roles["dormetoDiscovery"].Deleted {
-		t.Fatalf("pool %+v provider %+v", s.Pools["dmt-dev"], s.Providers["dmt-dev/aws"])
+	if s.Pools["dmt-dev"].State != "ACTIVE" || s.Providers["dmt-dev/aws-121014831971"].State != "ACTIVE" || s.Roles["dormetoDiscovery"].Deleted {
+		t.Fatalf("pool %+v provider %+v", s.Pools["dmt-dev"], s.Providers["dmt-dev/aws-121014831971"])
 	}
 	if again := len(s.CallsTo("/workloadIdentityPools")) + len(s.CallsTo("/providers")) + len(s.CallsTo("/roles")); again != creates {
 		t.Fatalf("%d creations: they were undeleted", again-creates)
@@ -662,7 +662,7 @@ func TestAConnectStoppedPartwayIsRecordedAndDisconnectRemovesWhatItMade(t *testi
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if !s.Roles["dormetoDiscovery"].Deleted || !s.Roles["dormetoCommand"].Deleted || len(s.ServiceAccounts) != 0 ||
-		s.Pools["dmt-dev"].State != "DELETED" || s.Providers["dmt-dev/aws"].State != "DELETED" || m.rec != nil {
+		s.Pools["dmt-dev"].State != "DELETED" || s.Providers["dmt-dev/aws-121014831971"].State != "DELETED" || m.rec != nil {
 		t.Fatalf("left: roles %+v accounts %v pool %+v\n%s", s.Roles, s.ServiceAccounts, s.Pools["dmt-dev"], out)
 	}
 }
@@ -710,7 +710,7 @@ func TestAFirstConnectStoppedAfterItsStepsSaysWhatItsRecordHolds(t *testing.T) {
 		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
 	m := newFakeManager()
 	code, out := runConnect(t, s, connectRequest(m))
-	if code != 1 || !strings.Contains(out, "  ✗ verification: provider aws: ") || strings.Contains(out, "is not written") ||
+	if code != 1 || !strings.Contains(out, "  ✗ verification: provider aws-121014831971: ") || strings.Contains(out, "is not written") ||
 		!strings.HasSuffix(out, "The manager's record holds the connection without its routers: run the same command again to change what differs.\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -980,7 +980,7 @@ func TestDisconnectTestsTheHostsBindingsAndRolesBeforeAnyChange(t *testing.T) {
 	s := connectServer(t)
 	otherProject(s)
 	m := newFakeManager()
-	m.rec = &fleet.GoogleConnection{Project: "dormeto-dev", ProjectNumber: "1034397096264", Pool: "dmt-dev", Provider: "aws", Scopes: []string{"projects/shop-prod"},
+	m.rec = &fleet.GoogleConnection{Project: "dormeto-dev", ProjectNumber: "1034397096264", Pool: "dmt-dev", Provider: "aws-121014831971", Scopes: []string{"projects/shop-prod"},
 		ServiceAccounts: fleet.GoogleServiceAccounts{Discovery: discoveryEmail, Command: commandEmail}, Routers: []fleet.GoogleRouter{}, GoogleAdded: []string{}}
 	s.Lock()
 	s.Enabled = append(s.Enabled, access.Load().Manager.APIs...)
@@ -1125,5 +1125,108 @@ func TestDisconnectGoesOnPastRegionsCloudRunDidNotList(t *testing.T) {
 	}
 	if got := rolesOf(s.Policy, "serviceAccount:"+commandEmail); len(got) != 0 {
 		t.Errorf("command left on the project: %v", got)
+	}
+}
+
+// A project with a recorded router gone and another in an unreachable region keeps its command grants (the unseen router
+// still needs them); the gone router's controller grant is taken back.
+func TestConnectKeepsAProjectsGrantsWhenOneRouterIsGoneAndAnotherUnseen(t *testing.T) {
+	s := connectServer(t)
+	routerAt(s, "europe-west2")
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	delete(s.RunServices, "europe-west1/dmtr-europe-west1-controller")
+	delete(s.RunServices, "europe-west2/dmtr-europe-west2-controller")
+	s.RunUnreachable = []string{"europe-west2"}
+	s.Unlock()
+	d, out, errs := connectDeps(s)
+	if code := Connect(context.Background(), d, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	if got := rolesOf(s.Policy, "serviceAccount:"+commandEmail); len(got) == 0 {
+		t.Errorf("the project's command grants were taken back:\n%s", out)
+	}
+	if got := rolesOf(s.Policies["tagValues/9"], "serviceAccount:"+commandEmail); len(got) == 0 {
+		t.Errorf("the tag value's grant was taken back")
+	}
+	if got := rolesOf(s.Policies["projects/dormeto-dev/locations/europe-west2/services/dmtr-europe-west2-controller"], "serviceAccount:"+commandEmail); len(got) == 0 {
+		t.Errorf("the unseen router's controller grant was taken back")
+	}
+	if len(m.rec.Routers) != 1 || m.rec.Routers[0].Region != "europe-west2" {
+		t.Fatalf("routers %+v", m.rec.Routers)
+	}
+}
+
+// The warning is given once per project even when the host is also a scope.
+func TestDisconnectWarnsOncePerProjectWhenTheHostIsAlsoAScope(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	r := connectRequest(m)
+	r.Scopes = []string{"projects/dormeto-dev"}
+	if code, out := runConnect(t, s, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	unreachableRegions(s)
+	d, out, errs := connectDeps(s)
+	if code := Disconnect(context.Background(), d, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	if n := strings.Count(errs.String(), "Cloud Run did not list"); n != 1 {
+		t.Fatalf("the warning %d times:\n%s", n, errs)
+	}
+}
+
+// --dry-run on a project answering unreachable regions: the warning, the plan, exit 0, nothing changed.
+func TestConnectDryRunGoesOnPastRegionsCloudRunDidNotList(t *testing.T) {
+	s := connectServer(t)
+	unreachableRegions(s)
+	m := newFakeManager()
+	r := connectRequest(m)
+	r.DryRun, r.Yes = true, false
+	d, out, errs := connectDeps(s)
+	if code := Connect(context.Background(), d, r); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	if !strings.Contains(errs.String(), unreachableWarning) || !strings.Contains(out.String(), "  + workload identity pool dmt-dev\n") {
+		t.Fatalf("stdout %s\nstderr %s", out, errs)
+	}
+	if mut := s.Mutations(); len(mut) != 0 || len(m.puts) != 0 {
+		t.Fatalf("mutations %+v puts %d", mut, len(m.puts))
+	}
+}
+
+// The live state of a stopped first run: the record written, the APIs on, the two roles made, no pool yet. The next connect
+// plans what is left, not what exists.
+func TestConnectResumedAfterAStoppedFirstRunPlansOnlyWhatIsLeft(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	s.Refuse(gcptest.Refusal{Method: http.MethodPost, Host: "iam.googleapis.com", Path: "/v1/projects/dormeto-dev/locations/global/workloadIdentityPools",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 1 || !strings.Contains(out, "Done: apis, roles. Not done: federation,") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if m.rec == nil || s.Pools["dmt-dev"] != nil || s.Roles["dormetoCommand"] == nil {
+		t.Fatalf("state: record %+v", m.rec)
+	}
+	code, out = runConnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, l := range lines(out) {
+		if strings.HasPrefix(l, "  + API ") || strings.HasPrefix(l, "  + role ") {
+			t.Errorf("planned again: %q", l)
+		}
+	}
+	for _, w := range []string{"  + workload identity pool dmt-dev", "  + provider aws-121014831971 of pool dmt-dev: AWS account 121014831971, condition"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("no %q in\n%s", w, out)
+		}
+	}
+	if s.Providers["dmt-dev/aws-121014831971"] == nil || m.rec.Provider != "aws-121014831971" || len(m.rec.Routers) != 1 {
+		t.Fatalf("provider %+v record %+v", s.Providers, m.rec)
 	}
 }

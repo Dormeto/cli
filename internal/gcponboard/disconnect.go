@@ -111,6 +111,7 @@ func (x *link) findFormerRouterProjects() error {
 	if _, err := x.findRouters(x.routerProjects()); err != nil {
 		return err
 	}
+	x.former = slices.DeleteFunc(x.former, func(p string) bool { return slices.Contains(x.routerProjects(), p) })
 	routers, err := x.findRouters(x.former)
 	if err != nil {
 		return err

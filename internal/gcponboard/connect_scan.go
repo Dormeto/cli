@@ -41,9 +41,15 @@ func (x *link) scan() error {
 		for _, r := range x.rec.Routers {
 			if slices.Contains(x.unseen[r.Project], r.Region) {
 				x.unseenRouters = append(x.unseenRouters, r)
+			}
+		}
+		for _, r := range x.rec.Routers {
+			if slices.Contains(x.unseen[r.Project], r.Region) {
 				continue
 			}
-			if !slices.Contains(x.routerProjects(), r.Project) && !slices.Contains(x.gone, r.Project) {
+			// A project holding a router this run did not see still needs the command account's grants.
+			held := slices.Contains(x.routerProjects(), r.Project) || slices.ContainsFunc(x.unseenRouters, func(o fleet.GoogleRouter) bool { return o.Project == r.Project })
+			if !held && !slices.Contains(x.gone, r.Project) {
 				x.gone = append(x.gone, r.Project)
 			}
 		}
