@@ -106,6 +106,11 @@ func (x *link) findFormerRouterProjects() error {
 			x.former = append(x.former, p)
 		}
 	}
+	// The record's router projects are listed too, only for what Cloud Run did not list there: the warning, since their
+	// routers are the record's.
+	if _, err := x.findRouters(x.routerProjects()); err != nil {
+		return err
+	}
 	routers, err := x.findRouters(x.former)
 	if err != nil {
 		return err

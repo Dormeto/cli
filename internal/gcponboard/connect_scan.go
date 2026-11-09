@@ -35,9 +35,14 @@ func (x *link) scan() error {
 		return err
 	}
 	x.routers = routers
-	// The record's routers not found: a project left without any has its command grants taken back.
+	// The record's routers not found: a project left without any has its command grants taken back. One in a region Cloud
+	// Run did not list is not seen, not gone: its grants and its entry stay, and this run grants nothing there.
 	if x.rec != nil {
 		for _, r := range x.rec.Routers {
+			if slices.Contains(x.unseen[r.Project], r.Region) {
+				x.unseenRouters = append(x.unseenRouters, r)
+				continue
+			}
 			if !slices.Contains(x.routerProjects(), r.Project) && !slices.Contains(x.gone, r.Project) {
 				x.gone = append(x.gone, r.Project)
 			}
@@ -177,27 +182,36 @@ func (x *link) ancestry(project string) ([]string, error) {
 }
 
 // findRouters are the routers of the projects, by project and region: their services dmtr-<region>-controller, the
-// controller's URL and version. A project with Cloud Run off has none; a location Cloud Run did not list stops the run (a
-// router there would leave the record).
+// controller's URL and version. A project with Cloud Run off has none. A location Cloud Run did not list (a region the
+// project can't use) is warned about once per project and noted in x.unseen: the run goes on without it.
 func (x *link) findRouters(projects []string) ([]fleet.GoogleRouter, error) {
 	found := make([][]fleet.GoogleRouter, len(projects))
+	missed := make([][]string, len(projects))
 	err := x.each(len(projects), func(i int) error {
 		var err error
-		found[i], err = x.routersIn(projects[i])
+		found[i], missed[i], err = x.routersIn(projects[i])
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	var out []fleet.GoogleRouter
-	for _, rs := range found {
+	for i, rs := range found {
 		out = append(out, rs...)
+		if len(missed[i]) > 0 {
+			x.unseen[projects[i]] = missed[i]
+			w := fmt.Sprintf("Cloud Run did not list the services of project %s in %s: a router there, if any, isn't seen by this run", projects[i], strings.Join(missed[i], ", "))
+			x.warnings = append(x.warnings, w)
+			fmt.Fprintf(x.d.Err, "  ! %s\n", w)
+		}
 	}
 	return out, nil
 }
 
-func (x *link) routersIn(project string) ([]fleet.GoogleRouter, error) {
+// routersIn lists a project's routers and the regions Cloud Run did not list, sorted.
+func (x *link) routersIn(project string) ([]fleet.GoogleRouter, []string, error) {
 	var out []fleet.GoogleRouter
+	var missed []string
 	token := ""
 	for {
 		u := runV2 + "projects/" + url.PathEscape(project) + "/locations/-/services"
@@ -223,11 +237,18 @@ func (x *link) routersIn(project string) ([]fleet.GoogleRouter, error) {
 		err := x.d.Google.Do(x.ctx, http.MethodGet, u, nil, &page)
 		switch {
 		case serviceDisabled(err):
-			return nil, nil
+			return nil, nil, nil
 		case err != nil:
-			return nil, fmt.Errorf("the Cloud Run services of project %s are not listed: %w", project, err)
-		case len(page.Unreachable) > 0:
-			return nil, fmt.Errorf("Cloud Run did not list the services of project %s in %s: run the same command again", project, strings.Join(page.Unreachable, ", "))
+			return nil, nil, fmt.Errorf("the Cloud Run services of project %s are not listed: %w", project, err)
+		}
+		for _, u := range page.Unreachable {
+			_, region, ok := strings.Cut(u, "/locations/")
+			if !ok {
+				region = u
+			}
+			if !slices.Contains(missed, region) {
+				missed = append(missed, region)
+			}
 		}
 		for _, s := range page.Services {
 			_, rest, _ := strings.Cut(s.Name, "/locations/")
@@ -250,7 +271,8 @@ func (x *link) routersIn(project string) ([]fleet.GoogleRouter, error) {
 		}
 		if token = page.NextPageToken; token == "" {
 			slices.SortFunc(out, func(a, b fleet.GoogleRouter) int { return strings.Compare(a.Region, b.Region) })
-			return out, nil
+			slices.Sort(missed)
+			return out, missed, nil
 		}
 	}
 }

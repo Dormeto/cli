@@ -144,14 +144,17 @@ type link struct {
 	host    string
 	rec     *fleet.GoogleConnection // the manager's record as read
 
-	scopes   []string
-	orgOf    map[string]string    // a folder scope's organization, organizations/<n>
-	projects []string             // the projects at the scopes, sorted
-	routers  []fleet.GoogleRouter // the routers at the scopes, by project and region
-	tagValue map[string]string    // a router project's tag value <project>/dormeto/managed, tagValues/<n>
-	gone     []string             // connect: the projects of the record's routers that hold none any more
-	former   []string             // disconnect: the projects at the scopes holding a dormetoCommand but no router of the record
-	removing map[string]bool      // the grants this run takes out, by place and grantKey
+	scopes        []string
+	orgOf         map[string]string    // a folder scope's organization, organizations/<n>
+	projects      []string             // the projects at the scopes, sorted
+	routers       []fleet.GoogleRouter // the routers at the scopes, by project and region
+	tagValue      map[string]string    // a router project's tag value <project>/dormeto/managed, tagValues/<n>
+	unseen        map[string][]string  // the regions Cloud Run did not list, by project
+	unseenRouters []fleet.GoogleRouter // connect: the record's routers in those regions: kept as they are
+	warnings      []string             // what the scan warned about, in --json's warnings
+	gone          []string             // connect: the projects of the record's routers that hold none any more
+	former        []string             // disconnect: the projects at the scopes holding a dormetoCommand but no router of the record
+	removing      map[string]bool      // the grants this run takes out, by place and grantKey
 
 	tested      map[string][]string // the steps tested, by resource
 	testedOrder []string
@@ -180,7 +183,7 @@ func newLink(ctx context.Context, d Deps, r ConnectRequest, command string) *lin
 		d.Out = d.Err
 	}
 	x := &link{run: newRun(ctx, d, Request{Project: r.Project, Configuration: r.Configuration, Yes: r.Yes, DryRun: r.DryRun, JSON: r.JSON}),
-		c: r, command: command, jsonOut: out, host: r.Project, orgOf: map[string]string{}, tagValue: map[string]string{},
+		c: r, command: command, jsonOut: out, host: r.Project, orgOf: map[string]string{}, unseen: map[string][]string{}, tagValue: map[string]string{},
 		tested: map[string][]string{}, accounts: map[string]bool{}, google: map[string]bool{}, left: map[string]planned{},
 		removing: map[string]bool{}}
 	return x
@@ -761,6 +764,10 @@ func (x *link) printJSON(v any) error {
 	if !x.c.JSON {
 		return nil
 	}
+	if m, ok := v.(map[string]any); ok && len(x.warnings) > 0 {
+		v = maps.Clone(m)
+		v.(map[string]any)["warnings"] = x.warnings
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -1201,6 +1208,10 @@ func (x *link) record() fleet.GoogleConnection {
 		}
 	}
 	routers := append([]fleet.GoogleRouter{}, x.routers...)
+	routers = append(routers, x.unseenRouters...)
+	slices.SortFunc(routers, func(a, b fleet.GoogleRouter) int {
+		return cmp.Or(strings.Compare(a.Project, b.Project), strings.Compare(a.Region, b.Region))
+	})
 	return fleet.GoogleConnection{Project: x.host, ProjectNumber: x.number, Pool: x.poolID(), Provider: x.providerID(), Scopes: slices.Clone(x.scopes),
 		ServiceAccounts: fleet.GoogleServiceAccounts{Discovery: x.email("discovery"), Command: x.email("command")}, Routers: routers,
 		GoogleAdded: added, ConnectedAt: x.now(), ConnectedBy: x.account, CLI: x.d.Version}

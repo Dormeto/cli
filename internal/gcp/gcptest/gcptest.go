@@ -104,8 +104,10 @@ type Server struct {
 	// RunServices are the Cloud Run services, by <region>/<service>; NEGs the network endpoint groups, by <region>/<name>;
 	// Jobs the Cloud Scheduler jobs, by <region>/<job>.
 	RunServices map[string]*RunService
-	NEGs        map[string]*NEG
-	Jobs        map[string]*Job
+	// RunUnreachable are the regions Cloud Run's list answers in unreachable (regions the project can't use), as projects/<id>/locations/<region>.
+	RunUnreachable []string
+	NEGs           map[string]*NEG
+	Jobs           map[string]*Job
 	// FailingRevisions are the services whose first revision does not start, by service, with Google's message: the
 	// creation's operation fails and the service stays in Google, not ready.
 	FailingRevisions map[string]string

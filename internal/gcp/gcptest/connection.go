@@ -202,7 +202,15 @@ func (s *Server) runServices(w http.ResponseWriter, location string) {
 		}
 		services = append(services, &svc)
 	}
-	Reply(w, map[string]any{"services": services})
+	out := map[string]any{"services": services}
+	if len(s.RunUnreachable) > 0 {
+		var un []string
+		for _, region := range s.RunUnreachable {
+			un = append(un, "projects/"+s.ProjectID+"/locations/"+region)
+		}
+		out["unreachable"] = un
+	}
+	Reply(w, out)
 }
 
 // scopePolicy serves testIamPermissions, getIamPolicy and setIamPolicy of a folder or an organization (resource:

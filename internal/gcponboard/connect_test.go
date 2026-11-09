@@ -1019,3 +1019,111 @@ func TestARecordOfAnotherEnvironmentIsRefused(t *testing.T) {
 		t.Fatalf("changes %+v, deletes %d, puts %d", after[before:], m.deletes, len(m.puts))
 	}
 }
+
+const unreachableWarning = "Cloud Run did not list the services of project dormeto-dev in europe-west15, me-central2: a router there, if any, isn't seen by this run"
+
+func unreachableRegions(s *gcptest.Server) {
+	s.Lock()
+	defer s.Unlock()
+	s.RunUnreachable = []string{"me-central2", "europe-west15"}
+}
+
+// Cloud Run lists the regions a project can't use as unreachable on every call: connect warns once, on stderr, and goes on
+// with the routers it listed.
+func TestConnectGoesOnPastRegionsCloudRunDidNotList(t *testing.T) {
+	s := connectServer(t)
+	unreachableRegions(s)
+	m := newFakeManager()
+	d, out, errs := connectDeps(s)
+	if code := Connect(context.Background(), d, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	if n := strings.Count(errs.String(), unreachableWarning); n != 1 {
+		t.Fatalf("the warning %d times in stderr:\n%s", n, errs)
+	}
+	if strings.Contains(out.String(), "did not list") {
+		t.Fatalf("the warning on stdout:\n%s", out)
+	}
+	if got := rolesOf(s.Policies["projects/dormeto-dev/locations/europe-west1/services/dmtr-europe-west1-controller"], "serviceAccount:"+commandEmail); !slices.Equal(got, []string{"roles/run.invoker"}) {
+		t.Errorf("command on the controller: %v", got)
+	}
+	if len(m.rec.Routers) != 1 || m.rec.Routers[0].Region != "europe-west1" {
+		t.Fatalf("routers %+v", m.rec.Routers)
+	}
+}
+
+// A router the record holds in an unreachable region is not gone: its grants and its entry stay, and nothing is granted there.
+func TestConnectKeepsTheRecordedRouterOfAnUnreachableRegion(t *testing.T) {
+	s := connectServer(t)
+	routerAt(s, "europe-west2")
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	delete(s.RunServices, "europe-west2/dmtr-europe-west2-controller")
+	s.RunUnreachable = []string{"europe-west2"}
+	s.Unlock()
+	controller := "projects/dormeto-dev/locations/europe-west2/services/dmtr-europe-west2-controller"
+	before := rolesOf(s.Policies[controller], "serviceAccount:"+commandEmail)
+	if len(before) == 0 {
+		t.Fatal("no grant on the controller to keep")
+	}
+	d, out, errs := connectDeps(s)
+	if code := Connect(context.Background(), d, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	for _, l := range lines(out.String()) {
+		if strings.HasPrefix(l, "  - ") || strings.Contains(l, "europe-west2") {
+			t.Errorf("a change at the unseen router: %q", l)
+		}
+	}
+	if !strings.Contains(errs.String(), "in europe-west2: a router there") {
+		t.Errorf("stderr %s", errs)
+	}
+	if got := rolesOf(s.Policies[controller], "serviceAccount:"+commandEmail); !slices.Equal(got, before) {
+		t.Errorf("the controller's grants %v, were %v", got, before)
+	}
+	if len(m.rec.Routers) != 2 || m.rec.Routers[1].Region != "europe-west2" {
+		t.Fatalf("routers %+v", m.rec.Routers)
+	}
+	if got := rolesOf(s.Policy, "serviceAccount:"+commandEmail); len(got) == 0 {
+		t.Errorf("the project's command grant was taken back")
+	}
+}
+
+func TestConnectJSONCarriesTheUnreachableWarning(t *testing.T) {
+	s := connectServer(t)
+	unreachableRegions(s)
+	r := connectRequest(newFakeManager())
+	r.JSON = true
+	d, out, errs := connectDeps(s)
+	if code := Connect(context.Background(), d, r); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	var got struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || !slices.Equal(got.Warnings, []string{unreachableWarning}) {
+		t.Fatalf("%v %s", err, out)
+	}
+}
+
+func TestDisconnectGoesOnPastRegionsCloudRunDidNotList(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	unreachableRegions(s)
+	d, out, errs := connectDeps(s)
+	if code := Disconnect(context.Background(), d, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s%s", code, out, errs)
+	}
+	if n := strings.Count(errs.String(), unreachableWarning); n != 1 {
+		t.Fatalf("the warning %d times in stderr:\n%s", n, errs)
+	}
+	if got := rolesOf(s.Policy, "serviceAccount:"+commandEmail); len(got) != 0 {
+		t.Errorf("command left on the project: %v", got)
+	}
+}

@@ -1624,6 +1624,10 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   later run keeps the recorded scopes and adds the ones given: to drop a scope, disconnect, then connect again. A folder's
   organization is found from the ancestry of a project in it. A folder in which you see no project stops the run: give its
   organization as a scope instead.
+- **Regions Cloud Run does not list:** Cloud Run answers some regions as `unreachable` (regions the project can't use). Connect
+  and disconnect say so once per project (`Cloud Run did not list the services of project <p> in <regions>: a router there, if
+  any, isn't seen by this run`, on stderr, and in `--json`'s `warnings`) and go on with the regions it listed. A router the
+  record holds in such a region is neither dropped nor granted again: its grants and its entry stay.
 - **As `gcp install`:** your permissions are tested at the host and at each scope, each for the steps that act on it: a
   folder for its bindings, an organization for its role and bindings, a router project for its grants (a ✗ stops the run
   with nothing changed). A router project's tag value is read only then: Google answers one you may not read as one that
