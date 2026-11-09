@@ -345,7 +345,7 @@ func TestGcpWorkloadsSettingsReadTheRulesFiles(t *testing.T) {
 
 // The reasons are the router's (REASONS of gcp/src/levels.mjs), word for word.
 var gcpRouterReasons = map[string]string{
-	"--wait-seconds":  "waitSeconds is 0 on Google Cloud: the waker holds no request (behind a swap the switch back takes longer than any hold; behind the policy it receives only the error fetch)",
+	"--wait-seconds":  "waitSeconds is 0 on Google Cloud: the waker holds no request, it answers the waiting page at once and the page waits for the wake",
 	"--max-holders":   "maxHolders is 0 on Google Cloud: no request is held",
 	"--drain-seconds": "drainSeconds is 0 on Google Cloud: the nap's switch is a URL map change, and the backend service's own connection draining applies",
 }

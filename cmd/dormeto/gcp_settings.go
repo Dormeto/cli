@@ -16,7 +16,7 @@ import (
 
 // gcpFixedReasons are what Google Cloud fixes at 0 whatever the level says, and why: the router's own words.
 var gcpFixedReasons = []struct{ flag, key, reason, why string }{
-	{"wait-seconds", "waitSeconds", "waitSeconds is 0 on Google Cloud: the waker holds no request (behind a swap the switch back takes longer than any hold; behind the policy it receives only the error fetch)", "the waker holds no request"},
+	{"wait-seconds", "waitSeconds", "waitSeconds is 0 on Google Cloud: the waker holds no request, it answers the waiting page at once and the page waits for the wake", "the waker holds no request"},
 	{"max-holders", "maxHolders", "maxHolders is 0 on Google Cloud: no request is held", "no request is held"},
 	{"drain-seconds", "drainSeconds", "drainSeconds is 0 on Google Cloud: the nap's switch is a URL map change, and the backend service's own connection draining applies", "the nap's switch is a URL map change"},
 }

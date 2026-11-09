@@ -1602,8 +1602,9 @@ reads the image without a token and deploys it by its digest (`<name>@sha256:…
 
 By default the idle check counts every request the backend service answers, scanners included. With the router's request
 logs, it counts only the requests the waker would not ignore: not scanners, not `HEAD` requests, not an IP list's
-addresses, not what a no-wake rule of any level matches. A logged request holds its method, path, user agent and address and
-no other header, so a rule with a `headers` condition never matches it, and it counts.
+addresses, not what a no-wake rule of any level matches. A logged request holds its method, path, user agent and address, and its
+only headers are `user-agent` and `x-forwarded-for` (the address): a rule's `headers` condition on either can match it, and one on any
+other header never does, so the request counts.
 
 - **The logs decide.** On a backend service that logs every request, any entry in the window makes the logs decide
   alone, whatever Monitoring counts. Its `request_count` is sampled and batched, and cannot tell whether the logs are
@@ -1806,7 +1807,7 @@ exit is 1.
 
   | Setting | On Google Cloud | Why |
   |---|---|---|
-  | `--wait-seconds` | 0 | The waker holds no request. Behind a swap, the switch back takes longer than any hold (regional 100 s, classic 250 s). Behind the global load balancer's policy, the waker receives only the error fetch. |
+  | `--wait-seconds` | 0 | The waker holds no request: it answers the waiting page at once, and the page waits for the wake. |
   | `--max-holders` | 0 | No request is held. |
   | `--drain-seconds` | 0 | The nap's switch is a URL map change, and the backend service's own connection draining applies. |
   | `--wake-mode` | `browser` behind the global load balancer's policy | The error fetch carries neither the visitor's path nor its method: waking on it would let every scanner wake the workload. |
@@ -1824,8 +1825,8 @@ exit is 1.
   AWS. In `browser`, only the page's probe, an explicit wake or a wake rule wakes it. Behind the global load balancer's policy
   the waker receives only the error fetch, so the wake mode is `browser`, whatever the levels say: the page's probe, an explicit
   `POST /_dormeto/wake`, the wake header `x-dormeto-wake: 1` or a wake rule wakes it, and any other request counts in the stats as
-  `deferred:browser mode`, scanners included. The waker wakes on the wake header there as on AWS, but whether Google's error fetch
-  passes a visitor's header of its own was not measured. A visitor on a `.php` URL or on a path a no-wake rule keeps gets a page whose probe
+  `deferred:browser mode`, scanners included. The waker wakes on the wake header there as on AWS, and Google's error fetch passes a
+  visitor's header of its own (measured on 2026-11-09: a browser's `GET /` with `x-dormeto-wake: 1` woke an asleep workload). A visitor on a `.php` URL or on a path a no-wake rule keeps gets a page whose probe
   never wakes the workload, as on AWS.
 - **The rules, as on AWS.** A rule has a name and one or more conditions (`sourceIps`, `userAgentPattern`, `headers`,
   `pathPrefixes`, `pathPattern`), and matches when all of them do. There are at most 20 rules per list and level; the levels add up, the
@@ -1914,7 +1915,7 @@ Service Mesh) is still refused.
   resource `internal_http_lb_rule`: `gcp install` updates a log view filtered before to include it.
 - **The limits.** The visitors' addresses are private, so an IP list is for private ranges. A project's regional serverless
   network endpoint groups share 5,000 queries a second (Google's documentation). A cross-region internal load balancer's waker is in one region. The
-  swap's wait is 30 s on an internal load balancer and 150 s on a cross-region one (measured on 2026-11-08), so a wake timeout of 90 s or
+  swap's wait is 30 s on an internal load balancer and 150 s on a cross-region one (set from the spreads measured on 2026-11-08: ten times the internal kind's worst, 3 s, and one and a quarter times the cross-region kind's worst, 120 s), so a wake timeout of 90 s or
   less, or 210 s or less, is refused. The page has no favicon.
 
 ### Google Cloud schedules and pauses
@@ -2069,8 +2070,10 @@ are newer still, and not released. Measured on Google in `dormeto-dev` on 2026-1
 balancer's error fetch carries, and that the page's language, its policy, a 256 KiB page and a 59 KB icon reach the browser;
 a stopped VM's machine type changed within its series and across to N2D, and a start refused for quota leaving the VM stopped;
 Google accepting the internal kinds' waker, their swap waits, the client's address read through them, and their logs and
-metric; the names and descriptions GKE gives a Gateway's and an Ingress's load balancers. Their acceptance on Google has not
-finished. There is no dashboard or manager for
+metric; the names and descriptions GKE gives a Gateway's and an Ingress's load balancers. Google Cloud accepted them in `dormeto-dev` on 2026-11-09, with router image 0.39.0-dev.3 and CLI 0.13.0-dev.2,
+builds of `main`: the settings by level, the wake mode and rules, the waiting page, the fallback's machine type change through
+the router's own role, both internal kinds (measured, napped by the idle check, woken by the page's probe) and GKE's refusal.
+They are not released. There is no dashboard or manager for
 Google Cloud yet: the organization level of the settings and of the waiting page, and the custom types, come with it.
 
 ## Building from source

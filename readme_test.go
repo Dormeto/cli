@@ -372,7 +372,7 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		"`router <version> doesn't have the settings levels: dormeto gcp install --version <this CLI's>`",
 		"`set on this workload`, `type <name>`, `router`, `built-in` or `fixed on Google Cloud`",
 		// what Google Cloud fixes, and why
-		"| `--wait-seconds` | 0 | The waker holds no request.",
+		"| `--wait-seconds` | 0 | The waker holds no request: it answers the waiting page at once, and the page waits for the wake. |",
 		"| `--max-holders` | 0 | No request is held. |",
 		"| `--drain-seconds` | 0 | The nap's switch is a URL map change, and the backend service's own connection draining applies. |",
 		"| `--wake-mode` | `browser` behind the global load balancer's policy |",
@@ -508,7 +508,7 @@ func TestReadmeGoogleCloudNumbersAreTheRoutersCode(t *testing.T) {
 			room, floor("regional"), floor("classic"), floor("internal"), floor("cross-region-internal")),
 		fmt.Sprintf("more than %d s on a regional load balancer, more than %d s on a classic one, more than %d s on an internal one, more than %d s on a cross-region internal one",
 			floor("regional"), floor("classic"), floor("internal"), floor("cross-region-internal")),
-		fmt.Sprintf("The swap's wait is %d s on an internal load balancer and %d s on a cross-region one (measured on 2026-11-08), so a wake timeout of %d s or less, or %d s or less, is refused",
+		fmt.Sprintf("The swap's wait is %d s on an internal load balancer and %d s on a cross-region one (set from the spreads measured on 2026-11-08: ten times the internal kind's worst, 3 s, and one and a quarter times the cross-region kind's worst, 120 s), so a wake timeout of %d s or less, or %d s or less, is refused",
 			s("internal"), s("cross-region-internal"), floor("internal"), floor("cross-region-internal")),
 		fmt.Sprintf("| idle window | `--idle-minutes` | %s | %d |", rangeOf("idleMinutes"), builtIn["idleMinutes"]),
 		fmt.Sprintf("| wake timeout | `--wake-timeout-seconds` | 60 to %d | %d |", max, builtIn["wakeTimeoutSeconds"]),
@@ -548,7 +548,7 @@ func TestReadmeGoogleCloudSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
 		// what the policy's fetch carries (M1)
 		"| the global load balancer's error fetch | the client's address | the headers the fetch carries, `accept-language`, `cookie`, `referer` and `user-agent` among them | none: a path condition never matches |",
 		"The error fetch carries the visitor's query string and address, and these headers (measured on 2026-11-08; `referer` in an earlier measure): `accept`, `accept-language`, `cookie`, `forwarded`, `host`, `referer`, `traceparent`, `user-agent`, `via`, `x-cloud-trace-context`, `x-dormeto-workload`, `x-forwarded-for` and `x-forwarded-proto`",
-		"whether Google's error fetch passes a visitor's header of its own was not measured",
+		"Google's error fetch passes a visitor's header of its own (measured on 2026-11-09: a browser's `GET /` with `x-dormeto-wake: 1` woke an asleep workload)",
 		// the idle check's no-wake rules, the router level's join, two VMs of one name
 		"not an IP list's addresses, not what a no-wake rule of any level matches",
 		"the schedule's own `joinMinutes`, else the router's (`gcp routers settings --join-minutes`), else 15",
@@ -558,6 +558,7 @@ func TestReadmeGoogleCloudSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
 		"or `mci-` and a six-character hash",
 		// what was measured
 		"Measured on Google in `dormeto-dev` on 2026-11-08 and 2026-11-09",
+		"Google Cloud accepted them in `dormeto-dev` on 2026-11-09, with router image 0.39.0-dev.3 and CLI 0.13.0-dev.2, builds of `main`: the settings by level, the wake mode and rules, the waiting page, the fallback's machine type change through the router's own role, both internal kinds (measured, napped by the idle check, woken by the page's probe) and GKE's refusal. They are not released.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)
@@ -567,6 +568,9 @@ func TestReadmeGoogleCloudSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
 		"160 s regional or internal", "more than 160 s on a regional or internal load balancer",
 		"until it is measured on these kinds",
 		"tested against the code only: their measures and their acceptance on Google have not run",
+		"Their acceptance on Google has not finished",
+		"the switch back takes longer than any hold",
+		"was not measured",
 		"a file the router would refuse is refused before any call (exit 2) with AWS's words",
 		"what the fetch carries: `Host`, `User-Agent`, `Referer`",
 		"The CLI tells them from Google",
