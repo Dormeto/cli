@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 )
 
@@ -179,6 +180,10 @@ func (x *run) routerStatus() RouterStatus {
 				detail += ": " + drift
 				ok = false
 			}
+			if drift := customPagesDrift(got, st.Record.CustomPages); drift != "" {
+				detail += ": " + drift
+				ok = false
+			}
 		}
 		add("service", s.name, ok, state, detail)
 	}
@@ -250,6 +255,25 @@ func listsDrift(got runService, recorded []RecordIPList) string {
 	return ipListsEnv + " is " + have + ", not the recorded IP lists"
 }
 
+// customPagesDrift says how a service's DMT_CUSTOM_PAGES differs from the record's switch: "" when it does not. A turn-off
+// stopped between the services leaves the waker serving the stored custom HTML until the next install.
+func customPagesDrift(got runService, recorded bool) string {
+	want := ""
+	if recorded {
+		want = "1"
+	}
+	have := got.env(customPagesEnv)
+	switch {
+	case have == want:
+		return ""
+	case have == "":
+		return customPagesEnv + " is not set, but the record has custom pages on"
+	case !recorded:
+		return customPagesEnv + " is " + have + ", but the record has custom pages off"
+	}
+	return customPagesEnv + " is " + have + ", not the recorded 1"
+}
+
 // grantStatuses read each policy the grants are on, once.
 func (x *run) grantStatuses(grants []RecordGrant) []GrantStatus {
 	places := map[string]ResourcePolicy{
@@ -308,6 +332,9 @@ func PrintStatus(w io.Writer, rep StatusReport) error {
 			}
 			for _, l := range listLines(listsOfRecord(r.Record.IPLists)) {
 				fmt.Fprintf(&b, "  %s\n", l)
+			}
+			if r.Record.Image != "" {
+				fmt.Fprintf(&b, "  custom pages: %s\n", fleet.OnOff(r.Record.CustomPages))
 			}
 			for _, e := range r.Record.Rbac {
 				fmt.Fprintf(&b, "  Kubernetes access: Role and RoleBinding dormeto-%s, namespace %s, cluster %s\n", e.Workload, e.Namespace, e.Cluster)

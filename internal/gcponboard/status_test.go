@@ -28,6 +28,7 @@ func TestStatusText(t *testing.T) {
 	want := "Project dormeto-dev (1034397096264)\n" +
 		"Router dmtr-europe-west1, region europe-west1: version 0.34.0, image " + routerImage + "\n" +
 		"  installed 2026-10-29T10:00:00Z, updated 2026-10-29T10:00:00Z by me@example.com with the CLI 0.8.0\n" +
+		"  custom pages: off\n" +
 		"  ✓ service " + controllerName + ": ready, image " + routerImage + ", " + controllerURL + "\n" +
 		"  ✓ service " + wakerName + ": ready, image " + routerImage + "\n" +
 		"  ✓ health " + controllerURL + ": version 0.34.0\n" +
@@ -269,6 +270,50 @@ func TestStatusComparesTheIPListsOnBothServicesWithTheRecord(t *testing.T) {
 			t.Fatalf("%s: exit %d:\n%s", name, code, out)
 		}
 	}
+}
+
+// The custom pages switch is shown from the record and compared on both services: a turn-off stopped between them leaves the
+// waker serving the stored HTML, and status must say so.
+func TestStatusShowsTheCustomPagesSwitchAndComparesItOnBothServicesWithTheRecord(t *testing.T) {
+	g := newRouterRig(t)
+	if code, out := g.run(t, withCustomPages(withImage, true)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := g.status(t, europeStatus)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  custom pages: on\n")
+	for _, name := range []string{controllerName, wakerName} {
+		svc := g.s.RunServices["europe-west1/"+name]
+		env := svc.Template.Containers[0].Env
+		svc.Template.Containers[0].Env = slices.DeleteFunc(slices.Clone(env), func(e gcptest.RunEnv) bool { return e.Name == "DMT_CUSTOM_PAGES" })
+		code, out := g.status(t, europeStatus)
+		if code != 1 {
+			t.Fatalf("%s: exit %d:\n%s", name, code, out)
+		}
+		contains(t, out, "  ✗ service "+name+": ready, image ", "DMT_CUSTOM_PAGES is not set, but the record has custom pages on\n")
+		svc.Template.Containers[0].Env = env
+		if code, out := g.status(t, europeStatus); code != 0 {
+			t.Fatalf("%s: exit %d:\n%s", name, code, out)
+		}
+	}
+	// The record off, a service still on: the stopped turn-off.
+	if code, out := g.run(t, withCustomPages(plain, false)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out = g.status(t, europeStatus)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  custom pages: off\n")
+	svc := g.s.RunServices["europe-west1/"+wakerName]
+	svc.Template.Containers[0].Env = append(svc.Template.Containers[0].Env, gcptest.RunEnv{Name: "DMT_CUSTOM_PAGES", Value: "1"})
+	code, out = g.status(t, europeStatus)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "DMT_CUSTOM_PAGES is 1, but the record has custom pages off\n")
 }
 
 // Lists on a service the record does not list are drift too.
