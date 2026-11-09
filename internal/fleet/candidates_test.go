@@ -98,3 +98,21 @@ func TestListCandidatesStopsAtLimit(t *testing.T) {
 		t.Fatalf("got %d, %d requests, %v", len(got), len(q), err)
 	}
 }
+
+func TestResolveCandidatesAmbiguousNameNamesTheCloudsResources(t *testing.T) {
+	g := func(project string) Candidate {
+		return Candidate{ID: "projects/" + project + "/global/backendServices/web", Cloud: "gcp", Status: "pending-onboarding"}
+	}
+	a := Candidate{ID: "arn:aws:elasticloadbalancing:eu-west-1:111111111111:targetgroup/web/aaaaaaaaaaaaaaaa", Status: "pending-onboarding"}
+	for _, c := range []struct {
+		found []Candidate
+		say   string
+	}{
+		{[]Candidate{g("proj-one"), g("proj-two")}, "web names several backend services:"},
+		{[]Candidate{a, g("proj-one")}, "web names several target groups or backend services:"},
+	} {
+		if _, err := ResolveCandidates(c.found, []string{"web"}); err == nil || !strings.HasPrefix(err.Error(), c.say) {
+			t.Errorf("err = %v, want %q", err, c.say)
+		}
+	}
+}

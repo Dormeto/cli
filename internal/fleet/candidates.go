@@ -16,7 +16,8 @@ import (
 const candidatePage = 200
 
 // Candidate is a row of GET /iam/discovery/candidates: what the CLI reads of it. The row as the API sent it is kept, so
-// --json prints every field. Its id is the ARN of its target group (or of its rule), and only ever travels in a body.
+// --json prints every field. Its id is the ARN of its target group (or of its rule) or a backend service's path, and
+// only ever travels in a body.
 type Candidate struct {
 	ID             string   `json:"id"`
 	Cloud          string   `json:"cloud,omitempty"` // aws or gcp; absent from a manager before Google Cloud's
@@ -80,6 +81,9 @@ func (c Candidate) Name() string {
 		return TargetGroupName(c.TargetGroupARN)
 	case c.TargetGroup != "":
 		return c.TargetGroup
+	}
+	if strings.HasPrefix(c.ID, "projects/") { // a Google Cloud backend service's path
+		return c.ID[strings.LastIndex(c.ID, "/")+1:]
 	}
 	return TargetGroupName(c.ID)
 }
@@ -157,7 +161,13 @@ func ResolveCandidates(cs []Candidate, refs []string) ([]Candidate, error) {
 			return nil, fmt.Errorf("no candidate %s%s", ref, status)
 		case 1:
 		default:
-			lines := []string{ref + " names several target groups:"}
+			what := "target groups" // the resources of the clouds named
+			if g := countGoogle(found); g == len(found) {
+				what = "backend services"
+			} else if g > 0 {
+				what = "target groups or backend services"
+			}
+			lines := []string{ref + " names several " + what + ":"}
 			for _, c := range found {
 				lines = append(lines, "  "+c.ID)
 			}
@@ -169,4 +179,15 @@ func ResolveCandidates(cs []Candidate, refs []string) ([]Candidate, error) {
 		}
 	}
 	return out, nil
+}
+
+// countGoogle is how many of cs are Google Cloud's.
+func countGoogle(cs []Candidate) int {
+	n := 0
+	for _, c := range cs {
+		if c.IsGoogle() {
+			n++
+		}
+	}
+	return n
 }

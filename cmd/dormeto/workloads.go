@@ -256,7 +256,7 @@ func (w *writeCommand) run(c *cobra.Command, args []string, what, question strin
 		if len(targets) == 0 { // none resolved, a router did not answer: act on none, so that --json prints its empty shape
 			return report(act(ctx, api, nil))
 		}
-		if w.wording != nil {
+		if w.wording != nil && (w.dryRun || !w.yes) { // the routers are read only to word a question or a dry run
 			what, question = w.wording(ctx, api, targets, what, question)
 		}
 		if done, err := confirmWorkloads(ctx, c, w.deps, targets, what, question, w.always, w.dryRun, w.yes); done || err != nil {

@@ -1199,8 +1199,8 @@ exit 1) and a manager of 0.20.0 or later.
 
 ```sh
 dormeto aws workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
-                          [--database <id>|cluster:<id>]... [--fallback-type <type>]... [--set-tag k=v]...
-                          [--hibernate true|false]
+                          [--database <id>|cluster:<id>|<Cloud SQL name>]... [--fallback-type <type>]... [--set-tag k=v]...
+                          [--router <router>] [--hibernate true|false]
 dormeto aws workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry-run] [--yes]
 dormeto aws workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
 ```
@@ -1232,14 +1232,14 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
     workload inherits its router's setting, then the manager's. `inherit` is not a value here: leave the flag out.
 - **A Google Cloud candidate** is a backend service named in a URL map, given by its id (the backend service's path,
   `projects/<project>/global/backendServices/<name>` or `projects/<project>/regions/<region>/backendServices/<name>`) or
-  the name of its backend service, resolved as a target group's name is. Three flags take the cloud's own values, checked
+  the name of its backend service, resolved as a target group's name is. It needs manager 0.24.0 and router 0.40.0. Three flags take the cloud's own values, checked
   before anything is sent (exit 2):
   - `--database` is a Cloud SQL instance name such as `orders-db` (sent as `{kind: cloudsql-instance, id}`); `cluster:` is
     AWS's;
   - `--fallback-type` is a Compute Engine machine type such as `e2-medium`, for the VMs of unmanaged instance groups and
     zonal network endpoint groups (at most 5, as on AWS);
-  - `--router` names the manager's router to onboard it on (`dmtr-<project>-<region>`; one is chosen when there is only
-    one), and is refused for an AWS candidate.
+  - `--router` names the router to onboard a global candidate on when its project has several (`dmtr-<project>-<region>`);
+    a regional one goes on its region's router. It is refused for an AWS candidate.
 
   The manager decides whether the candidate is eligible, with the router's words, and the preview has the last word, as on
   AWS. `--hibernate` and the other flags are as on AWS. `dormeto gcp workloads onboard` stays the way for what the manager
@@ -1249,7 +1249,7 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
   A Google Cloud workload is offboarded the same way, by `<router>/<workload id>`; the manager refuses, before any
   change, a GKE workload and one whose onboarding turned request logs on, with the command that offboards it,
   `dormeto gcp workloads offboard <id> --project <p> --region <r>`.
-- `exclude` excludes each workload's target group from discovery, with a reason: the manager pauses its managed
+- `exclude` excludes each workload's target group (a Google Cloud workload's backend service) from discovery, with a reason: the manager pauses its managed
   workloads (an `exclude` operation). `--reason` is 1 to 246 characters; `--for` is up to 366 days, `--until` within
   366 days; without either, the exclusion lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal.
   For a Google Cloud workload it excludes its backend service, by the path the command builds from the workload's row
@@ -1306,8 +1306,8 @@ dormeto aws exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
   is read unless `--limit` stops at that many (0, the default, reads all). `--account` keeps one AWS account or Google Cloud project,
   `--candidate-region` one region of it (`europe-west1` or `global` on Google Cloud) (it needs `--account`; `--region` is the manager's). `--json` prints the
   manager's answer, `{candidates}`, every page in it.
-- `dismiss` takes candidates out of the pending onboarding, each given by its id, sent as it is whatever the
-  candidate's status, or the name of its target group, resolved among the candidates pending onboarding before anything
+- `dismiss` takes candidates out of the pending onboarding, each given by its id (a target group's ARN or a backend
+  service's path), sent as it is whatever the candidate's status, or the name of its target group, resolved among the candidates pending onboarding before anything
   is sent: an unknown name, or one that names the target groups of several accounts or regions (their ARNs are listed),
   exits 2 and nothing is dismissed. `--note` says why (cut at 256 characters).
 - `restore` brings dismissed candidates back, each id or name resolved among the dismissed ones in the same way.
@@ -1339,7 +1339,7 @@ manager's answer, every page in it.
   backend service (`--target-group <path>`, `projects/<project>/global|regions/<region>/backendServices/<name>`), a URL
   map (`--load-balancer <path>`, `…/urlMaps/<name>`) or a project (`--account <project ID>`). Each flag takes either
   cloud's value, and anything else exits 2 before any call. The manager pauses its managed workloads (an `exclude`
-  operation, followed), beside an operator's pause on a Google Cloud workload: lifting the exclusion leaves the
+  operation, followed), keeping its pause apart from an operator's on both clouds: lifting the exclusion leaves the
   operator's pause. `--reason` is 1 to 246 characters; `--for` is up to 366
   days, `--until` within 366 days; without either, the exclusion lasts until it is lifted. It is always confirmed on a
   terminal; `--dry-run` names the target and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json` (its

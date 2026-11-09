@@ -185,7 +185,7 @@ func waitForRun(ctx context.Context, deps fleetDeps, api *fleet.Client, before, 
 }
 
 // gcpRegionName is a Google Cloud region (europe-west1) or global, as --candidate-region may name one.
-var gcpRegionName = regexp.MustCompile(`^(global|[a-z]+-[a-z]+\d+)$`)
+var gcpRegionName = regexp.MustCompile(`^(global|[a-z]+-[a-z]+\d{1,2})$`)
 
 func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
@@ -208,8 +208,10 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("--account: %q is neither 12 digits nor a project ID", account)
 			case region != "" && account == "":
 				err = usagef("--candidate-region needs --account")
-			case region != "" && !regionName.MatchString(region) && !gcpRegionName.MatchString(region):
-				err = usagef("--candidate-region: %q is not a region such as eu-west-1 or europe-west1", region)
+			case region != "" && discover.IsAccountID(account) && !regionName.MatchString(region):
+				err = usagef("--candidate-region: %q is not an AWS region such as eu-west-1", region)
+			case region != "" && !discover.IsAccountID(account) && !gcpRegionName.MatchString(region):
+				err = usagef("--candidate-region: %q is not a Google Cloud region such as europe-west1, or global", region)
 			default:
 				err = checkLimit(limit)
 			}
@@ -283,8 +285,8 @@ func newDiscoveryDismiss(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "dismiss <candidate>...", Short: "Dismiss candidates: they leave the pending onboarding", SilenceErrors: true,
-		Long: "Dismiss candidates, each given by its id (the target group's ARN, sent as it is: a candidate of any status) or\n" +
-			"the name of its target group, among those pending onboarding. Every name is resolved before anything is sent: an\n" +
+		Long: "Dismiss candidates, each given by its id (a target group's ARN or a backend service's path, sent as it is: a\n" +
+			"candidate of any status) or the name of its target group or backend service, among those pending onboarding. Every name is resolved before anything is sent: an\n" +
 			"unknown one, or one that names the target groups of several accounts or regions (their ARNs are listed), exits 2\n" +
 			"and nothing is dismissed. --note says why (cut at 256 characters). `discovery restore` brings them back. --json\n" +
 			"prints the manager's candidates. Needs an operator.",
@@ -368,10 +370,12 @@ func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []stri
 }
 
 // chooseCandidates resolves each ref among the candidates of status from, in the order given, each candidate once. With
-// idsAsGiven, a ref that is an ARN (a candidate's id) is taken as it is, whatever its candidate's status, and the
+// idsAsGiven, a ref that is an ARN or a backend service's path (a candidate's id) is taken as it is, whatever its candidate's status, and the
 // candidates are listed only when a name is given.
 func chooseCandidates(ctx context.Context, api *fleet.Client, refs []string, from string, idsAsGiven bool) ([]fleet.Candidate, error) {
-	asGiven := func(ref string) bool { return idsAsGiven && strings.HasPrefix(ref, "arn:") }
+	asGiven := func(ref string) bool {
+		return idsAsGiven && (strings.HasPrefix(ref, "arn:") || fleet.IsBackendServicePath(ref))
+	}
 	var all []fleet.Candidate
 	if slices.ContainsFunc(refs, func(ref string) bool { return !asGiven(ref) }) { // a name to resolve
 		var err error

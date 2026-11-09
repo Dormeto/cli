@@ -102,7 +102,11 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			case lb != "":
 				target, text = map[string]any{"kind": "load-balancer", "arn": lb}, "load balancer "+lb[strings.LastIndex(strings.TrimSuffix(lb, "/"), "/")+1:]
 			default:
-				target, text = map[string]any{"kind": "account", "account": account}, "account "+account
+				noun := "project "
+				if discover.IsAccountID(account) {
+					noun = "account "
+				}
+				target, text = map[string]any{"kind": "account", "account": account}, noun+account
 			}
 			r, rerr := exclusionReason(reason)
 			var end time.Time

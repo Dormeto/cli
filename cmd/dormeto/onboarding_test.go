@@ -526,6 +526,10 @@ func TestOnboardChecksFlagsForTheCandidatesCloud(t *testing.T) {
 		{gcpCandidate(), []string{"web", "--fallback-type", "t3a.medium"}, "Compute Engine machine type"},
 		{gcpCandidate(), []string{"web", "--database", "Bad_Name"}, "Cloud SQL instance name"},
 		{gcpCandidate(), []string{"web", "--database", "cluster:aurora"}, "Cloud SQL instance name"},
+		{gcpCandidate(), []string{"web", "--fallback-type", "e2--"}, "Compute Engine machine type"},
+		{gcpCandidate(), []string{"web", "--fallback-type", "e2-medium-"}, "Compute Engine machine type"},
+		{gcpCandidate(), []string{"web", "--fallback-type", "e2-medium", "--fallback-type", "e2-medium"}, "e2-medium is named twice"},
+		{gcpCandidate(), []string{"web", "--database", "orders-db", "--database", "orders-db"}, "Cloud SQL instance orders-db is named twice"},
 		{row("111111111111", tgAPI, "pending-onboarding"), []string{tgAPI, "--fallback-type", "e2-medium"}, "EC2 instance type"},
 		{row("111111111111", tgAPI, "pending-onboarding"), []string{tgAPI, "--router", "prod-eu"}, "--router"},
 	} {
@@ -599,11 +603,67 @@ func TestExclusionsAddTakesEitherCloudsValues(t *testing.T) {
 		{"--account", "Dormeto"},
 		{"--target-group", "projects/dormeto-dev/regions/europe-west1/urlMaps/shop"},
 		{"--target-group", "projects//global/backendServices/x"},
+		{"--target-group", "projects/dormeto-dev/regions/eu-west-1/backendServices/web"},
+		{"--load-balancer", "projects/dormeto-dev/regions/eu-west-1/urlMaps/shop"},
 	} {
 		a := &obAPI{}
 		r := runOB(t, a, nil, append([]string{"exclusions", "add", "--reason", "r", "--yes"}, args...)...)
 		if r.exit != 2 || len(r.api.requests) != 0 {
 			t.Errorf("%v: exit %d, requests %d, stderr %q", args, r.exit, len(r.api.requests), r.stderr)
 		}
+	}
+}
+
+// A fallback type of neither cloud's form is refused before the manager is reached, as before Google Cloud's candidates.
+func TestOnboardRefusesAFallbackTypeOfNeitherCloudBeforeAnyCall(t *testing.T) {
+	a := pendingAPI()
+	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--fallback-type", "medium")
+	if r.exit != 2 || len(r.api.requests) != 0 {
+		t.Errorf("exit %d, requests %d, stderr %q", r.exit, len(r.api.requests), r.stderr)
+	}
+}
+
+func TestOnboardWithoutRouterSendsNoRouterKeyAndNamesTheGoogleWorkload(t *testing.T) {
+	a := &obAPI{pending: []string{gcpCandidate()}}
+	r := runOB(t, a, nil, "workloads", "onboard", "web")
+	if r.exit != 0 || len(a.writes) != 1 || strings.Contains(a.writes[0], `"router"`) {
+		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "onboarded prod-eu/w-new") {
+		t.Errorf("stdout %q", r.stdout)
+	}
+}
+
+func TestExcludeWordingReadsRoutersOnlyWhenAskedOrDryRun(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--yes", "--no-wait")
+	for _, q := range r.api.requests {
+		if q.URL.Path == "/iam/routers" {
+			t.Errorf("GET /routers with --yes: exit %d, stderr %q", r.exit, r.stderr)
+		}
+	}
+}
+
+func TestExcludeWordingNamesEitherResourceWhenRoutersAreMixedOrUnknown(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "prod-eu/w-1", "--reason", "r", "--dry-run")
+	if !strings.Contains(r.stdout, "exclude the target group or backend service of 2 workloads") {
+		t.Errorf("mixed: %q %q", r.stdout, r.stderr)
+	}
+	r = runOB(t, a, nil, "workloads", "exclude", "nowhere/w-1", "--reason", "r", "--dry-run")
+	if !strings.Contains(r.stdout, "target group or backend service") {
+		t.Errorf("unknown: %q %q", r.stdout, r.stderr)
+	}
+}
+
+func TestExclusionsAddLabelsAProjectAsOne(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "exclusions", "add", "--account", "dormeto-dev", "--reason", "r", "--dry-run")
+	if !strings.Contains(r.stdout, "project dormeto-dev") || strings.Contains(r.stdout, "account dormeto-dev") {
+		t.Errorf("stdout %q stderr %q", r.stdout, r.stderr)
+	}
+	r = runOB(t, a, nil, "exclusions", "add", "--account", "111111111111", "--reason", "r", "--dry-run")
+	if !strings.Contains(r.stdout, "account 111111111111") {
+		t.Errorf("stdout %q", r.stdout)
 	}
 }

@@ -561,3 +561,33 @@ func TestDiscoveryCandidatesPrintsACloudColumnAndTakesAProject(t *testing.T) {
 		t.Errorf("a bad account exits %d", r.exit)
 	}
 }
+
+// A backend service's path is an id as an ARN is: dismissed as given, whatever the candidate's status (a GKE one is not
+// pending onboarding), without a listing.
+func TestDiscoveryDismissSendsABackendServicePathAsGiven(t *testing.T) {
+	const path = "projects/dormeto-dev/global/backendServices/gke-web"
+	a := &disAPI{}
+	r := runDiscovery(t, a, nil, "", "dismiss", path)
+	if r.exit != 0 || len(a.requests) != 1 || a.requests[0] != `POST /iam/discovery/dismiss {"ids":["`+path+`"]}` || r.stdout != "dismissed 1 candidate: gke-web\n" {
+		t.Errorf("exit %d, requests %q, stdout %q, stderr %q", r.exit, a.requests, r.stdout, r.stderr)
+	}
+}
+
+func TestDiscoveryCandidatesChecksTheRegionAgainstTheAccountsCloud(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		exit int
+	}{
+		{[]string{"--account", "dormeto-dev", "--candidate-region", "global"}, 0},
+		{[]string{"--account", "dormeto-dev", "--candidate-region", "europe-west1"}, 0},
+		{[]string{"--account", "111111111111", "--candidate-region", "eu-west-1"}, 0},
+		{[]string{"--account", "111111111111", "--candidate-region", "global"}, 2},
+		{[]string{"--account", "dormeto-dev", "--candidate-region", "eu-west-1"}, 2},
+	} {
+		a := &disAPI{}
+		r := runDiscovery(t, a, nil, "", append([]string{"candidates"}, c.args...)...)
+		if r.exit != c.exit || (c.exit == 2 && len(a.requests) != 0) {
+			t.Errorf("%v: exit %d, requests %q, stderr %q", c.args, r.exit, a.requests, r.stderr)
+		}
+	}
+}

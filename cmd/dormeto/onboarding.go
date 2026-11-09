@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,7 +35,7 @@ var instanceType = regexp.MustCompile(`^[a-z][a-z0-9-]*\d[a-z0-9-]*\.[a-z0-9]+$`
 
 // machineType is a Compute Engine machine type (e2-medium) and cloudSQLName a Cloud SQL instance name.
 var (
-	machineType  = regexp.MustCompile(`^[a-z][a-z0-9]*-[a-z0-9-]+$`)
+	machineType  = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)+$`)
 	cloudSQLName = regexp.MustCompile(`^[a-z]([-a-z0-9]{0,96}[a-z0-9])?$`)
 )
 
@@ -72,14 +73,20 @@ func checkCandidateFlags(cand fleet.Candidate, router string, databases, fallbac
 		}
 		return nil
 	}
-	for _, d := range databases {
+	for i, d := range databases {
 		if !cloudSQLName.MatchString(d) {
 			return usagef("--database: %q is not a Cloud SQL instance name such as orders-db", d)
 		}
+		if slices.Contains(databases[:i], d) {
+			return usagef("--database: Cloud SQL instance %s is named twice", d)
+		}
 	}
-	for _, t := range fallbacks {
+	for i, t := range fallbacks {
 		if !machineType.MatchString(t) {
 			return usagef("--fallback-type: %q is not a Compute Engine machine type such as e2-medium", t)
+		}
+		if slices.Contains(fallbacks[:i], t) {
+			return usagef("--fallback-type: %s is named twice", t)
 		}
 	}
 	return nil
@@ -107,9 +114,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"identifier or cluster:<identifier>, or for a Google Cloud candidate a Cloud SQL instance name: stopped after the\n" +
 			"application, started before it), --fallback-type (an EC2 instance type such as t3a.medium, or for a Google Cloud\n" +
 			"candidate a Compute Engine machine type such as e2-medium; at most 5; for the instances of a workload), --router\n" +
-			"(a Google Cloud candidate only: the manager's router to onboard it on), --set-tag (Dormeto tags k=v;\n" +
-			"administrators) and --hibernate (true or false: hibernate its instances launched with hibernation at a nap;\n" +
-			"routers 0.32.0 and later; without it the workload inherits the router's or the manager's). --no-wait only\n" +
+			"(a Google Cloud candidate only: names the router to onboard a global candidate on when its project has several; a\n" +
+			"regional one goes on its region's router), --set-tag (Dormeto tags k=v;\n" +
+			"administrators) and --hibernate (true or false: on AWS, hibernate its instances launched with hibernation at a\n" +
+			"nap, from routers 0.32.0; on Google Cloud, suspend its VMs, not stop them; without it the workload inherits the\n" +
+			"router's or the manager's). --no-wait only\n" +
 			"starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
 			"`dormeto aws operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
@@ -119,7 +128,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			switch {
 			case err != nil:
 			case len(args) != 1 || strings.TrimSpace(args[0]) == "":
-				err = usagef("name exactly one candidate (its id or target group name)")
+				err = usagef("name exactly one candidate (its id, or its target group's or backend service's name)")
 			case utf8.RuneCountInString(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }):
 				err = usagef("--name: at most 64 characters, no control characters")
 			case idle < 5 || idle > 1440:
@@ -128,6 +137,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("--wake-mode: %q is not any or browser", wakeMode)
 			case len(fallbacks) > maxFallbackTypes:
 				err = usagef("--fallback-type: at most %d (%d given)", maxFallbackTypes, len(fallbacks))
+			}
+			for _, t := range fallbacks { // of neither cloud's form: refused before the manager is reached
+				if err == nil && !instanceType.MatchString(t) && !machineType.MatchString(t) {
+					err = usagef("--fallback-type: %q is neither an EC2 instance type such as t3a.medium nor a Compute Engine machine type such as e2-medium", t)
+				}
 			}
 			if err == nil {
 				tags, err = parseTagFlag("--set-tag", setTags)
@@ -189,12 +203,12 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's name)")
+	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's or backend service's name)")
 	fl.IntVar(&idle, "idle-minutes", 15, "the idle window, 5 to 1440 minutes")
 	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser")
 	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name (repeatable)")
 	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium, or Compute Engine machine type such as e2-medium (repeatable, at most 5)")
-	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the manager's router to onboard it on (one is chosen when there is only one)")
+	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the router to onboard a global candidate on when its project has several (a regional one goes on its region's router)")
 	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
 	fl.StringVar(&hibernate, "hibernate", "", "hibernate the instances at a nap: true or false (default: inherit)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
@@ -338,7 +352,7 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		asJSON             bool
 	)
 	cmd := &cobra.Command{
-		Use: "exclude (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude the target groups of workloads from discovery",
+		Use: "exclude (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude the target groups or backend services of workloads from discovery",
 		Long: "Exclude each workload's target group (a Google Cloud workload's backend service) from discovery, with a reason: the manager pauses its managed workloads\n" +
 			"(an operation, followed). --reason is 1 to 246 characters; --for is a duration up to 366 days (90m, 2h, 3d) and\n" +
 			"--until an RFC 3339 time or HH:MM today in the local time zone, within 366 days; without either the exclusion\n" +

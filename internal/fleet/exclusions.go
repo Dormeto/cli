@@ -129,8 +129,8 @@ func ExclusionsText(es []Exclusion, loc *time.Location) string {
 var (
 	targetGroupARN = regexp.MustCompile(`^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:targetgroup/[A-Za-z0-9-]{1,32}/[0-9a-f]{16}$`)
 	// A Google Cloud backend service's or URL map's path, global or regional.
-	backendServicePath = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/(global|regions/[a-z0-9-]+)/backendServices/[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
-	urlMapPath         = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/(global|regions/[a-z0-9-]+)/urlMaps/[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	backendServicePath = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/(global|regions/[a-z]+-[a-z]+\d{1,2})/backendServices/[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	urlMapPath         = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/(global|regions/[a-z]+-[a-z]+\d{1,2})/urlMaps/[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
 	loadBalancerARN    = regexp.MustCompile(`^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:loadbalancer/app/[A-Za-z0-9-]{1,32}/[0-9a-f]{16}$`)
 )
 
