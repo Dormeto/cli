@@ -43,7 +43,7 @@ func TestOwnerHoldsEveryCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.OK() || len(r.Commands) != 7 {
+	if !r.OK() || len(r.Commands) != 9 {
 		t.Fatalf("%+v", r)
 	}
 	if err := PrintText(out, r); err != nil {
@@ -53,6 +53,8 @@ func TestOwnerHoldsEveryCommand(t *testing.T) {
 		"Project dormeto-dev (1034397096264), no organization, checked as me@example.com\n",
 		"  ✓ check: every permission held\n",
 		"  ✓ offboard: every permission held\n",
+		"  ✓ connect: every permission held\n",
+		"  ✓ disconnect: every permission held\n",
 		"  APIs on: compute.googleapis.com, run.googleapis.com,",
 		"  APIs off: none\n",
 		"  ✓ billing: enabled\n",
@@ -96,10 +98,39 @@ func TestCheckTestsTheLogViewsAndTheRequestLogsPermissions(t *testing.T) {
 		"workloads":      {},
 		"onboard":        requestLogs,
 		"offboard":       requestLogs,
+		"connect":        {},
+		"disconnect":     {},
 	} {
 		if got := command(t, r, name).Missing; !slices.Equal(got, missing) {
 			t.Errorf("%s: missing %v, want %v", name, got, missing)
 		}
+	}
+}
+
+// connect and disconnect are checked in the project with the steps that act on a project: their folder and organization
+// bindings, which Google refuses to test on a project, are tested at those scopes by the commands themselves.
+func TestCheckTestsConnectAndDisconnectWithoutTheFolderAndOrganizationBindings(t *testing.T) {
+	s := gcptest.New(t)
+	s.Enabled = access.Load().APIs
+	s.Invalid = map[string]bool{}
+	for _, p := range access.StepNeeds("connect", "folderBindings", "organizationBindings") {
+		s.Invalid[p] = true
+	}
+	d, _ := deps(s)
+	r, err := Check(context.Background(), d, Request{Project: "dormeto-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"connect", "disconnect"} {
+		c := command(t, r, name)
+		if !c.OK() || !slices.Contains(c.Held, "resourcemanager.projects.setIamPolicy") || !slices.Contains(c.Held, "run.services.list") ||
+			slices.ContainsFunc(c.Held, func(p string) bool { return s.Invalid[p] }) {
+			t.Errorf("%s: %+v", name, c)
+		}
+	}
+	if !slices.Contains(command(t, r, "connect").Held, "iam.workloadIdentityPools.create") ||
+		!slices.Contains(command(t, r, "disconnect").Held, "iam.workloadIdentityPools.delete") {
+		t.Fatalf("%+v", r.Commands)
 	}
 }
 
@@ -160,8 +191,9 @@ func TestNoRoleInTheProject(t *testing.T) {
 		t.Fatal("ok")
 	}
 	for _, c := range r.Commands {
-		// install-router's image step is for an image of --image only (none here).
-		if !slices.Equal(c.Missing, access.NeedsWithout(c.Command, nil, "image")) || len(c.Held) != 0 {
+		// install-router's image step is for an image of --image only (none here); connect's and disconnect's folder and
+		// organization bindings are tested at those scopes by connect and disconnect themselves.
+		if !slices.Equal(c.Missing, access.NeedsWithout(c.Command, nil, "image", "folderBindings", "organizationBindings")) || len(c.Held) != 0 {
 			t.Fatalf("%+v", c)
 		}
 	}
@@ -284,7 +316,7 @@ func TestJSONShape(t *testing.T) {
 		t.Fatal(err, out)
 	}
 	if got.Project["id"] != "dormeto-dev" || got.Project["number"] != "1034397096264" || got.Project["parent"] != "folders/7" ||
-		got.Account != "me@example.com" || len(got.Commands) != 7 || got.Commands[0].Command != "check" ||
+		got.Account != "me@example.com" || len(got.Commands) != 9 || got.Commands[0].Command != "check" ||
 		len(got.APIs.Enabled) != 1 || len(got.APIs.Missing) != 8 {
 		t.Fatalf("%s", out)
 	}
@@ -336,7 +368,7 @@ func TestServicesListingDeniedStillReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	note := "APIs: not checked (serviceusage.services.list refused)"
-	if r.OK() || len(r.Commands) != 7 || !slices.Contains(r.Warnings, note) || len(r.APIs.Enabled) != 0 || len(r.APIs.Missing) != 0 {
+	if r.OK() || len(r.Commands) != 9 || !slices.Contains(r.Warnings, note) || len(r.APIs.Enabled) != 0 || len(r.APIs.Missing) != 0 {
 		t.Fatalf("%+v", r)
 	}
 	if !slices.Contains(command(t, r, "check").Missing, "serviceusage.services.list") {

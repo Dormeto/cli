@@ -277,7 +277,9 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 func check(ctx context.Context, d Deps, r Request, commands []string) (Report, error) {
 	ownImage := r.Image != ""
 	needs := func(command string) []string {
-		var skip []string
+		// connect's and disconnect's folder and organization bindings: Google refuses to test them on a project, and the
+		// commands test them at those scopes.
+		skip := []string{"folderBindings", "organizationBindings"}
 		if !ownImage {
 			skip = append(skip, imageStep)
 		}

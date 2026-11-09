@@ -1,5 +1,6 @@
 // Package access is the manifest of what Dormeto needs in Google Cloud: the APIs, the custom roles, the predefined
-// roles' permissions, the router's grants and, per `dormeto gcp` command, the permissions the operator needs by step.
+// roles' permissions, the router's grants, the manager's connection (its section manager) and, per `dormeto gcp` command,
+// the permissions the operator needs by step.
 // access.json is a byte for byte copy of router/gcp/access.json (a test compares them).
 package access
 
@@ -45,6 +46,58 @@ type Feature struct {
 	Operator map[string]map[string][]string `json:"operator"`
 }
 
+// ManagerRole is a custom role of the manager's accounts: Permissions wherever it is defined, OrganizationPermissions
+// added only when it is defined in an organization (Google refuses them in a project's role).
+type ManagerRole struct {
+	Title                   string   `json:"title"`
+	Description             string   `json:"description"`
+	Permissions             []string `json:"permissions"`
+	OrganizationPermissions []string `json:"organizationPermissions"`
+}
+
+// ManagerGrant is one of the manager accounts' grants: a role (a custom role's ID, or a predefined role) to an account
+// (discovery or command) on a resource (scope, controller, tagValue or project).
+type ManagerGrant struct {
+	Account string `json:"account"`
+	Role    string `json:"role"`
+	On      string `json:"on"`
+}
+
+// Attribute is one entry of the provider's attribute mapping: Google's attribute and the expression that sets it.
+type Attribute struct {
+	Name, Expression string
+}
+
+// Federation is the workload identity pool and its AWS provider, placeholders ({env}, {account}) not yet filled; Mapping
+// in the manifest's order.
+type Federation struct {
+	Pool      string      `json:"pool"`
+	Provider  string      `json:"provider"`
+	Condition string      `json:"condition"`
+	Mapping   []Attribute `json:"-"`
+}
+
+// Impersonation is the grant on each service account to the principal set of each of the manager's roles that act as it:
+// Roles by account (discovery, command).
+type Impersonation struct {
+	Role         string              `json:"role"`
+	PrincipalSet string              `json:"principalSet"`
+	Roles        map[string][]string `json:"-"`
+}
+
+// Manager is the manifest's manager section: what `dormeto gcp connect` sets up for the manager.
+type Manager struct {
+	APIs            []string               `json:"apis"`
+	Federation      Federation             `json:"federation"`
+	ServiceAccounts map[string]string      `json:"serviceAccounts"`
+	Roles           map[string]ManagerRole `json:"roles"`
+	Grants          struct {
+		Scopes         []ManagerGrant `json:"scopes"`
+		RouterProjects []ManagerGrant `json:"routerProjects"`
+	} `json:"grants"`
+	Impersonation Impersonation `json:"impersonation"`
+}
+
 // Manifest is access.json.
 type Manifest struct {
 	Version    int                 `json:"version"`
@@ -53,6 +106,7 @@ type Manifest struct {
 	Predefined map[string][]string `json:"predefined"`
 	Router     []Grant             `json:"router"`
 	Features   map[string]Feature  `json:"features"`
+	Manager    Manager             `json:"manager"`
 
 	commands []string
 	steps    map[string][]string
@@ -107,7 +161,47 @@ func parse(b []byte) (Manifest, error) {
 	if m.Version != 1 || len(m.commands) == 0 {
 		return m, fmt.Errorf("version %d with %d commands", m.Version, len(m.commands))
 	}
-	return m, nil
+	return m, parseManager(b, &m.Manager)
+}
+
+// parseManager reads the manager section's mapping in file order and the impersonation's roles by account.
+func parseManager(b []byte, m *Manager) error {
+	var top struct {
+		Manager struct {
+			Federation struct {
+				Mapping json.RawMessage `json:"mapping"`
+			} `json:"federation"`
+			Impersonation map[string]json.RawMessage `json:"impersonation"`
+		} `json:"manager"`
+	}
+	if err := json.Unmarshal(b, &top); err != nil {
+		return err
+	}
+	if top.Manager.Federation.Mapping == nil {
+		return fmt.Errorf("manager: no federation mapping")
+	}
+	names, err := keys(top.Manager.Federation.Mapping)
+	if err != nil {
+		return fmt.Errorf("manager mapping: %w", err)
+	}
+	var mapping map[string]string
+	if err := json.Unmarshal(top.Manager.Federation.Mapping, &mapping); err != nil {
+		return fmt.Errorf("manager mapping: %w", err)
+	}
+	for _, name := range names {
+		m.Federation.Mapping = append(m.Federation.Mapping, Attribute{name, mapping[name]})
+	}
+	m.Impersonation.Roles = map[string][]string{}
+	for account := range m.ServiceAccounts {
+		if raw, ok := top.Manager.Impersonation[account]; ok {
+			var roles []string
+			if err := json.Unmarshal(raw, &roles); err != nil {
+				return fmt.Errorf("manager impersonation %s: %w", account, err)
+			}
+			m.Impersonation.Roles[account] = roles
+		}
+	}
+	return nil
 }
 
 // keys are the keys of a JSON object in file order.
@@ -146,6 +240,21 @@ func Needs(command string) []string {
 	var out []string
 	for _, ps := range steps {
 		out = append(out, ps...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// StepNeeds are the permissions of the named steps of a command, sorted, without duplicates (nil for an unknown command):
+// connect and disconnect test each resource for the steps that act on it only.
+func StepNeeds(command string, steps ...string) []string {
+	all, ok := Load().perms[command]
+	if !ok {
+		return nil
+	}
+	out := []string{}
+	for _, step := range steps {
+		out = append(out, all[step]...)
 	}
 	slices.Sort(out)
 	return slices.Compact(out)
