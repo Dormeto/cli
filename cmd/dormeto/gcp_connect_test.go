@@ -5,12 +5,16 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Dormeto/cli/internal/gcponboard"
 )
@@ -134,6 +138,109 @@ func TestGcpConnectIsWiredInTheRoot(t *testing.T) {
 		out, _, code := executed(t, build{}, "gcp", name, "--help")
 		if code != 0 || !strings.Contains(out, "--manager-region") || !strings.Contains(out, "--gcloud-configuration") || !strings.Contains(out, "--dry-run") {
 			t.Fatalf("%s: %d %s", name, code, out)
+		}
+	}
+}
+
+// flagNames are a command's flags, its own and those it inherits, but help.
+func flagNames(t *testing.T, root *cobra.Command, path ...string) []string {
+	t.Helper()
+	cmd, _, err := root.Find(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	add := func(f *pflag.Flag) {
+		if f.Name != "help" && !slices.Contains(out, f.Name) {
+			out = append(out, f.Name)
+		}
+	}
+	cmd.LocalFlags().VisitAll(add)
+	cmd.InheritedFlags().VisitAll(add)
+	slices.Sort(out)
+	return out
+}
+
+// readmeFlags are the flags a text of the README names, --name; with quoted, only those opening a code span, `--name` (a
+// span quoting a command line, such as an install a refusal names, is that command's).
+func readmeFlags(text string, quoted bool) []string {
+	pattern := "--([a-z][a-z0-9-]*)"
+	if quoted {
+		pattern = "`" + pattern
+	}
+	var out []string
+	for _, m := range regexp.MustCompile(pattern).FindAllStringSubmatch(text, -1) {
+		if !slices.Contains(out, m[1]) {
+			out = append(out, m[1])
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// The README's "Connecting the manager" names exactly the flags of gcp connect and disconnect (and --region, which it names as
+// the fleet commands' flag), and its routers pause bullet and examples exactly those of gcp routers pause and resume but the
+// ones every gcp command takes (--project, --region, --gcloud-configuration, said in the section's introduction).
+func TestReadmeNamesTheFlagsOfConnectDisconnectAndRoutersPause(t *testing.T) {
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, connect, ok := strings.Cut(string(b), "\n### Connecting the manager\n")
+	if !ok {
+		t.Fatal("README.md has no '### Connecting the manager'")
+	}
+	connect, _, _ = strings.Cut(connect, "\n### ")
+	root := &cobra.Command{Use: "dormeto"}
+	root.AddCommand(newGcp(gcpRuns{}, fleetDeps{}, "1.2.3"))
+	want := flagNames(t, root, "gcp", "connect")
+	for _, f := range flagNames(t, root, "gcp", "disconnect") {
+		if !slices.Contains(want, f) {
+			t.Errorf("disconnect has --%s, which connect has not", f)
+		}
+	}
+	want = append(want, "region")
+	slices.Sort(want)
+	if got := readmeFlags(connect, false); !slices.Equal(got, want) {
+		t.Errorf("Connecting the manager names %v, connect and disconnect take %v (and --region)", got, want)
+	}
+
+	_, pause, ok := strings.Cut(string(b), "\n### Google Cloud schedules and pauses\n")
+	if !ok {
+		t.Fatal("README.md has no '### Google Cloud schedules and pauses'")
+	}
+	pause, _, _ = strings.Cut(pause, "\n### ")
+	var named []string
+	for _, line := range strings.Split(pause, "\n") {
+		if strings.HasPrefix(line, "dormeto gcp routers pause") || strings.HasPrefix(line, "dormeto gcp routers resume") {
+			named = append(named, line)
+		}
+	}
+	_, bullet, _ := strings.Cut(pause, "\n- `routers pause` pauses the whole router")
+	bullet, _, _ = strings.Cut(bullet, "\n- ")
+	got := readmeFlags(strings.Join(named, "\n"), false)
+	for _, f := range readmeFlags(bullet, true) {
+		if !slices.Contains(got, f) {
+			got = append(got, f)
+		}
+	}
+	common := []string{"gcloud-configuration", "project", "region"}
+	var takes []string
+	for _, path := range [][]string{{"gcp", "routers", "pause"}, {"gcp", "routers", "resume"}} {
+		for _, f := range flagNames(t, root, path...) {
+			if !slices.Contains(takes, f) {
+				takes = append(takes, f)
+			}
+		}
+	}
+	for _, f := range got {
+		if !slices.Contains(takes, f) {
+			t.Errorf("the routers pause bullet names --%s, which pause and resume don't take", f)
+		}
+	}
+	for _, f := range takes {
+		if !slices.Contains(common, f) && !slices.Contains(got, f) {
+			t.Errorf("the routers pause bullet doesn't name --%s", f)
 		}
 	}
 }

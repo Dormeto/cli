@@ -370,7 +370,7 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		"The organization level and the custom types are the manager's",
 		"`instance` is a VM of an unmanaged instance group or of a zonal network endpoint group, `asg` a managed instance group, `k8s` GKE pods and `databases` a Cloud SQL companion",
 		"`router <version> doesn't have the settings levels: dormeto gcp install --version <this CLI's>`",
-		"`set on this workload`, `type <name>`, `router`, `built-in` or `fixed on Google Cloud`",
+		"`set on this workload`, `type <name>`, `router`, `organization`, `built-in` or `fixed on Google Cloud`",
 		// what Google Cloud fixes, and why
 		"| `--wait-seconds` | 0 | The waker holds no request: it answers the waiting page at once, and the page waits for the wake. |",
 		"| `--max-holders` | 0 | No request is held. |",
@@ -619,6 +619,108 @@ func TestChangelogUnreleasedSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) 
 		"`--json` carries `instanceTypes`",
 		"`gkemcg1-` or `mci-`,",
 	} {
+		if strings.Contains(text, gone) {
+			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
+		}
+	}
+}
+
+// The manager on Google Cloud (vision docs/specs/2026-11-09-google-cloud-manager-design.md, and its final reviews' fixes): the
+// README says connect, disconnect, routers pause and the CLOUD column as the code does them, and none of what a connected
+// manager made false.
+func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	for _, want := range []string{
+		// connect
+		"### Connecting the manager",
+		"dormeto gcp connect --project my-host --scope folders/123 --scope projects/shop --profile ops --env prod",
+		"It is applied in the order apis, roles, federation, serviceAccounts, impersonation, projectBindings, folderBindings, organizationBindings, controller, tag, routersGone",
+		"A router project's tag value is read only then: Google answers one you may not read as one that does not exist",
+		"A later connect that adds scopes writes them first too, with the routers already recorded",
+		"A run stopped after its steps says what the record holds then",
+		"the routersGone step: on the project, its tag value and the recorded routers' controllers",
+		"The commands a run tells you to run name the manager as you did (`--profile`, `--env`, `--manager-region`, `--api-url`, `--gcloud-configuration`)",
+		// disconnect
+		"which unregisters the manager's Google Cloud routers (`the manager's Google Cloud routers unregistered`)",
+		"A project that has left the connection's scopes is not read: after a disconnect it keeps the role `dormetoCommand` a connect left there, granted to no one",
+		// routers pause and resume, the name and the tags
+		"dormeto gcp routers pause --project my-project --region europe-west1 --reason \"release freeze\" --for 3h",
+		"`--json` (the controller's answer by router, `{\"<router>\": …}`, as AWS's)",
+		"`router <version> doesn't have the router's pause: dormeto gcp install --version <this CLI's>`",
+		"an older router, which drops them, is refused before any change with the install to run",
+		"`Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first: dormeto gcp install …`",
+		// the organization level, from a connected manager
+		"the workload, its type, its router, the organization, then the built-in value",
+		"a manager connected with [`dormeto gcp connect`](#connecting-the-manager) pushes its settings to the router",
+		"Without a connected manager the organization level reads as unset, and only the built-in types exist",
+		"the organization's is the manager's page, which a [connected](#connecting-the-manager) manager pushes to the router with its settings",
+		"The manager reaches Google Cloud routers once [connected](#connecting-the-manager): its commands and its dashboard list them",
+		// how far it was tried
+		"*Not run against Google yet*: `gcp connect`, `gcp disconnect`, `gcp routers pause` and `resume`, and the manager reaching a router through the connection",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"which Google Cloud does not have yet",
+		"the organization's comes with the manager",
+		"There is no dashboard or manager for Google Cloud yet",
+		"(its 1 router unregistered)",
+	} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the Google Cloud section still says %q", gone)
+		}
+	}
+	// The CLOUD column, --account and routers upgrade's and show's Google Cloud lines, in the manager's commands.
+	routers := strings.Join(strings.Fields(section(t, readme(t), "Routers and workloads")), " ")
+	for _, want := range []string{
+		"Lists each router's name, cloud (`aws` or `gcp`), account or project",
+		"`workloads list` and `show`, `routers show` and `discovery access` print the same `CLOUD` column",
+		"`--account <id>`: only the routers of these AWS accounts or Google Cloud projects",
+		"a Google Cloud router below the version available, which the line says to upgrade with `dormeto gcp install --project <p> --region <r> --version <available>`",
+		"A Google Cloud router (`cloud gcp`, `project <id>`) has no Lambda, queue, concurrency or wake statistics metrics row",
+		"inherit the organization level the manager pushes to it",
+	} {
+		if !strings.Contains(routers, want) {
+			t.Errorf("the Routers and workloads section lacks %q", want)
+		}
+	}
+	if strings.Contains(routers, "a Google Cloud router, which the line says to upgrade with `dormeto gcp install --project <p> --region <r>`.") {
+		t.Error("routers upgrade's Google Cloud line has no --version")
+	}
+}
+
+// The CHANGELOG's Unreleased says the connection's final fixes as the code does them.
+func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
+	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
+	text := strings.Join(strings.Fields(unreleased), " ")
+	for _, want := range []string{
+		"skips a Google Cloud router below the version available with one line naming `dormeto gcp install --project <p> --region <r> --version <available>`",
+		"`--account` selects Google Cloud projects too",
+		"`discovery access` lists `NAME`, `CLOUD`, `ACCOUNT OR PROJECT`, the routers list's order",
+		"its `hibernate` and `join windows` rows inherit the organization level the manager pushes to it",
+		"a later connect that adds scopes writes them first too, with the routers already recorded",
+		"for a project moved out of the scopes, its recorded routers' controllers (`roles/run.invoker`)",
+		"The router projects are tested for the tag step before their tag values are read",
+		"The commands a run names keep `--manager-region` and `--api-url`",
+		"takes the version's core when a dev build's long version would pass Google's 256 characters",
+		"`the manager's Google Cloud routers unregistered`",
+		"A project that has left the connection's scopes is not read: it keeps the `dormetoCommand` a connect left there, granted to no one",
+		"`--json` printing the controller's answer by router (`{\"<router>\": …}`, as AWS's)",
+		"with either flag, an older router, which drops them, is refused after the dry run and before any change",
+		"The CLI embeds router 228bd0c's `gcp/access.json`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"skip each Google Cloud router with one line naming `dormeto gcp install` or", "router 8cc9f6f's"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
 		}

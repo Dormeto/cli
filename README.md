@@ -696,7 +696,7 @@ same `CLOUD` column (`show` prints a `cloud` line, and `project` for a Google Cl
 carries the manager's `cloud` field.
 
 - `--outdated`: only the routers below the version available.
-- `--account <id>`: only the routers of these AWS accounts.
+- `--account <id>`: only the routers of these AWS accounts or Google Cloud projects.
 - `--router-region <region>`: only the routers in these regions (`--region` is the manager's).
 - `--name <glob>`: only the routers whose name matches the glob (`*`, `?`, `[…]`).
 - `--tag key=value`: only the routers that serve a workload carrying this Dormeto tag.
@@ -728,7 +728,8 @@ It prints the plan: each router to upgrade, from → to, then the routers skippe
 - newer than the version available;
 - of unknown version (its error is given);
 - busy with an operation (the operation's type and id are given);
-- a Google Cloud router, which the line says to upgrade with `dormeto gcp install --project <p> --region <r>`.
+- a Google Cloud router below the version available, which the line says to upgrade with
+  `dormeto gcp install --project <p> --region <r> --version <available>`, as the manager and its dashboard say it.
 
 The plan is confirmed on a terminal. Without one, `--yes` is required (exit 2 after the plan). A declined confirmation
 starts nothing and exits 0. `--dry-run` prints the plan and stops. Then one `upgrade-router` operation per router is
@@ -757,7 +758,10 @@ and last run), the Lambda and queue figures, the workloads by state, the pauses,
 router reaches it directly or through its proxy function in the cluster's VPC, with the proxy's name and version; router
 0.33.0 or later, and no version when the proxy did not answer the check's ping) and the IP lists, then each
 configuration value with where it is set (`terraform`: the router's module; `manager`). Times are in the local
-time zone. `--json` prints the manager's answer.
+time zone. `--json` prints the manager's answer. A Google Cloud router (`cloud gcp`, `project <id>`) has no Lambda, queue,
+concurrency or wake statistics metrics row, its configuration is set by `cli`, and its `hibernate` and `join windows` rows
+inherit the organization level the manager pushes to it (`manager: off, read 2m ago`), the built-in value until one is
+pushed.
 
 ### routers install and uninstall
 
@@ -1622,33 +1626,43 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   organization as a scope instead.
 - **As `gcp install`:** your permissions are tested at the host and at each scope, each for the steps that act on it: a
   folder for its bindings, an organization for its role and bindings, a router project for its grants (a ✗ stops the run
-  with nothing changed). Then the plan is printed and confirmed (`--yes` without a terminal, `--dry-run` prints it only).
-  It is applied in the order apis, roles, federation, serviceAccounts, impersonation, projectBindings, folderBindings,
-  organizationBindings, controller, tag, every IAM change printed (Dormeto's and Google's), and verified. The connection's
-  record is written in the manager (`PUT /iam/discovery/google`): the host, its number, the pool, the provider, the scopes,
-  the two accounts, the routers with their controller's URL and version, the bindings Google added, and who connected with
-  which CLI. A first connect writes it before its first step, without its routers, so that a run stopped partway leaves
-  what it made for `gcp disconnect`; then whole at the end, once verified. The manager registers the record's routers at
-  once. Run again, connect plans only the differences (a router installed since gets its grants), or says `up to date`. A
-  router of the record no longer found is dropped from it. When its project holds no router any more, the command
-  account's grants there are taken back, and its role `dormetoCommand` is left, granted to no one, for disconnect to
-  delete. A record made for another environment (its pool and accounts not `dmt-<env>`'s) is refused, exit 2. `--json`
-  prints the record on stdout (`{"connection": …}`; a dry run's `{"dryRun": true, "plan": […]}`) and the words on stderr.
+  with nothing changed). A router project's tag value is read only then: Google answers one you may not read as one that
+  does not exist. Then the plan is printed and confirmed (`--yes` without a terminal, `--dry-run` prints it only). It is
+  applied in the order apis, roles, federation, serviceAccounts, impersonation, projectBindings, folderBindings,
+  organizationBindings, controller, tag, routersGone, every IAM change printed (Dormeto's and Google's), and verified.
+  The connection's record is written in the manager (`PUT /iam/discovery/google`): the host, its number, the pool, the
+  provider, the scopes, the two accounts, the routers with their controller's URL and version, the bindings Google
+  added, and who connected with which CLI. A first connect writes it before its first step, without its routers, so that
+  a run stopped partway leaves what it made for `gcp disconnect`; then whole at the end, once verified. A later connect
+  that adds scopes writes them first too, with the routers already recorded, so that what it makes at a new scope is
+  disconnect's to remove. A run stopped after its steps says what the record holds then. The manager registers the
+  record's routers at once. Run again, connect plans only the differences (a router installed since gets its grants), or
+  says `up to date`. A router of the record no longer found is dropped from it. When its project holds no router any
+  more at the scopes (the router uninstalled, or the project moved out of a folder scope), the command account's grants
+  there are taken back (the routersGone step: on the project, its tag value and the recorded routers' controllers), and
+  its role `dormetoCommand` is left, granted to no one, for disconnect to delete (at the scopes). A record made for
+  another environment (its pool and accounts not `dmt-<env>`'s) is refused, exit 2. The commands a run tells you to run
+  name the manager as you did (`--profile`, `--env`, `--manager-region`, `--api-url`, `--gcloud-configuration`).
+  `--json` prints the record on stdout (`{"connection": …}`; a dry run's `{"dryRun": true, "plan": […]}`) and the words
+  on stderr.
 - **What Google keeps:** a connect after a disconnect undeletes the pool and its provider (Google keeps them 30 days) and
   the custom roles (7 days), then updates them. A custom role deleted more than 7 days ago can't be undeleted, and Google
   blocks its ID until its permanent deletion ends, at the latest 44 days after the deletion. Connect then stops with
   `Google blocks the ID of role <id> in <where>: …; Google frees it by <date>`, the date counted from the manager's last
   disconnect in its audit. A deleted service account is created again: its name is free at once.
 - **`gcp disconnect`** reads the record back, under its names: a record whose pool and accounts are not `dmt-<env>`'s is
-  refused (exit 2, the record kept). It tests the host for its bindings and roles too. It removes every binding of the two
-  accounts on the recorded routers' controllers and tag values, on the projects (the project scopes, the router projects
-  and the host), and on the folders and organizations of the scopes. A project at the scopes, or the host, that holds a
-  `dormetoCommand` without a router of the record (a router there once, or a first connect that stopped before naming
-  its routers) is a router project too: its command grants go, on its project, its tag value and the controllers it
-  holds. Then it deletes the two custom roles where connect defines them (one still granted to another member is kept,
-  and said), the two accounts with their impersonation grants, the provider and the pool. It verifies that no binding of
-  the accounts is left, then clears the record (`DELETE /iam/discovery/google`), which unregisters the manager's Google
-  Cloud routers. It turns no API off, and lists the APIs and the bindings Google added as left in place.
+  refused (exit 2, the record kept). It tests the host for its bindings and roles too. It removes every binding of the
+  two accounts on the recorded routers' controllers and tag values, on the projects (the project scopes, the router
+  projects and the host), and on the folders and organizations of the scopes. A project at the scopes, or the host, that
+  holds a `dormetoCommand` without a router of the record (a router there once, or a first connect that stopped before
+  naming its routers) is a router project too: its command grants go, on its project, its tag value and the controllers
+  it holds. Then it deletes the two custom roles where connect defines them (one still granted to another member is
+  kept, and said), the two accounts with their impersonation grants, the provider and the pool. It verifies that no
+  binding of the accounts is left, then clears the record (`DELETE /iam/discovery/google`), which unregisters the
+  manager's Google Cloud routers (`the manager's Google Cloud routers unregistered`). It turns no API off, and lists the
+  APIs and the bindings Google added as left in place. A project that has left the connection's scopes is not read:
+  after a disconnect it keeps the role `dormetoCommand` a connect left there, granted to no one, which you delete with
+  `gcloud iam roles delete dormetoCommand --project <id>`.
 - **Exit codes** as `gcp install`: 0; 1 when the manager or a check refuses, a permission is missing or Google refuses;
   2 for a bad flag (`--project` not a project ID, a `--scope` of another form) or `--yes` missing without a terminal;
   128 and the signal's number when stopped.
@@ -1854,10 +1868,11 @@ dormeto gcp workloads show shop --project my-project --region europe-west1     #
 
 A Google Cloud router has AWS's settings, on AWS's names, flags and lines. A workload's idle window, wake timeout,
 retry after a failed wake and wake mode each come from the first level that sets them: the workload, its type, its router,
-then the built-in value. `inherit` gives a value back to the levels. The no-wake and wake rules add up across the levels,
-the router's first. The organization level and the custom types are the manager's, which Google Cloud does not have yet:
-the organization level reads as unset, and only the built-in types exist. `routers settings` with no flag shows the
-router's level. A router without the levels answers 404, which the CLI says as `router <version> doesn't have the settings
+the organization, then the built-in value. `inherit` gives a value back to the levels. The no-wake and wake rules add up
+across the levels, the most general first. The organization level and the custom types are the manager's: a manager
+connected with [`dormeto gcp connect`](#connecting-the-manager) pushes its settings to the router when they change and at
+its polls, and the router reads them as an AWS router reads the manager's. Without a connected manager the organization
+level reads as unset, and only the built-in types exist. `routers settings` with no flag shows the router's level. A router without the levels answers 404, which the CLI says as `router <version> doesn't have the settings
 levels: dormeto gcp install --version <this CLI's>`.
 
 | Setting | Flag | Range | Built-in |
@@ -1882,7 +1897,8 @@ exit is 1.
   `--type` names another. The `databases` type's built-in is AWS's 1800 s, brought to Google Cloud's cap of 1700 s and shown `fixed`.
 - **What Google Cloud fixes.** Some values can't be chosen here. The router resolves them to the value Google imposes, and
   `show` says so: each setting is printed with the level it comes from, `set on this workload`, `type <name>`, `router`,
-  `built-in` or `fixed on Google Cloud` (`--json`: `workload`, `type`, `router`, `default` or `fixed`).
+  `organization`, `built-in` or `fixed on Google Cloud` (`--json`: `workload`, `type`, `router`, `organization`, `default`
+  or `fixed`).
 
   | Setting | On Google Cloud | Why |
   |---|---|---|
@@ -1941,8 +1957,8 @@ dormeto gcp workloads waiting-page clear shop --project my-project --region euro
 The page a visitor sees while a workload wakes can carry your name, icon and words, or be your own HTML, with AWS's flags
 (`--icon auto|none|<file>`, `--title`, `--description`, `--html <file or ->`, `--json`), checks and limits (an icon of 64 KiB at
 most, a title of 80 characters, a description of 500, HTML of 256 KiB; the checks run before any call, exit 2) and lines:
-[Waiting page](#waiting-page) has them. One document is kept per level, the workload's and the router's; the organization's
-comes with the manager. The most specific level with a document decides the mode, and a template takes each field from the most
+[Waiting page](#waiting-page) has them. One document is kept per level, the workload's and the router's; the organization's is
+the manager's page, which a [connected](#connecting-the-manager) manager pushes to the router with its settings. The most specific level with a document decides the mode, and a template takes each field from the most
 specific template that has it. The page is in the visitor's language, English or French, and its progress bar is filled from the
 median of the workload's last 10 wakes. A router without the page says so, with the version to install.
 
@@ -2012,14 +2028,17 @@ dormeto gcp routers resume --project my-project --region europe-west1
 
 - `routers pause` pauses the whole router, as `dormeto aws routers pause` does: `--reason` (1 to 256 characters), `--for`
   (a duration up to 366 days: `90m`, `2h`, `3d`) or `--until` (an RFC 3339 time, or `HH:MM` today), not both (exit 2,
-  before any call), `--keep-asleep`, `--dry-run` (prints the router and the body, sends nothing) and `--yes` (accepted: one router asks nothing). Without `--for` or `--until` it lasts until `routers resume`. The workloads asleep
+  before any call), `--keep-asleep`, `--dry-run` (prints the router and the body, sends nothing), `--yes` (accepted: one router asks nothing) and `--json` (the controller's answer by router, `{"<router>": …}`, as AWS's). Without `--for` or `--until` it lasts until `routers resume`. The workloads asleep
   are woken and printed unless `--keep-asleep`. A workload's own pause stays when the router is resumed. Routers 0.40.0
   and later; an older one answers `router <version> doesn't have the router's pause: dormeto gcp install --version <this
   CLI's>`.
 - `workloads onboard --name <text> --set-tag k=v` set the workload's name for people (up to 64 characters, default its ID) and
   its Dormeto tags, as on AWS: `--set-tag` is repeatable, at most 50, a key of 1 to 128 characters, a value of up to 256,
   letters, digits, spaces and `_ . : / = + - @`, no key starting with `dormeto:`; a bad one is refused (exit 2) before any
-  call. `workloads show` prints `name` and `tags`. Routers 0.40.0 and later.
+  call. `workloads show` prints `name` and `tags`. Routers 0.40.0 and later: with either flag the router's version is read
+  after the dry run, and an older router, which drops them, is refused before any change with the install to run, as
+  `Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first: dormeto gcp install …`
+  (exit 1).
 - `schedule set --file` takes the schedule's JSON, the same as on AWS
   ([Keeping workloads awake and scheduling them](#keeping-workloads-awake-and-scheduling-them), and
   [Schedule recurrences](#schedule-recurrences) from router 0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`.
@@ -2153,6 +2172,8 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   napped it for scanners alone. The waker reading the client's address behind global, regional and classic load
   balancers. A nap through a new revision of the router. The uninstall, which left the policy as before. Not run: an
   install interrupted while its database is being created (unit-tested).
+- *Not run against Google yet*: `gcp connect`, `gcp disconnect`, `gcp routers pause` and `resume`, and the manager reaching
+  a router through the connection, with manager 0.24.0 and router 0.40.0, not released. Their tests play Google's answers.
 
 The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
 CLI 0.12.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for
@@ -2163,8 +2184,9 @@ a stopped VM's machine type changed within its series and across to N2D, and a s
 Google accepting the internal kinds' waker, their swap waits, the client's address read through them, and their logs and
 metric; the names and descriptions GKE gives a Gateway's and an Ingress's load balancers. The router's new features were accepted in `dormeto-dev` on 2026-11-08 and 2026-11-09, on dev builds of `main` (router 0.39.0-dev.2, then 0.39.0-dev.3 with the final review's fixes): the settings by level, the wake mode and rules, the waiting page, the fallback's machine type change through
 the router's own role, both internal kinds (measured, napped by the idle check, woken by the page's probe) and GKE's refusal.
-They are not released. There is no dashboard or manager for
-Google Cloud yet: the organization level of the settings and of the waiting page, and the custom types, come with it.
+They are not released. The manager reaches Google Cloud routers once
+[connected](#connecting-the-manager): its commands and its dashboard list them, and it pushes the organization level of the
+settings and of the waiting page, and its custom types, to them.
 
 ## Building from source
 
