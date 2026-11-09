@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -183,6 +184,9 @@ func waitForRun(ctx context.Context, deps fleetDeps, api *fleet.Client, before, 
 	}
 }
 
+// gcpRegionName is a Google Cloud region (europe-west1) or global, as --candidate-region may name one.
+var gcpRegionName = regexp.MustCompile(`^(global|[a-z]+-[a-z]+\d+)$`)
+
 func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		status, account, region string
@@ -191,7 +195,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "candidates", Short: "List the discovery candidates of a status", Args: noArgs, SilenceErrors: true,
-		Long: "List the candidates of one status (default pending-onboarding): target group, account, region, hosts, idle\n" +
+		Long: "List the candidates of one status (default pending-onboarding): target group or backend service, cloud, account, region, hosts, idle\n" +
 			"hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
 			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
 			"manager's). --json prints the manager's answer, {candidates}, every page in it.",
@@ -200,12 +204,12 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			switch {
 			case !slices.Contains(fleet.CandidateStatuses, status):
 				err = usagef("--status: %q is not one of %s", status, strings.Join(fleet.CandidateStatuses, ", "))
-			case account != "" && !discover.IsAccountID(account):
-				err = usagef("--account: %q is not 12 digits", account)
+			case account != "" && !discover.IsAccountID(account) && !projectID.MatchString(account):
+				err = usagef("--account: %q is neither 12 digits nor a project ID", account)
 			case region != "" && account == "":
 				err = usagef("--candidate-region needs --account")
-			case region != "" && !regionName.MatchString(region):
-				err = usagef("--candidate-region: %q is not a region such as eu-west-1", region)
+			case region != "" && !regionName.MatchString(region) && !gcpRegionName.MatchString(region):
+				err = usagef("--candidate-region: %q is not a region such as eu-west-1 or europe-west1", region)
 			default:
 				err = checkLimit(limit)
 			}
@@ -227,7 +231,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&status, "status", "pending-onboarding", "the status: "+strings.Join(fleet.CandidateStatuses, ", "))
-	fl.StringVar(&account, "account", "", "only the candidates of this AWS account (12 digits)")
+	fl.StringVar(&account, "account", "", "only the candidates of this AWS account (12 digits) or Google Cloud project")
 	fl.StringVar(&region, "candidate-region", "", "only the candidates in this region of --account (--region is the manager's)")
 	fl.IntVar(&limit, "limit", 0, "stop at this many candidates (0, the default: all)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answer, {candidates}, every page in it")
@@ -246,7 +250,7 @@ func candidatesText(cs []fleet.Candidate, status string) string {
 	if len(cs) == 0 {
 		return "no candidates in " + status + "\n"
 	}
-	rows := [][]string{{"TARGET GROUP", "ACCOUNT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
+	rows := [][]string{{"TARGET GROUP", "CLOUD", "ACCOUNT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
 	for _, c := range cs {
 		hosts := strings.Join(c.Hosts, ",")
 		if hosts == "" {
@@ -259,7 +263,7 @@ func candidatesText(cs []fleet.Candidate, status string) string {
 		case c.Workload != nil:
 			workload = c.Workload.Router + "/" + c.Workload.Name
 		}
-		rows = append(rows, []string{c.Name(), c.Account, c.Region, hosts, figure(c.IdleHours7d, "h"), figure(c.Requests7d, ""), workload, c.StatusReason})
+		rows = append(rows, []string{c.Name(), fleet.CloudName(c.Cloud), c.Account, c.Region, hosts, figure(c.IdleHours7d, "h"), figure(c.Requests7d, ""), workload, c.StatusReason})
 	}
 	return fleet.Table(rows)
 }

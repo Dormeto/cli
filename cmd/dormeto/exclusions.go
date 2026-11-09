@@ -61,9 +61,10 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		asJSON                              bool
 	)
 	cmd := &cobra.Command{
-		Use: "add (--target-group <arn> | --load-balancer <arn> | --account <id>) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude a target group, a load balancer or an account from discovery",
+		Use: "add (--target-group <arn|path> | --load-balancer <arn|path> | --account <id>) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude a target group, a load balancer or an account from discovery",
 		Args: noArgs, SilenceErrors: true,
-		Long: "Exclude one target (an application target group or load balancer by ARN, or a whole account by its 12 digits)\n" +
+		Long: "Exclude one target (an application target group or load balancer by ARN, a Google Cloud backend service or URL map\n" +
+			"by its path, or a whole account by its 12 digits or a project by its ID)\n" +
 			"from discovery: the manager pauses its managed workloads (an operation, followed). --reason is 1 to 246\n" +
 			"characters; --for is a duration up to 366 days (90m, 2h, 3d) and --until an RFC 3339 time or HH:MM today in the\n" +
 			"local time zone, within 366 days; without either the exclusion lasts until `dormeto aws exclusions lift`. It is\n" +
@@ -83,17 +84,21 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			switch {
 			case given != 1:
 				err = usagef("give exactly one of --target-group, --load-balancer and --account")
-			case tg != "" && !fleet.IsTargetGroupARN(tg):
-				err = usagef("--target-group: %q is not the ARN of an application target group", tg)
-			case lb != "" && !fleet.IsLoadBalancerARN(lb):
-				err = usagef("--load-balancer: %q is not the ARN of an application load balancer", lb)
-			case account != "" && !discover.IsAccountID(account):
-				err = usagef("--account: %q is not 12 digits", account)
+			case tg != "" && !fleet.IsTargetGroupARN(tg) && !fleet.IsBackendServicePath(tg):
+				err = usagef("--target-group: %q is neither the ARN of an application target group nor the path of a backend service (projects/<project>/global/backendServices/<name>)", tg)
+			case lb != "" && !fleet.IsLoadBalancerARN(lb) && !fleet.IsURLMapPath(lb):
+				err = usagef("--load-balancer: %q is neither the ARN of an application load balancer nor the path of a URL map (projects/<project>/global/urlMaps/<name>)", lb)
+			case account != "" && !discover.IsAccountID(account) && !projectID.MatchString(account):
+				err = usagef("--account: %q is neither 12 digits nor a project ID", account)
 			}
 			switch {
 			case err != nil:
+			case tg != "" && fleet.IsBackendServicePath(tg):
+				target, text = map[string]any{"kind": "target-group", "path": tg}, "backend service "+tg[strings.LastIndex(tg, "/")+1:]
 			case tg != "":
 				target, text = map[string]any{"kind": "target-group", "arn": tg}, "target group "+fleet.TargetGroupName(tg)
+			case lb != "" && fleet.IsURLMapPath(lb):
+				target, text = map[string]any{"kind": "load-balancer", "path": lb}, "URL map "+lb[strings.LastIndex(lb, "/")+1:]
 			case lb != "":
 				target, text = map[string]any{"kind": "load-balancer", "arn": lb}, "load balancer "+lb[strings.LastIndex(strings.TrimSuffix(lb, "/"), "/")+1:]
 			default:
@@ -126,9 +131,9 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&tg, "target-group", "", "the ARN of an application target group")
-	fl.StringVar(&lb, "load-balancer", "", "the ARN of an application load balancer")
-	fl.StringVar(&account, "account", "", "an AWS account, 12 digits")
+	fl.StringVar(&tg, "target-group", "", "the ARN of an application target group, or the path of a Google Cloud backend service")
+	fl.StringVar(&lb, "load-balancer", "", "the ARN of an application load balancer, or the path of a Google Cloud URL map")
+	fl.StringVar(&account, "account", "", "an AWS account (12 digits) or a Google Cloud project ID")
 	fl.StringVar(&reason, "reason", "", "why, 1 to 246 characters, shown in the manager (required)")
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 366 days (90m, 2h, 3d); default until lifted")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")

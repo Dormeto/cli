@@ -18,8 +18,8 @@ func (r Router) Outdated(available string) bool {
 	return r.Version != "" && available != "" && install.CompareVersions(r.Version, available) < 0
 }
 
-// cloudName is the cloud of a row: "gcp" or "aws" (a manager before Google Cloud's names none, and has only AWS).
-func cloudName(c string) string {
+// CloudName is the cloud of a row: "gcp" or "aws" (a manager before Google Cloud's names none, and has only AWS).
+func CloudName(c string) string {
 	if c == "" {
 		return "aws"
 	}
@@ -80,7 +80,7 @@ func RoutersTable(rs []Router, available string) string {
 				count += " (" + s + ")"
 			}
 		}
-		rows = append(rows, []string{r.Name, cloudName(r.Cloud), orNone(r.Account), r.Region, r.Source, version, orNone(r.Health.Status), count})
+		rows = append(rows, []string{r.Name, CloudName(r.Cloud), orNone(r.Account), r.Region, r.Source, version, orNone(r.Health.Status), count})
 	}
 	return Table(rows)
 }
@@ -120,7 +120,7 @@ func WorkloadsTable(ws []Workload, now time.Time) string {
 		if since == "" {
 			since = w.UpdatedAt
 		}
-		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), cloudName(w.Cloud), w.State, orNone(strings.Join(tags, ",")), Age(since, now)})
+		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), CloudName(w.Cloud), w.State, orNone(strings.Join(tags, ",")), Age(since, now)})
 	}
 	return Table(rows)
 }

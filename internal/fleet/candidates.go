@@ -19,6 +19,7 @@ const candidatePage = 200
 // --json prints every field. Its id is the ARN of its target group (or of its rule), and only ever travels in a body.
 type Candidate struct {
 	ID             string   `json:"id"`
+	Cloud          string   `json:"cloud,omitempty"` // aws or gcp; absent from a manager before Google Cloud's
 	Account        string   `json:"account"`
 	AccountName    string   `json:"accountName,omitempty"`
 	Region         string   `json:"region"`
@@ -68,6 +69,9 @@ func (c Candidate) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(candidateFields(c))
 }
+
+// IsGoogle tells whether the candidate is Google Cloud's.
+func (c Candidate) IsGoogle() bool { return c.Cloud == "gcp" }
 
 // Name is the candidate's target group name, or its id when it has no target group.
 func (c Candidate) Name() string {

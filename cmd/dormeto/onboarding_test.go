@@ -90,8 +90,16 @@ func (a *obAPI) handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"id":%q,"type":%q,"status":"succeeded","target":{"account":"111111111111","region":"eu-west-1"},"steps":[]%s}`, id, a.types[id], extra)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/iam/workloads/"):
 		id := path[strings.LastIndex(path, "/")+1:]
-		if a.noTG[id] {
+		if a.noTG[id] && !strings.HasPrefix(id, "g-") {
 			io.WriteString(w, `{"workloadId":"`+id+`","state":"AWAKE"}`)
+			return
+		}
+		if strings.HasPrefix(id, "g-") { // a Google Cloud workload
+			bs := "projects/dormeto-dev/global/backendServices/" + id
+			if a.noTG[id] {
+				bs = "api"
+			}
+			fmt.Fprintf(w, `{"workloadId":%q,"state":"AWAKE","targetGroupArn":null,"backendService":%q}`, id, bs)
 			return
 		}
 		fmt.Fprintf(w, `{"workloadId":%q,"state":"AWAKE","targetGroupArn":%q}`, id, tgARN("111111111111", "tg-"+id))
@@ -484,5 +492,94 @@ func TestExclusionsListJSONKeepsTheRows(t *testing.T) {
 	r = runOB(t, &obAPI{exclusions: `{"exclusions":[]}`}, nil, "exclusions", "list")
 	if r.exit != 0 || !strings.Contains(r.stdout, "no exclusions") {
 		t.Errorf("empty: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}
+
+const gcpBS = "projects/dormeto-dev/global/backendServices/web"
+
+func gcpCandidate() string {
+	return `{"id":"` + gcpBS + `","cloud":"gcp","account":"dormeto-dev","region":"global","targetGroup":"web","targetGroupArn":null,"status":"pending-onboarding"}`
+}
+
+func TestOnboardGoogleCloudCandidateBody(t *testing.T) {
+	a := &obAPI{pending: []string{gcpCandidate()}}
+	r := runOB(t, a, nil, "workloads", "onboard", "web", "--router", "gcp-dev", "--database", "orders-db", "--fallback-type", "e2-medium", "--fallback-type", "n2-standard-2", "--no-wait")
+	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[{"id":"orders-db","kind":"cloudsql-instance"}],"router":"gcp-dev","settings":{"fallbackInstanceTypes":["e2-medium","n2-standard-2"],"idleMinutes":15,"wakeMode":"any"},"type":"onboard"}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestOnboardChecksFlagsForTheCandidatesCloud(t *testing.T) {
+	for _, c := range []struct {
+		cand string
+		args []string
+		say  string
+	}{
+		{gcpCandidate(), []string{"web", "--fallback-type", "t3a.medium"}, "Compute Engine machine type"},
+		{gcpCandidate(), []string{"web", "--database", "Bad_Name"}, "Cloud SQL instance name"},
+		{gcpCandidate(), []string{"web", "--database", "cluster:aurora"}, "Cloud SQL instance name"},
+		{row("111111111111", tgAPI, "pending-onboarding"), []string{tgAPI, "--fallback-type", "e2-medium"}, "EC2 instance type"},
+		{row("111111111111", tgAPI, "pending-onboarding"), []string{tgAPI, "--router", "prod-eu"}, "--router"},
+	} {
+		a := &obAPI{pending: []string{c.cand}}
+		r := runOB(t, a, nil, append([]string{"workloads", "onboard"}, c.args...)...)
+		if r.exit != 2 || len(a.writes) != 0 || !strings.Contains(r.stderr, c.say) {
+			t.Errorf("%v: exit %d, writes %q, stderr %q", c.args, r.exit, a.writes, r.stderr)
+		}
+	}
+}
+
+func TestOffboardGoogleCloudRouterPostsTheSameBody(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "workloads", "offboard", "gcp-dev/g-1", "--yes", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != `POST /iam/operations {"router":"gcp-dev","type":"offboard","workloadId":"g-1"}` {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestExcludeGoogleCloudWorkloadSendsItsBackendServicePath(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--yes", "--no-wait")
+	want := `POST /iam/exclusions {"reason":"r","target":{"kind":"target-group","path":"projects/dormeto-dev/global/backendServices/g-1"},"workload":{"id":"g-1","router":"gcp-dev"}}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &obAPI{noTG: map[string]bool{"g-2": true}}
+	r = runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-2", "--reason", "r", "--yes", "--no-wait")
+	if r.exit != 1 || len(a.writes) != 0 || !strings.Contains(r.stderr, "the workload has no backend service path to exclude") {
+		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestExclusionsAddTakesEitherCloudsValues(t *testing.T) {
+	const um = "projects/dormeto-dev/regions/europe-west1/urlMaps/shop"
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--target-group", gcpBS}, `{"reason":"r","target":{"kind":"target-group","path":"` + gcpBS + `"}}`},
+		{[]string{"--target-group", "projects/dormeto-dev/regions/europe-west1/backendServices/web"}, `{"reason":"r","target":{"kind":"target-group","path":"projects/dormeto-dev/regions/europe-west1/backendServices/web"}}`},
+		{[]string{"--load-balancer", um}, `{"reason":"r","target":{"kind":"load-balancer","path":"` + um + `"}}`},
+		{[]string{"--load-balancer", "projects/dormeto-dev/global/urlMaps/shop"}, `{"reason":"r","target":{"kind":"load-balancer","path":"projects/dormeto-dev/global/urlMaps/shop"}}`},
+		{[]string{"--account", "dormeto-dev"}, `{"reason":"r","target":{"account":"dormeto-dev","kind":"account"}}`},
+	} {
+		a := &obAPI{}
+		r := runOB(t, a, nil, append([]string{"exclusions", "add", "--reason", "r", "--yes", "--no-wait"}, c.args...)...)
+		if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != "POST /iam/exclusions "+c.want {
+			t.Errorf("%v: exit %d, writes %q, stderr %q", c.args, r.exit, a.writes, r.stderr)
+		}
+	}
+	for _, args := range [][]string{
+		{"--target-group", "projects/dormeto-dev/global/urlMaps/shop"},
+		{"--load-balancer", gcpBS},
+		{"--account", "Dormeto"},
+		{"--target-group", "projects//global/backendServices/x"},
+	} {
+		a := &obAPI{}
+		r := runOB(t, a, nil, append([]string{"exclusions", "add", "--reason", "r", "--yes"}, args...)...)
+		if r.exit != 2 || len(r.api.requests) != 0 {
+			t.Errorf("%v: exit %d, requests %d, stderr %q", args, r.exit, len(r.api.requests), r.stderr)
+		}
 	}
 }

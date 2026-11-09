@@ -32,6 +32,12 @@ const (
 // instanceType is an EC2 instance type as the manager and the dashboard accept it (t3a.medium).
 var instanceType = regexp.MustCompile(`^[a-z][a-z0-9-]*\d[a-z0-9-]*\.[a-z0-9]+$`)
 
+// machineType is a Compute Engine machine type (e2-medium) and cloudSQLName a Cloud SQL instance name.
+var (
+	machineType  = regexp.MustCompile(`^[a-z][a-z0-9]*-[a-z0-9-]+$`)
+	cloudSQLName = regexp.MustCompile(`^[a-z]([-a-z0-9]{0,96}[a-z0-9])?$`)
+)
+
 // notStarted is an error from before an operation's start was sent: the item is reported as not started.
 type notStarted struct{ error }
 
@@ -51,16 +57,44 @@ func opItems(api *fleet.Client, labels []string, start func(ctx context.Context,
 	return items
 }
 
+// checkCandidateFlags refuses (exit 2) a flag value that is not the candidate's cloud's: Cloud SQL instance names and
+// Compute Engine machine types for a Google Cloud candidate, RDS identifiers and EC2 instance types for an AWS one, and
+// --router for a Google Cloud candidate only.
+func checkCandidateFlags(cand fleet.Candidate, router string, databases, fallbacks []string) error {
+	if !cand.IsGoogle() {
+		if router != "" {
+			return usagef("--router: only for a Google Cloud candidate; %s is an AWS one", cand.Name())
+		}
+		for _, t := range fallbacks {
+			if !instanceType.MatchString(t) {
+				return usagef("--fallback-type: %q is not an EC2 instance type such as t3a.medium", t)
+			}
+		}
+		return nil
+	}
+	for _, d := range databases {
+		if !cloudSQLName.MatchString(d) {
+			return usagef("--database: %q is not a Cloud SQL instance name such as orders-db", d)
+		}
+	}
+	for _, t := range fallbacks {
+		if !machineType.MatchString(t) {
+			return usagef("--fallback-type: %q is not a Compute Engine machine type such as e2-medium", t)
+		}
+	}
+	return nil
+}
+
 func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		name, wakeMode string
-		idle           int
-		databases      []string
-		fallbacks      []string
-		setTags        []string
-		hibernate      string
-		wait           waitFlags
-		asJSON         bool
+		name, wakeMode, router string
+		idle                   int
+		databases              []string
+		fallbacks              []string
+		setTags                []string
+		hibernate              string
+		wait                   waitFlags
+		asJSON                 bool
 	)
 	cmd := &cobra.Command{
 		Use: "onboard <candidate>", Short: "Onboard a discovery candidate: Dormeto starts managing its workload", SilenceErrors: true,
@@ -69,9 +103,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"it; then print the workload as <router>/<workload id>. It sends what the dashboard's dialog sends: --name (the\n" +
 			"workload's display name, up to 64 characters; empty, the target group's name), --idle-minutes (5 to 1440, 15 by\n" +
 			"default), --wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an\n" +
-			"RDS instance identifier, or cluster:<identifier>: stopped after the application, started before it),\n" +
-			"--fallback-type (an EC2 instance type such as t3a.medium, at most 5; for the EC2 instances of a workload),\n" +
-			"--set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernate its instances launched\n" +
+			"RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name; stopped\n" +
+			"after the application, started before it),\n" +
+			"--fallback-type (an EC2 instance type such as t3a.medium, or for a Google Cloud candidate a Compute Engine machine\n" +
+			"type such as e2-medium; at most 5; for the instances of a workload),\n" +
+			"--router (a Google Cloud candidate: the manager's router to use, when several serve its region), --set-tag (Dormeto tags k=v; administrators) and --hibernate (true or false: hibernate its instances launched\n" +
 			"with hibernation at a nap; routers 0.32.0 and later; without it the workload inherits the router's or the\n" +
 			"manager's). --no-wait only starts it; Ctrl-C and --timeout stop following, the operation goes on in the\n" +
 			"manager: `dormeto aws operations watch <id>`. Needs an operator.",
@@ -91,11 +127,6 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("--wake-mode: %q is not any or browser", wakeMode)
 			case len(fallbacks) > maxFallbackTypes:
 				err = usagef("--fallback-type: at most %d (%d given)", maxFallbackTypes, len(fallbacks))
-			}
-			for _, t := range fallbacks {
-				if err == nil && !instanceType.MatchString(t) {
-					err = usagef("--fallback-type: %q is not an EC2 instance type such as t3a.medium", t)
-				}
 			}
 			if err == nil {
 				tags, err = parseTagFlag("--set-tag", setTags)
@@ -117,13 +148,18 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				cand := chosen[0]
+				if err := checkCandidateFlags(cand, router, databases, fallbacks); err != nil {
+					return err
+				}
 				settings := map[string]any{"idleMinutes": idle, "wakeMode": wakeMode}
 				if len(fallbacks) > 0 {
 					settings["fallbackInstanceTypes"] = fallbacks
 				}
 				dbs := []map[string]string{}
 				for _, d := range databases {
-					if id, ok := strings.CutPrefix(d, "cluster:"); ok {
+					if cand.IsGoogle() {
+						dbs = append(dbs, map[string]string{"kind": "cloudsql-instance", "id": d})
+					} else if id, ok := strings.CutPrefix(d, "cluster:"); ok {
 						dbs = append(dbs, map[string]string{"kind": "rds-cluster", "id": id})
 					} else {
 						dbs = append(dbs, map[string]string{"kind": "rds-instance", "id": d})
@@ -135,6 +171,9 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				body := map[string]any{"type": "onboard", "candidateId": cand.ID, "settings": settings, "databases": dbs}
 				if name != "" {
 					body["name"] = name
+				}
+				if router != "" {
+					body["router"] = router
 				}
 				if len(tags) > 0 {
 					body["tags"] = tags
@@ -154,6 +193,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser")
 	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier> (repeatable)")
 	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium (repeatable, at most 5; for the EC2 instances of a workload)")
+	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the manager's router to onboard it on (one is chosen when there is only one)")
 	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
 	fl.StringVar(&hibernate, "hibernate", "", "hibernate the EC2 instances at a nap: true or false (default: inherit)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
@@ -298,6 +338,7 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					t := targets[i]
 					var st struct {
 						TargetGroupARN string `json:"targetGroupArn"`
+						BackendService string `json:"backendService"`
 					}
 					if err := api.Get(ctx, t.Path(""), nil, &st); err != nil {
 						if ctx.Err() != nil {
@@ -305,10 +346,17 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						}
 						return fleet.Operation{}, notStarted{fmt.Errorf("read the workload: %w", err)}
 					}
-					if st.TargetGroupARN == "" {
+					target := map[string]any{"kind": "target-group", "arn": st.TargetGroupARN}
+					switch {
+					case st.TargetGroupARN != "":
+					case st.BackendService != "" && fleet.IsBackendServicePath(st.BackendService): // a Google Cloud workload's
+						target = map[string]any{"kind": "target-group", "path": st.BackendService}
+					case st.BackendService != "":
+						return fleet.Operation{}, notStarted{errors.New("the workload has no backend service path to exclude")}
+					default:
 						return fleet.Operation{}, notStarted{errors.New("the workload has no target group to exclude")}
 					}
-					body := exclusionBody(map[string]any{"kind": "target-group", "arn": st.TargetGroupARN}, r, end, set)
+					body := exclusionBody(target, r, end, set)
 					body["workload"] = map[string]string{"router": t.Router, "id": t.ID}
 					return fleet.Exclude(ctx, api, body)
 				}), opConcurrency, wait)

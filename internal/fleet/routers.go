@@ -189,7 +189,7 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	// A Google Cloud router has no Lambda, failure queue, concurrency or wake statistics metrics: AWS's rows are left out.
 	aws := d.Cloud != "gcp"
 	rows := [][2]string{
-		{"router", d.Name}, {"cloud", cloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"source", d.Source},
+		{"router", d.Name}, {"cloud", CloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"source", d.Source},
 		{"version", version}, {"health", orNone(h.Status)}, {"problems", strings.Join(problems, "\n")},
 		{"idle check", schedule}, {"lambda", lambdaText(d)}, {"failure queues", awsOnly(aws, queuesText(d))},
 		{"concurrency", concurrencyText(d)},

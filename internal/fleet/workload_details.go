@@ -115,7 +115,7 @@ func (d WorkloadDetails) Text(router string, loc *time.Location) string {
 	var b strings.Builder
 	b.WriteString(Labelled([][2]string{
 		{"workload", router + "/" + d.WorkloadID}, {"name", d.Name}, {"state", state}, {"failure", failure}, {"url", d.URL},
-		{"cloud", cloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"router version", version}, {"tags", strings.Join(tags, ", ")},
+		{"cloud", CloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"router version", version}, {"tags", strings.Join(tags, ", ")},
 	}))
 	b.WriteString(d.Description.block(loc))
 	section := func(title, text string) {

@@ -17,6 +17,7 @@ import (
 type ExclusionTarget struct {
 	Kind    string `json:"kind"` // target-group, load-balancer or account
 	ARN     string `json:"arn,omitempty"`
+	Path    string `json:"path,omitempty"` // a Google Cloud backend service's or URL map's path
 	Account string `json:"account"`
 	Region  string `json:"region,omitempty"`
 	Name    string `json:"name"`
@@ -118,14 +119,21 @@ func ExclusionsText(es []Exclusion, loc *time.Location) string {
 }
 
 var (
-	targetGroupARN  = regexp.MustCompile(`^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:targetgroup/[A-Za-z0-9-]{1,32}/[0-9a-f]{16}$`)
-	loadBalancerARN = regexp.MustCompile(`^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:loadbalancer/app/[A-Za-z0-9-]{1,32}/[0-9a-f]{16}$`)
+	targetGroupARN = regexp.MustCompile(`^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:targetgroup/[A-Za-z0-9-]{1,32}/[0-9a-f]{16}$`)
+	// A Google Cloud backend service's or URL map's path, global or regional.
+	backendServicePath = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/(global|regions/[a-z0-9-]+)/backendServices/[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	urlMapPath         = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/(global|regions/[a-z0-9-]+)/urlMaps/[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	loadBalancerARN    = regexp.MustCompile(`^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:loadbalancer/app/[A-Za-z0-9-]{1,32}/[0-9a-f]{16}$`)
 )
 
 // IsTargetGroupARN and IsLoadBalancerARN tell whether s is the ARN of an application target group or load balancer, as
 // the manager accepts one to exclude.
 func IsTargetGroupARN(s string) bool  { return targetGroupARN.MatchString(s) }
 func IsLoadBalancerARN(s string) bool { return loadBalancerARN.MatchString(s) }
+
+// IsBackendServicePath and IsURLMapPath tell whether s is the path of a Google Cloud backend service or URL map.
+func IsBackendServicePath(s string) bool { return backendServicePath.MatchString(s) }
+func IsURLMapPath(s string) bool         { return urlMapPath.MatchString(s) }
 
 // Exclude starts an exclusion: POST /exclusions with body ({target, reason, expiresAt?, workload?}), the operation that
 // pauses its workloads.

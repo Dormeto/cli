@@ -350,7 +350,7 @@ func (r AccessReport) Text(loc *time.Location) string {
 	// The routers list's order: NAME, then CLOUD and ACCOUNT OR PROJECT.
 	table := [][]string{{"NAME", "CLOUD", "ACCOUNT OR PROJECT", "DISCOVERY ROLE", "COMMAND ROLE", "FORWARDER"}}
 	for _, a := range r.Accounts {
-		table = append(table, []string{orNone(a.Name), cloudName(a.Cloud), a.Account, a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
+		table = append(table, []string{orNone(a.Name), CloudName(a.Cloud), a.Account, a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
 	}
 	return text + "\n" + Table(table)
 }

@@ -533,3 +533,26 @@ func TestDiscoveryAccessPrintsACloudColumnForBothClouds(t *testing.T) {
 		t.Errorf("json %q", r.stdout)
 	}
 }
+
+func TestDiscoveryCandidatesPrintsACloudColumnAndTakesAProject(t *testing.T) {
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {
+		row("111111111111", "api", "pending-onboarding"),
+		`{"id":"projects/dormeto-dev/global/backendServices/web","cloud":"gcp","account":"dormeto-dev","region":"global","targetGroup":"web","targetGroupArn":null,"status":"pending-onboarding"}`,
+	}}}
+	r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates")
+	lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
+	if r.exit != 0 || len(lines) != 3 {
+		t.Fatalf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	col := strings.Index(lines[0], "CLOUD")
+	if col < 0 || !strings.HasPrefix(lines[1][col:], "aws ") || !strings.HasPrefix(lines[2][col:], "gcp ") {
+		t.Errorf("table %q", lines)
+	}
+	r = runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates", "--account", "dormeto-dev", "--json")
+	if r.exit != 0 || !strings.Contains(r.stdout, `"cloud": "gcp"`) || !strings.Contains(a.requests[len(a.requests)-1], "account=dormeto-dev") {
+		t.Errorf("exit %d, stdout %q, requests %q", r.exit, r.stdout, a.requests)
+	}
+	if r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates", "--account", "123"); r.exit != 2 {
+		t.Errorf("a bad account exits %d", r.exit)
+	}
+}
