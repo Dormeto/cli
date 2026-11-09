@@ -208,3 +208,42 @@ func TestTheBuildersCanBeCalledTwice(t *testing.T) {
 		t.Errorf("two roots differ:\n%s\n%s", a.String(), b.String())
 	}
 }
+
+// The manager's writing commands all take --yes (a no-op where they ask nothing), so a script can pass it to each.
+func TestEveryWritingAwsCommandTakesYes(t *testing.T) {
+	root := newRoot(build{})
+	for _, path := range [][]string{
+		{"types", "set"}, {"types", "delete"}, {"users", "groups"}, {"users", "invite"}, {"users", "enable"}, {"users", "resend"},
+		{"users", "reset-mfa"}, {"users", "role"}, {"users", "disable"}, {"groups", "create"}, {"groups", "update"}, {"groups", "delete"},
+		{"discovery", "dismiss"}, {"discovery", "restore"}, {"discovery", "run"}, {"discovery", "config", "set"}, {"exclusions", "add"},
+		{"exclusions", "lift"}, {"manager", "check"}, {"manager", "update"}, {"routers", "description"}, {"routers", "install"},
+		{"routers", "waiting-page", "set"}, {"routers", "waiting-page", "clear"}, {"savings", "discounts"}, {"settings", "set"},
+		{"settings", "waiting-page", "set"}, {"settings", "waiting-page", "clear"}, {"workloads", "description"},
+		{"workloads", "idle-window"}, {"workloads", "onboard"}, {"workloads", "waiting-page", "set"}, {"workloads", "waiting-page", "clear"},
+	} {
+		c, _, err := root.Find(append([]string{"aws"}, path...))
+		if err != nil || c.Flags().Lookup("yes") == nil {
+			t.Errorf("aws %s: no --yes (%v)", strings.Join(path, " "), err)
+		}
+	}
+}
+
+func TestAwsTypesSetAcceptsYes(t *testing.T) {
+	_, errs, _ := executed(t, build{}, "aws", "types", "set", "--yes")
+	if strings.Contains(errs, "unknown flag") {
+		t.Fatal(errs)
+	}
+}
+
+func TestAwsWorkloadsSettingsHelpSaysWhatHibernateDoesOnEachCloud(t *testing.T) {
+	out, _, code := executed(t, build{}, "aws", "workloads", "settings", "--help")
+	out = strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"AWS: EC2 instances launched with hibernation are hibernated, not stopped", "Google Cloud: VMs are suspended, not stopped"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("exit %d, no %q:\n%s", code, want, out)
+		}
+	}
+	if strings.Contains(out, "Set whether the EC2 instances") {
+		t.Fatalf("still says EC2 only:\n%s", out)
+	}
+}

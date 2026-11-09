@@ -148,6 +148,7 @@ func newTypes(deps fleetDeps) *cobra.Command {
 	cmd := fleetCommand("types", "Show and set the organization's workload types")
 	f.bind(cmd)
 	cmd.AddCommand(newTypesList(f, deps), newTypesShow(f, deps), newTypesSet(f, deps), newTypesDelete(f, deps))
+	acceptYes(cmd)
 	return cmd
 }
 

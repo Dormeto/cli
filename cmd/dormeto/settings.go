@@ -285,8 +285,9 @@ func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings (<router>/<workload>... | --tag k=v...) [--hibernate true|false|inherit] [--type <name>|inherit] [--idle-minutes <minutes>|inherit] ...",
 		Short: "Set the settings of workloads",
-		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the workloads nap: true\n" +
-			"or false for the workload, inherit to follow its router's setting, then the manager's. A workload with fallback\n" +
+		Long: "Set whether the workloads hibernate when they nap, as each cloud does it. AWS: EC2 instances launched with\n" +
+			"hibernation are hibernated, not stopped. Google Cloud: VMs are suspended, not stopped. Give true or false for\n" +
+			"the workload, inherit to follow its router's setting, then the manager's. On AWS, a workload with fallback\n" +
 			"instance types does not hibernate unless it is set true on the workload itself (a hibernated instance cannot\n" +
 			"change type). Its own workload settings (--idle-minutes, --wait-seconds, --drain-seconds, --wake-timeout-seconds,\n" +
 			"--max-holders, --failed-retry-seconds, --wake-mode and the rules files) and --type (a custom or built-in type),\n" +
