@@ -441,7 +441,7 @@ func TestGcpRoutersResumeReadsTheRequest(t *testing.T) {
 
 func TestGcpWorkloadsOnboardReadsTheNameAndTheTags(t *testing.T) {
 	onboard := []string{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be"}
-	calls, errs, exit := gcpRan(t, 0, append(slices.Clone(onboard), "--name", "  The shop ", "--tag", "team=web", "--tag", "env=prod")...)
+	calls, errs, exit := gcpRan(t, 0, append(slices.Clone(onboard), "--name", "  The shop ", "--set-tag", "team=web", "--set-tag", "env=prod")...)
 	if exit != 0 || errs != "" || len(calls) != 1 {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
@@ -457,12 +457,12 @@ func TestGcpWorkloadsOnboardReadsTheNameAndTheTags(t *testing.T) {
 func TestGcpWorkloadsOnboardRefusesABadNameOrTagBeforeAnyCall(t *testing.T) {
 	onboard := []string{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be"}
 	for _, extra := range [][]string{
-		{"--tag", "team"},
-		{"--tag", "=web"},
-		{"--tag", "team=web", "--tag", "team=api"},
-		{"--tag", "dormeto:x=1"},
-		{"--tag", "a=b#c"},
-		{"--tag", "k=" + strings.Repeat("v", 257)},
+		{"--set-tag", "team"},
+		{"--set-tag", "=web"},
+		{"--set-tag", "team=web", "--set-tag", "team=api"},
+		{"--set-tag", "dormeto:x=1"},
+		{"--set-tag", "a=b#c"},
+		{"--set-tag", "k=" + strings.Repeat("v", 257)},
 		{"--name", strings.Repeat("n", 65)},
 		{"--name", "a\nb"},
 	} {
@@ -474,9 +474,27 @@ func TestGcpWorkloadsOnboardRefusesABadNameOrTagBeforeAnyCall(t *testing.T) {
 	// More than 50 tags.
 	extra := []string{}
 	for i := range 51 {
-		extra = append(extra, "--tag", fmt.Sprintf("k%d=v", i))
+		extra = append(extra, "--set-tag", fmt.Sprintf("k%d=v", i))
 	}
 	if calls, _, exit := gcpRan(t, 0, append(slices.Clone(onboard), extra...)...); exit != 2 || len(calls) != 0 {
 		t.Errorf("51 tags: exit %d %v", exit, calls)
+	}
+}
+
+func TestGcpWorkloadsOnboardTagIsNotAFlag(t *testing.T) {
+	calls, _, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be", "--tag", "team=a")
+	if exit != 2 || len(calls) != 0 {
+		t.Fatalf("%d %v", exit, calls)
+	}
+}
+
+func TestGcpRoutersPauseAndResumeTakeDryRunAndYes(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "pause", "--project", "p", "--region", "europe-west1", "--reason", "x", "--dry-run", "--yes")
+	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.DryRun || !calls[0].r.Yes {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+	calls, errs, exit = gcpRan(t, 0, "gcp", "routers", "resume", "--project", "p", "--region", "europe-west1", "--dry-run", "--yes")
+	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.DryRun || !calls[0].r.Yes {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
 }

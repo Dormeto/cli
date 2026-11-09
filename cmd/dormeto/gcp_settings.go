@@ -190,6 +190,7 @@ func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
 			return run(ctx, d, r)
 		})
 	gcpRouterFlags(cmd, &f)
+	gcpRouterDryRunFlags(cmd, &f)
 	fl := cmd.Flags()
 	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager (required)")
 	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d)")
@@ -222,5 +223,12 @@ func newGcpRoutersResume(run gcpRun, version string) *cobra.Command {
 		"End the pause of the router: its workloads follow their schedule and idle rules again. A router that was not paused says\n"+
 			"\"not paused\". Routers 0.40.0 and later.", &f, []string{"project", "region"}, version, run)
 	gcpRouterFlags(cmd, &f)
+	gcpRouterDryRunFlags(cmd, &f)
 	return cmd
+}
+
+// gcpRouterDryRunFlags are AWS's --dry-run and --yes of a router's pause and resume: a single router asks nothing.
+func gcpRouterDryRunFlags(cmd *cobra.Command, f *gcpFlags) {
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation (a single router asks nothing)")
 }

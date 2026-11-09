@@ -3481,7 +3481,7 @@ func TestRouterPauseAndResumePostToTheController(t *testing.T) {
 	if body["reason"] != "release freeze" || body["by"] != "me@example.com" || len(body) != 2 {
 		t.Fatalf("not asked, keepAsleep and until are not sent: %v", body)
 	}
-	contains(t, out, "dmtr-europe-west1", "paused", "release freeze", "woke shop", "dormeto gcp routers resume --project dormeto-dev --region europe-west1")
+	contains(t, out, "dmtr-europe-west1: paused, woke shop\n")
 	code, out = g.call(t, RouterResume, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -3511,7 +3511,7 @@ func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
 	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, "keeping asleep", "until 2026-12-01T07:00:00Z")
+	contains(t, out, "paused until 2026-12-01 07:00 UTC, keeping asleep\n")
 	if strings.Contains(out, "woke") {
 		t.Fatalf("%s", out)
 	}
@@ -3555,4 +3555,52 @@ func TestRouterPauseAndResumeSayAnOlderRouterByItsVersion(t *testing.T) {
 			t.Errorf("%s: exit %d, want %q in:\n%s", name, code, want, out)
 		}
 	}
+}
+
+func TestRouterPauseAndResumeDryRunSendNothing(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.Reason, r.KeepAsleep, r.Until, r.DryRun, r.Yes = "freeze", true, "2026-12-01T07:00:00Z", true, true
+	mark := len(g.s.Calls())
+	code, out := g.call(t, RouterPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "dry run", "dmtr-europe-west1", "nothing sent", `"reason":"freeze"`, `"keepAsleep":true`, `"until":"2026-12-01T07:00:00Z"`)
+	code, out = g.call(t, RouterResume, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "dry run", "dmtr-europe-west1", "nothing sent")
+	if got := g.controllerCalls(mark); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestRouterPauseSaysAWSLines(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"], g.s.Workloads["blog"] = "ASLEEP", "ASLEEP"
+	r := workloadsEurope
+	r.Reason, r.Until = "freeze", "2026-12-01T07:00:00Z"
+	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).Format("2006-01-02 15:04 MST") // the rig's clock is UTC
+	_, out := g.call(t, RouterPause, r)
+	want := "dmtr-europe-west1: paused until " + local + ", woke blog, shop\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("want %q in:\n%s", want, out)
+	}
+	g.call(t, RouterResume, r)
+	r.KeepAsleep, r.Until = true, ""
+	_, out = g.call(t, RouterPause, r)
+	if want := "dmtr-europe-west1: paused, keeping asleep\n"; !strings.Contains(out, want) {
+		t.Fatalf("want %q in:\n%s", want, out)
+	}
+	r.Until, r.KeepAsleep = "2026-12-01T07:00:00Z", true
+	_, out = g.call(t, RouterPause, r)
+	if want := "dmtr-europe-west1: paused until " + local + ", keeping asleep\n"; !strings.Contains(out, want) {
+		t.Fatalf("want %q in:\n%s", want, out)
+	}
+	_, out = g.call(t, RouterResume, r)
+	contains(t, out, "dmtr-europe-west1: resumed\n")
+	_, out = g.call(t, RouterResume, r)
+	contains(t, out, "dmtr-europe-west1: not paused\n")
 }

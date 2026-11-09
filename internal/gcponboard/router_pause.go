@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // routerPauseWords is what a router below 0.40.0 lacks, in the words of its refusal.
@@ -29,12 +30,15 @@ func RouterResume(ctx context.Context, d Deps, r Request) int {
 }
 
 func (x *run) pauseRouter() error {
-	in, ends, err := x.pauseIn()
+	in, _, err := x.pauseIn()
 	if err != nil {
 		return err
 	}
 	if err := x.require("workloads"); err != nil {
 		return err
+	}
+	if x.r.DryRun {
+		return x.routerDryRun("pause", in)
 	}
 	if in["by"], err = x.d.Google.Tokens.Account(x.ctx); err != nil {
 		return err
@@ -53,20 +57,29 @@ func (x *run) pauseRouter() error {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("the controller's answer is not a pause: %w", err)
 	}
-	x.say("Router %s is paused (%s): none of its workloads is napped automatically %s.", x.n.router, in["reason"], ends)
-	switch {
-	case x.r.KeepAsleep:
-		x.say("The workloads asleep stay as they are, keeping asleep: a visitor still wakes one.")
-	case len(a.Woken) > 0:
-		x.say("Asleep, now woke %s.", strings.Join(a.Woken, ", "))
+	// AWS's line: <router>: paused[ until <local time>][, keeping asleep][, woke <workloads>].
+	line := x.n.router + ": paused"
+	if until, ok := in["until"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, until); err == nil {
+			line += " until " + t.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
+		}
 	}
-	x.say("End it with: %s", x.routersCommand("resume"))
+	if x.r.KeepAsleep {
+		line += ", keeping asleep"
+	}
+	if len(a.Woken) > 0 {
+		line += ", woke " + strings.Join(a.Woken, ", ")
+	}
+	x.say("%s", line)
 	return nil
 }
 
 func (x *run) resumeRouter() error {
 	if err := x.require("workloads"); err != nil {
 		return err
+	}
+	if x.r.DryRun {
+		return x.routerDryRun("resume", map[string]any{})
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
 	if err != nil {
@@ -87,18 +100,18 @@ func (x *run) resumeRouter() error {
 		return fmt.Errorf("the controller's answer is not a resume: %w", err)
 	}
 	if a.Resumed {
-		x.say("Router %s is resumed: its workloads follow their schedule and idle rules again.", x.n.router)
+		x.say("%s: resumed", x.n.router)
 	} else {
-		x.say("Router %s is not paused.", x.n.router)
+		x.say("%s: not paused", x.n.router)
 	}
 	return nil
 }
 
-// routersCommand is a `dormeto gcp routers` command on this router.
-func (x *run) routersCommand(verb string) string {
-	c := fmt.Sprintf("dormeto gcp routers %s --project %s --region %s", verb, x.n.project, x.n.region)
-	if x.r.Configuration != "" {
-		c += " --gcloud-configuration " + x.r.Configuration
-	}
-	return c
+// routerDryRun says what the pause or resume would send, to which router, and stops: no call. Under --json, stdout is
+// {"dryRun":true,"targets":[router]}, as AWS's.
+func (x *run) routerDryRun(verb string, in map[string]any) error {
+	body, _ := json.Marshal(in)
+	out := x.textOut()
+	fmt.Fprintf(out, "dry run: would %s router, nothing sent\n  %s: POST /v1/%s %s\n", verb, x.n.router, verb, body)
+	return x.printStop("dryRun", true, []string{x.n.router})
 }
