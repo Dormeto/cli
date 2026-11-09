@@ -325,18 +325,37 @@ func (x *link) readManager() error {
 
 // recordNames refuses a record whose pool, provider or accounts are not this environment's: acting under the names of
 // another --env would find nothing, and a disconnect would then clear the record of the real connection. With them equal,
-// every name a run acts on is the record's.
+// every name a run acts on is the record's. The refusal names every field that differs, and those only.
 func (x *link) recordNames() error {
 	if x.rec == nil {
 		return nil
 	}
 	pool, provider, discovery, command := x.poolID(), x.providerID(), x.email("discovery"), x.email("command")
 	r := x.rec
-	if r.Pool == pool && r.Provider == provider && r.ServiceAccounts == (fleet.GoogleServiceAccounts{Discovery: discovery, Command: command}) {
+	var has, want []string
+	if r.Pool != pool {
+		has, want = append(has, "pool "+r.Pool), append(want, pool)
+	}
+	if r.Provider != provider {
+		has, want = append(has, "provider "+r.Provider), append(want, provider)
+	}
+	if r.ServiceAccounts != (fleet.GoogleServiceAccounts{Discovery: discovery, Command: command}) {
+		has = append(has, fmt.Sprintf("the accounts %s and %s", r.ServiceAccounts.Discovery, r.ServiceAccounts.Command))
+		want = append(want, discovery, command)
+	}
+	if len(has) == 0 {
 		return nil
 	}
-	return &stop{2, fmt.Sprintf("--env: the manager's connection names pool %s and the accounts %s and %s, not those of environment %s (%s, %s and %s)\nNothing was changed.",
-		r.Pool, r.ServiceAccounts.Discovery, r.ServiceAccounts.Command, x.m.Env, pool, discovery, command)}
+	return &stop{2, fmt.Sprintf("--env: the manager's connection names %s, not those of environment %s (%s)\nNothing was changed.",
+		andList(has), x.m.Env, andList(want))}
+}
+
+// andList is "a", "a and b" or "a, b and c".
+func andList(items []string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }
 
 // commandLine is a dormeto gcp command for this manager, as the runs tell to run it: the manager found as this run found it.

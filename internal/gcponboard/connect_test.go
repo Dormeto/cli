@@ -1230,3 +1230,25 @@ func TestConnectResumedAfterAStoppedFirstRunPlansOnlyWhatIsLeft(t *testing.T) {
 		t.Fatalf("provider %+v record %+v", s.Providers, m.rec)
 	}
 }
+
+// A record made when the provider was called aws: the refusal names the provider that differs, not the pool and the
+// accounts that match.
+func TestARecordOfAnOlderProviderNameIsRefusedNamingTheProvider(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	m.rec.Provider = "aws"
+	before := len(s.Mutations())
+	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){runDisconnect, runConnect} {
+		code, out := run(t, s, connectRequest(m))
+		if code != 2 || !strings.Contains(out, "--env: the manager's connection names provider aws, not those of environment dev (aws-121014831971)\nNothing was changed.\n") ||
+			strings.Contains(out, "pool") || strings.Contains(out, "accounts") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+	}
+	if len(s.Mutations()) != before || m.deletes != 0 || m.rec == nil {
+		t.Fatalf("changes %d deletes %d", len(s.Mutations())-before, m.deletes)
+	}
+}
