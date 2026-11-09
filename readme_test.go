@@ -2,10 +2,12 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -384,7 +386,7 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		"at most 20 rules per list and level",
 		"the first match decides",
 		"| the page's probe | the client's address | the browser's request | the visitor's path, which the page sends in `x-dormeto-path` |",
-		"| the global load balancer's error fetch | the client's address | what the fetch carries: `Host`, `User-Agent`, `Referer` | none: a path condition never matches |",
+		"| the global load balancer's error fetch | the client's address | the headers the fetch carries, `accept-language`, `cookie`, `referer` and `user-agent` among them | none: a path condition never matches |",
 		"| an explicit `POST /_dormeto/wake` | the client's address | the request's own | `/_dormeto/wake` |",
 		"A visitor on a `.php` URL or on a path a no-wake rule keeps gets a page whose probe never wakes the workload",
 		// the page
@@ -424,7 +426,7 @@ func TestReadmeGoogleCloudSettingsFlagsWakesAndSources(t *testing.T) {
 	for _, want := range []string{
 		"`--join-minutes` is the router command's alone; `--dry-run` and `--yes` are on both",
 		"median of the workload's last 10 wakes",
-		"Behind a regional, classic or internal load balancer, a value of the swap's wait + 60 s or less (160 s regional or internal, 310 s classic)",
+		"Behind a regional, classic or internal load balancer, a value of the swap's wait + 60 s or less (160 s regional, 310 s classic, 90 s internal, 210 s cross-region internal)",
 		"The `databases` type's built-in is AWS's 1800 s, brought to Google Cloud's cap of 1700 s and shown `fixed`",
 		"share 5,000 queries a second (Google's documentation)",
 	} {
@@ -435,6 +437,186 @@ func TestReadmeGoogleCloudSettingsFlagsWakesAndSources(t *testing.T) {
 	for _, gone := range []string{"are the router's command's", "the router's last 10 wakes", "The `databases` type's built-in wake timeout is 1700 s"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("the Google Cloud section still says %q", gone)
+		}
+	}
+}
+
+// routerSource is a file of the router's repository, a sibling checkout as the parity tests read it; the test is skipped without it.
+func routerSource(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "router", filepath.FromSlash(path)))
+	if err != nil {
+		t.Skipf("the router repository is absent: %v", err)
+	}
+	return string(b)
+}
+
+// routerNumbers reads `name: 123_000` or `'name': 123` pairs from the router's JS object literal `const <name> = { ... }`.
+func routerNumbers(t *testing.T, source, name string) map[string]int {
+	t.Helper()
+	_, body, ok := strings.Cut(source, "const "+name+" = {")
+	if !ok {
+		t.Fatalf("the router has no %s", name)
+	}
+	body, _, _ = strings.Cut(body, "}")
+	out := map[string]int{}
+	for _, m := range regexp.MustCompile(`'?([A-Za-z-]+)'?: (\d[\d_]*)`).FindAllStringSubmatch(body, -1) {
+		n, _ := strconv.Atoi(strings.ReplaceAll(m[2], "_", ""))
+		out[m[1]] = n
+	}
+	return out
+}
+
+// routerConst reads `const <name> = <number>;` from the router's source.
+func routerConst(t *testing.T, source, name string) int {
+	t.Helper()
+	m := regexp.MustCompile(`const ` + name + ` = (\d+);`).FindStringSubmatch(source)
+	if m == nil {
+		t.Fatalf("the router has no %s", name)
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
+// G5's numbers, read from the router's code (switch.mjs's swap waits, levels.mjs's floor and cap, the shared ranges and built-ins,
+// onboarding.mjs's series): a change there fails here instead of leaving the README stale.
+func TestReadmeGoogleCloudNumbersAreTheRoutersCode(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	waits := routerNumbers(t, routerSource(t, "gcp/src/switch.mjs"), "SWAP_WAIT_MS")
+	levels := routerSource(t, "gcp/src/levels.mjs")
+	room, max := routerConst(t, levels, "SWAP_WAKE_ROOM_SECONDS"), routerConst(t, levels, "WAKE_TIMEOUT_MAX")
+	s := func(kind string) int { return waits[kind] / 1000 }
+	floor := func(kind string) int { return s(kind) + room }
+	shared := routerSource(t, "lambda/src/lib/settings-levels.mjs")
+	builtIn := routerNumbers(t, shared, "BUILT_IN")
+	_, ranges, _ := strings.Cut(shared, "const SETTING_RANGES = {")
+	rangeOf := func(key string) string {
+		m := regexp.MustCompile(key + `: \[(\d+), (\d+)\]`).FindStringSubmatch(ranges)
+		if m == nil {
+			t.Fatalf("no range of %s", key)
+		}
+		return m[1] + " to " + m[2]
+	}
+	_, series, _ := strings.Cut(routerSource(t, "gcp/src/onboarding.mjs"), "const CHANGEABLE_SERIES = new Set([")
+	series, _, _ = strings.Cut(series, "])")
+	var upper []string
+	for _, name := range strings.Split(series, ", ") {
+		upper = append(upper, strings.ToUpper(strings.Trim(name, "'")))
+	}
+	for _, want := range []string{
+		fmt.Sprintf("a value of the swap's wait + %d s or less (%d s regional, %d s classic, %d s internal, %d s cross-region internal) is refused",
+			room, floor("regional"), floor("classic"), floor("internal"), floor("cross-region-internal")),
+		fmt.Sprintf("more than %d s on a regional load balancer, more than %d s on a classic one, more than %d s on an internal one, more than %d s on a cross-region internal one",
+			floor("regional"), floor("classic"), floor("internal"), floor("cross-region-internal")),
+		fmt.Sprintf("The swap's wait is %d s on an internal load balancer and %d s on a cross-region one (measured on 2026-11-08), so a wake timeout of %d s or less, or %d s or less, is refused",
+			s("internal"), s("cross-region-internal"), floor("internal"), floor("cross-region-internal")),
+		fmt.Sprintf("| idle window | `--idle-minutes` | %s | %d |", rangeOf("idleMinutes"), builtIn["idleMinutes"]),
+		fmt.Sprintf("| wake timeout | `--wake-timeout-seconds` | 60 to %d | %d |", max, builtIn["wakeTimeoutSeconds"]),
+		fmt.Sprintf("| retry after a failed wake | `--failed-retry-seconds` | %s | %d |", rangeOf("failedRetrySeconds"), builtIn["failedRetrySeconds"]),
+		fmt.Sprintf("between first and second generation series (%s)", strings.Join(upper, ", ")),
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+	if !strings.HasPrefix(rangeOf("wakeTimeoutSeconds"), "60 to ") {
+		t.Errorf("the shared wake timeout's range starts elsewhere: %s", rangeOf("wakeTimeoutSeconds"))
+	}
+}
+
+// What the measures settled and the fix waves changed (G5's final reviews): the README says it as the router and the CLI now do.
+func TestReadmeGoogleCloudSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
+	text := strings.Join(strings.Fields(section(t, readme(t), "Google Cloud")), " ")
+	for _, want := range []string{
+		// the internal kinds in the section's introduction
+		"of a global, regional or classic external Application Load Balancer, or of an internal one",
+		// gcp status and the custom pages switch
+		"the record's features, IP lists, custom pages switch (`custom pages: on` or `off`) and Kubernetes access",
+		"such as `DMT_IP_LISTS` or `DMT_CUSTOM_PAGES` on a service after an interrupted run",
+		// uninstall --force and offboard name the VMs on a fallback type
+		"`--force` offboards each first, tag bindings included, and names each VM it leaves on a fallback machine type",
+		"as soon as the router answers the offboarding, before the tag bindings go (on stderr under `--json`), and `--json` carries the router's `fallbacks`",
+		// the onboarding's flags
+		"the machine types a VM of an unmanaged instance group or of a zonal network endpoint group may run on",
+		"An empty `--wake-mode` is refused (exit 2), as an empty `--load-balancer` or `--gke-cluster` is",
+		// the rules file, as AWS's CLI: the router checks it
+		"A rules file is a JSON list (`-` for the standard input), which the CLI checks before any call (exit 2). The router checks each rule, with AWS's words: a workload whose rules it refuses gets nothing written, its problems are printed, the others go on, and the exit is 1",
+		// --json with --dry-run and a declined question
+		"Under `--json`, a dry run prints `{\"dryRun\":true,\"targets\":[…]}` and a declined question `{\"confirmed\":false,\"targets\":[…]}` on stdout, and the words on stderr, as on AWS",
+		// the hibernation's levels
+		"| hibernation | `--hibernate` | `true` or `false` | off with fallback machine types, else the router's, else on |",
+		// what the policy's fetch carries (M1)
+		"| the global load balancer's error fetch | the client's address | the headers the fetch carries, `accept-language`, `cookie`, `referer` and `user-agent` among them | none: a path condition never matches |",
+		"The error fetch carries the visitor's query string and address, and these headers (measured on 2026-11-08; `referer` in an earlier measure): `accept`, `accept-language`, `cookie`, `forwarded`, `host`, `referer`, `traceparent`, `user-agent`, `via`, `x-cloud-trace-context`, `x-dormeto-workload`, `x-forwarded-for` and `x-forwarded-proto`",
+		"whether Google's error fetch passes a visitor's header of its own was not measured",
+		// the idle check's no-wake rules, the router level's join, two VMs of one name
+		"not an IP list's addresses, not what a no-wake rule of any level matches",
+		"the schedule's own `joinMinutes`, else the router's (`gcp routers settings --join-minutes`), else 15",
+		"`backend service <service> has two VMs named <name> (zones <zone> and <zone>): Dormeto records a workload's VMs by name; rename one`",
+		// who tells the internal kinds; GKE's mci-
+		"The router tells them from Google by the rules' scheme",
+		"or `mci-` and a six-character hash",
+		// what was measured
+		"Measured on Google in `dormeto-dev` on 2026-11-08 and 2026-11-09",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the Google Cloud section lacks %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"160 s regional or internal", "more than 160 s on a regional or internal load balancer",
+		"until it is measured on these kinds",
+		"tested against the code only: their measures and their acceptance on Google have not run",
+		"a file the router would refuse is refused before any call (exit 2) with AWS's words",
+		"what the fetch carries: `Host`, `User-Agent`, `Referer`",
+		"The CLI tells them from Google",
+		"the router's, else on (off with fallback machine types)",
+		"`--json` carries the router's `instanceTypes`",
+		"(N1, N2, N2D, E2, C2, C2D, M1, M2 and T2D)",
+	} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the Google Cloud section still says %q", gone)
+		}
+	}
+}
+
+// The CHANGELOG's Unreleased section says what the measures and the fix waves changed, and none of what they made false.
+func TestChangelogUnreleasedSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
+	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
+	text := strings.Join(strings.Fields(unreleased), " ")
+	for _, want := range []string{
+		"more than 160 s regional, more than 310 s classic, more than 90 s internal, more than 210 s cross-region internal",
+		"for the VMs of unmanaged instance groups and zonal network endpoint groups",
+		"With `--request-logs`, the onboarding turns on the logs of the backend service in the map's scope: global, or regional in the router's region",
+		"`--json` carries the router's `fallbacks`",
+		"`dormeto gcp uninstall --force` names them too",
+		"`gcp status` prints `custom pages: on` or `off` from the record, and exits 1 when a service's `DMT_CUSTOM_PAGES` differs from it",
+		"An empty `--wake-mode` is refused (exit 2)",
+		"`{\"dryRun\":true,\"targets\":[…]}`",
+		"not what a no-wake rule of any level matches",
+		"a router level's `joinMinutes` joins a workload's windows",
+		"has two VMs named <name> (zones <zone> and <zone>)",
+		"or `mci-` and a six-character hash",
+		"The router checks a rules file's rules, with AWS's words",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"more than 160 s regional, more than 310 s classic, shown",
+		"the backend service of the map's own place",
+		"accepted up to 3600",
+		"`--json` carries `instanceTypes`",
+		"`gkemcg1-` or `mci-`,",
+	} {
+		if strings.Contains(text, gone) {
+			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
 		}
 	}
 }
