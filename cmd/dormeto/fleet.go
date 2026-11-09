@@ -192,7 +192,7 @@ type routerFilters struct {
 
 func (r *routerFilters) bind(cmd *cobra.Command) {
 	f := cmd.Flags()
-	f.StringSliceVar(&r.accounts, "account", nil, "only the routers of these AWS accounts (repeatable or comma-separated)")
+	f.StringSliceVar(&r.accounts, "account", nil, "only the routers of these AWS accounts or Google Cloud projects (repeatable or comma-separated)")
 	f.StringSliceVar(&r.regions, "router-region", nil, "only the routers in these regions (--region is the manager's)")
 	f.StringVar(&r.name, "name", "", "only the routers whose name matches this glob (*, ?, […])")
 	f.StringArrayVar(&r.tags, "tag", nil, "only the routers that serve a workload with this Dormeto tag, key=value (repeatable: all must match)")
@@ -275,9 +275,9 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "list", Short: "List the routers, their versions, health and workloads", Args: noArgs, SilenceErrors: true,
-		Long: "List the manager's routers: name, account, region, source, version (with the version available when it is\n" +
-			"higher), health and workloads. --tag keeps the routers that serve a workload with those Dormeto tags. A router\n" +
-			"that does not answer is listed, its error on stderr.",
+		Long: "List the manager's routers: name, cloud (aws or gcp), account or project, region, source, version (with the version\n" +
+			"available when it is higher), health and workloads. --tag keeps the routers that serve a workload with those Dormeto\n" +
+			"tags. A router that does not answer is listed, its error on stderr.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			sel, err := filters.selection(nil, false, false)
 			if err != nil {

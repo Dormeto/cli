@@ -21,7 +21,8 @@ type RouterSettings struct {
 	At          string          `json:"at"`
 }
 
-// ManagerSettings is what a router last read of the manager's settings; URL is nil when it reads none.
+// ManagerSettings is what a router last read of the manager's settings; URL is nil when it reads none. A Google Cloud router's
+// URL is always nil: the manager pushes its level to the router, and ReadAt is when.
 type ManagerSettings struct {
 	URL         *string `json:"url"`
 	Hibernate   *bool   `json:"hibernate"`
@@ -66,7 +67,13 @@ func (d RouterDetails) hibernateText(loc *time.Location, now time.Time) string {
 		return OnOff(*s.Hibernate) + s.setHere(loc)
 	}
 	m := d.ManagerSettings
-	if m == nil || m.URL == nil {
+	if m == nil || (m.URL == nil && d.Cloud != "gcp") {
+		return "inherit (built-in default: on)"
+	}
+	if m.Hibernate == nil && d.Cloud == "gcp" { // none pushed, or one the router can't read: the levels go on without it
+		if m.Error != "" {
+			return "inherit (built-in default: on; manager: " + m.Error + ")"
+		}
 		return "inherit (built-in default: on)"
 	}
 	if m.Hibernate == nil { // nothing read: the router stops at naps until it has

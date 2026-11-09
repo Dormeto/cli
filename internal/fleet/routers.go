@@ -186,10 +186,12 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	}
 	workloads += fmt.Sprintf(", %d paused", d.Workloads.Paused)
 
+	// A Google Cloud router has no Lambda, failure queue, concurrency or wake statistics metrics: AWS's rows are left out.
+	aws := d.Cloud != "gcp"
 	rows := [][2]string{
 		{"router", d.Name}, {"cloud", cloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"source", d.Source},
 		{"version", version}, {"health", orNone(h.Status)}, {"problems", strings.Join(problems, "\n")},
-		{"idle check", schedule}, {"lambda", lambdaText(d)}, {"failure queues", queuesText(d)},
+		{"idle check", schedule}, {"lambda", lambdaText(d)}, {"failure queues", awsOnly(aws, queuesText(d))},
 		{"concurrency", concurrencyText(d)},
 		{"workloads", workloads}, {"last activity", When(d.Workloads.LastActivityAt, loc)},
 		{"pauses", strings.Join(pauses, "\n")}, {"clusters", clustersText(d.Clusters, loc)}, {"ip lists", ipListsText(d, loc)},
@@ -201,7 +203,7 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	}
 	conf := [][2]string{
 		{"idle check schedule", withSource(orNone(deref(c.CheckSchedule.Value)), c.CheckSchedule.Source)},
-		{"wake statistics metrics", withSource(metrics, c.Metrics.Source)},
+		{"wake statistics metrics", awsOnly(aws, withSource(metrics, c.Metrics.Source))},
 		{"ip lists", withSource(listsText(c.IPLists.Value), c.IPLists.Source)},
 	}
 	if c.IPListsCatalog != nil {
@@ -210,6 +212,14 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	conf = append(conf, [2]string{"no-wake rules", withSource(rulesText(c.NoWakeRules.Value), c.NoWakeRules.Source)},
 		[2]string{"hibernate", d.hibernateText(loc, now)}, [2]string{"join windows", d.joinText(loc, now)})
 	return Labelled(rows) + d.Description.block(loc) + "\nconfiguration\n" + indent(Labelled(conf))
+}
+
+// awsOnly is text for an AWS router, "" (no row) for a Google Cloud one.
+func awsOnly(aws bool, text string) string {
+	if !aws {
+		return ""
+	}
+	return text
 }
 
 func deref(s *string) string {

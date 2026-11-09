@@ -54,6 +54,32 @@ func TestPlanUpgradeSkipReasons(t *testing.T) {
 	}
 }
 
+// A Google Cloud router is skipped as an AWS one is when it is up to date, newer or of unknown version; below the version
+// available, it is skipped with the install that upgrades it, at that version, as the manager and the dashboard say it.
+func TestPlanUpgradeOfGoogleCloudRouters(t *testing.T) {
+	gcp := func(name, version string) Router {
+		return Router{Name: name, Cloud: "gcp", Account: "dormeto-dev", Region: "europe-west2", Source: "cli", Version: version}
+	}
+	lost := gcp("lost", "")
+	lost.Error = "timed out"
+	p := PlanUpgrade([]Router{gcp("old", "0.39.0"), gcp("same", "0.40.0"), gcp("ahead", "0.41.0-dev.1"), gcp("blind", ""), lost}, "0.40.0")
+	want := map[string]string{
+		"old":   "a Google Cloud router: upgrade it with dormeto gcp install --project dormeto-dev --region europe-west2 --version 0.40.0",
+		"same":  "up to date",
+		"ahead": "newer than the version available",
+		"blind": "its version is unknown",
+		"lost":  "its version is unknown (timed out)",
+	}
+	if len(p.Upgrade) != 0 || len(p.Skipped) != len(want) {
+		t.Fatalf("plan %+v", p)
+	}
+	for _, s := range p.Skipped {
+		if want[s.Router] != s.Reason {
+			t.Errorf("%s: %q, want %q", s.Router, s.Reason, want[s.Router])
+		}
+	}
+}
+
 func TestPlanText(t *testing.T) {
 	p := PlanUpgrade([]Router{{Name: "old", Version: "0.29.0"}, {Name: "same", Version: "0.30.0"}}, "0.30.0")
 	got := p.Text()

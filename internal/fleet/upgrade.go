@@ -23,10 +23,15 @@ type Skip struct {
 	Reason string `json:"reason"`
 }
 
-// GcpInstallCommand is the CLI command that installs, and so upgrades, a Google Cloud router: the manager's
-// operations don't change a project's services (the manager never changes Google Cloud).
-func GcpInstallCommand(r Router) string {
-	return fmt.Sprintf("dormeto gcp install --project %s --region %s", r.Account, r.Region)
+// GcpInstallCommand is the CLI command that installs, and so upgrades, a Google Cloud router, at version when one is
+// given, as the manager and the dashboard say it: the manager's operations don't change a project's services (the manager
+// never changes Google Cloud).
+func GcpInstallCommand(r Router, version string) string {
+	command := fmt.Sprintf("dormeto gcp install --project %s --region %s", r.Account, r.Region)
+	if version != "" {
+		command += " --version " + version
+	}
+	return command
 }
 
 // Plan is what an upgrade does to the routers selected.
@@ -37,14 +42,13 @@ type Plan struct {
 }
 
 // PlanUpgrade decides for each router, in order: written in Terraform, an operation running, its version unknown,
-// up to date, newer than the version available (a pre-release is below its release), else upgraded.
+// up to date, newer than the version available (a pre-release is below its release), else upgraded; a Google Cloud router
+// below the version available is skipped with the install that upgrades it.
 func PlanUpgrade(rs []Router, available string) Plan {
 	p := Plan{Available: available}
 	skip := func(r Router, reason string) { p.Skipped = append(p.Skipped, Skip{r.Name, reason}) }
 	for _, r := range rs {
 		switch {
-		case r.Cloud == "gcp":
-			skip(r, "a Google Cloud router: upgrade it with "+GcpInstallCommand(r))
 		case r.Source == "terraform":
 			skip(r, "written in Terraform (upgraded with its Terraform)")
 		case r.Operation != nil:
@@ -53,6 +57,8 @@ func PlanUpgrade(rs []Router, available string) Plan {
 			skip(r, fmt.Sprintf("its version is unknown (%s)", r.Error))
 		case r.Version == "":
 			skip(r, "its version is unknown")
+		case r.Outdated(available) && r.Cloud == "gcp":
+			skip(r, "a Google Cloud router: upgrade it with "+GcpInstallCommand(r, available))
 		case r.Outdated(available):
 			p.Upgrade = append(p.Upgrade, Step{r.Name, r.Version, available})
 		case install.CompareVersions(r.Version, available) == 0:

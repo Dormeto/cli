@@ -500,3 +500,22 @@ func TestWorkloadsListPrintsACloudColumnAndJSONKeepsCloud(t *testing.T) {
 		t.Errorf("%v: %q", err, r.stdout)
 	}
 }
+
+// --account matches a router's account column, an AWS account or a Google Cloud project: its help says both, on each command
+// that takes the router filters.
+func TestAccountFilterHelpNamesAWSAccountsAndGoogleCloudProjects(t *testing.T) {
+	for _, args := range [][]string{{"routers", "list", "--help"}, {"routers", "upgrade", "--help"}} {
+		r := runFleet(t, &fakeAPI{}, "eu-west-1", args...)
+		if r.exit != 0 || !strings.Contains(r.stdout, "only the routers of these AWS accounts or Google Cloud projects") {
+			t.Errorf("%v: exit %d:\n%s", args, r.exit, r.stdout)
+		}
+	}
+	if r := runFleet(t, &fakeAPI{}, "eu-west-1", "routers", "list", "--help"); !strings.Contains(r.stdout, "name, cloud (aws or gcp), account or project, region") {
+		t.Errorf("list's help:\n%s", r.stdout)
+	}
+	// And it selects them: a project picks its Google Cloud router.
+	r := runFleet(t, &fakeAPI{routers: mixedUpgradeRouters}, "eu-west-1", "routers", "list", "--account", "dormeto-dev")
+	if r.exit != 0 || !strings.Contains(r.stdout, "dmtr-dormeto-dev-europe-west2") || strings.Contains(r.stdout, "dmtr-other-us-east1") || strings.Contains(r.stdout, "r1 ") {
+		t.Errorf("exit %d:\n%s", r.exit, r.stdout)
+	}
+}

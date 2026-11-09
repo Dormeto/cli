@@ -347,9 +347,10 @@ func (r AccessReport) Text(loc *time.Location) string {
 	if len(r.Accounts) == 0 {
 		return text + "\nevery account checked is ready\n"
 	}
-	table := [][]string{{"ACCOUNT OR PROJECT", "CLOUD", "NAME", "DISCOVERY ROLE", "COMMAND ROLE", "FORWARDER"}}
+	// The routers list's order: NAME, then CLOUD and ACCOUNT OR PROJECT.
+	table := [][]string{{"NAME", "CLOUD", "ACCOUNT OR PROJECT", "DISCOVERY ROLE", "COMMAND ROLE", "FORWARDER"}}
 	for _, a := range r.Accounts {
-		table = append(table, []string{a.Account, cloudName(a.Cloud), orNone(a.Name), a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
+		table = append(table, []string{orNone(a.Name), cloudName(a.Cloud), a.Account, a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
 	}
 	return text + "\n" + Table(table)
 }

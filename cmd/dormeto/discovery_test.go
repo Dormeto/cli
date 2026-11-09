@@ -509,23 +509,24 @@ func TestDiscoveryAccessPrintsACloudColumnForBothClouds(t *testing.T) {
 	lines := strings.Split(r.stdout, "\n")
 	var table []string
 	for i, l := range lines {
-		if strings.HasPrefix(l, "ACCOUNT") {
+		if strings.HasPrefix(l, "NAME") {
 			table = lines[i:]
 		}
 	}
 	if r.exit != 0 || len(table) < 3 {
 		t.Fatalf("exit %d, stdout %q", r.exit, r.stdout)
 	}
-	for i, want := range []string{"ACCOUNT OR PROJECT  CLOUD  NAME", "111111111111", "dormeto-dev"} {
+	// The routers list's order: NAME, then CLOUD, then ACCOUNT OR PROJECT.
+	for i, want := range []string{"NAME         CLOUD  ACCOUNT OR PROJECT  DISCOVERY ROLE", "prod ", "Dormeto dev "} {
 		if !strings.HasPrefix(table[i], want) {
 			t.Errorf("line %d: %q, want it to start with %q", i, table[i], want)
 		}
 	}
-	if f := strings.Fields(table[1]); f[1] != "aws" {
-		t.Errorf("AWS row %q", table[1])
-	}
-	if f := strings.Fields(table[2]); f[1] != "gcp" {
-		t.Errorf("Google Cloud row %q", table[2])
+	cloud, account := strings.Index(table[0], "CLOUD"), strings.Index(table[0], "ACCOUNT OR PROJECT")
+	for i, want := range [][2]string{{"aws", "111111111111"}, {"gcp", "dormeto-dev"}} {
+		if row := table[i+1]; !strings.HasPrefix(row[cloud:], want[0]+" ") || !strings.HasPrefix(row[account:], want[1]+" ") {
+			t.Errorf("row %q, want %s under CLOUD and %s under ACCOUNT OR PROJECT", row, want[0], want[1])
+		}
 	}
 	r = runDiscovery(t, a, nil, "", "access", "--json")
 	if !strings.Contains(r.stdout, `"cloud": "gcp"`) {
