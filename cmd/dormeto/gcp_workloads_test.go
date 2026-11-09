@@ -496,6 +496,7 @@ func TestGcpWorkloadsOnboardRefusesABadWakeModeOrFallbackType(t *testing.T) {
 		"a type twice":    {[]string{"--fallback-type", "e2-small", "--fallback-type", "e2-small"}, "twice"},
 		"an empty type":   {[]string{"--fallback-type", ""}, "--fallback-type"},
 		"inherit on wake": {[]string{"--wake-mode", "inherit"}, "--wake-mode"},
+		"an empty wake":   {[]string{"--wake-mode", ""}, "--wake-mode: empty"},
 	} {
 		calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), c.args...)...)
 		if exit != 2 || len(calls) != 0 || !strings.Contains(errs, c.want) {
@@ -505,6 +506,14 @@ func TestGcpWorkloadsOnboardRefusesABadWakeModeOrFallbackType(t *testing.T) {
 	calls, _, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), six[:10]...)...)
 	if exit != 0 || len(calls[0].r.FallbackTypes) != 5 {
 		t.Fatalf("five types: %d %v", exit, calls)
+	}
+}
+
+// The VMs of unmanaged instance groups and of zonal network endpoint groups are the ones a fallback type applies to.
+func TestGcpWorkloadsOnboardFallbackTypeHelpNamesTheVMsItAppliesTo(t *testing.T) {
+	out, _, _ := executed(t, build{}, "gcp", "workloads", "onboard", "--help")
+	if !strings.Contains(out, "VMs of unmanaged instance groups and zonal network endpoint groups") {
+		t.Fatalf("%s", out)
 	}
 }
 

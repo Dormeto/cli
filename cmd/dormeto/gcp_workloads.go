@@ -146,7 +146,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			fmt.Fprintln(c.ErrOrStderr(), "--wake-timeout is now --wake-timeout-seconds")
 		}
 		// Given empty, as a variable with no value: read as not given, it would onboard something else.
-		for _, name := range []string{"load-balancer", "gke-cluster"} {
+		for _, name := range []string{"load-balancer", "gke-cluster", "wake-mode"} {
 			if v, _ := c.Flags().GetString(name); v == "" && c.Flags().Changed(name) {
 				fmt.Fprintf(c.ErrOrStderr(), "--%s: empty\n", name)
 				return exitCode(2)
@@ -183,7 +183,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "the old name of --wake-timeout-seconds")
 	fl.MarkHidden("wake-timeout")
 	fl.StringVar(&wakeMode, "wake-mode", "", "what wakes the workload: any request that passes the filters, or browser (default: the router's; the global load balancer's waiting page wakes by browser alone)")
-	fl.StringArrayVar(&fallbackTypes, "fallback-type", nil, "a fallback machine type such as e2-medium (repeatable, at most 5; for the VMs of unmanaged instance groups, which a wake out of capacity runs on it)")
+	fl.StringArrayVar(&fallbackTypes, "fallback-type", nil, "a fallback machine type such as e2-medium (repeatable, at most 5; for the VMs of unmanaged instance groups and zonal network endpoint groups: a wake out of capacity runs them on it)")
 	fl.StringArrayVar(&databases, "cloud-sql", nil, "a Cloud SQL instance to nap with the workload: tagged as you, down after the application, up before it; repeatable")
 	fl.BoolVar(&requestLogs, "request-logs", false, "turn the backend service's request logs on, every request, for the idle check to read them (set back at the offboarding)")
 	fl.StringVar(&cluster, "gke-cluster", "", "the workload's pods are in this GKE cluster, as <location>/<name>: its Kubernetes RBAC is printed, asked and applied")
