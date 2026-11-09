@@ -1524,7 +1524,7 @@ a bad flag or a missing answer (an `--yes` without a terminal); 128 and the sign
 dormeto gcp check --project my-project --region europe-west1
 dormeto gcp install --project my-project --region europe-west1
 dormeto gcp workloads onboard --project my-project --region europe-west1 \
-  --url-map shop-map --backend-service shop --idle-minutes 30
+  --url-map shop-map --backend-service shop --idle-minutes 30 --name "The shop" --tag team=web
 dormeto gcp workloads list --project my-project --region europe-west1
 dormeto gcp uninstall --project my-project --region europe-west1
 ```
@@ -1998,8 +1998,20 @@ dormeto gcp workloads schedule clear shop --project my-project --region europe-w
 dormeto gcp workloads pause shop --project my-project --region europe-west1 \
   --reason "load test" --until 2026-12-01T08:00:00+01:00
 dormeto gcp workloads resume shop --project my-project --region europe-west1
+dormeto gcp routers pause --project my-project --region europe-west1 --reason "release freeze" --for 3h
+dormeto gcp routers resume --project my-project --region europe-west1
 ```
 
+- `routers pause` pauses the whole router, as `dormeto aws routers pause` does: `--reason` (1 to 256 characters), `--for`
+  (a duration up to 366 days: `90m`, `2h`, `3d`) or `--until` (an RFC 3339 time, or `HH:MM` today), not both (exit 2,
+  before any call), and `--keep-asleep`. Without `--for` or `--until` it lasts until `routers resume`. The workloads asleep
+  are woken and printed unless `--keep-asleep`. A workload's own pause stays when the router is resumed. Routers 0.40.0
+  and later; an older one answers `router <version> doesn't have the router's pause: dormeto gcp install --version <this
+  CLI's>`.
+- `workloads onboard --name <text> --tag k=v` set the workload's name for people (up to 64 characters, default its ID) and
+  its Dormeto tags, as on AWS: `--tag` is repeatable, at most 50, a key of 1 to 128 characters, a value of up to 256,
+  letters, digits, spaces and `_ . : / = + - @`, no key starting with `dormeto:`; a bad one is refused (exit 2) before any
+  call. `workloads show` prints `name` and `tags`. Routers 0.40.0 and later.
 - `schedule set --file` takes the schedule's JSON, the same as on AWS
   ([Keeping workloads awake and scheduling them](#keeping-workloads-awake-and-scheduling-them), and
   [Schedule recurrences](#schedule-recurrences) from router 0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`.

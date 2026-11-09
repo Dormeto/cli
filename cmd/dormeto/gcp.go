@@ -30,20 +30,21 @@ type gcpRun func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) i
 // gcpRuns are the runs of the gcp commands: internal/gcponboard's, or a test's.
 type gcpRuns struct {
 	check, install, status, uninstall, routerSettings gcpRun
+	routerPause, routerResume                         gcpRun
 	workloads                                         gcpWorkloadRuns
 	routerPage                                        gcpPageRuns
 	connect, disconnect                               gcpConnectRun
 }
 
 // theGcpRuns are internal/gcponboard's.
-var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, workloads: theGcpWorkloadRuns,
+var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, routerPause: gcponboard.RouterPause, routerResume: gcponboard.RouterResume, workloads: theGcpWorkloadRuns,
 	routerPage: gcpPageRuns{gcponboard.RouterPageShow, gcponboard.RouterPageSet, gcponboard.RouterPageClear},
 	connect:    gcponboard.Connect, disconnect: gcponboard.Disconnect}
 
 // newGcp is the gcp commands; connect and disconnect reach the manager with the fleet commands' dependencies.
 func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs.routerSettings, runs.routerPage, version),
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
 		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
 	return cmd
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -115,10 +116,11 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 	return cmd
 }
 
-func newGcpRouters(run gcpRun, page gcpPageRuns, version string) *cobra.Command {
+func newGcpRouters(runs gcpRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "routers", Short: "The Dormeto router of a region in Google Cloud", Args: noArgs, SilenceErrors: true,
-		Long: "The settings and waiting page of the router dmtr-<region>. Its status is `dormeto gcp status`."}
-	cmd.AddCommand(newGcpRoutersSettings(run, version), newGcpWaitingPage(page, version, false))
+		Long: "The settings, pause and waiting page of the router dmtr-<region>. Its status is `dormeto gcp status`."}
+	cmd.AddCommand(newGcpRoutersSettings(runs.routerSettings, version), newGcpRoutersPause(runs.routerPause, version), newGcpRoutersResume(runs.routerResume, version),
+		newGcpWaitingPage(runs.routerPage, version, false))
 	return cmd
 }
 
@@ -169,5 +171,56 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "say what would be set and stop")
 	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (a single router asks nothing)")
+	return cmd
+}
+
+func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
+	var f gcpFlags
+	var reason, dur, until string
+	var keepAsleep bool
+	var end string
+	cmd := gcpCommand("pause", "Pause the router: no automatic nap of its workloads",
+		"Pause the router, as `dormeto aws routers pause` does: none of its workloads is napped automatically, and the workloads\n"+
+			"asleep are woken unless --keep-asleep (the woken ones are printed). --reason (1 to 256 characters) is shown in the manager.\n"+
+			"--for is a duration up to 366 days (90m, 2h, 3d); --until is an RFC 3339 time or HH:MM today in the local time zone,\n"+
+			"within 366 days; without either the pause lasts until `dormeto gcp routers resume`. A pause of one workload stays when\n"+
+			"the router is resumed. Routers 0.40.0 and later; an older one is refused with the version to install.",
+		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, end
+			return run(ctx, d, r)
+		})
+	gcpRouterFlags(cmd, &f)
+	fl := cmd.Flags()
+	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager (required)")
+	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d)")
+	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
+	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake the workloads that are asleep")
+	prior := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := prior(c, args); err != nil {
+			return err
+		}
+		var err error
+		if reason, err = pauseReason(reason); err == nil {
+			var t time.Time
+			var set bool
+			if t, set, err = endOf(time.Now(), dur, until, maxPause, false); set {
+				end = t.UTC().Format(time.RFC3339)
+			}
+		}
+		if err != nil {
+			return finish(c, err)
+		}
+		return nil
+	}
+	return cmd
+}
+
+func newGcpRoutersResume(run gcpRun, version string) *cobra.Command {
+	var f gcpFlags
+	cmd := gcpCommand("resume", "End the pause of the router",
+		"End the pause of the router: its workloads follow their schedule and idle rules again. A router that was not paused says\n"+
+			"\"not paused\". Routers 0.40.0 and later.", &f, []string{"project", "region"}, version, run)
+	gcpRouterFlags(cmd, &f)
 	return cmd
 }

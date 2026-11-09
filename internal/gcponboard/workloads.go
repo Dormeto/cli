@@ -103,16 +103,19 @@ func (b backend) String() string {
 
 // workload is the controller's Workload.
 type workload struct {
-	ID                  string         `json:"id"`
-	State               string         `json:"state"`
-	URLMap              string         `json:"urlMap"`
-	BackendService      string         `json:"backendService"`
-	WakerBackendService string         `json:"wakerBackendService"`
-	Hosts               []string       `json:"hosts"`
-	Settings            map[string]any `json:"settings"`
-	Backends            []backend      `json:"backends"`
-	AwakeSince          string         `json:"awakeSince"`
-	LastWake            *struct {
+	ID                  string   `json:"id"`
+	State               string   `json:"state"`
+	URLMap              string   `json:"urlMap"`
+	BackendService      string   `json:"backendService"`
+	WakerBackendService string   `json:"wakerBackendService"`
+	Hosts               []string `json:"hosts"`
+	// Name is the workload's name for people (the router's default is the ID), Tags its Dormeto tags.
+	Name       string            `json:"name"`
+	Tags       map[string]string `json:"tags"`
+	Settings   map[string]any    `json:"settings"`
+	Backends   []backend         `json:"backends"`
+	AwakeSince string            `json:"awakeSince"`
+	LastWake   *struct {
 		DurationMs int `json:"durationMs"`
 	} `json:"lastWake"`
 	Failure json.RawMessage `json:"failure"`
@@ -446,6 +449,13 @@ func (x *run) details(w workload) {
 	if w.LB != nil {
 		line("load balancer", w.LB.String())
 	}
+	line("name", w.Name)
+	var tags []string
+	for k, v := range w.Tags {
+		tags = append(tags, k+"="+v)
+	}
+	sort.Strings(tags)
+	line("tags", strings.Join(tags, ", "))
 	line("URL map", w.URLMap)
 	line("backend service", w.BackendService)
 	line("waker backend service", w.WakerBackendService)
@@ -518,6 +528,9 @@ type onboardingIn struct {
 	RequestLogs    *requestLogsIn `json:"requestLogs,omitempty"`
 	// The machine types a VM of an unmanaged group may run on, a field of the body, not of the settings.
 	FallbackInstanceTypes []string `json:"fallbackInstanceTypes,omitempty"`
+	// The workload's name for people and its Dormeto tags, as AWS's onboarding takes them; the router sets `source` (cli) itself.
+	Name string            `json:"name,omitempty"`
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 // loadBalancerKinds are the kinds --load-balancer takes: internal is a regional map, cross-region-internal a global one.
@@ -549,7 +562,8 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 	case r.BackendService == "":
 		return onboardingIn{}, &stop{2, "--backend-service: needed"}
 	}
-	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, LoadBalancer: r.LoadBalancer, CloudSQL: r.CloudSQL, Settings: map[string]any{}}
+	in := onboardingIn{URLMap: r.URLMap, BackendService: r.BackendService, LoadBalancer: r.LoadBalancer, CloudSQL: r.CloudSQL, Settings: map[string]any{},
+		Name: r.Name, Tags: r.Tags}
 	if v := r.LoadBalancer; v != "" && !slices.Contains(loadBalancerKinds, v) {
 		return in, &stop{2, fmt.Sprintf("--load-balancer: %q is not global, regional, classic, internal or cross-region-internal", v)}
 	}

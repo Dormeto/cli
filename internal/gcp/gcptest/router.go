@@ -410,6 +410,10 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 			s.waitingPage(w, r, "router")
 			return
 		}
+		if r.URL.Path == "/v1/pause" || r.URL.Path == "/v1/resume" {
+			s.routerPause(w, r)
+			return
+		}
 		if r.URL.Path == "/v1/settings" {
 			s.routerSettings(w, r)
 			return

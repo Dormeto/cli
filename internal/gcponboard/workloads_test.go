@@ -3413,3 +3413,146 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 		t.Errorf("a line with no VM on a fallback type:\n%s", out)
 	}
 }
+
+func TestWorkloadsOnboardSendsTheNameAndTheTagsOnlyWhenGiven(t *testing.T) {
+	g := newWorkloadsRig(t)
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	in := g.body(t, "POST", controllerHost, "/v1/workloads")
+	for _, key := range []string{"name", "tags"} {
+		if _, ok := in[key]; ok {
+			t.Fatalf("%s is sent only when given: %v", key, in)
+		}
+	}
+	if _, ok := in["source"]; ok {
+		t.Fatalf("the router decides the source: %v", in)
+	}
+
+	g = newWorkloadsRig(t)
+	r := shopOnboarding
+	r.Name, r.Tags = "The shop", map[string]string{"team": "web", "env": "prod"}
+	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, query := range []string{"/v1/workloads?dryRun=true", "/v1/workloads"} {
+		in := g.body(t, "POST", controllerHost, query)
+		if in["name"] != "The shop" || !jsonEqual(in["tags"], map[string]string{"env": "prod", "team": "web"}) {
+			t.Errorf("%s: %v", query, in)
+		}
+	}
+}
+
+func TestWorkloadsShowPrintsTheNameAndTheTags(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := shopOnboarding
+	r.Name, r.Tags = "The shop", map[string]string{"team": "web", "env": "prod"}
+	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	show := workloadsEurope
+	show.ID = "shop"
+	code, out := g.call(t, WorkloadsShow, show)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  name: The shop\n", "  tags: env=prod, team=web\n")
+	// A workload with no tag prints no tags line; its name is the router's default, the ID.
+	g = newWorkloadsRig(t)
+	g.call(t, WorkloadsOnboard, shopOnboarding)
+	_, out = g.call(t, WorkloadsShow, show)
+	contains(t, out, "  name: shop\n")
+	if strings.Contains(out, "tags:") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestRouterPauseAndResumePostToTheController(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"], g.s.Workloads["blog"] = "ASLEEP", "AWAKE"
+	r := workloadsEurope
+	r.Reason = "release freeze"
+	mark := len(g.s.Calls())
+	code, out := g.call(t, RouterPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	body := g.body(t, "POST", controllerHost, "/v1/pause")
+	if body["reason"] != "release freeze" || body["by"] != "me@example.com" || len(body) != 2 {
+		t.Fatalf("not asked, keepAsleep and until are not sent: %v", body)
+	}
+	contains(t, out, "dmtr-europe-west1", "paused", "release freeze", "woke shop", "dormeto gcp routers resume --project dormeto-dev --region europe-west1")
+	code, out = g.call(t, RouterResume, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "resumed")
+	if body := g.body(t, "POST", controllerHost, "/v1/resume"); body["by"] != "me@example.com" || len(body) != 1 {
+		t.Fatalf("%v", body)
+	}
+	if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/pause", "POST /v1/resume"}) {
+		t.Fatalf("%v", got)
+	}
+	// Resumed again: nothing was paused.
+	_, out = g.call(t, RouterResume, r)
+	contains(t, out, "not paused")
+}
+
+func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "ASLEEP"
+	r := workloadsEurope
+	r.Reason, r.KeepAsleep, r.Until = "audit", true, "2026-12-01T07:00:00Z"
+	code, out := g.call(t, RouterPause, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	body := g.body(t, "POST", controllerHost, "/v1/pause")
+	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
+		t.Fatalf("%v", body)
+	}
+	contains(t, out, "keeping asleep", "until 2026-12-01T07:00:00Z")
+	if strings.Contains(out, "woke") {
+		t.Fatalf("%s", out)
+	}
+	r.JSON = true
+	_, out = g.call(t, RouterPause, r)
+	var a map[string]any
+	if err := json.Unmarshal([]byte(out), &a); err != nil || a["pause"] == nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+}
+
+func TestRouterPauseRefusesAMissingReasonBeforeAnyCall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	mark := len(g.s.Calls())
+	for _, reason := range []string{"", "  ", strings.Repeat("x", 257)} {
+		r := workloadsEurope
+		r.Reason = reason
+		if code, out := g.call(t, RouterPause, r); code != 2 || out == "" {
+			t.Errorf("%q: exit %d:\n%s", reason, code, out)
+		}
+	}
+	r := workloadsEurope
+	r.Reason, r.Until = "x", "tomorrow"
+	if code, _ := g.call(t, RouterPause, r); code != 2 {
+		t.Errorf("exit %d", code)
+	}
+	if got := g.controllerCalls(mark); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestRouterPauseAndResumeSayAnOlderRouterByItsVersion(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.ControllerBelow040 = true
+	g.s.HealthVersion = "0.39.0"
+	r := workloadsEurope
+	r.Reason = "x"
+	want := "router 0.39.0 doesn't have the router's pause: dormeto gcp install --version " + embeddedRouterVersion()
+	for name, run := range map[string]func(context.Context, Deps, Request) int{"pause": RouterPause, "resume": RouterResume} {
+		if code, out := g.call(t, run, r); code != 1 || !strings.Contains(out, want) {
+			t.Errorf("%s: exit %d, want %q in:\n%s", name, code, want, out)
+		}
+	}
+}

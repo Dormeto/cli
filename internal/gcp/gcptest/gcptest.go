@@ -120,6 +120,10 @@ type Server struct {
 	NextEvents      []any
 	ScheduleProblem string
 	ScheduleJoin    map[string]any
+	// ControllerBelow040 plays a router before 0.40.0: no route for the router-wide pause and resume; RouterPause is the pause
+	// POST /v1/pause set, until POST /v1/resume.
+	ControllerBelow040 bool
+	RouterPause        map[string]any
 	// ControllerBeforeSettings plays a router before G5: no route for the settings levels (a workload's settings, the router's).
 	// SettingsProblem, when set, makes a PUT of settings refuse with a 400 saying it; RouterLevel is the router's level as
 	// GET /v1/settings answers it.

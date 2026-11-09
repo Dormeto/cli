@@ -4,6 +4,7 @@ package gcptest
 // of Resource Manager (on <location>-cloudresourcemanager.googleapis.com). Every handler here runs under the server's lock.
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -133,6 +134,9 @@ type workloadIn struct {
 	RequestLogs    map[string]any `json:"requestLogs"`
 
 	FallbackInstanceTypes []string `json:"fallbackInstanceTypes"`
+
+	Name string            `json:"name"`
+	Tags map[string]string `json:"tags"`
 }
 
 // workloads serves /v1/workloads…, as the router's controller does.
@@ -333,7 +337,10 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,
-		"wakerBackendService": "dmtr-fake-" + id, "settings": in.Settings}
+		"wakerBackendService": "dmtr-fake-" + id, "settings": in.Settings, "name": cmp.Or(in.Name, id)}
+	if len(in.Tags) > 0 {
+		s.WorkloadDocs[id]["tags"] = in.Tags
+	}
 	if in.LoadBalancer != "" && in.LoadBalancer != "global" {
 		s.WorkloadDocs[id]["lb"] = map[string]any{"kind": in.LoadBalancer}
 	}
@@ -636,4 +643,44 @@ func (s *Server) waitingPage(w http.ResponseWriter, r *http.Request, level strin
 	}
 	answer["from"] = from
 	Reply(w, answer)
+}
+
+// routerPause serves POST /v1/pause and /v1/resume: the router-wide pause, with the bodies of a workload's. A reason is needed to
+// pause; the answers are {pause, woken} and {resumed}. ControllerBelow040 plays a router without them: no route.
+func (s *Server) routerPause(w http.ResponseWriter, r *http.Request) {
+	if s.ControllerBelow040 || r.Method != http.MethodPost {
+		controllerFail(w, 404, "not-found", "no route for "+r.Method+" "+r.URL.Path)
+		return
+	}
+	var in map[string]any
+	body, _ := io.ReadAll(r.Body)
+	if json.Unmarshal(body, &in) != nil {
+		controllerFail(w, 400, "bad-request", "the body is not JSON")
+		return
+	}
+	if r.URL.Path == "/v1/resume" {
+		resumed := s.RouterPause != nil
+		s.RouterPause = nil
+		Reply(w, map[string]any{"resumed": resumed})
+		return
+	}
+	if reason, _ := in["reason"].(string); strings.TrimSpace(reason) == "" {
+		controllerFail(w, 400, "bad-request", "reason required (1 to 256 characters)")
+		return
+	}
+	keep, given := in["keepAsleep"]
+	if _, isBool := keep.(bool); given && !isBool {
+		controllerFail(w, 400, "bad-request", "keepAsleep must be true or false")
+		return
+	}
+	s.RouterPause = map[string]any{"by": in["by"], "at": "2026-11-09T10:00:00.000Z", "reason": in["reason"], "until": in["until"], "keepAsleep": keep == true}
+	woken := []string{}
+	if keep != true {
+		for _, id := range slices.Sorted(maps.Keys(s.Workloads)) {
+			if s.Workloads[id] == "ASLEEP" {
+				woken = append(woken, id)
+			}
+		}
+	}
+	Reply(w, map[string]any{"pause": s.RouterPause, "woken": woken})
 }

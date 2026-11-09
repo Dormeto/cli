@@ -54,8 +54,12 @@ type Request struct {
 	// The workloads commands: the workload's ID (an argument, or --id of onboard), the URL map and backend service to
 	// onboard, and the settings given (nil: not given).
 	ID, URLMap, BackendService string
-	IdleMinutes                *int
-	Hibernate                  *bool
+	// Name is --name of onboard (the workload's name for people, trimmed; "": the router's, the ID) and Tags its --tag, Dormeto's
+	// labels (nil: none), both checked by the command.
+	Name        string
+	Tags        map[string]string
+	IdleMinutes *int
+	Hibernate   *bool
 
 	// The onboard command's load balancer (--load-balancer: global, regional, classic, internal or cross-region-internal), wake timeout (--wake-timeout-seconds, nil:
 	// not given) and Cloud SQL companions (--cloud-sql); its GKE cluster is GKECluster. RequestLogs is --request-logs: the

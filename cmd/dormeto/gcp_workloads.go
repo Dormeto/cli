@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -109,12 +110,18 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var loadBalancer, cluster, wakeMode string
 	var databases, fallbackTypes []string
 	var requestLogs bool
+	var name string
+	var tags []string
+	var tagged map[string]string
 	cmd := gcpCommand("onboard", "Onboard a backend service as a workload",
 		"Onboard a backend service of a global, regional or classic external Application Load Balancer as a workload. The\n"+
 			"controller checks the eligibility first and names the VMs, managed groups and databases; the tag dormeto=managed is then\n"+
 			"bound to each of them as you (the router holds no permission to tag), and the workload is onboarded awake. --id defaults\n"+
 			"to the backend service's name when that is a valid ID (lowercase letters, digits and dashes, at most 40 characters), else\n"+
-			"it is asked on a terminal and needed otherwise. --dry-run stops after the eligibility check.\n"+
+			"it is asked on a terminal and needed otherwise. --name is the workload's name for people (up to 64 characters, default its\n"+
+			"ID) and --tag k=v its Dormeto tags, repeatable, with AWS's checks (at most 50, a key of 1 to 128 characters, a value of up\n"+
+			"to 256, letters, digits, spaces and _ . : / = + - @, no key starting with dormeto:); the router sets the source (cli).\n"+
+			"--dry-run stops after the eligibility check.\n"+
 			"--cloud-sql needs the feature cloud-sql of the router's install, and --gke-cluster its feature gke. With --gke-cluster the\n"+
 			"Service's owner is read in the cluster, as you, and the Role and RoleBinding dormeto-<workload> of its namespace are\n"+
 			"printed, asked and applied before the onboarding; a refused onboarding removes what this run added. No tag is bound for\n"+
@@ -127,6 +134,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			r.URLMap, r.BackendService, r.ID, r.Hibernate = urlMap, backendService, id, hibernating
 			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, databases, cluster, requestLogs
 			r.WakeMode, r.FallbackTypes = wakeMode, fallbackTypes
+			r.Name, r.Tags = strings.TrimSpace(name), tagged
 			if idleGiven {
 				r.IdleMinutes = &idle
 			}
@@ -152,6 +160,18 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 				return exitCode(2)
 			}
 		}
+		// AWS's checks of the name and the tags: the router's too, said before any call.
+		if n := strings.TrimSpace(name); utf8.RuneCountInString(n) > 64 || strings.ContainsFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+			fmt.Fprintln(c.ErrOrStderr(), "--name: at most 64 characters, no control characters")
+			return exitCode(2)
+		}
+		var terr error
+		if tagged, terr = parseTagFlag("--tag", tags); terr != nil {
+			return finish(c, terr)
+		}
+		if len(tagged) == 0 {
+			tagged = nil
+		}
 		if wakeMode != "" && wakeMode != "any" && wakeMode != "browser" {
 			fmt.Fprintf(c.ErrOrStderr(), "--wake-mode: %q is not any or browser\n", wakeMode)
 			return exitCode(2)
@@ -176,6 +196,8 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&urlMap, "url-map", "", "the URL map of the load balancer (required)")
 	fl.StringVar(&backendService, "backend-service", "", "the application's backend service (required)")
 	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
+	fl.StringVar(&name, "name", "", "the workload's name for people, up to 64 characters (default: its ID)")
+	fl.StringArrayVar(&tags, "tag", nil, "a Dormeto tag of the workload, key=value (repeatable, at most 50; the dormeto: prefix is reserved)")
 	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the router's, 15)")
 	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
 	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional, classic, internal (a regional map) or cross-region-internal (default: read from Google)")

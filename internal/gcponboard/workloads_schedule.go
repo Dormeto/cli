@@ -235,13 +235,15 @@ func (p pausedOf) String() string {
 	return text
 }
 
-func (x *run) pauseWorkload() error {
+// pauseIn validates --reason, --keep-asleep and --until before any call and gives the pause's body, without `by`, and how its
+// end reads in the lines.
+func (x *run) pauseIn() (map[string]any, string, error) {
 	reason := strings.TrimSpace(x.r.Reason)
 	switch {
 	case reason == "":
-		return &stop{2, "--reason: needed, the reason of the pause"}
+		return nil, "", &stop{2, "--reason: needed, the reason of the pause"}
 	case utf8.RuneCountInString(reason) > reasonMax:
-		return &stop{2, fmt.Sprintf("--reason: at most %d characters", reasonMax)}
+		return nil, "", &stop{2, fmt.Sprintf("--reason: at most %d characters", reasonMax)}
 	}
 	in := map[string]any{"reason": reason}
 	if x.r.KeepAsleep {
@@ -251,12 +253,21 @@ func (x *run) pauseWorkload() error {
 	if x.r.Until != "" {
 		until, err := time.Parse(time.RFC3339, x.r.Until)
 		if err != nil {
-			return &stop{2, fmt.Sprintf("--until: %q is not a time in RFC 3339, such as 2026-12-01T08:00:00+01:00", x.r.Until)}
+			return nil, "", &stop{2, fmt.Sprintf("--until: %q is not a time in RFC 3339, such as 2026-12-01T08:00:00+01:00", x.r.Until)}
 		}
 		at := until.UTC().Format(time.RFC3339)
 		in["until"] = at
 		ends = "until " + at + ", unless it is resumed sooner"
 	}
+	return in, ends, nil
+}
+
+func (x *run) pauseWorkload() error {
+	in, ends, err := x.pauseIn()
+	if err != nil {
+		return err
+	}
+	reason := in["reason"].(string)
 	if err := x.require("workloads"); err != nil {
 		return err
 	}

@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +34,7 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 	runs := gcpRuns{check: ran("check"), install: ran("install"), status: ran("status")}
 	runs.uninstall = ran("uninstall")
 	runs.routerSettings = ran("routers settings")
+	runs.routerPause, runs.routerResume = ran("routers pause"), ran("routers resume")
 	runs.workloads = gcpWorkloadRuns{list: ran("workloads list"), show: ran("workloads show"), onboard: ran("workloads onboard"),
 		offboard: ran("workloads offboard"), nap: ran("workloads nap"), wake: ran("workloads wake"),
 		scheduleShow: ran("workloads schedule show"), scheduleSet: ran("workloads schedule set"), scheduleClear: ran("workloads schedule clear"),
@@ -374,5 +378,105 @@ func TestGcpDoesNotWarnWithoutThoseFlags(t *testing.T) {
 				t.Fatalf("%d %q %v", exit, errs, calls)
 			}
 		})
+	}
+}
+
+func TestGcpRoutersPauseReadsTheRequest(t *testing.T) {
+	end := time.Now().Add(30 * 24 * time.Hour).Truncate(time.Second)
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "pause", "--project", "p", "--region", "europe-west1", "--reason", " freeze ",
+		"--until", end.In(time.FixedZone("", 3600)).Format(time.RFC3339), "--keep-asleep", "--json")
+	want := gcponboard.Request{Project: "p", Region: "europe-west1", Reason: "freeze", Until: end.UTC().Format(time.RFC3339), KeepAsleep: true, JSON: true}
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "routers pause" || !reflect.DeepEqual(calls[0].r, want) {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+	// --for is a duration from now, sent as the time it ends.
+	calls, _, exit = gcpRan(t, 0, "gcp", "routers", "pause", "--project", "p", "--region", "europe-west1", "--reason", "x", "--for", "2h")
+	if exit != 0 || len(calls) != 1 || calls[0].r.Until == "" {
+		t.Fatalf("%d %+v", exit, calls)
+	}
+	until, err := time.Parse(time.RFC3339, calls[0].r.Until)
+	if err != nil || time.Until(until) < 119*time.Minute || time.Until(until) > 121*time.Minute {
+		t.Fatalf("%v %s", err, calls[0].r.Until)
+	}
+	// Neither: until it is resumed.
+	calls, _, _ = gcpRan(t, 0, "gcp", "routers", "pause", "--project", "p", "--region", "europe-west1", "--reason", "x")
+	if len(calls) != 1 || calls[0].r.Until != "" || calls[0].r.KeepAsleep {
+		t.Fatalf("%+v", calls)
+	}
+}
+
+func TestGcpRoutersPauseRefusesBeforeAnyCall(t *testing.T) {
+	base := []string{"gcp", "routers", "pause", "--project", "p", "--region", "europe-west1"}
+	for _, extra := range [][]string{
+		{},
+		{"--reason", "  "},
+		{"--reason", strings.Repeat("x", 257)},
+		{"--reason", "x", "--for", "1h", "--until", "2099-12-01T08:00:00Z"},
+		{"--reason", "x", "--for", "400d"},
+		{"--reason", "x", "--until", "tomorrow"},
+		{"--reason", "x", "--until", "2001-01-01T00:00:00Z"},
+		{"--reason", "x", "extra"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append(slices.Clone(base), extra...)...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d %q calls %v", extra, exit, errs, calls)
+		}
+	}
+	calls, _, exit := gcpRan(t, 0, "gcp", "routers", "pause", "--project", "p", "--reason", "x")
+	if exit != 2 || len(calls) != 0 {
+		t.Errorf("no region: %d %v", exit, calls)
+	}
+}
+
+func TestGcpRoutersResumeReadsTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "resume", "--project", "p", "--region", "europe-west1", "--json")
+	want := gcponboard.Request{Project: "p", Region: "europe-west1", JSON: true}
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "routers resume" || !reflect.DeepEqual(calls[0].r, want) {
+		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+	if calls, _, exit := gcpRan(t, 0, "gcp", "routers", "resume", "--project", "p"); exit != 2 || len(calls) != 0 {
+		t.Fatalf("%d %v", exit, calls)
+	}
+}
+
+func TestGcpWorkloadsOnboardReadsTheNameAndTheTags(t *testing.T) {
+	onboard := []string{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be"}
+	calls, errs, exit := gcpRan(t, 0, append(slices.Clone(onboard), "--name", "  The shop ", "--tag", "team=web", "--tag", "env=prod")...)
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	if r := calls[0].r; r.Name != "The shop" || !reflect.DeepEqual(r.Tags, map[string]string{"team": "web", "env": "prod"}) {
+		t.Fatalf("%+v", r)
+	}
+	calls, _, _ = gcpRan(t, 0, onboard...)
+	if r := calls[0].r; r.Name != "" || r.Tags != nil {
+		t.Fatalf("not given, not sent: %+v", r)
+	}
+}
+
+func TestGcpWorkloadsOnboardRefusesABadNameOrTagBeforeAnyCall(t *testing.T) {
+	onboard := []string{"gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be"}
+	for _, extra := range [][]string{
+		{"--tag", "team"},
+		{"--tag", "=web"},
+		{"--tag", "team=web", "--tag", "team=api"},
+		{"--tag", "dormeto:x=1"},
+		{"--tag", "a=b#c"},
+		{"--tag", "k=" + strings.Repeat("v", 257)},
+		{"--name", strings.Repeat("n", 65)},
+		{"--name", "a\nb"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, append(slices.Clone(onboard), extra...)...)
+		if exit != 2 || len(calls) != 0 || errs == "" {
+			t.Errorf("%v: exit %d %q calls %v", extra, exit, errs, calls)
+		}
+	}
+	// More than 50 tags.
+	extra := []string{}
+	for i := range 51 {
+		extra = append(extra, "--tag", fmt.Sprintf("k%d=v", i))
+	}
+	if calls, _, exit := gcpRan(t, 0, append(slices.Clone(onboard), extra...)...); exit != 2 || len(calls) != 0 {
+		t.Errorf("51 tags: exit %d %v", exit, calls)
 	}
 }
