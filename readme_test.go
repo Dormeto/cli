@@ -726,3 +726,50 @@ func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
 		}
 	}
 }
+
+// G2 plan 2: the README and the CHANGELOG say what the manager's commands do for a Google Cloud candidate, as the code does.
+func TestDocsSayOnboardOffboardExcludeAndCandidatesOnGoogleCloud(t *testing.T) {
+	text := strings.Join(strings.Fields(readme(t)), " ")
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
+	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
+	log := strings.Join(strings.Fields(unreleased), " ")
+	for _, want := range []string{
+		"**A Google Cloud candidate** is a backend service named in a URL map, given by its id",
+		"`--database` is a Cloud SQL instance name such as `orders-db` (sent as `{kind: cloudsql-instance, id}`)",
+		"`--fallback-type` is a Compute Engine machine type such as `e2-medium`",
+		"`--router` names the manager's router to onboard it on",
+		"and is refused for an AWS candidate",
+		"the preview has the last word, as on AWS",
+		"A Google Cloud workload is offboarded the same way, by `<router>/<workload id>`",
+		"`dormeto gcp workloads offboard <id> --project <p> --region <r>`",
+		"(`projects/<project>/global/backendServices/<name>`, or `regions/<region>` for a regional or internal load balancer)",
+		"`--target-group <path>`",
+		"`--load-balancer <path>`",
+		"`--account <project ID>`",
+		"lifting the exclusion leaves the operator's pause",
+		"`CLOUD` (`aws` or `gcp`), `ACCOUNT OR PROJECT`",
+		"(`europe-west1` or `global` on Google Cloud)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("README.md lacks %q", want)
+		}
+	}
+	for _, want := range []string{
+		"`dormeto aws workloads onboard <candidate>` takes a Google Cloud candidate",
+		"`--database` is a Cloud SQL instance name (sent as `{kind: cloudsql-instance, id}`)",
+		"`--fallback-type` a Compute Engine machine type such as `e2-medium` (at most 5)",
+		"the new `--router` names the manager's router to onboard it on",
+		"`regions/<region>` for a regional or internal load balancer, else `global`",
+		"`dormeto aws exclusions add` takes either cloud's value",
+		"`TARGET GROUP OR BACKEND SERVICE`, `CLOUD` and `ACCOUNT OR PROJECT` columns",
+		"These need router 0.40.0 on Google Cloud",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+		}
+	}
+}

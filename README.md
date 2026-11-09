@@ -1230,11 +1230,30 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
     targets everywhere else;
   - `--hibernate true|false`: hibernation of its EC2 instances (see [Hibernation](#hibernation)); without it the
     workload inherits its router's setting, then the manager's. `inherit` is not a value here: leave the flag out.
+- **A Google Cloud candidate** is a backend service named in a URL map, given by its id (the backend service's path,
+  `projects/<project>/global/backendServices/<name>` or `projects/<project>/regions/<region>/backendServices/<name>`) or
+  the name of its backend service, resolved as a target group's name is. Three flags take the cloud's own values, checked
+  before anything is sent (exit 2):
+  - `--database` is a Cloud SQL instance name such as `orders-db` (sent as `{kind: cloudsql-instance, id}`); `cluster:` is
+    AWS's;
+  - `--fallback-type` is a Compute Engine machine type such as `e2-medium`, for the VMs of unmanaged instance groups and
+    zonal network endpoint groups (at most 5, as on AWS);
+  - `--router` names the manager's router to onboard it on (`dmtr-<project>-<region>`; one is chosen when there is only
+    one), and is refused for an AWS candidate.
+
+  The manager decides whether the candidate is eligible, with the router's words, and the preview has the last word, as on
+  AWS. `--hibernate` and the other flags are as on AWS. `dormeto gcp workloads onboard` stays the way for what the manager
+  does not do on Google Cloud (a GKE workload, `--request-logs`).
 - `offboard` starts the offboarding of each workload, at most `--concurrency` at once (1 to 20, 4 by default): the
   workload is woken, its application given back as it was, and it leaves Dormeto. It is always confirmed on a terminal.
+  A Google Cloud workload is offboarded the same way, by `<router>/<workload id>`; the manager refuses, before any
+  change, a GKE workload and one whose onboarding turned request logs on, with the command that offboards it,
+  `dormeto gcp workloads offboard <id> --project <p> --region <r>`.
 - `exclude` excludes each workload's target group from discovery, with a reason: the manager pauses its managed
   workloads (an `exclude` operation). `--reason` is 1 to 246 characters; `--for` is up to 366 days, `--until` within
   366 days; without either, the exclusion lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal.
+  For a Google Cloud workload it excludes its backend service, by the path the command builds from the workload's row
+  (`projects/<project>/global/backendServices/<name>`, or `regions/<region>` for a regional or internal load balancer).
 - A workload another operation holds is refused with that operation's id; the others go on (exit 1).
 
 ## Discovery and exclusions
@@ -1253,7 +1272,7 @@ dormeto aws discovery access [--limit <n>] [--json]
 dormeto aws discovery config show [--json]
 dormeto aws discovery config set --file <path>|- [--yes] [--json]
 dormeto aws exclusions list [--json]
-dormeto aws exclusions add (--target-group <arn> | --load-balancer <arn> | --account <id>) --reason <text> [--for <d> | --until <time>]
+dormeto aws exclusions add (--target-group <arn|path> | --load-balancer <arn|path> | --account <id>) --reason <text> [--for <d> | --until <time>]
 dormeto aws exclusions lift <id>... [--no-wait] [--timeout <d>] [--json]
 ```
 
@@ -1281,10 +1300,11 @@ dormeto aws exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 ### discovery candidates, dismiss and restore
 
 - `candidates` lists the candidates of one `--status` (`pending-onboarding` by default; `pending-offboarding`,
-  `managed`, `ineligible`, `dismissed`, `excluded`, `out-of-scope`, `gone`): target group, account, region, hosts, idle
+  `managed`, `ineligible`, `dismissed`, `excluded`, `out-of-scope`, `gone`): target group or backend service, `CLOUD`
+  (`aws` or `gcp`), `ACCOUNT OR PROJECT`, region (`global` for a global backend service), hosts, idle
   hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every page
-  is read unless `--limit` stops at that many (0, the default, reads all). `--account` keeps one AWS account,
-  `--candidate-region` one region of it (it needs `--account`; `--region` is the manager's). `--json` prints the
+  is read unless `--limit` stops at that many (0, the default, reads all). `--account` keeps one AWS account or Google Cloud project,
+  `--candidate-region` one region of it (`europe-west1` or `global` on Google Cloud) (it needs `--account`; `--region` is the manager's). `--json` prints the
   manager's answer, `{candidates}`, every page in it.
 - `dismiss` takes candidates out of the pending onboarding, each given by its id, sent as it is whatever the
   candidate's status, or the name of its target group, resolved among the candidates pending onboarding before anything
@@ -1315,8 +1335,12 @@ manager's answer, every page in it.
   workloads it paused by name, and its state (`active`, `expired`, or `lifting` while a lift runs). `--json` prints the
   manager's answer, `{exclusions}`.
 - `exclusions add` excludes one target from discovery: an application target group (`--target-group <arn>`), an
-  application load balancer (`--load-balancer <arn>`) or a whole account (`--account <12 digits>`). The manager pauses
-  its managed workloads (an `exclude` operation, followed). `--reason` is 1 to 246 characters; `--for` is up to 366
+  application load balancer (`--load-balancer <arn>`) or a whole account (`--account <12 digits>`); on Google Cloud, a
+  backend service (`--target-group <path>`, `projects/<project>/global|regions/<region>/backendServices/<name>`), a URL
+  map (`--load-balancer <path>`, `…/urlMaps/<name>`) or a project (`--account <project ID>`). Each flag takes either
+  cloud's value, and anything else exits 2 before any call. The manager pauses its managed workloads (an `exclude`
+  operation, followed), beside an operator's pause on a Google Cloud workload: lifting the exclusion leaves the
+  operator's pause. `--reason` is 1 to 246 characters; `--for` is up to 366
   days, `--until` within 366 days; without either, the exclusion lasts until it is lifted. It is always confirmed on a
   terminal; `--dry-run` names the target and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json` (its
   operation, an object).
