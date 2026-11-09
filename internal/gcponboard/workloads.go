@@ -1033,6 +1033,8 @@ func (x *run) offboard() error {
 			return x.controllerFailure(id, p.Backends, err, true)
 		}
 	}
+	// The router's run is gone with its answer: said now, before the untag that can fail and that a rerun cannot name again.
+	x.sayOnFallback(forced)
 	out, err := x.afterController(id, p, x.r.Force)
 	if err != nil {
 		return err
@@ -1057,9 +1059,6 @@ func (x *run) offboard() error {
 		}
 		for _, l := range forced.NotGivenBack {
 			x.say("  ! %s", l)
-		}
-		for _, l := range forced.onFallbackLines() {
-			x.say("  %s", l)
 		}
 		for _, u := range out.untagged {
 			x.say("  untagged: %s", u)
@@ -1112,6 +1111,18 @@ func (f forcedOff) onFallbackLines() []string {
 		lines = append(lines, fmt.Sprintf("VM %s is on %s, its own is %s: it keeps %s until you change it by hand", t.Instance, t.To, t.From, t.To))
 	}
 	return lines
+}
+
+// sayOnFallback says the VMs an offboarding leaves on a fallback machine type: on stdout, and on stderr under --json, whose
+// stdout is the one answer (which carries them too, when the run goes through).
+func (x *run) sayOnFallback(f forcedOff) {
+	for _, l := range f.onFallbackLines() {
+		if x.r.JSON {
+			fmt.Fprintf(x.d.Err, "  %s\n", l)
+		} else {
+			x.say("  %s", l)
+		}
+	}
 }
 
 // deleteWorkload offboards a workload at the controller, which wakes it first. One that cannot wake is refused

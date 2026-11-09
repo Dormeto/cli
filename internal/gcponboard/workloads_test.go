@@ -651,6 +651,24 @@ func (g *workloadsRig) stuckOffboarding(t *testing.T) {
 	}
 }
 
+// The router has deleted the run once it answers: a failed untag must not lose the VMs it left on a fallback type, and a rerun
+// finds no workload to name them.
+func TestWorkloadsOffboardNamesTheVMsOnAFallbackTypeEvenWhenTheUntagFails(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.OnFallback = map[string]map[string]map[string]string{"shop": {"web-1": {"from": "e2-small", "to": "e2-medium"}}}
+	g.stuckOffboarding(t)
+	r := workloadsEurope
+	r.ID = "shop"
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
+	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: zoneHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
+	code, out := g.call(t, WorkloadsOffboard, r)
+	if code != 1 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "boom", "VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand")
+}
+
 func TestWorkloadsOffboardRerunFinishesTheUnbindsAfterAFailure(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.stuckOffboarding(t)
@@ -3378,8 +3396,12 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 		g.s.Workloads["shop"] = "AWAKE"
 		r.Force, r.JSON = false, true
 		code, out = g.call(t, WorkloadsOffboard, r)
-		var answer map[string]any
-		if err := json.Unmarshal([]byte(out), &answer); err != nil || code != 0 || !jsonEqual(answer["fallbacks"], []map[string]string{{"instance": "web-1", "from": "e2-small", "to": "e2-medium"}, {"instance": "web-2", "from": "n2-standard-2", "to": "n2-standard-4"}}) {
+		// The rig's stdout and stderr share a buffer: the lines come first (on stderr), the answer last.
+		answer := map[string]any{}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		last := lines[len(lines)-1]
+		contains(t, out, "  VM web-1 is on e2-medium, its own is e2-small: it keeps")
+		if err := json.Unmarshal([]byte(last), &answer); err != nil || code != 0 || !jsonEqual(answer["fallbacks"], []map[string]string{{"instance": "web-1", "from": "e2-small", "to": "e2-medium"}, {"instance": "web-2", "from": "n2-standard-2", "to": "n2-standard-4"}}) {
 			t.Errorf("force %v json: %d %s", force, code, out)
 		}
 	}

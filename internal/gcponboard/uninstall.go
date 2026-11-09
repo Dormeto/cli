@@ -244,6 +244,8 @@ func (x *run) planOffboard(workloads []workloadRef) step {
 			// The controller's workload, then its tag bindings: Google refuses to delete a tag value still bound.
 			// --force is what asked for this step: a workload that cannot wake is offboarded with its backends left down.
 			forced, out, err := x.offboardWorkload(w.ID, true)
+			// After the uninstall no router is left to give a VM its own type back: named now, before anything that can fail.
+			x.sayOnFallback(forced)
 			if err != nil && !workloadNotThere(err) {
 				return "", fmt.Errorf("workload %s: %s", w.ID, refusal(err))
 			}

@@ -260,6 +260,23 @@ func TestUninstallRefusesWhileWorkloadsAreOnboarded(t *testing.T) {
 	}
 }
 
+// No router is left after the uninstall to give a VM its own type back: each workload removed names the VMs it leaves on a
+// fallback type.
+func TestUninstallForceNamesTheVMsLeftOnAFallbackType(t *testing.T) {
+	g := routerInstalled(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.Workloads["blog"] = "ASLEEP"
+	g.s.OnFallback = map[string]map[string]map[string]string{"shop": {"web-1": {"from": "e2-small", "to": "e2-medium"}}}
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true})
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand")
+	if strings.Count(out, "by hand") != 1 {
+		t.Errorf("one line for the one VM:\n%s", out)
+	}
+}
+
 func TestUninstallForceOffboardsEachWorkloadFirst(t *testing.T) {
 	g := routerInstalled(t)
 	g.s.Workloads["shop"] = "AWAKE"
