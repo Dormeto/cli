@@ -1,9 +1,10 @@
 package gcponboard
 
 // `dormeto gcp routers pause` and `resume`: the controller's POST /v1/pause and /v1/resume, the router-wide pause, with the
-// bodies of a workload's (`{reason, until?, keepAsleep?, by}` and `{by}`) and AWS's flags and lines. The operator's gcloud
-// account is the `by`. The router's checks (the 366 days) are the controller's, said as it says them; a router below 0.40.0 has
-// no route for them, which is said with its version and the one to install.
+// bodies of a workload's (`{reason, until?, keepAsleep?, by}` and `{by}`) and AWS's flags, lines and --json
+// (`{"<router>": <answer>}`). The operator's gcloud account is the `by`. The router's checks (the 366 days) are the
+// controller's, said as it says them; a router below 0.40.0 has no route for them, which is said with its version and the
+// one to install.
 
 import (
 	"context"
@@ -48,8 +49,7 @@ func (x *run) pauseRouter() error {
 		return err
 	}
 	if x.r.JSON {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		return x.printByRouter(raw)
 	}
 	var a struct {
 		Woken []string `json:"woken"`
@@ -90,8 +90,7 @@ func (x *run) resumeRouter() error {
 		return err
 	}
 	if x.r.JSON {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		return x.printByRouter(raw)
 	}
 	var a struct {
 		Resumed bool `json:"resumed"`
@@ -105,6 +104,17 @@ func (x *run) resumeRouter() error {
 		x.say("%s: not paused", x.n.router)
 	}
 	return nil
+}
+
+// printByRouter prints the controller's answer under the router's name, as AWS's routers pause and resume print theirs:
+// {"<router>": <answer>}.
+func (x *run) printByRouter(answer json.RawMessage) error {
+	b, err := json.Marshal(map[string]json.RawMessage{x.n.router: answer})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(x.d.Out, "%s\n", b)
+	return err
 }
 
 // routerDryRun says what the pause or resume would send, to which router, and stops: no call. Under --json, stdout is

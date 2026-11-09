@@ -121,6 +121,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			"it is asked on a terminal and needed otherwise. --name is the workload's name for people (up to 64 characters, default its\n"+
 			"ID) and --set-tag k=v its Dormeto tags, repeatable, with AWS's checks (at most 50, a key of 1 to 128 characters, a value of up\n"+
 			"to 256, letters, digits, spaces and _ . : / = + - @, no key starting with dormeto:); the router sets the source (cli).\n"+
+			"Both need router 0.40.0 or later: an older one, which drops them, is refused with the install to run.\n"+
 			"--dry-run stops after the eligibility check.\n"+
 			"--cloud-sql needs the feature cloud-sql of the router's install, and --gke-cluster its feature gke. With --gke-cluster the\n"+
 			"Service's owner is read in the cluster, as you, and the Role and RoleBinding dormeto-<workload> of its namespace are\n"+

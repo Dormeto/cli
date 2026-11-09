@@ -184,7 +184,8 @@ func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
 			"asleep are woken unless --keep-asleep (the woken ones are printed). --reason (1 to 256 characters) is shown in the manager.\n"+
 			"--for is a duration up to 366 days (90m, 2h, 3d); --until is an RFC 3339 time or HH:MM today in the local time zone,\n"+
 			"within 366 days; without either the pause lasts until `dormeto gcp routers resume`. A pause of one workload stays when\n"+
-			"the router is resumed. Routers 0.40.0 and later; an older one is refused with the version to install.",
+			"the router is resumed. --json prints the controller's answer by router, {\"<router>\": …}, as AWS's. Routers 0.40.0 and\n"+
+			"later; an older one is refused with the version to install.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, end
 			return run(ctx, d, r)
@@ -221,7 +222,8 @@ func newGcpRoutersResume(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
 	cmd := gcpCommand("resume", "End the pause of the router",
 		"End the pause of the router: its workloads follow their schedule and idle rules again. A router that was not paused says\n"+
-			"\"not paused\". Routers 0.40.0 and later.", &f, []string{"project", "region"}, version, run)
+			"\"not paused\". --json prints the controller's answer by router, {\"<router>\": …}, as AWS's. Routers 0.40.0 and later.",
+		&f, []string{"project", "region"}, version, run)
 	gcpRouterFlags(cmd, &f)
 	gcpRouterDryRunFlags(cmd, &f)
 	return cmd

@@ -699,6 +699,9 @@ func (x *run) onboard() error {
 	if err := x.covers(dry); err != nil {
 		return err
 	}
+	if err := x.readsNameAndTags(); err != nil {
+		return err
+	}
 	x.warnStandard(dry)
 	x.warnReplicas(dry)
 	// Read before any change: what --request-logs sets back, which stops on a failed read; without it, whether the idle check
@@ -931,6 +934,39 @@ func (x *run) covers(dry dryRun) error {
 		if !namespacePattern.MatchString(dry.GKE.Namespace) || !namespacePattern.MatchString(dry.GKE.Service) {
 			return &stop{1, fmt.Sprintf("The dry run of router %s names namespace %q and Service %q for cluster %s, which are not Kubernetes names.\nNothing was changed.", x.n.router, dry.GKE.Namespace, dry.GKE.Service, x.r.GKECluster)}
 		}
+	}
+	return nil
+}
+
+// nameAndTagsRouterVersion is the first router version whose onboarding reads the workload's name and tags: an older one drops
+// them without a word.
+const nameAndTagsRouterVersion = "0.40.0"
+
+// readsNameAndTags stops an onboarding given --name or --set-tag on a router below nameAndTagsRouterVersion, which would
+// onboard the workload without them, as covers stops one whose dry run does not answer a flag. The version is the one the
+// controller's health answers, its core deciding (0.40.0's dev builds read them); unread, the run stops too.
+func (x *run) readsNameAndTags() error {
+	var flags []string
+	if x.r.Name != "" {
+		flags = append(flags, "--name")
+	}
+	if len(x.r.Tags) > 0 {
+		flags = append(flags, "--set-tag")
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	given, need := strings.Join(flags, " and "), "needs"
+	if len(flags) > 1 {
+		need = "need"
+	}
+	version, err := x.health()
+	if err != nil {
+		return &stop{1, fmt.Sprintf("The version of router %s is not read, and %s %s %s or later: %s\nNothing was changed.", x.n.router, given, need, nameAndTagsRouterVersion, refusal(err))}
+	}
+	if below(version, nameAndTagsRouterVersion) {
+		return &stop{1, fmt.Sprintf("Router %s is %s, older than %s, which reads %s. Install a newer router first: %s.\nNothing was changed.",
+			x.n.router, version, nameAndTagsRouterVersion, given, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+nameAndTagsRouterVersion+" or later>"))}
 	}
 	return nil
 }

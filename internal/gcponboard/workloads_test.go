@@ -3430,6 +3430,7 @@ func TestWorkloadsOnboardSendsTheNameAndTheTagsOnlyWhenGiven(t *testing.T) {
 	}
 
 	g = newWorkloadsRig(t)
+	g.s.HealthVersion = "0.40.0" // a router that reads them
 	r := shopOnboarding
 	r.Name, r.Tags = "The shop", map[string]string{"team": "web", "env": "prod"}
 	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
@@ -3443,8 +3444,61 @@ func TestWorkloadsOnboardSendsTheNameAndTheTagsOnlyWhenGiven(t *testing.T) {
 	}
 }
 
+// A router below 0.40.0 drops the onboarding's name and tags: with --name or --set-tag, its version is read after the dry run,
+// and one below 0.40.0 is refused before any change, with the install that brings a router reading them, as a flag the dry
+// run does not answer is. The version's core decides (0.40.0's dev builds read them); its version unread, the run stops too.
+func TestWorkloadsOnboardNameOrTagsOnARouterBelow040IsRefusedBeforeAnyChange(t *testing.T) {
+	named, tagged, both := shopOnboarding, shopOnboarding, shopOnboarding
+	named.Name = "The shop"
+	tagged.Tags = map[string]string{"team": "web"}
+	both.Name, both.Tags = "The shop", map[string]string{"team": "web"}
+	for flags, r := range map[string]Request{"--name": named, "--set-tag": tagged, "--name and --set-tag": both} {
+		for _, dry := range []bool{false, true} {
+			g := newWorkloadsRig(t)
+			g.s.HealthVersion = "0.39.9-dev.2"
+			r.DryRun = dry
+			mark := len(g.s.Calls())
+			code, out := g.call(t, WorkloadsOnboard, r)
+			if code != 1 {
+				t.Fatalf("%s, dry run %t: exit %d:\n%s", flags, dry, code, out)
+			}
+			contains(t, out, "Router dmtr-europe-west1 is 0.39.9-dev.2, older than 0.40.0, which reads "+flags+". Install a newer router first: dormeto gcp install --project dormeto-dev --region europe-west1 ",
+				"\nNothing was changed.\n")
+			if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 {
+				t.Errorf("%s, dry run %t: changes %v, bindings %v", flags, dry, m, g.bindings())
+			}
+			if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/workloads?dryRun=true", "GET /v1/health"}) {
+				t.Errorf("%s, dry run %t: controller calls %v", flags, dry, got)
+			}
+		}
+	}
+	for _, version := range []string{"0.40.0", "0.40.0-dev.1"} {
+		g := newWorkloadsRig(t)
+		g.s.HealthVersion = version
+		if code, out := g.call(t, WorkloadsOnboard, both); code != 0 || g.s.Workloads["shop"] != "AWAKE" {
+			t.Fatalf("%s: exit %d:\n%s", version, code, out)
+		}
+	}
+	// Without the flags, no version is read for them.
+	g := newWorkloadsRig(t)
+	mark := len(g.s.Calls())
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 0 || slices.Contains(g.controllerCalls(mark), "GET /v1/health") {
+		t.Fatalf("exit %d, calls %v:\n%s", code, g.controllerCalls(mark), out)
+	}
+	// Its version unread: stopped, nothing changed.
+	g = newWorkloadsRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: http.MethodGet, Host: controllerHost, Path: "/v1/health", Code: 503, Status: "UNAVAILABLE", Message: "down"})
+	mark = len(g.s.Calls())
+	code, out := g.call(t, WorkloadsOnboard, named)
+	if code != 1 || len(g.changes(mark)) != 1 {
+		t.Fatalf("exit %d, changes %v:\n%s", code, g.changes(mark), out)
+	}
+	contains(t, out, "The version of router dmtr-europe-west1 is not read, and --name needs 0.40.0 or later: ", "\nNothing was changed.\n")
+}
+
 func TestWorkloadsShowPrintsTheNameAndTheTags(t *testing.T) {
 	g := newWorkloadsRig(t)
+	g.s.HealthVersion = "0.40.0" // a router that reads them
 	r := shopOnboarding
 	r.Name, r.Tags = "The shop", map[string]string{"team": "web", "env": "prod"}
 	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
@@ -3515,10 +3569,16 @@ func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
 	if strings.Contains(out, "woke") {
 		t.Fatalf("%s", out)
 	}
+	// --json: the router's answer by router, as AWS's {"<router>": <answer>}.
 	r.JSON = true
 	_, out = g.call(t, RouterPause, r)
-	var a map[string]any
-	if err := json.Unmarshal([]byte(out), &a); err != nil || a["pause"] == nil {
+	var a map[string]map[string]any
+	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a["dmtr-europe-west1"]["pause"] == nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	_, out = g.call(t, RouterResume, r)
+	a = nil
+	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a["dmtr-europe-west1"]["resumed"] != true {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 }
