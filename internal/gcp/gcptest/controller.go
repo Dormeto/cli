@@ -107,7 +107,19 @@ func (s *Server) workloadBody(id string) map[string]any {
 		out[k] = v
 	}
 	out["id"], out["state"] = id, s.Workloads[id]
+	if f := s.OnFallback[id]; len(f) > 0 {
+		out["fallbacks"] = fallbacksOf(f)
+	}
 	return out
+}
+
+// fallbacksOf is OnFallback's VMs in the router's shape (AWS's): [{instance, from, to}], by VM.
+func fallbacksOf(on map[string]map[string]string) []map[string]string {
+	var list []map[string]string
+	for _, vm := range slices.Sorted(maps.Keys(on)) {
+		list = append(list, map[string]string{"instance": vm, "from": on[vm]["from"], "to": on[vm]["to"]})
+	}
+	return list
 }
 
 type workloadIn struct {
@@ -172,7 +184,7 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 			if force {
 				answer := map[string]any{"id": id, "left": left}
 				if len(onFallback) > 0 {
-					answer["instanceTypes"] = onFallback
+					answer["fallbacks"] = fallbacksOf(onFallback)
 				}
 				if notGivenBack := s.NotGivenBack[id]; len(notGivenBack) > 0 {
 					answer["notGivenBack"] = notGivenBack
@@ -181,7 +193,7 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if len(onFallback) > 0 {
-				Reply(w, map[string]any{"instanceTypes": onFallback})
+				Reply(w, map[string]any{"fallbacks": fallbacksOf(onFallback)})
 				return
 			}
 			Reply(w, map[string]any{})

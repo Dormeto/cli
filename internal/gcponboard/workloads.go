@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -131,17 +130,22 @@ type workload struct {
 	RequestLogs *requestLogsIn `json:"requestLogs"`
 	IdleReads   string         `json:"idleReads"`
 	// The levels (a router with the settings levels): where each setting comes from, the type, the rules of every level, the resolved
-	// hibernation, the fallback machine types and the types a VM runs on.
+	// hibernation, the fallback machine types and the VMs running on one.
 	SettingsFrom          map[string]string   `json:"settingsFrom"`
 	Type                  *fleet.WorkloadType `json:"type"`
 	NoWakeRules           []describedRule     `json:"noWakeRules"`
 	WakeRules             []describedRule     `json:"wakeRules"`
 	Hibernation           *fleet.Hibernation  `json:"hibernation"`
 	FallbackInstanceTypes []string            `json:"fallbackInstanceTypes"`
-	InstanceTypes         map[string]struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	} `json:"instanceTypes"`
+	Fallbacks             []fallbackOn        `json:"fallbacks"`
+}
+
+// fallbackOn is a VM that runs on a fallback machine type, as AWS's status and the router's give it: its own type and the one it
+// runs on.
+type fallbackOn struct {
+	Instance string `json:"instance"`
+	From     string `json:"from"`
+	To       string `json:"to"`
 }
 
 // describedRule is a rule as the controller describes it, with its level (`from` for a wake rule).
@@ -1036,8 +1040,8 @@ func (x *run) offboard() error {
 	left := slices.Concat(out.tagsLeft, out.accessLeft, out.logsLeft)
 	if x.r.JSON {
 		answer := map[string]any{"id": id, "offboarded": true, "untagged": out.untagged, "left": leftDown(forced.Left)}
-		if len(forced.InstanceTypes) > 0 {
-			answer["instanceTypes"] = forced.InstanceTypes
+		if len(forced.Fallbacks) > 0 {
+			answer["fallbacks"] = forced.Fallbacks
 		}
 		for key, value := range map[string][]string{"removed": out.removed, "restored": out.restored, "kept": out.kept, "notRemoved": left, "notGivenBack": forced.NotGivenBack} {
 			if len(value) > 0 {
@@ -1096,20 +1100,16 @@ func leftDown(left []backend) []string {
 type forcedOff struct {
 	Left         []backend `json:"left"`
 	NotGivenBack []string  `json:"notGivenBack"`
-	// The VMs left on a fallback machine type, plain or forced: {<vm>: {from: its own, to: the one it runs on}}.
-	InstanceTypes map[string]struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	} `json:"instanceTypes"`
+	// The VMs left on a fallback machine type, plain or forced, as AWS's offboarding gives them.
+	Fallbacks []fallbackOn `json:"fallbacks"`
 }
 
 // onFallbackLines say each VM that keeps a fallback machine type, by name: no stop of the router's gives it its own back once it
 // is offboarded.
 func (f forcedOff) onFallbackLines() []string {
 	var lines []string
-	for _, vm := range slices.Sorted(maps.Keys(f.InstanceTypes)) {
-		t := f.InstanceTypes[vm]
-		lines = append(lines, fmt.Sprintf("VM %s is on %s, its own is %s: it keeps %s until you change it by hand", vm, t.To, t.From, t.To))
+	for _, t := range slices.SortedFunc(slices.Values(f.Fallbacks), func(a, b fallbackOn) int { return strings.Compare(a.Instance, b.Instance) }) {
+		lines = append(lines, fmt.Sprintf("VM %s is on %s, its own is %s: it keeps %s until you change it by hand", t.Instance, t.To, t.From, t.To))
 	}
 	return lines
 }

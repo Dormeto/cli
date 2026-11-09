@@ -176,6 +176,19 @@ func TestWorkloadsShowPrintsEachSettingWithItsOriginThenTheTypeAndTheRules(t *te
 	contains(t, out, "settings: idleMinutes 15")
 }
 
+// The Workload view gives the VMs on a fallback type as AWS's `fallbacks` list.
+func TestWorkloadsShowNamesTheVMsRunningOnAFallbackType(t *testing.T) {
+	g, r := settingsRig(t)
+	g.s.WorkloadDocs["shop"] = map[string]any{"settings": map[string]any{"idleMinutes": 30}, "settingsFrom": map[string]any{"idleMinutes": "router"}}
+	g.s.OnFallback = map[string]map[string]map[string]string{"shop": {"web-2": {"from": "n2-standard-2", "to": "n2-standard-4"}, "web-1": {"from": "e2-small", "to": "e2-medium"}}}
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsShow, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "running on a fallback type: web-1 e2-medium (was e2-small), web-2 n2-standard-4 (was n2-standard-2)")
+}
+
 func TestWorkloadsSettingsDryRunSendsNothingAndSaysWhatItWouldSet(t *testing.T) {
 	g, r := settingsRig(t)
 	r.IDs, r.DryRun = []string{"shop", "web"}, true

@@ -318,8 +318,8 @@ func (x *run) levelDetails(w workload) {
 		x.say("  fallback machine types: %s", strings.Join(w.FallbackInstanceTypes, ", "))
 	}
 	var vms []string
-	for vm, t := range w.InstanceTypes {
-		vms = append(vms, fmt.Sprintf("%s %s (was %s)", vm, t.To, t.From))
+	for _, t := range w.Fallbacks {
+		vms = append(vms, fmt.Sprintf("%s %s (was %s)", t.Instance, t.To, t.From))
 	}
 	sort.Strings(vms)
 	if len(vms) > 0 {

@@ -3379,7 +3379,7 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 		r.Force, r.JSON = false, true
 		code, out = g.call(t, WorkloadsOffboard, r)
 		var answer map[string]any
-		if err := json.Unmarshal([]byte(out), &answer); err != nil || code != 0 || !jsonEqual(answer["instanceTypes"], onFallback) {
+		if err := json.Unmarshal([]byte(out), &answer); err != nil || code != 0 || !jsonEqual(answer["fallbacks"], []map[string]string{{"instance": "web-1", "from": "e2-small", "to": "e2-medium"}, {"instance": "web-2", "from": "n2-standard-2", "to": "n2-standard-4"}}) {
 			t.Errorf("force %v json: %d %s", force, code, out)
 		}
 	}
