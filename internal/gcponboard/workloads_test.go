@@ -3664,3 +3664,34 @@ func TestRouterPauseSaysAWSLines(t *testing.T) {
 	_, out = g.call(t, RouterResume, r)
 	contains(t, out, "dmtr-europe-west1: not paused\n")
 }
+
+func TestWorkloadsOnboardSaysTheAccessMayStillPropagateWhenTheControllerFailsRightAfterTheInstall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: controllerHost, Path: "/v1/workloads", Code: 500, Status: "INTERNAL", Message: "internal error"})
+	g.d.Now = func() time.Time { return installNow.Add(9 * time.Minute) }
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 1 || !strings.Contains(out, "internal error") || !strings.Contains(out, propagatingHint) || !strings.Contains(out, "try again in a few minutes") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestWorkloadsOnboardSaysNothingOfPropagationWhenAPlain500ComesLongAfterTheInstall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: controllerHost, Path: "/v1/workloads", Code: 500, Status: "INTERNAL", Message: "internal error"})
+	g.d.Now = func() time.Time { return installNow.Add(11 * time.Minute) }
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 1 || !strings.Contains(out, "internal error") || strings.Contains(out, "propagating") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+func TestWorkloadsOnboardSaysTheAccessMayStillPropagateWhenTheBodyNamesGoogles403LongAfterTheInstall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Refuse(gcptest.Refusal{Method: "POST", Host: controllerHost, Path: "/v1/workloads", Code: 500, Status: "INTERNAL",
+		Message: "7 PERMISSION_DENIED: Missing or insufficient permissions."})
+	g.d.Now = func() time.Time { return installNow.Add(3 * time.Hour) }
+	code, out := g.call(t, WorkloadsOnboard, shopOnboarding)
+	if code != 1 || !strings.Contains(out, "Missing or insufficient permissions") || !strings.Contains(out, propagatingHint) {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}

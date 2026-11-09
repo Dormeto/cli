@@ -339,6 +339,10 @@ func (x *run) require(command string, features ...string) error {
 
 // refusal is the error as one line: the controller's message, else Google's.
 func refusal(err error) string {
+	var h *propagating
+	if errors.As(err, &h) {
+		return refusal(h.err) + "\n" + propagatingHint
+	}
 	var e *gcp.Error
 	if errors.As(err, &e) && e.Message != "" && e.Reason != "" && !strings.HasPrefix(e.Reason, "IAM_") {
 		return e.Message
@@ -349,7 +353,48 @@ func refusal(err error) string {
 // controller calls the router's controller as the operator.
 func (x *run) controller(method, path string, in, out any) error {
 	u := x.controllerURL()
-	return x.d.Google.Invoke(x.ctx, method, u+path, u, in, out)
+	err := x.d.Google.Invoke(x.ctx, method, u+path, u, in, out)
+	if err != nil && x.mayPropagate(err) {
+		return &propagating{err}
+	}
+	return err
+}
+
+const propagatingHint = "the router's access may still be propagating (Google applies new grants within minutes): try again in a few minutes"
+
+// propagating is a controller's failure that may be Google's new grants not applied yet: the controller's 500 hides a
+// 403 of the router's own database, and it clears within minutes.
+type propagating struct{ err error }
+
+func (p *propagating) Error() string { return p.err.Error() + " (" + propagatingHint + ")" }
+func (p *propagating) Unwrap() error { return p.err }
+
+// mayPropagate tells whether a controller's failure is a 500 within 10 minutes of the install (the record's installedAt),
+// or whose body names Google's 403.
+func (x *run) mayPropagate(err error) bool {
+	var e *gcp.Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	if strings.Contains(e.Message, "Missing or insufficient permissions") || strings.Contains(e.Message, "PERMISSION_DENIED") {
+		return true
+	}
+	if e.Code != http.StatusInternalServerError {
+		return false
+	}
+	var doc recordDocument
+	if found, err := x.get(firestoreAPI, x.recordURL(), &doc); err != nil || !found {
+		return false
+	}
+	rec, err := doc.record()
+	if err != nil {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, rec.InstalledAt)
+	if err != nil {
+		return false
+	}
+	return x.d.Now().Sub(at) <= 10*time.Minute
 }
 
 func (x *run) workloadPath() (string, error) {
