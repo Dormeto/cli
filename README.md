@@ -2070,8 +2070,7 @@ are newer still, and not released. Measured on Google in `dormeto-dev` on 2026-1
 balancer's error fetch carries, and that the page's language, its policy, a 256 KiB page and a 59 KB icon reach the browser;
 a stopped VM's machine type changed within its series and across to N2D, and a start refused for quota leaving the VM stopped;
 Google accepting the internal kinds' waker, their swap waits, the client's address read through them, and their logs and
-metric; the names and descriptions GKE gives a Gateway's and an Ingress's load balancers. Google Cloud accepted them in `dormeto-dev` on 2026-11-09, with router image 0.39.0-dev.3 and CLI 0.13.0-dev.2,
-builds of `main`: the settings by level, the wake mode and rules, the waiting page, the fallback's machine type change through
+metric; the names and descriptions GKE gives a Gateway's and an Ingress's load balancers. The router's new features were accepted in `dormeto-dev` on 2026-11-08 and 2026-11-09, on dev builds of `main` (router 0.39.0-dev.2, then 0.39.0-dev.3 with the final review's fixes): the settings by level, the wake mode and rules, the waiting page, the fallback's machine type change through
 the router's own role, both internal kinds (measured, napped by the idle check, woken by the page's probe) and GKE's refusal.
 They are not released. There is no dashboard or manager for
 Google Cloud yet: the organization level of the settings and of the waiting page, and the custom types, come with it.
