@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -56,6 +57,24 @@ func (x *run) withRoutes(words, method, path string, in, out any) error {
 	return err
 }
 
+// textOut is where a command's words go: stdout, and stderr under --json, whose stdout is JSON alone.
+func (x *run) textOut() io.Writer {
+	if x.r.JSON {
+		return x.d.Err
+	}
+	return x.d.Out
+}
+
+// printStop prints, under --json, why nothing was sent and to what, as AWS's commands do: {<key>: <value>, "targets": [names]}.
+func (x *run) printStop(key string, value bool, names []string) error {
+	if !x.r.JSON {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]any{key: value, "targets": names})
+	fmt.Fprintf(x.d.Out, "%s\n", b)
+	return nil
+}
+
 // stopped tells that an error is a stop: the run ends there, for every workload.
 func stopped(err error) bool {
 	var s *stop
@@ -74,11 +93,12 @@ func (x *run) workloadsSettings() error {
 	}
 	said := workloadSaid(x.r.Levels)
 	if x.r.DryRun {
-		x.say("dry run: %s: would act on, nothing sent", said)
+		out := x.textOut()
+		fmt.Fprintf(out, "dry run: %s: would act on %d %s, nothing sent\n", said, len(x.r.IDs), fleet.Plural(len(x.r.IDs), "workload"))
 		for _, id := range x.r.IDs {
-			x.say("  %s", id)
+			fmt.Fprintf(out, "  %s\n", id)
 		}
-		return nil
+		return x.printStop("dryRun", true, x.r.IDs)
 	}
 	// As AWS's: several workloads are confirmed on a terminal, and need --yes without one.
 	if n := len(x.r.IDs); n > 1 && !x.r.Yes {
@@ -86,12 +106,13 @@ func (x *run) workloadsSettings() error {
 			return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on %d workloads without a terminal", n)}
 		}
 		question := fmt.Sprintf("Set %s for %s?", said, strings.Join(x.r.IDs, ", "))
-		ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+		ok, err := install.Prompted(x.ctx, x.textOut(), func() (bool, error) { return x.d.Prompter.Confirm(question) })
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return &stop{0, "not confirmed: nothing sent"}
+			fmt.Fprintln(x.textOut(), "not confirmed: nothing sent")
+			return x.printStop("confirmed", false, x.r.IDs)
 		}
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
@@ -196,8 +217,8 @@ func (x *run) routerSettings() error {
 	}
 	said := routerSaid(x.r.Levels)
 	if x.r.DryRun {
-		x.say("%s: would set %s", x.n.router, said)
-		return nil
+		fmt.Fprintf(x.textOut(), "%s: would set %s\n", x.n.router, said)
+		return x.printStop("dryRun", true, []string{x.n.router})
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
 	if err != nil {

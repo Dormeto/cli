@@ -1,6 +1,7 @@
 package gcponboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -198,7 +199,40 @@ func TestWorkloadsSettingsDryRunSendsNothingAndSaysWhatItWouldSet(t *testing.T) 
 	if code != 0 || len(g.controllerCalls(mark)) != 0 {
 		t.Fatalf("exit %d %v:\n%s", code, g.controllerCalls(mark), out)
 	}
-	contains(t, out, "dry run: its settings: would act on", "nothing sent", "  shop", "  web")
+	contains(t, out, "dry run: its settings: would act on 2 workloads, nothing sent\n", "  shop", "  web")
+}
+
+// Under --json stdout is JSON, as AWS's: the text goes to stderr and a dry run or a declined question prints its shape.
+func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t *testing.T) {
+	g, r := settingsRig(t)
+	var errs bytes.Buffer
+	g.d.Err = &errs
+	r.IDs, r.JSON = []string{"shop", "web"}, true
+	r.Levels = map[string]any{"idleMinutes": 30}
+	r.DryRun = true
+	code, out := g.call(t, WorkloadsSettings, r)
+	if want := `{"dryRun":true,"targets":["shop","web"]}` + "\n"; code != 0 || out != want {
+		t.Fatalf("dry run: exit %d, stdout %q, want %q", code, out, want)
+	}
+	contains(t, errs.String(), "dry run: its settings: would act on 2 workloads, nothing sent\n")
+	r.DryRun = false
+	errs.Reset()
+	g.d.Terminal = true
+	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), &errs, true)
+	code, out = g.call(t, WorkloadsSettings, r)
+	if want := `{"confirmed":false,"targets":["shop","web"]}` + "\n"; code != 0 || out != want {
+		t.Fatalf("declined: exit %d, stdout %q, want %q", code, out, want)
+	}
+	contains(t, errs.String(), "Set its settings for shop, web? [y/N]: ", "not confirmed: nothing sent")
+	// A router's level: its dry run is JSON on stdout too.
+	r.DryRun, r.IDs = true, nil
+	r.Levels = map[string]any{"hibernate": ptr(true)}
+	errs.Reset()
+	code, out = g.call(t, RouterSettings, r)
+	if want := `{"dryRun":true,"targets":["dmtr-europe-west1"]}` + "\n"; code != 0 || out != want {
+		t.Fatalf("router dry run: exit %d, stdout %q, want %q", code, out, want)
+	}
+	contains(t, errs.String(), "dmtr-europe-west1: would set")
 }
 
 func TestWorkloadsSettingsAskForSeveralWorkloadsOnly(t *testing.T) {
