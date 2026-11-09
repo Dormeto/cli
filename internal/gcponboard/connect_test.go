@@ -397,6 +397,22 @@ func TestConnectRefusesAnotherHostProject(t *testing.T) {
 	}
 }
 
+// The commands the runs tell to run find the manager as this run did: with --manager-region and --api-url when given.
+func TestConnectsCommandLinesKeepTheManagersRegionAndAPIURL(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	m.rec = &fleet.GoogleConnection{Project: "other-host", ProjectNumber: "1", Pool: "dmt-dev", Provider: "aws"}
+	r := connectRequest(m)
+	r.ManagerRegion, r.APIURL, r.Configuration = "eu-west-1", "https://abc123.execute-api.eu-west-1.amazonaws.com", "dormeto-dev"
+	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){runConnect, runDisconnect} {
+		code, out := run(t, s, r)
+		if code != 1 || !strings.Contains(out, "(dormeto gcp disconnect --project other-host --profile kloudy --env dev --manager-region eu-west-1 --api-url https://abc123.execute-api.eu-west-1.amazonaws.com --gcloud-configuration dormeto-dev)") &&
+			!strings.Contains(out, ": dormeto gcp disconnect --project other-host --profile kloudy --env dev --manager-region eu-west-1 --api-url https://abc123.execute-api.eu-west-1.amazonaws.com --gcloud-configuration dormeto-dev\n") {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+	}
+}
+
 // disconnect removes every binding of the two accounts at the recorded scopes and router projects, the two custom roles,
 // the accounts, the provider and the pool, and clears the record; the APIs stay on and are listed, with Google's own
 // bindings.
@@ -430,8 +446,9 @@ func TestDisconnectRemovesEveryBindingOfTheTwoAccountsAndLeavesTheAPIs(t *testin
 		"  - service account " + commandEmail,
 		"  - provider aws of pool dmt-dev",
 		"  - workload identity pool dmt-dev",
-		"  - record of the connection in manager dev (its 1 router unregistered)",
+		"  - record of the connection in manager dev (the manager's Google Cloud routers unregistered)",
 		"  ✓ verified: no binding of " + discoveryEmail + " or " + commandEmail + " is left at the scopes and router projects",
+		"  ✓ record: cleared the connection in manager dev (the manager's Google Cloud routers unregistered)",
 		"Left in place:",
 		"  API iam.googleapis.com",
 		"  API iamcredentials.googleapis.com",
@@ -711,6 +728,203 @@ func TestAFirstConnectStoppedAfterItsStepsSaysWhatItsRecordHolds(t *testing.T) {
 	}
 	if len(m.puts) != 1 || len(m.rec.Routers) != 0 {
 		t.Fatalf("puts %+v", m.puts)
+	}
+}
+
+// A router of the record whose project has left the scopes (moved to another folder) still has its controller: disconnect
+// finds it from the record, and a connect takes the command account's roles/run.invoker back on it, with the grants on the
+// project and its tag value.
+func TestConnectTakesTheInvokerGrantBackOnTheControllerOfAProjectThatLeftTheScopes(t *testing.T) {
+	s := connectServer(t)
+	s.Parent, s.Ancestors = "folders/7", []string{"folders/7", "organizations/42"}
+	s.Scopes = map[string]bool{"folders/7": true, "organizations/42": true}
+	otherProject(s, "folders/7", "organizations/42")
+	m := newFakeManager()
+	r := connectRequest(m)
+	r.Scopes = []string{"folders/7"}
+	if code, out := runConnect(t, s, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	s.Parent, s.Ancestors = "folders/8", []string{"folders/8", "organizations/42"}
+	s.Unlock()
+	controller := "projects/dormeto-dev/locations/europe-west1/services/dmtr-europe-west1-controller"
+	invoker := "  - grant roles/run.invoker to serviceAccount:" + commandEmail + " on controller dmtr-europe-west1-controller of project dormeto-dev"
+	dry := connectRequest(m)
+	dry.DryRun = true
+	if code, out := runDisconnect(t, s, dry); code != 0 || !slices.Contains(lines(out), invoker) {
+		t.Fatalf("disconnect: exit %d:\n%s", code, out)
+	}
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, w := range []string{
+		invoker + " (not at the scopes any more)",
+		"  - grant projects/dormeto-dev/roles/dormetoCommand to serviceAccount:" + commandEmail + " on project dormeto-dev (not at the scopes any more)",
+		"  - grant roles/resourcemanager.tagUser to serviceAccount:" + commandEmail + " on tag value dormeto-dev/dormeto/managed (not at the scopes any more)",
+		"  ~ record of the connection in manager dev: - router dormeto-dev/europe-west1 (not found at the scopes)",
+	} {
+		if !slices.Contains(lines(out), w) {
+			t.Errorf("no line %q in\n%s", w, out)
+		}
+	}
+	if got := rolesOf(s.Policies[controller], "serviceAccount:"+commandEmail); len(got) != 0 {
+		t.Fatalf("command on the controller: %v", got)
+	}
+	if len(m.rec.Routers) != 0 {
+		t.Fatalf("routers %+v", m.rec.Routers)
+	}
+}
+
+// Google answers a tag value the caller may not read as one that does not exist (403): the router projects are tested for
+// the tag step before their tag values are read, so a missing permission is said as missing, not as an install to run.
+// Disconnect alike, for a value it would otherwise find nothing on.
+func TestConnectTestsTheRouterProjectsBeforeReadingTheirTagValues(t *testing.T) {
+	s := connectServer(t)
+	s.Withheld["projects/dormeto-dev"] = map[string]bool{"resourcemanager.tagValues.get": true}
+	m := newFakeManager()
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 1 || !strings.HasSuffix(out, "  ✗ connect in project dormeto-dev: missing resourcemanager.tagValues.get\nNothing was changed.\n") || strings.Contains(out, "dormeto gcp install") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if mut := s.Mutations(); len(mut) != 0 || len(m.puts) != 0 {
+		t.Fatalf("mutations %+v puts %d", mut, len(m.puts))
+	}
+	delete(s.Withheld, "projects/dormeto-dev")
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	s.Withheld["projects/dormeto-dev"] = map[string]bool{"resourcemanager.tagValues.get": true}
+	s.Unlock()
+	before := len(s.Mutations())
+	code, out = runDisconnect(t, s, connectRequest(m))
+	if code != 1 || !strings.HasSuffix(out, "  ✗ disconnect in project dormeto-dev: missing resourcemanager.tagValues.get\nNothing was changed.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if mut := s.Mutations(); len(mut) != before || m.deletes != 0 {
+		t.Fatalf("mutations %+v", mut[before:])
+	}
+}
+
+// A permission missing at a folder scope, at an organization (a scope's, or a folder's where its role is defined) or in a
+// router project: exit 1 with it named, nothing changed in Google or in the manager.
+func TestConnectWithAPermissionMissingAtAScopeOrARouterProjectChangesNothing(t *testing.T) {
+	for _, c := range []struct {
+		scope, at, permission, line string
+	}{
+		{"folders/7", "folders/7", "resourcemanager.folders.setIamPolicy", "  ✗ connect in folder 7: missing resourcemanager.folders.setIamPolicy"},
+		{"folders/7", "organizations/42", "iam.roles.create", "  ✗ connect in organization 42: missing iam.roles.create"},
+		{"organizations/42", "organizations/42", "resourcemanager.organizations.setIamPolicy", "  ✗ connect in organization 42: missing resourcemanager.organizations.setIamPolicy"},
+		{"projects/dormeto-dev", "projects/dormeto-dev", "run.services.setIamPolicy", "  ✗ connect in project dormeto-dev: missing run.services.setIamPolicy"},
+		{"projects/dormeto-dev", "projects/dormeto-dev", "resourcemanager.tagValues.setIamPolicy", "  ✗ connect in project dormeto-dev: missing resourcemanager.tagValues.setIamPolicy"},
+	} {
+		s := connectServer(t)
+		s.Parent, s.Ancestors = "folders/7", []string{"folders/7", "organizations/42"}
+		s.Scopes = map[string]bool{"folders/7": true, "organizations/42": true}
+		s.Withheld[c.at] = map[string]bool{c.permission: true}
+		m := newFakeManager()
+		r := connectRequest(m)
+		r.Scopes = []string{c.scope}
+		code, out := runConnect(t, s, r)
+		if code != 1 || !strings.HasSuffix(out, c.line+"\nNothing was changed.\n") || strings.Contains(out, "Checked:") {
+			t.Errorf("%s in %s: exit %d:\n%s", c.permission, c.at, code, out)
+		}
+		if mut := s.Mutations(); len(mut) != 0 || len(m.puts) != 0 {
+			t.Errorf("%s in %s: mutations %+v puts %d", c.permission, c.at, mut, len(m.puts))
+		}
+	}
+}
+
+// disconnect at a folder scope: the discovery account's grant on the folder goes, and the role dormetoDiscovery of the
+// folder's organization is deleted.
+func TestDisconnectAtAFolderRemovesItsGrantAndItsOrganizationsRole(t *testing.T) {
+	s := connectServer(t)
+	s.Parent, s.Ancestors = "folders/7", []string{"folders/7", "organizations/42"}
+	s.Scopes = map[string]bool{"folders/7": true, "organizations/42": true}
+	m := newFakeManager()
+	r := connectRequest(m)
+	r.Scopes = []string{"folders/7"}
+	if code, out := runConnect(t, s, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := runDisconnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, w := range []string{
+		"Checked: me@example.com holds every permission dormeto gcp disconnect needs in project dormeto-dev (host), folder 7, organization 42.",
+		"  - grant organizations/42/roles/dormetoDiscovery to serviceAccount:" + discoveryEmail + " on folder 7",
+		"  - role dormetoDiscovery in organization 42",
+		"  - role dormetoCommand in project dormeto-dev",
+	} {
+		if !slices.Contains(lines(out), w) {
+			t.Errorf("no line %q in\n%s", w, out)
+		}
+	}
+	if got := rolesOf(s.Policies["folders/7"], "serviceAccount:"+discoveryEmail); len(got) != 0 {
+		t.Errorf("folder grant left: %v", got)
+	}
+	if role := s.OrgRoles["42/dormetoDiscovery"]; role == nil || !role.Deleted {
+		t.Errorf("organization role %+v", role)
+	}
+	if m.rec != nil {
+		t.Errorf("record %+v", m.rec)
+	}
+}
+
+// A custom role still granted to another member once the accounts' grants are out is kept, and said; the rest goes.
+func TestDisconnectKeepsARoleStillGrantedToAnotherMember(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	s.Policy["bindings"] = append(s.Policy["bindings"].([]any), map[string]any{"role": "projects/dormeto-dev/roles/dormetoDiscovery", "members": []any{"user:ann@example.com"}})
+	s.Unlock()
+	code, out := runDisconnect(t, s, connectRequest(m))
+	if code != 0 || !slices.Contains(lines(out), "  = role dormetoDiscovery in project dormeto-dev: kept, still granted to user:ann@example.com on project dormeto-dev") ||
+		slices.Contains(lines(out), "  - role dormetoDiscovery in project dormeto-dev") || !slices.Contains(lines(out), "  - role dormetoCommand in project dormeto-dev") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if s.Roles["dormetoDiscovery"].Deleted || !s.Roles["dormetoCommand"].Deleted || m.rec != nil {
+		t.Fatalf("roles %+v record %+v", s.Roles, m.rec)
+	}
+	if got := rolesOf(s.Policy, "user:ann@example.com"); !slices.Equal(got, []string{"projects/dormeto-dev/roles/dormetoDiscovery"}) {
+		t.Fatalf("ann's grant %v", got)
+	}
+}
+
+// devVersion is a dev build's version as Go stamps it from git: longer than a release's.
+const devVersion = "0.14.1-0.20261109143000-d3ca66f12345+dirty"
+
+// withinLimit is a role's description as Dormeto writes it with devVersion: whole within Google's 256 characters, else with the
+// version's core.
+func withinLimit(description string) string {
+	if whole := "Dormeto " + devVersion + ": " + description; len(whole) <= 256 {
+		return whole
+	}
+	return "Dormeto 0.14.1: " + description
+}
+
+// Google takes a custom role's description of at most 256 characters, and dormetoCommand's own text is 232: a dev build's
+// long version is cut to its core there (a release's, such as 0.14.0, is written whole).
+func TestConnectsRoleDescriptionsStayWithinGooglesLimitWithADevBuildsVersion(t *testing.T) {
+	s := connectServer(t)
+	d, out, _ := connectDeps(s)
+	d.Version = devVersion
+	if code := Connect(context.Background(), d, connectRequest(newFakeManager())); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for id, r := range s.Roles {
+		if want := withinLimit(access.Load().Manager.Roles[id].Description); r.Description != want || len(r.Description) > 256 {
+			t.Errorf("%s: %q (%d characters), want %q", id, r.Description, len(r.Description), want)
+		}
+	}
+	if !strings.HasPrefix(s.Roles["dormetoCommand"].Description, "Dormeto 0.14.1: ") {
+		t.Errorf("dormetoCommand: %q", s.Roles["dormetoCommand"].Description)
 	}
 }
 

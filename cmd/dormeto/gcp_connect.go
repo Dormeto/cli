@@ -117,7 +117,8 @@ func gcpConnectCommand(use, short, long string, f *gcpConnectFlags, deps fleetDe
 				return finish(c, err)
 			}
 			r := gcponboard.ConnectRequest{Project: f.project, Scopes: f.scopes, Configuration: f.configuration, Profile: f.manager.profile,
-				Env: f.manager.env, Yes: f.yes, DryRun: f.dryRun, JSON: f.json, Manager: connectedManager{api}}
+				Env: f.manager.env, ManagerRegion: f.manager.region, APIURL: f.manager.apiURL, Yes: f.yes, DryRun: f.dryRun, JSON: f.json,
+				Manager: connectedManager{api}}
 			code := run(ctx, gcpDeps(c, f.configuration, version), r)
 			if s := signalled(); s != nil {
 				code = signalCode(s)

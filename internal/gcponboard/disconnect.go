@@ -11,6 +11,7 @@ package gcponboard
 // what it leaves: the APIs (other things may use them) and the bindings Google added during the connects.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -57,10 +58,11 @@ func (x *link) disconnect() error {
 	if err := x.findFormerRouterProjects(); err != nil {
 		return err
 	}
-	if err := x.findTagValues(false); err != nil {
+	// The tag values once their projects are tested: a value the caller may not read answers as one that does not exist.
+	if err := x.checkRest(); err != nil {
 		return err
 	}
-	if err := x.checkRest(); err != nil {
+	if err := x.findTagValues(false); err != nil {
 		return err
 	}
 	if err := x.planDisconnect(); err != nil {
@@ -180,21 +182,14 @@ func (x *link) planDisconnect() error {
 			x.steps = append(x.steps, *s)
 		}
 	}
-	x.recordLine = fmt.Sprintf("- record of the connection in manager %s (%s unregistered)", x.m.Env, its(len(x.rec.Routers), "router"))
+	// The manager's DELETE unregisters every Google Cloud router it holds, the record's or not.
+	x.recordLine = fmt.Sprintf("- record of the connection in manager %s (the manager's Google Cloud routers unregistered)", x.m.Env)
 	return nil
 }
 
-// its is "its 1 router", "its 2 routers", "no router".
-func its(n int, word string) string {
-	if n == 0 {
-		return "no " + word
-	}
-	return "its " + count(n, word)
-}
-
 // planRemovals takes every binding of the members out of each place's policy (a place gone has none), each place's at once
-// with its etag (Update), its lines followed by the note when there is one; the policies as they will be are kept for the
-// roles' check.
+// with its etag (Update), its lines followed by the place's note, else note, when there is one; the policies as they will be
+// are kept for the roles' check.
 func (x *link) planRemovals(name string, places []place, members []string, note string) (*step, error) {
 	type group struct {
 		place  place
@@ -228,8 +223,8 @@ func (x *link) planRemovals(name string, places []place, members []string, note 
 		for _, g := range grants {
 			x.removing[pl.what+"\x00"+grantKey(g)] = true
 			line := "- grant " + describeOn(g, pl.what)
-			if note != "" {
-				line += " (" + note + ")"
+			if n := cmp.Or(pl.note, note); n != "" {
+				line += " (" + n + ")"
 			}
 			lines = append(lines, line)
 		}
@@ -415,7 +410,7 @@ func (x *link) applyDisconnect() error {
 		x.say("  ✗ record: %s", err)
 		return &stop{1, "Google Cloud is disconnected, but the manager's record is not cleared: run the same command again."}
 	}
-	x.say("  ✓ record: cleared the connection in manager %s (%s unregistered)", x.m.Env, its(len(x.rec.Routers), "router"))
+	x.say("  ✓ record: cleared the connection in manager %s (the manager's Google Cloud routers unregistered)", x.m.Env)
 	x.leftInPlaceAfterDisconnect()
 	if err := x.printJSON(map[string]any{"connection": nil}); err != nil {
 		return err

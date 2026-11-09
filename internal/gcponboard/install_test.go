@@ -785,6 +785,20 @@ func TestInstallUpdatesADescriptionOfAnotherVersion(t *testing.T) {
 	}
 }
 
+// The install's roles too stay within Google's 256 characters with a dev build's version, cut to its core.
+func TestInstallsRoleDescriptionsStayWithinGooglesLimitWithADevBuildsVersion(t *testing.T) {
+	g := newInstallRig(t)
+	g.d.Version = devVersion
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for id, r := range g.s.Roles {
+		if want := withinLimit(access.Load().Roles[id].Description); r.Description != want || len(r.Description) > 256 {
+			t.Errorf("%s: %q (%d characters), want %q", id, r.Description, len(r.Description), want)
+		}
+	}
+}
+
 func TestInstallRetriesABindingOfTheNewServiceAccount(t *testing.T) {
 	g := newInstallRig(t)
 	g.s.AccountLag = 1

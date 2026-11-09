@@ -47,7 +47,22 @@ func (x *run) roleName(id string) string { return "projects/" + x.n.project + "/
 // wantRole is a custom role as the install writes it.
 func (x *run) wantRole(id string) access.Role {
 	r := roleDef(id)
-	return access.Role{Title: r.Title, Description: "Dormeto " + x.d.Version + ": " + r.Description, Permissions: slices.Clone(r.Permissions)}
+	return access.Role{Title: r.Title, Description: roleDescription(x.d.Version, r.Description), Permissions: slices.Clone(r.Permissions)}
+}
+
+// maxRoleDescription is the longest description of a custom role Google takes: 256 characters ("Role", IAM's REST reference).
+const maxRoleDescription = 256
+
+// roleDescription is a custom role's description as Dormeto writes it, "Dormeto <version>: <the manifest's description>", with
+// the version's core (X.Y.Z) when a longer one, a dev build's such as 0.14.1-0.20261109143000-d3ca66f12345+dirty, would pass
+// Google's limit: the manifest's longest, dormetoCommand's, is 232 characters.
+func roleDescription(version, description string) string {
+	if d := "Dormeto " + version + ": " + description; len(d) <= maxRoleDescription {
+		return d
+	}
+	core, _, _ := strings.Cut(version, "-")
+	core, _, _ = strings.Cut(core, "+")
+	return "Dormeto " + core + ": " + description
 }
 
 func (x *run) planRoles() (*step, error) {

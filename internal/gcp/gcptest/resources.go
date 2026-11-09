@@ -327,6 +327,18 @@ func (s *Server) resourcePolicy(w http.ResponseWriter, name, verb string, body [
 	}
 }
 
+// maxRoleDescription is the longest description of a custom role Google takes: 256 characters ("Role", IAM's REST reference).
+const maxRoleDescription = 256
+
+// longDescription refuses a role's description longer than Google takes, as Google does (400).
+func longDescription(w http.ResponseWriter, description string) bool {
+	if len(description) <= maxRoleDescription {
+		return false
+	}
+	Fail(w, 400, "INVALID_ARGUMENT", fmt.Sprintf("The description of the role is %d characters long, more than %d.", len(description), maxRoleDescription))
+	return true
+}
+
 func (s *Server) roleBody(id string, role *Role) map[string]any {
 	return roleBodyIn("projects/"+s.ProjectID, id, role)
 }
@@ -394,6 +406,9 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 			Fail(w, 409, "ALREADY_EXISTS", "A role named "+in.RoleID+" in this "+strings.TrimSuffix(strings.Split(parent, "/")[0], "s")+" already exists.")
 			return
 		}
+		if longDescription(w, in.Role.Description) {
+			return
+		}
 		role := &Role{Title: in.Role.Title, Description: in.Role.Description, Permissions: in.Role.IncludedPermissions, Stage: in.Role.Stage}
 		roles[in.RoleID] = role
 		Reply(w, roleBodyIn(parent, in.RoleID, role))
@@ -426,6 +441,9 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 				Stage               string   `json:"stage"`
 			}
 			json.Unmarshal(body, &in)
+			if longDescription(w, in.Description) {
+				return
+			}
 			for _, field := range strings.Split(r.URL.Query().Get("updateMask"), ",") {
 				switch field {
 				case "title":
@@ -529,7 +547,8 @@ func tagBody(t *Tag) map[string]any {
 		"namespacedName": t.NamespacedName}
 }
 
-// tags serves tag keys and values: created by operations, read by namespaced name (403 when missing, as Google).
+// tags serves tag keys and values: created by operations, read by namespaced name (403 when missing, as Google, and when the
+// caller lacks resourcemanager.tagKeys.get or tagValues.get in the name's project, which Google answers alike).
 func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 	if s.disabled(w, "cloudresourcemanager.googleapis.com") {
 		return
@@ -550,6 +569,15 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/namespaced") && r.Method == http.MethodGet:
 		name := r.URL.Query().Get("name")
+		project, _, _ := strings.Cut(name, "/")
+		get := "resourcemanager.tagKeys.get"
+		if values {
+			get = "resourcemanager.tagValues.get"
+		}
+		if !s.holds("projects/"+project, get) {
+			Fail(w, 403, "PERMISSION_DENIED", "Permission denied on resource '"+name+"' (or it may not exist).")
+			return
+		}
 		for _, t := range store {
 			if t.NamespacedName == name {
 				Reply(w, tagBody(t))

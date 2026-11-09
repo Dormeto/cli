@@ -78,9 +78,14 @@ func TestGcpConnectFlagsReadIntoTheRequestAndTheManagerIsRead(t *testing.T) {
 	m := r.Manager
 	r.Manager = nil
 	want := gcponboard.ConnectRequest{Project: "dormeto-dev", Scopes: []string{"projects/dormeto-dev", "folders/7"}, Configuration: "dormeto-dev",
-		Profile: "kloudy", Env: "dev", Yes: true, DryRun: true, JSON: true}
+		Profile: "kloudy", Env: "dev", ManagerRegion: "eu-west-1", Yes: true, DryRun: true, JSON: true}
 	if !reflect.DeepEqual(r, want) || out.profile != "kloudy" || !reflect.DeepEqual(out.located, []string{"dev/eu-west-1"}) {
 		t.Fatalf("%+v profile %q located %v", r, out.profile, out.located)
+	}
+	// --api-url too, for the commands the runs tell to run.
+	calls, out = gcpConnectRan(t, 0, "gcp", "disconnect", "--project", "dormeto-dev", "--env", "dev", "--api-url", "https://abc123.execute-api.eu-west-1.amazonaws.com")
+	if out.exit != 0 || len(calls) != 1 || calls[0].r.APIURL != "https://abc123.execute-api.eu-west-1.amazonaws.com" || calls[0].r.ManagerRegion != "" {
+		t.Fatalf("exit %d %q %+v", out.exit, out.stderr, calls)
 	}
 	info, err := m.About(context.Background())
 	if err != nil || info.Version != "0.24.0-dev.2" || info.Account != "121014831971" || info.Env != "dev" || !strings.HasPrefix(info.URL, "http://127.0.0.1:") {

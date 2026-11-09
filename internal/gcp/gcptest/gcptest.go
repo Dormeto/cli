@@ -42,12 +42,12 @@ type Call struct {
 }
 
 // Mutating tells whether the call may change something: anything but a GET or a HEAD, except the read-only POSTs
-// (testIamPermissions, getIamPolicy).
+// (testIamPermissions, getIamPolicy, getAncestry).
 func (c Call) Mutating() bool {
 	if c.Method == http.MethodGet || c.Method == http.MethodHead {
 		return false
 	}
-	return !strings.HasSuffix(c.Path, ":testIamPermissions") && !strings.HasSuffix(c.Path, ":getIamPolicy")
+	return !strings.HasSuffix(c.Path, ":testIamPermissions") && !strings.HasSuffix(c.Path, ":getIamPolicy") && !strings.HasSuffix(c.Path, ":getAncestry")
 }
 
 // Server is the fake. Set its exported fields before the requests (or under Lock while they run).

@@ -4,7 +4,8 @@ package gcponboard
 // Resource Manager's project search and each project's ancestry, which also gives a folder scope its organization), their
 // routers (the Cloud Run services dmtr-<region>-controller, listed in every location at once) with their controller's URL
 // and version (its DMT_VERSION), and each router project's tag value <project>/dormeto/managed. Ten projects at a time; it
-// only reads, with the permissions of the read step, tested at the scopes.
+// only reads, with the permissions of the read step, tested at the scopes; the tag values once the router projects are
+// tested for the tag step, since Google answers a value the caller may not read as one that does not exist.
 
 import (
 	"fmt"
@@ -22,8 +23,9 @@ const (
 	scanAtOnce = 10
 )
 
-// scan finds the projects at the scopes, their routers and the router projects' tag values. A folder scope whose
-// organization is not found stops connect (its role would have nowhere to be defined); disconnect leaves that role.
+// scan finds the projects at the scopes and their routers, and the projects of the record's routers that hold none any more.
+// A folder scope whose organization is not found stops connect (its role would have nowhere to be defined); disconnect
+// leaves that role.
 func (x *link) scan() error {
 	if err := x.findProjects(); err != nil {
 		return err
@@ -33,9 +35,6 @@ func (x *link) scan() error {
 		return err
 	}
 	x.routers = routers
-	if err := x.findTagValues(true); err != nil {
-		return err
-	}
 	// The record's routers not found: a project left without any has its command grants taken back.
 	if x.rec != nil {
 		for _, r := range x.rec.Routers {
@@ -43,6 +42,15 @@ func (x *link) scan() error {
 				x.gone = append(x.gone, r.Project)
 			}
 		}
+	}
+	return nil
+}
+
+// readTagValues reads, once checkRest has tested the router projects, their tag values (one missing stops connect) and those
+// of the projects left without a router.
+func (x *link) readTagValues() error {
+	if err := x.findTagValues(true); err != nil {
+		return err
 	}
 	for _, p := range x.gone {
 		name, found, err := x.tag("tagValues", p+"/dormeto/managed")

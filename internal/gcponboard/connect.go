@@ -56,15 +56,17 @@ type ManagerInfo struct {
 }
 
 // ConnectRequest is what the flags of connect and disconnect ask: the host project, the scopes (connect's --scope,
-// organizations/<n>, folders/<n> or projects/<id>), the gcloud configuration, the AWS profile and environment of the manager
-// (named in the commands the runs tell to run; Env is used when the manager does not say its own), and the manager.
+// organizations/<n>, folders/<n> or projects/<id>), the gcloud configuration, the AWS profile, environment, region and API
+// URL of the manager (named in the commands the runs tell to run; Env is used when the manager does not say its own), and
+// the manager.
 type ConnectRequest struct {
-	Project           string
-	Scopes            []string
-	Configuration     string
-	Profile, Env      string
-	Yes, DryRun, JSON bool
-	Manager           Manager
+	Project               string
+	Scopes                []string
+	Configuration         string
+	Profile, Env          string
+	ManagerRegion, APIURL string
+	Yes, DryRun, JSON     bool
+	Manager               Manager
 }
 
 const (
@@ -87,12 +89,14 @@ var (
 )
 
 // place is a resource with an IAM policy: how the plan and the IAM lines name it, where its policy is read and written, and
-// the step that changes it. fresh: created by this run, its policy is not read while planning.
+// the step that changes it. fresh: created by this run, its policy is not read while planning. note: why its removals are
+// planned, said after each.
 type place struct {
 	what  string
 	rp    ResourcePolicy
 	step  string
 	fresh bool
+	note  string
 }
 
 // binding is one grant on a place.
@@ -223,6 +227,9 @@ func (x *link) connect() error {
 	if err := x.checkRest(); err != nil {
 		return err
 	}
+	if err := x.readTagValues(); err != nil {
+		return err
+	}
 	if err := x.planConnect(); err != nil {
 		return err
 	}
@@ -329,13 +336,19 @@ func (x *link) recordNames() error {
 		r.Pool, r.ServiceAccounts.Discovery, r.ServiceAccounts.Command, x.m.Env, pool, discovery, command)}
 }
 
-// commandLine is a dormeto gcp command for this manager, as the runs tell to run it.
+// commandLine is a dormeto gcp command for this manager, as the runs tell to run it: the manager found as this run found it.
 func (x *link) commandLine(command, project string) string {
 	parts := []string{"dormeto gcp", command, "--project", project}
 	if x.c.Profile != "" {
 		parts = append(parts, "--profile", x.c.Profile)
 	}
 	parts = append(parts, "--env", x.m.Env)
+	if x.c.ManagerRegion != "" {
+		parts = append(parts, "--manager-region", x.c.ManagerRegion)
+	}
+	if x.c.APIURL != "" {
+		parts = append(parts, "--api-url", x.c.APIURL)
+	}
 	if x.c.Configuration != "" {
 		parts = append(parts, "--gcloud-configuration", x.c.Configuration)
 	}
@@ -562,7 +575,7 @@ func (x *link) checkRest() error {
 		needs = append(needs, need{"projects/" + p, []string{"controller", "tag", "roles", "projectBindings"}})
 	}
 	for _, p := range x.gone {
-		needs = append(needs, need{"projects/" + p, []string{"tag", "projectBindings"}})
+		needs = append(needs, need{"projects/" + p, []string{"controller", "tag", "projectBindings"}})
 	}
 	for _, p := range x.former {
 		needs = append(needs, need{"projects/" + p, []string{"controller", "tag", "roles", "projectBindings"}})
@@ -654,20 +667,33 @@ func (x *link) planConnect() error {
 }
 
 // planGoneRouterProjects takes the command account's bindings out of the projects whose routers are all gone (their
-// project's policy and their tag value's); their role dormetoCommand stays, granting nothing: connect's permissions don't
-// delete a role.
+// project's policy, their tag value's, and their recorded routers' controllers: a project that left the scopes keeps them);
+// their role dormetoCommand stays, granting nothing: connect's permissions don't delete a role.
 func (x *link) planGoneRouterProjects() (*step, error) {
 	if len(x.gone) == 0 {
 		return nil, nil
 	}
 	var places []place
 	for _, p := range x.gone {
-		places = append(places, x.scopePlace("projects/"+p))
+		note := "no router left"
+		if !slices.Contains(x.projects, p) {
+			note = "not at the scopes any more"
+		}
+		at := []place{x.scopePlace("projects/" + p)}
 		if x.tagValue[p] != "" {
-			places = append(places, x.tagPlace(p))
+			at = append(at, x.tagPlace(p))
+		}
+		for _, r := range x.rec.Routers {
+			if r.Project == p {
+				at = append(at, x.controllerPlace(r))
+			}
+		}
+		for _, pl := range at {
+			pl.note = note
+			places = append(places, pl)
 		}
 	}
-	s, err := x.planRemovals("routersGone", places, []string{x.member("command")}, "no router left")
+	s, err := x.planRemovals("routersGone", places, []string{x.member("command")}, "")
 	if err != nil {
 		return nil, err
 	}
@@ -797,7 +823,7 @@ func (x *link) wantManagerRole(at roleAt) access.Role {
 	if strings.HasPrefix(at.parent, "organizations/") {
 		perms = append(perms, r.OrganizationPermissions...)
 	}
-	return access.Role{Title: r.Title, Description: "Dormeto " + x.d.Version + ": " + r.Description, Permissions: perms}
+	return access.Role{Title: r.Title, Description: roleDescription(x.d.Version, r.Description), Permissions: perms}
 }
 
 // planManagerRoles creates, undeletes then updates, or updates each custom role where it is defined, as the roles step of
