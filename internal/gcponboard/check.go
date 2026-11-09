@@ -183,15 +183,21 @@ type projectBody struct {
 	State     string `json:"state"`
 }
 
-// testPermissions are the permissions of perms the caller holds, asked 100 at a time. A batch Google refuses with a 400
-// (a permission it does not know) is asked again one permission at a time, still read-only, and the error names the
-// permissions refused.
+// testPermissions are the permissions of perms the caller holds in a project, asked 100 at a time. A batch Google refuses
+// with a 400 (a permission it does not know) is asked again one permission at a time, still read-only, and the error names
+// the permissions refused.
 func testPermissions(ctx context.Context, c *gcp.Client, project string, perms []string) ([]string, error) {
+	return testPermissionsOn(ctx, c, "projects/"+url.PathEscape(project), perms)
+}
+
+// testPermissionsOn is testPermissions on a project, a folder or an organization (projects/<id>, folders/<n>,
+// organizations/<n>).
+func testPermissionsOn(ctx context.Context, c *gcp.Client, resource string, perms []string) ([]string, error) {
 	held := []string{}
 	var rejected []string
 	var first error
 	for batch := range slices.Chunk(perms, permissionMax) {
-		got, err := testBatch(ctx, c, project, batch)
+		got, err := testBatch(ctx, c, resource, batch)
 		if err == nil {
 			held = append(held, got...)
 			continue
@@ -203,7 +209,7 @@ func testPermissions(ctx context.Context, c *gcp.Client, project string, perms [
 			first = err
 		}
 		for _, p := range batch {
-			got, err := testBatch(ctx, c, project, []string{p})
+			got, err := testBatch(ctx, c, resource, []string{p})
 			switch {
 			case err == nil:
 				held = append(held, got...)
@@ -223,12 +229,12 @@ func testPermissions(ctx context.Context, c *gcp.Client, project string, perms [
 	return held, nil
 }
 
-func testBatch(ctx context.Context, c *gcp.Client, project string, perms []string) ([]string, error) {
+func testBatch(ctx context.Context, c *gcp.Client, resource string, perms []string) ([]string, error) {
 	var out struct {
 		Permissions []string `json:"permissions"`
 	}
 	in := map[string]any{"permissions": perms}
-	if err := c.Do(ctx, http.MethodPost, crm+url.PathEscape(project)+":testIamPermissions", in, &out); err != nil {
+	if err := c.Do(ctx, http.MethodPost, crmV3+resource+":testIamPermissions", in, &out); err != nil {
 		return nil, err
 	}
 	return out.Permissions, nil

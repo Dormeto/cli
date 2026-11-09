@@ -1516,9 +1516,9 @@ visitor's first request wakes them: Compute Engine VMs and managed instance grou
 standalone network endpoint groups, and Cloud SQL instances as their companions. Everything but VMs and groups behind a
 global load balancer comes with router 0.37.0 and CLI 0.11.0, released on 2026-11-05, which carry what the measures of
 2026-11-04 changed and were accepted the same day ([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
-Every command takes `--project` (required) and, but `check` and `status`, `--region` (required: the router is
-`dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google refuses; 2 for a bad flag
-or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
+Every command takes `--project` (required) and, but `check`, `status`, `connect` and `disconnect`, `--region` (required:
+the router is `dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google refuses; 2 for
+a bad flag or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
 
 ```sh
 dormeto gcp check --project my-project --region europe-west1
@@ -1534,7 +1534,9 @@ dormeto gcp uninstall --project my-project --region europe-west1
   account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:
   Google refuses to turn APIs on otherwise. `--image <image>` also tests what a router image of your own needs (see
   [the router's image](#the-routers-image)). `--with <features>` also tests the [optional access](#optional-access-cloud-sql-and-gke) of
-  those features; with `--region`, those of the install record are tested too. `--json` prints the report.
+  those features; with `--region`, those of the install record are tested too. `connect` and `disconnect` are tested for
+  what they do in a project; the bindings they change on folders and organizations are tested there by the commands
+  themselves. `--json` prints the report.
 - **`gcp install`** checks your permissions first (a ✗ stops it with nothing changed), prints the plan (the APIs to turn
   on, every IAM binding to add with its role, member, resource and condition, every resource to create), asks for
   confirmation (`--yes` without a terminal, `--dry-run` prints the plan only), applies it, prints the IAM policy
@@ -1573,6 +1575,70 @@ dormeto gcp uninstall --project my-project --region europe-west1
   service account only, so ask for `roles/run.invoker` on the controller if you lack it.
   If Terraform writes the load balancer, the VMs, the databases or the Deployments, it must ignore what the router
   changes: the fields are on the website's [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
+
+### Connecting the manager
+
+`dormeto gcp connect` lets the Dormeto manager, which runs in AWS, reach Google Cloud. It sets up workload identity
+federation from the manager's AWS roles to two service accounts of a host project, and grants them what the manager needs
+at the scopes and on the routers. `dormeto gcp disconnect` removes it. The manager itself never changes a Google IAM policy.
+
+```sh
+dormeto gcp connect --project my-host --profile ops --env prod
+dormeto gcp connect --project my-host --scope folders/123 --scope projects/shop --profile ops --env prod
+dormeto gcp disconnect --project my-host --profile ops --env prod
+```
+
+- **Where the manager is:** `--profile`, `--env` and `--api-url`, as for the [manager's commands](#where-the-manager-is),
+  and `--manager-region` for their `--region`, which every `dormeto gcp` command uses for a Google Cloud region. The CLI
+  reads the manager first: its version, which must be 0.24.0 or later (a dev build of 0.24.0 counts; an older one is refused
+  with the version found), its AWS account (the caller's: the manager's API admits only callers of its own account) and
+  its environment (`GET /iam/update`). These name the manager's roles `dmt-<env>-manager-<x>` that the trust admits, with no
+  typing. `--gcloud-configuration` picks gcloud's configuration, as for the other `gcp` commands.
+- **What connect sets up**, from the manifest's `manager` section (`router/gcp/access.json`, embedded in the CLI):
+  - in the host project, the APIs `iam`, `iamcredentials`, `sts`, `cloudresourcemanager` and `cloudbilling`;
+  - the workload identity pool `dmt-<env>` and its provider `aws` for the manager's account, with the mapping
+    `google.subject=assertion.arn`, `attribute.aws_role=assertion.arn.extract('assumed-role/{role}/')` and the condition
+    `assertion.arn.startsWith('arn:aws:sts::<account>:assumed-role/dmt-<env>-manager-')`;
+  - the service accounts `dmt-<env>-discovery` and `dmt-<env>-command`, each granting `roles/iam.workloadIdentityUser`
+    to the principal set of the manager roles that act as it: discovery to `dmt-<env>-manager-discovery`, `-api` and
+    `-savings`, command to `dmt-<env>-manager-operations`, `-api` and `-fleet`;
+  - at each scope, the custom role `dormetoDiscovery` for the discovery account (read only). It is defined in a project
+    scope's project, and in the organization of a folder or organization scope, where it also holds
+    `resourcemanager.folders.get|list` and `resourcemanager.organizations.get`;
+  - for each router at the scopes (a Cloud Run service `dmtr-<region>-controller`), for the command account:
+    `roles/run.invoker` on the controller, `roles/resourcemanager.tagUser` on the tag value `<project>/dormeto/managed`,
+    and the custom role `dormetoCommand`, defined in the router's project and granted there.
+- **`--scope`** is `organizations/<n>`, `folders/<n>` or `projects/<id>`, repeatable; the default is the host project. A
+  later run keeps the recorded scopes and adds the ones given: to drop a scope, disconnect, then connect again. A folder's
+  organization is found from the ancestry of a project in it. A folder in which you see no project stops the run: give its
+  organization as a scope instead.
+- **As `gcp install`:** your permissions are tested at the host and at each scope, each for the steps that act on it: a
+  folder for its bindings, an organization for its role and bindings, a router project for its grants (a ✗ stops the run
+  with nothing changed). Then the plan is printed and confirmed (`--yes` without a terminal, `--dry-run` prints it only).
+  It is applied in the order apis, roles, federation, serviceAccounts, impersonation, projectBindings, folderBindings,
+  organizationBindings, controller, tag, every IAM change printed (Dormeto's and Google's), and verified. Last, the
+  connection's record is written in the manager (`PUT /iam/discovery/google`): the host, its number, the pool, the
+  provider, the scopes, the two accounts, the routers with their controller's URL and version, the bindings Google added,
+  and who connected with which CLI. The manager registers the record's routers at once. Run again, connect plans only the
+  differences (a router installed since gets its grants), or says `up to date`. A router of the record no longer found is
+  dropped from it. When its project holds no router any more, the command account's grants there are taken back, and its
+  role `dormetoCommand` is left, granted to no one. `--json` prints the record on stdout (`{"connection": …}`; a dry run's
+  `{"dryRun": true, "plan": […]}`) and the words on stderr.
+- **What Google keeps:** a connect after a disconnect undeletes the pool and its provider (Google keeps them 30 days) and
+  the custom roles (7 days), then updates them. A custom role deleted more than 7 days ago can't be undeleted, and Google
+  blocks its ID until its permanent deletion ends, at the latest 44 days after the deletion. Connect then stops with
+  `Google blocks the ID of role <id> in <where>: …; Google frees it by <date>`, the date counted from the manager's last
+  disconnect in its audit. A deleted service account is created again: its name is free at once.
+- **`gcp disconnect`** reads the record back. It removes every binding of the two accounts on the recorded routers'
+  controllers and tag values, on the projects (the project scopes, the router projects and the host), and on the folders
+  and organizations of the scopes. Then it deletes the two custom roles where connect defines them (one still granted to
+  another member is kept, and said), the two accounts with their impersonation grants, the provider and the pool. It
+  verifies that no binding of the accounts is left, then clears the record (`DELETE /iam/discovery/google`), which
+  unregisters the manager's Google Cloud routers. It turns no API off, and lists the APIs and the bindings Google added as
+  left in place.
+- **Exit codes** as `gcp install`: 0; 1 when the manager or a check refuses, a permission is missing or Google refuses;
+  2 for a bad flag (`--project` not a project ID, a `--scope` of another form) or `--yes` missing without a terminal;
+  128 and the signal's number when stopped.
 
 ### The router's image
 

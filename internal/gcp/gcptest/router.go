@@ -129,6 +129,8 @@ func (s *Server) cloudRun(w http.ResponseWriter, r *http.Request, body []byte) {
 	name := "projects/" + s.ProjectID + "/locations/" + region + "/services/" + id
 	operation := "projects/" + s.ProjectID + "/locations/" + region + "/operations/"
 	switch {
+	case tail == "services" && r.Method == http.MethodGet:
+		s.runServices(w, region)
 	case tail == "services" && r.Method == http.MethodPost:
 		id = r.URL.Query().Get("serviceId")
 		key = region + "/" + id

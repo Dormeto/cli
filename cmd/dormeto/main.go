@@ -64,7 +64,7 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 		old.Annotations = map[string]string{movedAnnotation: "aws"}
 		root.AddCommand(old)
 	}
-	root.AddCommand(newGcp(gcps, orDefault(v, "dev")))
+	root.AddCommand(newGcp(gcps, fleet, orDefault(v, "dev")))
 	return root
 }
 

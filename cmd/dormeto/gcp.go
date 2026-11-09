@@ -1,6 +1,7 @@
 package main
 
-// `dormeto gcp check`, `install`, `status`, `uninstall` and `workloads` (gcp_workloads.go): the flags read into a gcponboard.Request and the run called with the
+// `dormeto gcp check`, `install`, `status`, `uninstall`, `workloads` (gcp_workloads.go) and `connect` and `disconnect`
+// (gcp_connect.go): the flags read into a gcponboard.Request and the run called with the
 // real dependencies — the tokens of gcloud (its active configuration, or --gcloud-configuration), HTTPS with a 30 s
 // timeout, the terminal's prompts when stdin is one, the user's cache directory ($XDG_CACHE_HOME, else ~/.cache) and
 // the CLI's version. Exit codes: 0; 1 when a command lacks a permission or Google refuses; 2 for a bad flag or a missing
@@ -31,15 +32,19 @@ type gcpRuns struct {
 	check, install, status, uninstall, routerSettings gcpRun
 	workloads                                         gcpWorkloadRuns
 	routerPage                                        gcpPageRuns
+	connect, disconnect                               gcpConnectRun
 }
 
 // theGcpRuns are internal/gcponboard's.
 var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, workloads: theGcpWorkloadRuns,
-	routerPage: gcpPageRuns{gcponboard.RouterPageShow, gcponboard.RouterPageSet, gcponboard.RouterPageClear}}
+	routerPage: gcpPageRuns{gcponboard.RouterPageShow, gcponboard.RouterPageSet, gcponboard.RouterPageClear},
+	connect:    gcponboard.Connect, disconnect: gcponboard.Disconnect}
 
-func newGcp(runs gcpRuns, version string) *cobra.Command {
+// newGcp is the gcp commands; connect and disconnect reach the manager with the fleet commands' dependencies.
+func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs.routerSettings, runs.routerPage, version))
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs.routerSettings, runs.routerPage, version),
+		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
 	return cmd
 }
 
@@ -116,7 +121,8 @@ func newGcpCheck(run gcpRun, version string) *cobra.Command {
 	cmd := gcpCommand("check", "Check which permissions you lack for each dormeto gcp command (read-only)",
 		"Check, read-only, the permissions you hold in a Google Cloud project against what each dormeto gcp command\n"+
 			"needs, which of Dormeto's APIs are on, and that a billing account is linked. Nothing is changed. Exit 1 when\n"+
-			"a command lacks a permission or the project has no billing.\n\n"+
+			"a command lacks a permission or the project has no billing. connect and disconnect are tested for what they do in\n"+
+			"a project; the bindings they change on folders and organizations are tested there by the commands themselves.\n\n"+
 			"The permissions on the router's image (install-router's step image) and the API artifactregistry.googleapis.com\n"+
 			"are tested only for a router of --image, a router image of your own: give --image before a first install with\n"+
 			"it; with --region, the install record's image of --image is tested too. Dormeto's public image needs neither.\n"+

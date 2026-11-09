@@ -635,7 +635,8 @@ func (x *run) lagging(err error) (kind, api string) {
 	if !errors.As(err, &e) {
 		return "", ""
 	}
-	if e.Reason == "SERVICE_DISABLED" && (e.Service == "" || slices.Contains(everyAPI(), e.Service)) {
+	// The manager's APIs too: dormeto gcp connect turns them on in its host project.
+	if e.Reason == "SERVICE_DISABLED" && (e.Service == "" || slices.Contains(everyAPI(), e.Service) || slices.Contains(access.Load().Manager.APIs, e.Service)) {
 		return "api", e.Service
 	}
 	if e.Code == 400 && strings.Contains(strings.ToLower(e.Message), "service account") && strings.Contains(e.Message, "does not exist") {

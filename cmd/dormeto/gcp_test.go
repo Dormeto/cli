@@ -39,7 +39,7 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 		pageShow: ran("workloads waiting-page show"), pageSet: ran("workloads waiting-page set"), pageClear: ran("workloads waiting-page clear")}
 	runs.routerPage = gcpPageRuns{show: ran("routers waiting-page show"), set: ran("routers waiting-page set"), clear: ran("routers waiting-page clear")}
 	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
-	root.AddCommand(newGcp(runs, "1.2.3"))
+	root.AddCommand(newGcp(runs, fleetDeps{}, "1.2.3"))
 	var out, errs bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errs)

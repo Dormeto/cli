@@ -328,7 +328,11 @@ func (s *Server) resourcePolicy(w http.ResponseWriter, name, verb string, body [
 }
 
 func (s *Server) roleBody(id string, role *Role) map[string]any {
-	out := map[string]any{"name": "projects/" + s.ProjectID + "/roles/" + id, "title": role.Title, "description": role.Description,
+	return roleBodyIn("projects/"+s.ProjectID, id, role)
+}
+
+func roleBodyIn(parent, id string, role *Role) map[string]any {
+	out := map[string]any{"name": parent + "/roles/" + id, "title": role.Title, "description": role.Description,
 		"includedPermissions": role.Permissions, "stage": role.Stage, "etag": "BwR" + id}
 	if role.Deleted {
 		out["deleted"] = true
@@ -342,14 +346,27 @@ func (s *Server) accountBody(email string, a *ServiceAccount) map[string]any {
 		"disabled": a.Disabled}
 }
 
-// iam serves custom roles, service accounts and their policies.
+// iam serves custom roles (a project's and an organization's), service accounts and their policies, and the workload
+// identity pools (connection.go), under the project's ID or number.
 func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
+	roles, parent := s.Roles, "projects/"+s.ProjectID
 	rest, ok := strings.CutPrefix(r.URL.Path, "/v1/projects/"+s.ProjectID+"/")
+	if !ok {
+		rest, ok = strings.CutPrefix(r.URL.Path, "/v1/projects/"+s.ProjectNumber+"/")
+	}
+	if org, tail, found := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v1/organizations/"), "/"); !ok && found && strings.HasPrefix(r.URL.Path, "/v1/organizations/") && s.Scopes["organizations/"+org] {
+		roles, parent, rest, ok = s.orgRoles(org), "organizations/"+org, tail, true
+		defer s.keepOrgRoles(org, roles)
+	}
 	if !ok {
 		Fail(w, 403, "PERMISSION_DENIED", "The caller does not have permission")
 		return
 	}
-	if s.disabled(w, "iam.googleapis.com") {
+	if strings.HasPrefix(parent, "projects/") && s.disabled(w, "iam.googleapis.com") {
+		return
+	}
+	if pools, found := strings.CutPrefix(rest, "locations/global/workloadIdentityPools"); found {
+		s.pools(w, r, pools, body)
 		return
 	}
 	kind, item, _ := strings.Cut(rest, "/")
@@ -369,17 +386,17 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 			Fail(w, 400, "INVALID_ARGUMENT", "no roleId")
 			return
 		}
-		if _, ok := s.Roles[in.RoleID]; ok {
-			Fail(w, 409, "ALREADY_EXISTS", "A role named "+in.RoleID+" in this project already exists.")
+		if _, ok := roles[in.RoleID]; ok {
+			Fail(w, 409, "ALREADY_EXISTS", "A role named "+in.RoleID+" in this "+strings.TrimSuffix(strings.Split(parent, "/")[0], "s")+" already exists.")
 			return
 		}
 		role := &Role{Title: in.Role.Title, Description: in.Role.Description, Permissions: in.Role.IncludedPermissions, Stage: in.Role.Stage}
-		s.Roles[in.RoleID] = role
-		Reply(w, s.roleBody(in.RoleID, role))
+		roles[in.RoleID] = role
+		Reply(w, roleBodyIn(parent, in.RoleID, role))
 	case kind == "roles" && item != "":
-		role, ok := s.Roles[item]
+		role, ok := roles[item]
 		if !ok {
-			Fail(w, 404, "NOT_FOUND", "The role named projects/"+s.ProjectID+"/roles/"+item+" was not found.")
+			Fail(w, 404, "NOT_FOUND", "The role named "+parent+"/roles/"+item+" was not found.")
 			return
 		}
 		switch {
@@ -421,7 +438,7 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 			noRoute(w, r)
 			return
 		}
-		Reply(w, s.roleBody(item, role))
+		Reply(w, roleBodyIn(parent, item, role))
 	case kind == "serviceAccounts" && item == "" && r.Method == http.MethodPost:
 		var in struct {
 			AccountID      string `json:"accountId"`
@@ -469,6 +486,23 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 }
 
+// orgRoles are an organization's custom roles, by ID, from OrgRoles; keepOrgRoles writes them back.
+func (s *Server) orgRoles(org string) map[string]*Role {
+	out := map[string]*Role{}
+	for key, role := range s.OrgRoles {
+		if n, id, _ := strings.Cut(key, "/"); n == org {
+			out[id] = role
+		}
+	}
+	return out
+}
+
+func (s *Server) keepOrgRoles(org string, roles map[string]*Role) {
+	for id, role := range roles {
+		s.OrgRoles[org+"/"+id] = role
+	}
+}
+
 func tagBody(t *Tag) map[string]any {
 	return map[string]any{"name": t.Name, "parent": t.Parent, "shortName": t.ShortName, "description": t.Description,
 		"namespacedName": t.NamespacedName}
@@ -483,6 +517,14 @@ func (s *Server) tags(w http.ResponseWriter, r *http.Request, body []byte) {
 	store := s.TagKeys
 	if values {
 		store = s.TagValues
+	}
+	if name, verb, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v3/"), ":"); ok && values && r.Method == http.MethodPost {
+		if _, found := store[name]; !found {
+			Fail(w, 403, "PERMISSION_DENIED", "Permission denied on resource '"+name+"' (or it may not exist).")
+			return
+		}
+		s.resourcePolicy(w, name, verb, body)
+		return
 	}
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/namespaced") && r.Method == http.MethodGet:

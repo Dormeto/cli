@@ -189,6 +189,19 @@ type Server struct {
 	// account, as Google does in a project without the organization policy iam.automaticIamGrantsForDefaultServiceAccounts.
 	DefaultEditor bool
 
+	// Pools are the workload identity pools, by ID; Providers their providers, by <pool>/<provider>.
+	Pools     map[string]*Pool
+	Providers map[string]*Provider
+	// Scopes are the folders and organizations the caller sees (folders/<n>, organizations/<n>): their policies are in
+	// Policies, and the permissions held there are the project's. OrgRoles are the organizations' custom roles, by
+	// <organization number>/<role ID>.
+	Scopes   map[string]bool
+	OrgRoles map[string]*Role
+	// Ancestors are the project's folders and organization, parent first (projects.getAncestry); OtherProjects the other
+	// projects the project search finds, by ID.
+	Ancestors     []string
+	OtherProjects map[string]*OtherProject
+
 	routes   []route
 	calls    []Call
 	refusals []*Refusal
@@ -215,7 +228,8 @@ func New(t testing.TB) *Server {
 		RunServices: map[string]*RunService{}, NEGs: map[string]*NEG{}, Jobs: map[string]*Job{}, Images: map[string]bool{}, Digests: map[string]string{}, Workloads: map[string]string{},
 		WorkloadDocs: map[string]map[string]any{}, Schedules: map[string]map[string]any{}, WakeFails: map[string]bool{},
 		LogViews: map[string]*LogView{}, BackendServices: map[string]*BackendService{},
-		ops: map[string]*operation{}, lag: map[string]int{},
+		Pools: map[string]*Pool{}, Providers: map[string]*Provider{}, Scopes: map[string]bool{}, OrgRoles: map[string]*Role{},
+		OtherProjects: map[string]*OtherProject{}, ops: map[string]*operation{}, lag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -320,6 +334,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	path := r.URL.Path
 	switch {
+	case r.Host == "cloudresourcemanager.googleapis.com" && path == "/v3/projects:search" && r.Method == http.MethodGet:
+		s.search(w)
+	case r.Host == "cloudresourcemanager.googleapis.com" && strings.HasPrefix(path, "/v1/projects/") && strings.HasSuffix(path, ":getAncestry"):
+		s.ancestry(w, strings.TrimSuffix(strings.TrimPrefix(path, "/v1/projects/"), ":getAncestry"))
+	case r.Host == "cloudresourcemanager.googleapis.com" && (strings.HasPrefix(path, "/v3/folders/") || strings.HasPrefix(path, "/v3/organizations/")):
+		s.scopePolicy(w, r, strings.TrimPrefix(path, "/v3/"), body)
 	case r.Host == "cloudresourcemanager.googleapis.com" && strings.HasPrefix(path, "/v3/projects/"):
 		s.resourceManager(w, r, strings.TrimPrefix(path, "/v3/projects/"), body)
 	case r.Host == "cloudresourcemanager.googleapis.com" && (strings.HasPrefix(path, "/v3/tagKeys") || strings.HasPrefix(path, "/v3/tagValues")):
