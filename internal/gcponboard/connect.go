@@ -158,6 +158,7 @@ type link struct {
 	googleAdded []string           // the grants Google added during this run, as the record lists them
 	google      map[string]bool    // their keys (grantKey on the place)
 	recordLine  string             // the plan's line of the record, "" when the record is written for the last run's fields only
+	early       string             // connect: what the record written before the first step holds, "" when none was
 	unknownOrgs []string           // disconnect: the folder scopes whose organization is not known
 	left        map[string]planned // disconnect: each policy read, as its removals leave it, by place
 	kept        []string           // disconnect: the plan's lines of what it keeps
@@ -239,17 +240,37 @@ func (x *link) connect() error {
 	if done, err := x.confirm("Connect manager " + x.m.Env + " to Google Cloud through project " + x.host + "?"); done || err != nil {
 		return err
 	}
-	// A first connect is recorded before its first step, without its routers (the manager would call them before their
-	// grants): a run that stops partway leaves what it made known to disconnect.
-	if x.rec == nil {
-		first := x.record()
-		first.Routers = []fleet.GoogleRouter{}
-		if _, err := x.c.Manager.PutGoogleConnection(x.ctx, first); err != nil {
-			return &stop{1, fmt.Sprintf("the manager's record is not written: %s\nNothing was changed.", err)}
-		}
-		x.say("  ✓ record: wrote the connection in manager %s before any change, its routers to come at the end", x.m.Env)
+	if err := x.recordBefore(); err != nil {
+		return err
 	}
 	return x.applyConnect()
+}
+
+// recordBefore writes the record before the first step when there is none, or when this run adds scopes: the union of the
+// scopes, with the routers already recorded (none for a first connect: the manager would call a new router before its
+// grants). A run that stops partway leaves what it made known to disconnect, which sweeps the recorded scopes. early says
+// what the record then holds.
+func (x *link) recordBefore() error {
+	first := x.rec == nil
+	if !first && !slices.ContainsFunc(x.scopes, func(s string) bool { return !slices.Contains(x.rec.Scopes, s) }) {
+		return nil
+	}
+	rec := x.record()
+	rec.Routers = []fleet.GoogleRouter{}
+	if !first {
+		rec.Routers = append(rec.Routers, x.rec.Routers...)
+	}
+	if _, err := x.c.Manager.PutGoogleConnection(x.ctx, rec); err != nil {
+		return &stop{1, fmt.Sprintf("the manager's record is not written: %s\nNothing was changed.", err)}
+	}
+	if first {
+		x.early = "the connection without its routers"
+		x.say("  ✓ record: wrote the connection in manager %s before any change, its routers to come at the end", x.m.Env)
+		return nil
+	}
+	x.early = "the connection's new scopes without their routers"
+	x.say("  ✓ record: wrote the connection's new scopes in manager %s before any change, its new routers to come at the end", x.m.Env)
+	return nil
 }
 
 func (x *link) validate() error {
@@ -1247,6 +1268,9 @@ func (x *link) applyConnect() error {
 	if err != nil {
 		x.say("  ✗ verification: %s", err)
 		x.warn(warnings)
+		if x.early != "" {
+			return &stop{1, "The manager's record holds " + x.early + ": run the same command again to change what differs."}
+		}
 		return &stop{1, "The manager's record is not written: run the same command again to change what differs."}
 	}
 	x.say("  ✓ verified: the pool and its provider, the two service accounts, the roles' permissions and every planned grant")
@@ -1261,6 +1285,9 @@ func (x *link) applyConnect() error {
 	stored, err := x.c.Manager.PutGoogleConnection(x.ctx, want)
 	if err != nil {
 		x.say("  ✗ record: %s", err)
+		if x.early != "" {
+			return &stop{1, "Google Cloud is set up, but the manager's record holds only " + x.early + ": run the same command again."}
+		}
 		return &stop{1, "Google Cloud is set up, but the manager's record is not written: run the same command again."}
 	}
 	x.say("  ✓ record: wrote the connection in manager %s: %s registered", x.m.Env, count(len(want.Routers), "router"))

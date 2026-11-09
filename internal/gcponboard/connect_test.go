@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"slices"
@@ -25,6 +26,7 @@ type fakeManager struct {
 	deletes      int
 	disconnected time.Time
 	reads        int
+	refusedPut   int // the put, counted from 1, that the manager refuses (0: none)
 }
 
 func (m *fakeManager) About(context.Context) (ManagerInfo, error) { m.reads++; return m.info, nil }
@@ -36,6 +38,10 @@ func (m *fakeManager) GoogleConnection(context.Context) (*fleet.GoogleConnection
 	return &c, nil
 }
 func (m *fakeManager) PutGoogleConnection(_ context.Context, rec fleet.GoogleConnection) (*fleet.GoogleConnection, error) {
+	if m.refusedPut == len(m.puts)+1 {
+		m.refusedPut = 0
+		return nil, errors.New("503 the manager is unavailable")
+	}
 	m.puts = append(m.puts, rec)
 	m.rec = &rec
 	return &rec, nil
@@ -641,6 +647,70 @@ func TestAConnectStoppedPartwayIsRecordedAndDisconnectRemovesWhatItMade(t *testi
 	if !s.Roles["dormetoDiscovery"].Deleted || !s.Roles["dormetoCommand"].Deleted || len(s.ServiceAccounts) != 0 ||
 		s.Pools["dmt-dev"].State != "DELETED" || s.Providers["dmt-dev/aws"].State != "DELETED" || m.rec != nil {
 		t.Fatalf("left: roles %+v accounts %v pool %+v\n%s", s.Roles, s.ServiceAccounts, s.Pools["dmt-dev"], out)
+	}
+}
+
+// A later connect that adds a scope writes the record with the union of the scopes, and the routers already recorded,
+// before its first step, as a first connect does: one that stops partway leaves what it made at the new scope known to
+// disconnect, which removes it.
+func TestAConnectAddingAScopeStoppedPartwayIsRecordedAndDisconnectRemovesWhatItMade(t *testing.T) {
+	s := connectServer(t)
+	otherProject(s)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	recorded := m.rec.Routers
+	s.Refuse(gcptest.Refusal{Method: http.MethodPost, Host: "cloudresourcemanager.googleapis.com", Path: "/v3/projects/shop-prod:setIamPolicy",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
+	r := connectRequest(m)
+	r.Scopes = []string{"projects/shop-prod"}
+	code, out := runConnect(t, s, r)
+	if code != 1 || !strings.Contains(out, "Done: roles. Not done: projectBindings.") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if role := s.OtherRoles["shop-prod/dormetoDiscovery"]; role == nil || role.Deleted {
+		t.Fatalf("role %+v", role)
+	}
+	if len(m.puts) != 3 || !slices.Equal(m.rec.Scopes, []string{"projects/dormeto-dev", "projects/shop-prod"}) || !reflect.DeepEqual(m.rec.Routers, recorded) ||
+		!strings.Contains(out, "  ✓ record: wrote the connection's new scopes in manager dev before any change, its new routers to come at the end\n") {
+		t.Fatalf("puts %d, record %+v\n%s", len(m.puts), m.rec, out)
+	}
+	code, out = runDisconnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if role := s.OtherRoles["shop-prod/dormetoDiscovery"]; !role.Deleted || !slices.Contains(lines(out), "  - role dormetoDiscovery in project shop-prod") {
+		t.Fatalf("role %+v\n%s", role, out)
+	}
+}
+
+// A first connect whose verification fails, or whose last record is refused, says what the record written before its first
+// step holds: the connection without its routers.
+func TestAFirstConnectStoppedAfterItsStepsSaysWhatItsRecordHolds(t *testing.T) {
+	s := connectServer(t)
+	s.Refuse(gcptest.Refusal{Method: http.MethodGet, Host: "iam.googleapis.com", Path: "/v1/projects/dormeto-dev/locations/global/workloadIdentityPools/dmt-dev/providers/aws",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
+	m := newFakeManager()
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 1 || !strings.Contains(out, "  ✗ verification: provider aws: ") || strings.Contains(out, "is not written") ||
+		!strings.HasSuffix(out, "The manager's record holds the connection without its routers: run the same command again to change what differs.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(m.puts) != 1 || len(m.rec.Routers) != 0 {
+		t.Fatalf("puts %+v", m.puts)
+	}
+
+	s = connectServer(t)
+	m = newFakeManager()
+	m.refusedPut = 2
+	code, out = runConnect(t, s, connectRequest(m))
+	if code != 1 || !strings.Contains(out, "  ✗ record: 503 the manager is unavailable\n") ||
+		!strings.HasSuffix(out, "Google Cloud is set up, but the manager's record holds only the connection without its routers: run the same command again.\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if len(m.puts) != 1 || len(m.rec.Routers) != 0 {
+		t.Fatalf("puts %+v", m.puts)
 	}
 }
 
