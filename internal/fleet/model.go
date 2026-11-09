@@ -6,7 +6,8 @@ import "encoding/json"
 // every field, not only these.
 type Router struct {
 	Name           string         `json:"name"`
-	Account        string         `json:"account,omitempty"` // absent for a router of the manager's own account written in Terraform
+	Cloud          string         `json:"cloud,omitempty"`   // aws or gcp; absent from a manager before Google Cloud's
+	Account        string         `json:"account,omitempty"` // the AWS account, or the Google Cloud project; absent for a router of the manager's own account written in Terraform
 	Region         string         `json:"region"`
 	Source         string         `json:"source"`            // manager or terraform
 	Version        string         `json:"version,omitempty"` // "" when unknown (null)
@@ -98,6 +99,7 @@ type Workload struct {
 	WorkloadID string            `json:"workloadId"`
 	Name       string            `json:"name,omitempty"`
 	Router     string            `json:"router"`
+	Cloud      string            `json:"cloud,omitempty"`
 	Account    string            `json:"account,omitempty"`
 	Region     string            `json:"region,omitempty"`
 	State      string            `json:"state"`

@@ -686,10 +686,14 @@ person able to administer the manager.
 dormeto aws routers list [--account <id>]... [--router-region <region>]... [--name <glob>] [--tag k=v]... [--outdated] [--json]
 ```
 
-Lists each router's name, account, region, source (`manager` or `terraform`), version (`0.29.0 → 0.30.0` when below the
+Lists each router's name, cloud (`aws` or `gcp`), account or project, region, source (`manager`, `terraform` or `cli`), version (`0.29.0 → 0.30.0` when below the
 version available, `upgrading` while an upgrade runs), health and workloads (the total and the count per state), then a
 last line with the version available and how many routers are outdated. A router that does not answer is listed, its
-error on stderr.
+error on stderr. The manager serves both clouds: a Google Cloud router is `dmtr-<project>-<region>`, its account column
+holds the project and its source is `cli` (a Google Cloud router's installs, upgrades and uninstalls stay with
+`dormeto gcp install` and `uninstall`). `workloads list` and `show`, `routers show` and `discovery access` print the
+same `CLOUD` column (`show` prints a `cloud` line, and `project` for a Google Cloud row's account), and every `--json`
+carries the manager's `cloud` field.
 
 - `--outdated`: only the routers below the version available.
 - `--account <id>`: only the routers of these AWS accounts.
@@ -723,7 +727,8 @@ It prints the plan: each router to upgrade, from → to, then the routers skippe
 - up to date;
 - newer than the version available;
 - of unknown version (its error is given);
-- busy with an operation (the operation's type and id are given).
+- busy with an operation (the operation's type and id are given);
+- a Google Cloud router, which the line says to upgrade with `dormeto gcp install --project <p> --region <r>`.
 
 The plan is confirmed on a terminal. Without one, `--yes` is required (exit 2 after the plan). A declined confirmation
 starts nothing and exits 0. `--dry-run` prints the plan and stops. Then one `upgrade-router` operation per router is
@@ -769,7 +774,10 @@ dormeto aws routers uninstall staging-eu --yes --no-wait
 - `install` starts the manager's install of a router in the account and region (an `install-router` operation) and
   follows it. The account needs the command role the manager assumes: without it, the manager refuses (`no_access`) and
   the CLI prints why.
-- `uninstall` starts an `uninstall-router` operation for each router, 3 at once at most, and follows them. It is always
+- `install` of a Google Cloud project (`--account dormeto-dev`) is refused before any call, exit 2, with the command
+  `dormeto gcp install --project dormeto-dev --region <region>`.
+- `uninstall` skips each Google Cloud router with one line on stderr naming `dormeto gcp uninstall --project <p> --region
+  <r>`, and goes on with the others. It starts an `uninstall-router` operation for each other router, 3 at once at most, and follows them. It is always
   confirmed on a terminal. The operation's "check empty" step refuses a router that still has workloads: offboard them
   first.
 - `--json`: the operations, as the manager last said them: `install`'s as an object (`{}` when it did not start),

@@ -23,6 +23,12 @@ type Skip struct {
 	Reason string `json:"reason"`
 }
 
+// GcpInstallCommand is the CLI command that installs, and so upgrades, a Google Cloud router: the manager's
+// operations don't change a project's services (the manager never changes Google Cloud).
+func GcpInstallCommand(r Router) string {
+	return fmt.Sprintf("dormeto gcp install --project %s --region %s", r.Account, r.Region)
+}
+
 // Plan is what an upgrade does to the routers selected.
 type Plan struct {
 	Available string
@@ -37,6 +43,8 @@ func PlanUpgrade(rs []Router, available string) Plan {
 	skip := func(r Router, reason string) { p.Skipped = append(p.Skipped, Skip{r.Name, reason}) }
 	for _, r := range rs {
 		switch {
+		case r.Cloud == "gcp":
+			skip(r, "a Google Cloud router: upgrade it with "+GcpInstallCommand(r))
 		case r.Source == "terraform":
 			skip(r, "written in Terraform (upgraded with its Terraform)")
 		case r.Operation != nil:

@@ -185,6 +185,7 @@ func LintText(fs []LintFinding) string {
 // AccessRow is an account of the perimeter whose access is not complete.
 type AccessRow struct {
 	Account   string      `json:"account"`
+	Cloud     string      `json:"cloud"`
 	Name      string      `json:"name"`
 	Discovery AccessState `json:"discovery"`
 	Command   AccessState `json:"command"`
@@ -346,9 +347,9 @@ func (r AccessReport) Text(loc *time.Location) string {
 	if len(r.Accounts) == 0 {
 		return text + "\nevery account checked is ready\n"
 	}
-	table := [][]string{{"ACCOUNT", "NAME", "DISCOVERY ROLE", "COMMAND ROLE", "FORWARDER"}}
+	table := [][]string{{"ACCOUNT OR PROJECT", "CLOUD", "NAME", "DISCOVERY ROLE", "COMMAND ROLE", "FORWARDER"}}
 	for _, a := range r.Accounts {
-		table = append(table, []string{a.Account, orNone(a.Name), a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
+		table = append(table, []string{a.Account, cloudName(a.Cloud), orNone(a.Name), a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
 	}
 	return text + "\n" + Table(table)
 }

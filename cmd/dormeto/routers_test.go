@@ -46,6 +46,7 @@ type routersAPI struct {
 	fail      bool // the operations end failed
 	ops       []string
 	onPost    func(router string) // called on each pause or resume, before it is answered
+	mixed     bool                // GET /iam/routers answers an AWS router and a Google Cloud one
 }
 
 func (a *routersAPI) handler(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +56,8 @@ func (a *routersAPI) handler(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.Unlock()
 	path := r.URL.EscapedPath()
 	switch {
+	case a.mixed && r.Method == http.MethodGet && path == "/iam/routers":
+		io.WriteString(w, mixedRoutersAnswer)
 	case r.Method == http.MethodGet && path == "/iam/routers/prod-eu":
 		io.WriteString(w, routerDetailsAnswer)
 	case r.Method == http.MethodGet && path == "/iam/routers/odd%20one":
@@ -387,5 +390,85 @@ func TestRoutersUninstallJSONIsAnArray(t *testing.T) {
 	r = runRouters(t, &routersAPI{noAccess: true}, nil, "uninstall", "prod-eu", "--yes", "--json")
 	if r.exit != 1 || strings.TrimSpace(r.stdout) != "[]" {
 		t.Errorf("refused: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}
+
+const gcpRouterDetails = `{"name":"dmtr-dormeto-dev-europe-west2","cloud":"gcp","region":"europe-west2","account":"dormeto-dev","source":"cli",
+ "router":{"name":"dmtr-europe-west2","version":"0.40.0"},"pauses":[],"workloads":{"total":1,"byState":{"ASLEEP":1},"paused":0},
+ "health":{"status":"ok","problems":[]},"configuration":{"checkSchedule":{"value":"*/5 * * * *","source":"manager"},"ipLists":{"value":[],"source":"manager"},"noWakeRules":{"value":[],"source":"manager"},"metrics":{"value":null,"source":"manager"}}}`
+
+func TestRoutersShowPrintsTheCloudAndNamesTheProjectOfAGoogleCloudRouter(t *testing.T) {
+	r := runFleet(t, &fakeAPI{custom: func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, gcpRouterDetails) }}, "eu-west-1", "routers", "show", "dmtr-dormeto-dev-europe-west2")
+	if r.exit != 0 {
+		t.Fatalf("exit %d: %s", r.exit, r.stderr)
+	}
+	for _, want := range []string{"cloud gcp", "project dormeto-dev", "source cli"} {
+		if !hasLine(r.stdout, want) {
+			t.Errorf("stdout lacks the line %q:\n%s", want, r.stdout)
+		}
+	}
+	aws := runRouters(t, &routersAPI{}, nil, "show", "prod-eu")
+	if !hasLine(aws.stdout, "cloud aws") || !hasLine(aws.stdout, "account 111111111111") {
+		t.Errorf("an AWS router: %s", aws.stdout)
+	}
+	js := runFleet(t, &fakeAPI{custom: func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, gcpRouterDetails) }}, "eu-west-1", "routers", "show", "dmtr-dormeto-dev-europe-west2", "--json")
+	if !strings.Contains(js.stdout, `"cloud": "gcp"`) {
+		t.Errorf("json %q", js.stdout)
+	}
+}
+
+func TestRoutersInstallOfAProjectIsRefusedWithTheGoogleCloudCommand(t *testing.T) {
+	a := &routersAPI{}
+	r := runRouters(t, a, nil, "install", "--account", "dormeto-dev", "--router-region", "europe-west2")
+	want := "dormeto gcp install --project dormeto-dev --region europe-west2"
+	if r.exit != 2 || len(a.posted) != 0 || len(r.api.requests) != 0 || !strings.Contains(r.stderr, want) {
+		t.Errorf("exit %d, posted %v, requests %d, stderr %q", r.exit, a.posted, len(r.api.requests), r.stderr)
+	}
+	r = runRouters(t, a, nil, "install", "--account", "dormeto-dev")
+	if r.exit != 2 || !strings.Contains(r.stderr, "dormeto gcp install --project dormeto-dev --region <region>") {
+		t.Errorf("no region: exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
+func TestRoutersUninstallSkipsGoogleCloudRoutersNamingTheirCommand(t *testing.T) {
+	a := &routersAPI{mixed: true}
+	r := runRouters(t, a, nil, "uninstall", "prod-eu", "dmtr-dormeto-dev-europe-west2", "--yes", "--no-wait")
+	if r.exit != 0 || len(a.posted) != 1 || a.posted[0] != `/operations {"router":"prod-eu","type":"uninstall-router"}` {
+		t.Fatalf("exit %d, posted %v, stderr %q", r.exit, a.posted, r.stderr)
+	}
+	want := "dmtr-dormeto-dev-europe-west2: a Google Cloud router: uninstall it with dormeto gcp uninstall --project dormeto-dev --region europe-west2\n"
+	if r.stderr != want {
+		t.Errorf("stderr %q, want %q", r.stderr, want)
+	}
+	// Only Google Cloud routers: nothing is asked, nothing sent, and the exit is 0 as for a skip.
+	a = &routersAPI{mixed: true}
+	r = runRouters(t, a, nil, "uninstall", "dmtr-dormeto-dev-europe-west2", "--yes")
+	if r.exit != 0 || len(a.posted) != 0 || r.stderr != want {
+		t.Errorf("exit %d, posted %v, stderr %q", r.exit, a.posted, r.stderr)
+	}
+}
+
+// hasLine tells whether a line of out, its spaces squeezed, is want.
+func hasLine(out, want string) bool {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Join(strings.Fields(l), " ") == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRoutersShowOfAGoogleCloudRouterTheManagerCannotReachPrintsItsMessageAtOnce(t *testing.T) {
+	for _, code := range []string{"manager-access-missing", "router-too-old", "router-unknown"} {
+		message := "run dormeto gcp connect --project host --profile ops --env dev (" + code + ")"
+		api := &fakeAPI{custom: func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(502)
+			fmt.Fprintf(w, `{"error":%q,"message":%q}`, code, message)
+		}}
+		r := runFleet(t, api, "eu-west-1", "routers", "show", "dmtr-dormeto-dev-europe-west2")
+		// A refusal that no retry changes is asked once, not three times.
+		if r.exit != 1 || len(api.requests) != 1 || !strings.Contains(r.stderr, message) {
+			t.Errorf("%s: exit %d, %d requests, stderr %q", code, r.exit, len(api.requests), r.stderr)
+		}
 	}
 }

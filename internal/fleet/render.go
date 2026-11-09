@@ -18,6 +18,22 @@ func (r Router) Outdated(available string) bool {
 	return r.Version != "" && available != "" && install.CompareVersions(r.Version, available) < 0
 }
 
+// cloudName is the cloud of a row: "gcp" or "aws" (a manager before Google Cloud's names none, and has only AWS).
+func cloudName(c string) string {
+	if c == "" {
+		return "aws"
+	}
+	return c
+}
+
+// accountLabel is what a row's account is called: a Google Cloud row's is a project.
+func accountLabel(cloud string) string {
+	if cloud == "gcp" {
+		return "project"
+	}
+	return "account"
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return none
@@ -46,7 +62,7 @@ func sortedKeys[V any](m map[string]V) []string {
 // RoutersTable is the routers list: the version as "from → to" when below the one available, "upgrading" while an
 // upgrade runs, "?" when unknown; the workloads as their total and their count per state.
 func RoutersTable(rs []Router, available string) string {
-	rows := [][]string{{"NAME", "ACCOUNT", "REGION", "SOURCE", "VERSION", "HEALTH", "WORKLOADS"}}
+	rows := [][]string{{"NAME", "CLOUD", "ACCOUNT OR PROJECT", "REGION", "SOURCE", "VERSION", "HEALTH", "WORKLOADS"}}
 	for _, r := range rs {
 		version := r.Version
 		switch {
@@ -64,7 +80,7 @@ func RoutersTable(rs []Router, available string) string {
 				count += " (" + s + ")"
 			}
 		}
-		rows = append(rows, []string{r.Name, orNone(r.Account), r.Region, r.Source, version, orNone(r.Health.Status), count})
+		rows = append(rows, []string{r.Name, cloudName(r.Cloud), orNone(r.Account), r.Region, r.Source, version, orNone(r.Health.Status), count})
 	}
 	return Table(rows)
 }
@@ -94,7 +110,7 @@ func Plural(n int, word string) string {
 // WorkloadsTable is the workloads list: tags as k=v sorted by key, CHANGED the time since the state began (else the
 // last update), as 5m, 3h or 2d.
 func WorkloadsTable(ws []Workload, now time.Time) string {
-	rows := [][]string{{"ROUTER", "WORKLOAD", "NAME", "STATE", "TAGS", "CHANGED"}}
+	rows := [][]string{{"ROUTER", "WORKLOAD", "NAME", "CLOUD", "STATE", "TAGS", "CHANGED"}}
 	for _, w := range ws {
 		var tags []string
 		for _, k := range sortedKeys(w.Tags) {
@@ -104,7 +120,7 @@ func WorkloadsTable(ws []Workload, now time.Time) string {
 		if since == "" {
 			since = w.UpdatedAt
 		}
-		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), w.State, orNone(strings.Join(tags, ",")), Age(since, now)})
+		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), cloudName(w.Cloud), w.State, orNone(strings.Join(tags, ",")), Age(since, now)})
 	}
 	return Table(rows)
 }

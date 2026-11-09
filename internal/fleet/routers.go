@@ -15,6 +15,7 @@ import (
 type RouterDetails struct {
 	Name    string `json:"name"`
 	Region  string `json:"region"`
+	Cloud   string `json:"cloud"`
 	Account string `json:"account"`
 	Source  string `json:"source"`
 	Router  struct {
@@ -186,7 +187,7 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	workloads += fmt.Sprintf(", %d paused", d.Workloads.Paused)
 
 	rows := [][2]string{
-		{"router", d.Name}, {"account", d.Account}, {"region", d.Region}, {"source", d.Source},
+		{"router", d.Name}, {"cloud", cloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"source", d.Source},
 		{"version", version}, {"health", orNone(h.Status)}, {"problems", strings.Join(problems, "\n")},
 		{"idle check", schedule}, {"lambda", lambdaText(d)}, {"failure queues", queuesText(d)},
 		{"concurrency", concurrencyText(d)},

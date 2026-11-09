@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -103,6 +104,12 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := wait.check()
+			if err == nil && projectID.MatchString(account) {
+				if region == "" {
+					region = "<region>"
+				}
+				err = usagef("--account: %s is a Google Cloud project, whose routers the manager does not install: run dormeto gcp install --project %s --region %s", account, account, region)
+			}
 			if err == nil && !discover.IsAccountID(account) {
 				err = usagef("--account: %q is not 12 digits", account)
 			}
@@ -152,6 +159,10 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
+				names = skipGoogleCloud(ctx, c, api, names)
+				if len(names) == 0 {
+					return printStarted(c, asJSON, nil, nil)
+				}
 				question := fmt.Sprintf("Uninstall %s?", strings.Join(names, ", "))
 				if done, err := confirmNames(ctx, c, deps, names, "router", question, true, dryRun, yes); done || err != nil {
 					return err
@@ -176,6 +187,30 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&asJSON, "json", false, "print the operations, as the manager last said them")
 	wait.bind(cmd)
 	return cmd
+}
+
+// projectID is a Google Cloud project ID as --account may be given one: 6 to 30 lower-case letters, digits and hyphens.
+var projectID = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+
+// skipGoogleCloud is names without the Google Cloud routers, each said on stderr with the command that uninstalls it:
+// the manager changes no Google Cloud project, so it refuses them. The manager's routers are read once; when they
+// cannot be, every name goes on and the manager answers for each.
+func skipGoogleCloud(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string) []string {
+	var routers fleet.Routers
+	if api.Get(ctx, "/routers", nil, &routers) != nil {
+		return names
+	}
+	var kept []string
+	for _, name := range names {
+		i := slices.IndexFunc(routers.Rows, func(r fleet.Router) bool { return r.Name == name && r.Cloud == "gcp" })
+		if i < 0 {
+			kept = append(kept, name)
+			continue
+		}
+		r := routers.Rows[i]
+		fmt.Fprintf(c.ErrOrStderr(), "%s: a Google Cloud router: uninstall it with dormeto gcp uninstall --project %s --region %s\n", name, r.Account, r.Region)
+	}
+	return kept
 }
 
 // routerCalls POSTs body to each router's route in turn (see routerSends).

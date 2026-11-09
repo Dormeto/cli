@@ -278,3 +278,22 @@ func TestWorkloadsIdleWindowJSONIsTheAnswer(t *testing.T) {
 		t.Errorf("exit %d err %v stdout %q", r.exit, err, r.stdout)
 	}
 }
+
+func TestWorkloadsShowPrintsTheCloudAndTheProjectOfAGoogleCloudWorkload(t *testing.T) {
+	a := &showAPI{status: 200, body: `{"workloadId":"w-1","cloud":"gcp","state":"ASLEEP","account":"dormeto-dev","region":"europe-west2","backendService":"web","urlMap":"lb-map","lb":"lb"}`}
+	r := runShow(t, a, "show", "dmtr-dormeto-dev-europe-west2/w-1")
+	if r.exit != 0 {
+		t.Fatalf("exit %d: %s", r.exit, r.stderr)
+	}
+	for _, want := range []string{"cloud gcp", "project dormeto-dev"} {
+		if !hasLine(r.stdout, want) {
+			t.Errorf("stdout lacks the line %q:\n%s", want, r.stdout)
+		}
+	}
+	aws := runShow(t, &showAPI{status: 200, body: `{"workloadId":"w-1","state":"ASLEEP","account":"111111111111"}`}, "show", "prod-eu/w-1")
+	for _, want := range []string{"cloud aws", "account 111111111111"} {
+		if !hasLine(aws.stdout, want) {
+			t.Errorf("stdout lacks the line %q:\n%s", want, aws.stdout)
+		}
+	}
+}

@@ -428,3 +428,75 @@ func TestRegionFlagWinsOverTheProfilesForTheLookup(t *testing.T) {
 		t.Errorf("exit %d, config regions %v, stderr %q", r.exit, r.cfgRegions, r.stderr)
 	}
 }
+
+// A fleet of both clouds: the manager's rows carry cloud, a Google Cloud router is dmtr-<project>-<region> and its
+// workloads' account is the project.
+const mixedRoutersAnswer = `{"routers":[
+ {"name":"prod-eu","cloud":"aws","region":"eu-west-1","account":"111111111111","source":"manager","version":"0.29.0","workloads":4,"health":{"status":"healthy"},"workloadStates":{"ASLEEP":3,"AWAKE":1}},
+ {"name":"dmtr-dormeto-dev-europe-west2","cloud":"gcp","region":"europe-west2","account":"dormeto-dev","source":"cli","version":"0.40.0","workloads":1,"health":{"status":"healthy"},"workloadStates":{"ASLEEP":1}}
+],"available":{"version":"0.40.0"}}`
+
+func TestRoutersListPrintsBothCloudsInACloudColumn(t *testing.T) {
+	r := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list")
+	if r.exit != 0 {
+		t.Fatalf("exit %d: %s", r.exit, r.stderr)
+	}
+	lines := strings.Split(r.stdout, "\n")
+	for i, want := range [][]string{
+		{"NAME", "CLOUD", "ACCOUNT", "OR", "PROJECT", "REGION", "SOURCE", "VERSION", "HEALTH", "WORKLOADS"},
+		{"prod-eu", "aws", "111111111111", "eu-west-1", "manager", "0.29.0", "→", "0.40.0", "healthy", "4", "(3", "ASLEEP,", "1", "AWAKE)"},
+		{"dmtr-dormeto-dev-europe-west2", "gcp", "dormeto-dev", "europe-west2", "cli", "0.40.0", "healthy", "1", "(1", "ASLEEP)"},
+	} {
+		if got := strings.Fields(lines[i]); !slices.Equal(got, want) {
+			t.Errorf("line %d: %q, want %q", i, got, want)
+		}
+	}
+	// The columns line up whatever the longer name.
+	if strings.Index(lines[0], "CLOUD") != strings.Index(lines[2], "gcp") || strings.Index(lines[0], "ACCOUNT OR PROJECT") != strings.Index(lines[2], "  dormeto-dev")+2 {
+		t.Errorf("columns not aligned:\n%s", r.stdout)
+	}
+}
+
+func TestRoutersListFromAManagerWithoutCloudIsAWS(t *testing.T) {
+	r := runFleet(t, &fakeAPI{}, "eu-west-1", "routers", "list")
+	for _, line := range strings.Split(r.stdout, "\n")[1:4] {
+		if f := strings.Fields(line); f[1] != "aws" {
+			t.Errorf("line %q: cloud %q", line, f[1])
+		}
+	}
+}
+
+func TestRoutersListJSONPassesCloudThrough(t *testing.T) {
+	r := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list", "--json")
+	var got struct {
+		Routers []struct{ Name, Cloud string }
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Routers) != 2 || got.Routers[0].Cloud != "aws" || got.Routers[1].Cloud != "gcp" {
+		t.Errorf("%v: %q", err, r.stdout)
+	}
+}
+
+func TestWorkloadsListPrintsACloudColumnAndJSONKeepsCloud(t *testing.T) {
+	api := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"workloads":[
+ {"workloadId":"w-1","name":"api","cloud":"aws","router":"prod-eu","account":"111111111111","region":"eu-west-1","state":"ASLEEP","stateAt":"2026-10-19T09:00:00Z"},
+ {"workloadId":"w-2","name":"web","cloud":"gcp","router":"dmtr-dormeto-dev-europe-west2","account":"dormeto-dev","region":"europe-west2","state":"AWAKE","stateAt":"2026-10-19T09:00:00Z"}
+],"total":2,"cursor":null}`)
+	}}
+	r := runFleet(t, api, "eu-west-1", "workloads", "list")
+	lines := strings.Split(r.stdout, "\n")
+	for i, want := range [][]string{
+		{"ROUTER", "WORKLOAD", "NAME", "CLOUD", "STATE", "TAGS", "CHANGED"},
+		{"prod-eu", "w-1", "api", "aws", "ASLEEP", "—", "3h"},
+		{"dmtr-dormeto-dev-europe-west2", "w-2", "web", "gcp", "AWAKE", "—", "3h"},
+	} {
+		if got := strings.Fields(lines[i]); !slices.Equal(got, want) {
+			t.Errorf("line %d: %q, want %q", i, got, want)
+		}
+	}
+	r = runFleet(t, api, "eu-west-1", "workloads", "list", "--json")
+	var got struct{ Workloads []struct{ Cloud string } }
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Workloads) != 2 || got.Workloads[0].Cloud != "aws" || got.Workloads[1].Cloud != "gcp" {
+		t.Errorf("%v: %q", err, r.stdout)
+	}
+}

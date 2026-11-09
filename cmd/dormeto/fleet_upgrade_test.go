@@ -226,3 +226,35 @@ func TestUpgradeFailedHintComesAfterTheSummary(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
+
+const mixedUpgradeRouters = `{"routers":[
+ {"name":"r1","cloud":"aws","region":"eu-west-1","account":"1","source":"manager","version":"0.29.0"},
+ {"name":"dmtr-dormeto-dev-europe-west2","cloud":"gcp","region":"europe-west2","account":"dormeto-dev","source":"cli","version":"0.39.0"},
+ {"name":"dmtr-other-us-east1","cloud":"gcp","region":"us-east1","account":"other","source":"cli","version":"0.39.0"}
+],"available":{"version":"0.40.0"}}`
+
+func TestUpgradeAllOnAMixedFleetUpgradesTheAWSOnesAndSkipsEachGoogleCloudRouter(t *testing.T) {
+	api := &fakeAPI{routers: mixedUpgradeRouters}
+	r := runFleet(t, api, "eu-west-1", "routers", "upgrade", "--all", "--yes")
+	t.Logf("\n%s", r.stdout)
+	if r.exit != 0 || len(api.posted) != 1 || api.posted[0] != `{"router":"r1","type":"upgrade-router"}` {
+		t.Fatalf("exit %d, posted %v, stderr %q", r.exit, api.posted, r.stderr)
+	}
+	for _, want := range []string{
+		"1 router to upgrade to 0.40.0", "2 skipped", "✓ r1 0.29.0 → 0.40.0 in ",
+		"dmtr-dormeto-dev-europe-west2 a Google Cloud router: upgrade it with dormeto gcp install --project dormeto-dev --region europe-west2",
+		"dmtr-other-us-east1 a Google Cloud router: upgrade it with dormeto gcp install --project other --region us-east1",
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(r.stdout), " "), want) {
+			t.Errorf("stdout lacks %q", want)
+		}
+	}
+}
+
+func TestUpgradeOfOnlyGoogleCloudRoutersStartsNothing(t *testing.T) {
+	api := &fakeAPI{routers: mixedUpgradeRouters}
+	r := runFleet(t, api, "eu-west-1", "routers", "upgrade", "dmtr-other-us-east1", "--yes")
+	if r.exit != 0 || len(api.posted) != 0 || !strings.Contains(r.stdout, "nothing to upgrade") || !strings.Contains(r.stdout, "dormeto gcp install --project other --region us-east1") {
+		t.Errorf("exit %d, posted %v, stdout %q, stderr %q", r.exit, api.posted, r.stdout, r.stderr)
+	}
+}
