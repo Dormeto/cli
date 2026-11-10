@@ -75,7 +75,7 @@ func TestGcpWorkloadsOnboardReadsRequestLogs(t *testing.T) {
 
 func TestGcpWorkloadsOnboardReadsTheFeaturesFlags(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--url-map", "m", "--backend-service", "be",
-		"--load-balancer", "regional", "--wake-timeout-seconds", "900", "--cloud-sql", "db-1", "--cloud-sql", "db-2", "--gke-cluster", "europe-west1-b/c", "--yes")
+		"--load-balancer", "regional", "--wake-timeout-seconds", "900", "--database", "db-1", "--database", "db-2", "--gke-cluster", "europe-west1-b/c", "--yes")
 	if exit != 0 || errs != untriedWarning || len(calls) != 1 {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
@@ -637,5 +637,25 @@ func TestGcpWaitingPageShowAndClearReadTheTarget(t *testing.T) {
 		if _, _, exit = gcpRan(t, 0, append([]string{"gcp", "workloads", "waiting-page", verb}, pageArgs()...)...); exit != 2 {
 			t.Fatalf("%s without a workload: exit %d", verb, exit)
 		}
+	}
+}
+
+// --database is Cloud SQL's flag on both clouds' onboards; --cloud-sql is its hidden alias, saying what it is now.
+func TestGcpWorkloadsOnboardTakesDatabaseAndTheOldCloudSQL(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--database", "db1", "--database", "db2")...)
+	if exit != 0 || len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db1", "db2"}) || strings.Contains(errs, "is now") {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	calls, errs, exit = gcpRan(t, 0, append(strings.Fields(onboardArgs), "--cloud-sql", "db1")...)
+	if exit != 0 || len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db1"}) || !strings.Contains(errs, "--cloud-sql is now --database\n") {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	calls, _, _ = gcpRan(t, 0, append(strings.Fields(onboardArgs), "--cloud-sql", "db1", "--database", "db2")...)
+	if len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db2", "db1"}) && !slices.Equal(calls[0].r.CloudSQL, []string{"db1", "db2"}) {
+		t.Fatalf("%v", calls)
+	}
+	out, _, _ := executed(t, build{}, "gcp", "workloads", "onboard", "--help")
+	if strings.Contains(out, "--cloud-sql ") || !strings.Contains(out, "--database") {
+		t.Fatalf("%s", out)
 	}
 }

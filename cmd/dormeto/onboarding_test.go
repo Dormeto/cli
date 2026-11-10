@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -135,10 +136,10 @@ func TestOnboardPostsTheDashboardsBodyAndNamesTheWorkload(t *testing.T) {
 	}
 }
 
-func TestOnboardDefaultsAreTheDialogs(t *testing.T) {
+func TestOnboardWithoutTheFlagsSendsNoIdleMinutesAndNoWakeMode(t *testing.T) {
 	a := pendingAPI()
 	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--no-wait")
-	want := `POST /iam/operations {"candidateId":"` + tgARN("111111111111", tgAPI) + `","databases":[],"settings":{"idleMinutes":15,"wakeMode":"any"},"type":"onboard"}`
+	want := `POST /iam/operations {"candidateId":"` + tgARN("111111111111", tgAPI) + `","databases":[],"settings":{},"type":"onboard"}`
 	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want || strings.Contains(r.stdout, "onboarded") {
 		t.Fatalf("exit %d, writes %q, stdout %q", r.exit, a.writes, r.stdout)
 	}
@@ -191,7 +192,7 @@ func TestOnboardKubernetesCandidateSendsItsFallbackTypes(t *testing.T) {
 func TestOnboardSendsHibernateAndRefusesInherit(t *testing.T) {
 	a := pendingAPI()
 	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--hibernate", "false", "--no-wait")
-	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"hibernate":false,"idleMinutes":15,"wakeMode":"any"}`) {
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"hibernate":false}`) {
 		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
 	for _, v := range []string{"inherit", "maybe", ""} {
@@ -511,7 +512,7 @@ func gcpCandidate() string {
 func TestOnboardGoogleCloudCandidateBody(t *testing.T) {
 	a := &obAPI{pending: []string{gcpCandidate()}}
 	r := runOB(t, a, nil, "workloads", "onboard", "web", "--router", "gcp-dev", "--database", "orders-db", "--fallback-type", "e2-medium", "--fallback-type", "n2-standard-2", "--no-wait")
-	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[{"id":"orders-db","kind":"cloudsql-instance"}],"router":"gcp-dev","settings":{"fallbackInstanceTypes":["e2-medium","n2-standard-2"],"idleMinutes":15},"type":"onboard"}`
+	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[{"id":"orders-db","kind":"cloudsql-instance"}],"router":"gcp-dev","settings":{"fallbackInstanceTypes":["e2-medium","n2-standard-2"]},"type":"onboard"}`
 	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
 		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
@@ -520,13 +521,13 @@ func TestOnboardGoogleCloudCandidateBody(t *testing.T) {
 func TestOnboardGoogleCloudCandidateSendsNoWakeModeUnlessGiven(t *testing.T) {
 	a := &obAPI{pending: []string{gcpCandidate()}}
 	r := runOB(t, a, nil, "workloads", "onboard", "web", "--no-wait")
-	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[],"settings":{"idleMinutes":15},"type":"onboard"}`
+	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[],"settings":{},"type":"onboard"}`
 	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
 		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
 	a = &obAPI{pending: []string{gcpCandidate()}}
 	r = runOB(t, a, nil, "workloads", "onboard", "web", "--wake-mode", "any", "--no-wait")
-	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"idleMinutes":15,"wakeMode":"any"}`) {
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"wakeMode":"any"}`) {
 		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
 }
@@ -679,5 +680,59 @@ func TestExclusionsAddLabelsAProjectAsOne(t *testing.T) {
 	r = runOB(t, a, nil, "exclusions", "add", "--account", "111111111111", "--reason", "r", "--dry-run")
 	if !strings.Contains(r.stdout, "account 111111111111") {
 		t.Errorf("stdout %q", r.stdout)
+	}
+}
+
+func TestOnboardSendsTheIdleMinutesAndTheWakeModeOnlyWhenGiven(t *testing.T) {
+	a := pendingAPI()
+	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--idle-minutes", "20", "--wake-mode", "any", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"idleMinutes":20,"wakeMode":"any"}`) {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &obAPI{pending: []string{gcpCandidate()}}
+	r = runOB(t, a, nil, "workloads", "onboard", "web", "--idle-minutes", "45", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"idleMinutes":45}`) {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestOnboardSendsTheWakeTimeoutInItsSettingsAndRefusesOutOfRange(t *testing.T) {
+	a := pendingAPI()
+	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--wake-timeout-seconds", "900", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"wakeTimeoutSeconds":900}`) {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	for _, n := range []string{"59", "3601"} {
+		a = pendingAPI()
+		r = runOB(t, a, nil, "workloads", "onboard", tgAPI, "--wake-timeout-seconds", n, "--no-wait")
+		if r.exit != 2 || len(a.writes) != 0 || !strings.Contains(r.stderr, "--wake-timeout-seconds") {
+			t.Errorf("%s: exit %d, writes %q, stderr %q", n, r.exit, a.writes, r.stderr)
+		}
+	}
+}
+
+// The flags both onboards share come first, in one order and wording; each cloud's own follow.
+var sharedOnboardFlags = []string{"--name", "--set-tag", "--idle-minutes", "--wake-mode", "--wake-timeout-seconds", "--hibernate", "--fallback-type", "--database"}
+
+func flagOrder(t *testing.T, help string, flags []string) []string {
+	t.Helper()
+	var seen []string
+	_, flagsOnly, _ := strings.Cut(help, "\nFlags:\n")
+	for _, line := range strings.Split(flagsOnly, "\n") {
+		for _, f := range flags {
+			if strings.HasPrefix(strings.TrimSpace(line), f+" ") {
+				seen = append(seen, f)
+			}
+		}
+	}
+	return seen
+}
+
+func TestBothOnboardsListTheSharedFlagsInTheSameOrder(t *testing.T) {
+	for _, args := range [][]string{{"aws", "workloads", "onboard", "--help"}, {"gcp", "workloads", "onboard", "--help"}} {
+		out, _, _ := executed(t, build{}, args...)
+		if got := flagOrder(t, out, sharedOnboardFlags); !slices.Equal(got, sharedOnboardFlags) {
+			t.Errorf("%v lists %v\n%s", args, got, out)
+		}
 	}
 }

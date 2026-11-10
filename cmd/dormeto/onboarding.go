@@ -95,7 +95,7 @@ func checkCandidateFlags(cand fleet.Candidate, router string, databases, fallbac
 func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		name, wakeMode, router string
-		idle                   int
+		idle, wakeTimeout      int
 		databases              []string
 		fallbacks              []string
 		setTags                []string
@@ -109,9 +109,10 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"or a Google Cloud backend service's path) or the name of its target group or backend service (an unknown or\n" +
 			"ambiguous name exits 2, its ids listed, nothing sent), and follow it; then print the workload as\n" +
 			"<router>/<workload id>. It sends what the dashboard's dialog sends: --name (the workload's display name, up to\n" +
-			"64 characters; empty, the target group's or backend service's name), --idle-minutes (5 to 1440, 15 by default),\n" +
-			"--wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes; by default any on AWS, and on\n" +
-			"Google Cloud none is sent: the levels decide, as the dashboard's Inherit), --database (an RDS instance\n" +
+			"64 characters; empty, the target group's or backend service's name), --idle-minutes (5 to 1440) and --wake-mode\n" +
+			"(any, or browser: only the waiter page, the header or a wake rule wakes), sent only when given: without them the\n" +
+			"levels decide (the dashboard's Inherit; their built-ins are 15 minutes and any), --wake-timeout-seconds (60 to 3600\n" +
+			"on AWS, to 1700 on Google Cloud: how long a wake may take, given likewise), --database (an RDS instance\n" +
 			"identifier or cluster:<identifier>, or for a Google Cloud candidate a Cloud SQL instance name: stopped after the\n" +
 			"application, started before it), --fallback-type (an EC2 instance type such as t3a.medium, or for a Google Cloud\n" +
 			"candidate a Compute Engine machine type such as e2-medium; at most 5; for the instances of a workload), --router\n" +
@@ -133,8 +134,10 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("name exactly one candidate (its id, or its target group's or backend service's name)")
 			case utf8.RuneCountInString(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }):
 				err = usagef("--name: at most 64 characters, no control characters")
-			case idle < 5 || idle > 1440:
+			case c.Flags().Changed("idle-minutes") && (idle < 5 || idle > 1440):
 				err = usagef("--idle-minutes: %d is not from 5 to 1440", idle)
+			case c.Flags().Changed("wake-timeout-seconds") && (wakeTimeout < 60 || wakeTimeout > 3600):
+				err = usagef("--wake-timeout-seconds: %d is not from 60 to 3600", wakeTimeout)
 			case c.Flags().Changed("wake-mode") && wakeMode != "any" && wakeMode != "browser":
 				err = usagef("--wake-mode: %q is not any or browser", wakeMode)
 			case len(fallbacks) > maxFallbackTypes:
@@ -168,10 +171,19 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := checkCandidateFlags(cand, router, databases, fallbacks); err != nil {
 					return err
 				}
-				settings := map[string]any{"idleMinutes": idle}
-				// AWS's default is any; a Google Cloud candidate's levels decide unless the flag is given (the dashboard's Inherit).
-				if c.Flags().Changed("wake-mode") || !cand.IsGoogle() {
+				if cand.IsGoogle() && c.Flags().Changed("wake-timeout-seconds") && wakeTimeout > 1700 {
+					return usagef("--wake-timeout-seconds: %d is not from 60 to 1700, a Google Cloud workload's", wakeTimeout)
+				}
+				// What is not given is not sent: the levels decide, as the dashboard's Inherit.
+				settings := map[string]any{}
+				if c.Flags().Changed("idle-minutes") {
+					settings["idleMinutes"] = idle
+				}
+				if c.Flags().Changed("wake-mode") {
 					settings["wakeMode"] = wakeMode
+				}
+				if c.Flags().Changed("wake-timeout-seconds") {
+					settings["wakeTimeoutSeconds"] = wakeTimeout
 				}
 				if len(fallbacks) > 0 {
 					settings["fallbackInstanceTypes"] = fallbacks
@@ -215,14 +227,16 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
+	fl.SortFlags = false // the shared flags first, in gcp workloads onboard's order, then AWS's own
 	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's or backend service's name)")
-	fl.IntVar(&idle, "idle-minutes", 15, "the idle window, 5 to 1440 minutes")
-	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser (default: any on AWS; on Google Cloud the levels decide)")
-	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name (repeatable)")
-	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium, or Compute Engine machine type such as e2-medium (repeatable, at most 5)")
-	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the router to onboard a global candidate on when its project has several (a regional one goes on its region's router)")
 	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
+	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the levels', 15 built in)")
+	fl.StringVar(&wakeMode, "wake-mode", "", "what wakes the workload: any request that passes the filters, or browser (default: the levels', any built in)")
+	fl.IntVar(&wakeTimeout, "wake-timeout-seconds", 0, "how long a wake may take, 60 to 3600 seconds (default: the levels')")
 	fl.StringVar(&hibernate, "hibernate", "", "hibernate the instances at a nap: true or false (default: inherit)")
+	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium, or Compute Engine machine type such as e2-medium (repeatable, at most 5)")
+	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name (repeatable)")
+	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the router to onboard a global candidate on when its project has several (a regional one goes on its region's router)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd

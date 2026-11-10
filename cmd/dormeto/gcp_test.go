@@ -354,9 +354,9 @@ func TestGcpNoLongerWarnsOfCloudSQLAndGKE(t *testing.T) {
 		"check --with":      {"gcp", "check", "--project", "p", "--with", "cloud-sql"},
 		"install --with":    {"gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "--yes", "--with", "cloud-sql,gke"},
 		"uninstall --with":  {"gcp", "routers", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--with", "gke"},
-		"onboard cloud-sql": {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--cloud-sql", "db"},
+		"onboard cloud-sql": {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--database", "db"},
 		"onboard gke":       {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c"},
-		"onboard both":      {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c", "--cloud-sql", "a", "--cloud-sql", "b2"},
+		"onboard both":      {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c", "--database", "a", "--database", "b2"},
 		"access show":       {"gcp", "workloads", "access", "show", "--project", "p", "--region", "r", "--gke-cluster", "z/c", "--namespace", "n", "--workload", "w"},
 		"access grant":      {"gcp", "workloads", "access", "grant", "--project", "p", "--region", "r", "--gke-cluster", "z/c", "--namespace", "n", "--workload", "w", "--yes"},
 	} {

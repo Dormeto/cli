@@ -280,7 +280,7 @@ func TestOnboardDryRunSaysTheCandidateItsEligibilityAndTheBody(t *testing.T) {
 	want := "candidate " + tgAPI + ": aws, account 111111111111, eu-west-1 (" + tgARN("111111111111", tgAPI) + ")\n" +
 		"eligibility, as discovery listed it: pending-onboarding; idle 7d 120h, requests 7d 42\n" +
 		"dry run: would POST /iam/operations, nothing sent\n" +
-		`  {"candidateId":"` + tgARN("111111111111", tgAPI) + `","databases":[],"settings":{"idleMinutes":30,"wakeMode":"any"},"type":"onboard"}` + "\n"
+		`  {"candidateId":"` + tgARN("111111111111", tgAPI) + `","databases":[],"settings":{"idleMinutes":30},"type":"onboard"}` + "\n"
 	if r.exit != 0 || len(a.writes) != 0 || r.stdout != want {
 		t.Fatalf("exit %d, writes %q, stdout:\n%s\nwant:\n%s\nstderr %q", r.exit, a.writes, r.stdout, want, r.stderr)
 	}

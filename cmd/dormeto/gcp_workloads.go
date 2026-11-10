@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -184,7 +185,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var hibernating *bool
 	var idleGiven, wakeGiven bool
 	var loadBalancer, cluster, wakeMode string
-	var databases, fallbackTypes []string
+	var databases, oldDatabases, fallbackTypes []string
 	var requestLogs bool
 	var name string
 	var tags []string
@@ -199,7 +200,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			"to 256, letters, digits, spaces and _ . : / = + - @, no key starting with dormeto:); the router sets the source (cli).\n"+
 			"Both need router 0.40.0 or later: an older one, which drops them, is refused with the install to run.\n"+
 			"--dry-run stops after the eligibility check.\n"+
-			"--cloud-sql needs the feature cloud-sql of the router's install, and --gke-cluster its feature gke. With --gke-cluster the\n"+
+			"--database (a Cloud SQL instance) needs the feature cloud-sql of the router's install, and --gke-cluster its feature gke. With --gke-cluster the\n"+
 			"Service's owner is read in the cluster, as you, and the Role and RoleBinding dormeto-<workload> of its namespace are\n"+
 			"printed, asked and applied before the onboarding; a refused onboarding removes what this run added. No tag is bound for\n"+
 			"pods. On a Standard cluster, scaling pods saves money only with the node autoscaler freeing a node: it warns of that.\n"+
@@ -209,7 +210,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			"offboarding sets it back unless it changed since. Cloud Logging bills the logs past its free tier.",
 		&f, []string{"project", "region", "url-map", "backend-service"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.URLMap, r.BackendService, r.ID, r.Hibernate = urlMap, backendService, id, hibernating
-			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, databases, cluster, requestLogs
+			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, append(slices.Clone(databases), oldDatabases...), cluster, requestLogs
 			r.WakeMode, r.FallbackTypes = wakeMode, fallbackTypes
 			r.Name, r.Tags = strings.TrimSpace(name), tagged
 			if idleGiven {
@@ -229,6 +230,10 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		// The old name of --wake-timeout-seconds, AWS's.
 		if c.Flags().Changed("wake-timeout") {
 			fmt.Fprintln(c.ErrOrStderr(), "--wake-timeout is now --wake-timeout-seconds")
+		}
+		// The old name of --database, 0.11.0's.
+		if c.Flags().Changed("cloud-sql") {
+			fmt.Fprintln(c.ErrOrStderr(), "--cloud-sql is now --database")
 		}
 		// Given empty, as a variable with no value: read as not given, it would onboard something else.
 		for _, name := range []string{"load-balancer", "gke-cluster", "wake-mode"} {
@@ -268,26 +273,29 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		}
 		return nil
 	}
-	gcpRouterFlags(cmd, &f)
 	fl := cmd.Flags()
-	fl.StringVar(&urlMap, "url-map", "", "the URL map of the load balancer (required)")
-	fl.StringVar(&backendService, "backend-service", "", "the application's backend service (required)")
-	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
-	fl.StringVar(&name, "name", "", "the workload's name for people, up to 64 characters (default: its ID)")
+	fl.SortFlags = false // the shared flags first, in aws workloads onboard's order, then Google Cloud's own
+	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: its ID)")
 	fl.StringArrayVar(&tags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable, at most 50; the dormeto: prefix is reserved)")
 	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the router's, 15)")
-	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
-	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional, classic, internal (a regional map) or cross-region-internal (default: read from Google)")
-	fl.IntVar(&wakeTimeout, "wake-timeout-seconds", 0, fmt.Sprintf("how long a wake may take, %d to %d seconds (default: the router's, by what the workload holds)", gcponboard.MinWakeTimeout, gcponboard.MaxWakeTimeout))
-	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "the old name of --wake-timeout-seconds")
-	fl.MarkHidden("wake-timeout")
 	fl.StringVar(&wakeMode, "wake-mode", "", "what wakes the workload: any request that passes the filters, or browser (default: the router's; the global load balancer's waiting page wakes by browser alone)")
+	fl.IntVar(&wakeTimeout, "wake-timeout-seconds", 0, fmt.Sprintf("how long a wake may take, %d to %d seconds (default: the router's, by what the workload holds)", gcponboard.MinWakeTimeout, gcponboard.MaxWakeTimeout))
+	fl.StringVar(&hibernate, "hibernate", "", "suspend instead of stopping the VMs that can be suspended: true or false")
 	fl.StringArrayVar(&fallbackTypes, "fallback-type", nil, "a fallback machine type such as e2-medium (repeatable, at most 5; for the VMs of unmanaged instance groups and zonal network endpoint groups: a wake out of capacity runs them on it)")
-	fl.StringArrayVar(&databases, "cloud-sql", nil, "a Cloud SQL instance to nap with the workload: tagged as you, down after the application, up before it; repeatable")
+	fl.StringArrayVar(&databases, "database", nil, "a Cloud SQL instance to nap with the workload: tagged as you, down after the application, up before it (repeatable)")
+	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
+	fl.StringVar(&urlMap, "url-map", "", "the URL map of the load balancer (required)")
+	fl.StringVar(&backendService, "backend-service", "", "the application's backend service (required)")
+	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional, classic, internal (a regional map) or cross-region-internal (default: read from Google)")
 	fl.BoolVar(&requestLogs, "request-logs", false, "turn the backend service's request logs on, every request, for the idle check to read them (set back at the offboarding)")
 	fl.StringVar(&cluster, "gke-cluster", "", "the workload's pods are in this GKE cluster, as <location>/<name>: its Kubernetes RBAC is printed, asked and applied")
+	gcpRouterFlags(cmd, &f)
 	fl.BoolVar(&f.yes, "yes", false, "apply a GKE workload's Kubernetes RBAC without asking (needed without a terminal, and with --json)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
+	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "the old name of --wake-timeout-seconds")
+	fl.MarkHidden("wake-timeout")
+	fl.StringArrayVar(&oldDatabases, "cloud-sql", nil, "the old name of --database")
+	fl.MarkHidden("cloud-sql")
 	return cmd
 }
 
