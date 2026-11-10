@@ -200,7 +200,7 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte, ou
 func (c *Client) exchange(ctx context.Context, method, path string, payload []byte) (int, []byte, error) {
 	for i := 1; ; i++ {
 		status, h, data, err := c.send(ctx, method, path, payload)
-		if err != nil || method != http.MethodGet || i == getAttempts || (status != http.StatusTooManyRequests && status < 500) || refusedAtOnce(status, data) {
+		if err != nil || method != http.MethodGet || i == getAttempts || (status != http.StatusTooManyRequests && status < 500) {
 			return status, data, err
 		}
 		wait := time.Duration(i) * c.backoff
@@ -216,17 +216,6 @@ func (c *Client) exchange(ctx context.Context, method, path string, payload []by
 			return 0, nil, err
 		}
 	}
-}
-
-// refusedAtOnce tells whether a 502 is the manager's refusal to reach a Google Cloud router, which a retry does not
-// change: the manager's accounts have no access to it, it is too old to report, or it is unknown.
-func refusedAtOnce(status int, data []byte) bool {
-	if status != http.StatusBadGateway {
-		return false
-	}
-	var b struct{ Error string }
-	_ = json.Unmarshal(data, &b)
-	return b.Error == "manager-access-missing" || b.Error == "router-too-old" || b.Error == "router-unknown"
 }
 
 // send makes one signed request and reads its answer, whatever its status.

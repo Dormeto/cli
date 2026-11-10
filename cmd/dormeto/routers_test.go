@@ -459,10 +459,10 @@ func hasLine(out, want string) bool {
 }
 
 func TestRoutersShowOfAGoogleCloudRouterTheManagerCannotReachPrintsItsMessageAtOnce(t *testing.T) {
-	for _, code := range []string{"manager-access-missing", "router-too-old", "router-unknown"} {
+	for _, code := range []string{"no_access", "router_too_old", "router_unknown"} {
 		message := "run dormeto gcp connect --project host --profile ops --env dev (" + code + ")"
 		api := &fakeAPI{custom: func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(502)
+			w.WriteHeader(409)
 			fmt.Fprintf(w, `{"error":%q,"message":%q}`, code, message)
 		}}
 		r := runFleet(t, api, "eu-west-1", "routers", "show", "dmtr-dormeto-dev-europe-west2")

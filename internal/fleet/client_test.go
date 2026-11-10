@@ -151,6 +151,25 @@ func TestGetGivesUpAfterThreeAttempts(t *testing.T) {
 	}
 }
 
+func TestGetAnswersAGoogleCloudRouterRefusalOnceWithItsMessage(t *testing.T) {
+	for _, code := range []string{"no_access", "router_too_old", "router_unknown"} {
+		var calls atomic.Int32
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(409)
+			io.WriteString(w, `{"error":"`+code+`","message":"the router is refused"}`)
+		})
+		err := c.Get(context.Background(), "/routers/dmtr-p-r", nil, nil)
+		var ae *APIError
+		if !errors.As(err, &ae) || ae.Status != 409 || ae.Code != code || ae.Message != "the router is refused" || calls.Load() != 1 {
+			t.Errorf("%s: err = %v, calls = %d", code, err, calls.Load())
+		}
+		if err == nil || !strings.Contains(err.Error(), "the router is refused") {
+			t.Errorf("%s: the message is not shown: %v", code, err)
+		}
+	}
+}
+
 func TestCredentialsError(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("called") })
 	c.creds = aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) { return aws.Credentials{}, errors.New("expired") })
