@@ -139,6 +139,10 @@ func TestGcpConnectIsWiredInTheRoot(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "--manager-region") || !strings.Contains(out, "--gcloud-configuration") || !strings.Contains(out, "--dry-run") {
 			t.Fatalf("%s: %d %s", name, code, out)
 		}
+		// A dry run's --json is the released shape, its plan beside it (gcponboard's connect.go prints the host as its target).
+		if !strings.Contains(out, `a dry run's {"dryRun": true, "targets": [<host project>], "plan": […]}`) {
+			t.Errorf("%s --json: %s", name, out)
+		}
 	}
 }
 

@@ -527,10 +527,10 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   On a router's commands, `dormeto gcp routers` and `dormeto gcp workloads`, `--region` is the router's, a Google Cloud
   region such as `europe-west1`.
 - **Clouds.** The manager's commands serve AWS and Google Cloud. `routers list`, `workloads list`, `discovery
-  candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before
-  any call), the counts staying the manager's, of both clouds (`workloads list --json`'s `byState`, `discovery
-  access`'s counts), and every command that takes `--account` takes `--project` too, the same flag under the name of a
-  Google Cloud project (`routers install`, which installs in an AWS account only, takes `--account` alone). A Google Cloud
+  candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before any
+  call), the counts staying the manager's, of both clouds (`workloads list --json`'s `byState`, `discovery access`'s
+  counts), and every command that takes `--account` takes `--project` too, the same flag under the name of a Google
+  Cloud project (`routers install`, which installs in an AWS account only, takes `--account` alone). A Google Cloud
   router is named `dmtr-<project>-<region>`, a Google Cloud workload `<router>/<workload id>` as an AWS one, and its
   backends are `instance`, `asg`, `k8s` and `cloudsql-instance` in the text and in `--json` (the router's own values,
   `vm`, `mig`, `k8s` and `cloudsql`, stay on its wire).
@@ -1028,7 +1028,7 @@ is the file `schedule show --json` prints under `schedule`.
 ### Workload settings and types
 
 ```sh
-dormeto aws settings set --idle-minutes 30 --wake-mode default
+dormeto aws settings set --idle-minutes 30 --wake-mode inherit
 dormeto aws routers settings prod-eu --wait-seconds 20 --no-wake-rules-file rules.json
 dormeto aws types set api --tag kind=api --description "Public APIs" --wake-mode any
 dormeto aws types set databases --idle-minutes 45
@@ -1044,10 +1044,10 @@ by `--type` on the workload, else by its tags. `inherit` removes a value on ever
 too, and `default` is its old name there, read the same (the settings of a router or a workload never took it). The
 settings that Google Cloud fixes or limits say so in their flags' help, as each level has them: at a router's and a
 workload's, which the Google Cloud router checks, it refuses a wake timeout past 1700 and any hold, held requests or
-drain (they are 0; `inherit` is accepted); the organization's and the types' take any value, and a Google Cloud
-workload takes 0, and at most 1700 for the wake timeout, whatever they set. The CLI refuses a value out of its range
-before any call; a rules file is a JSON list, `-` for the standard input. A workload written by Terraform is refused: set it in its workload module. A router before
-0.37.0 answers that it must be upgraded.
+drain (they are 0; `inherit` is accepted); the organization's and the types' take any value, and a Google Cloud workload
+takes 0, and at most 1700 for the wake timeout, whatever they set. The CLI refuses a value out of its range before any
+call; a rules file is a JSON list, `-` for the standard input. A workload written by Terraform is refused: set it in its
+workload module. A router before 0.37.0 answers that it must be upgraded.
 
 ### Joined windows
 
@@ -1739,7 +1739,7 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   record made for another environment (its pool and accounts not `dmt-<env>`'s) is refused, exit 2. The commands a run
   tells you to run name the manager as you did (`--profile`, `--env`, `--manager-region`, `--api-url`,
   `--gcloud-configuration`). `--json` prints the record on stdout (`{"connection": …}`; a dry run's `{"dryRun": true,
-  "plan": […]}`) and the words on stderr.
+  "targets": [<host project>], "plan": […]}`) and the words on stderr.
 - **What Google keeps:** a connect after a disconnect undeletes the pool and its provider (Google keeps them 30 days) and
   the custom roles (7 days), then updates them. A custom role deleted more than 7 days ago can't be undeleted, and Google
   blocks its ID until its permanent deletion ends, at the latest 44 days after the deletion. Connect then stops with
@@ -2164,7 +2164,7 @@ dormeto gcp routers resume --project my-project --region europe-west1
   one map share its updates, and a router runs at most 20 naps at once. Ten naps on one regional map were all asleep
   within 283 s, none failed. A nap that finds the map busy gives up and tries again at a later check (the router's
   Compute Engine scenario page says why).
-- `pause <id> --reason <text>` (required, at most 256 characters) stops every nap, by the idle window, the schedule or
+- `pause <id> --reason <text>` (required, 1 to 256 characters) stops every nap, by the idle window, the schedule or
   `nap`, until `resume`, `--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today, at most 366
   days away). A workload asleep is woken. With `--keep-asleep`
   it is not, but a visitor still wakes it: only scheduled and maintenance wakes wait for the pause to end.
@@ -2199,14 +2199,15 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 ```
 
 - `access show` is read-only: what is in the cluster, and what `grant` would write.
-- `access grant` prints the objects, asks (`--yes` without a terminal; on stderr under `--json`), lists them in the install
-  record, then writes what differs: run again, it writes nothing. A Role or RoleBinding of that name without the label is
-  refused, nothing changed. The binding's other subjects stay; another router's service account (`dmtr-*@…`) among them
-  is refused. Kubernetes lets no one grant rights they do not hold: without them, you need `container.roles.escalate`
-  (Google lists it as testing in custom roles) and `container.roles.bind`.
-- `access revoke` prints what it removes and asks (`--yes` without a terminal; on stderr under `--json`), then removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
-  name without the label is left and said. While another subject holds the binding, only the router's subject goes, and
-  both objects stay. It works after `dormeto gcp routers uninstall`, which lists what it leaves in a cluster.
+- `access grant` prints the objects, asks (`--yes` without a terminal; on stderr under `--json`), lists them in the
+  install record, then writes what differs: run again, it writes nothing. A Role or RoleBinding of that name without the
+  label is refused, nothing changed. The binding's other subjects stay; another router's service account (`dmtr-*@…`)
+  among them is refused. Kubernetes lets no one grant rights they do not hold: without them, you need
+  `container.roles.escalate` (Google lists it as testing in custom roles) and `container.roles.bind`.
+- `access revoke` prints what it removes and asks (`--yes` without a terminal; on stderr under `--json`), then removes
+  the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that name without the label
+  is left and said. While another subject holds the binding, only the router's subject goes, and both objects stay. It
+  works after `dormeto gcp routers uninstall`, which lists what it leaves in a cluster.
 - The CLI and the router reach the cluster on its DNS endpoint, which must be open to traffic from outside its network:
   the router calls it from Cloud Run with its own token, with no VPC. A cluster with no DNS endpoint is refused, saying
   what to turn on; a private cluster is reached by its DNS endpoint only.

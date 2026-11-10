@@ -839,6 +839,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		// the clouds, --yes and --dry-run
 		"`discovery candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before any call)",
 		"every command that takes `--account` takes `--project` too",
+		"`--json` prints the record on stdout (`{\"connection\": …}`; a dry run's `{\"dryRun\": true, \"targets\": [<host project>], \"plan\": […]}`)",
 		"the counts staying the manager's, of both clouds (`workloads list --json`'s `byState`, `discovery access`'s counts)",
 		"Every writing command of both subtrees takes `--yes`, a no-op where nothing is asked, and `--dry-run`",
 		"Four commands have no `--dry-run`: `aws install`, `aws uninstall` and their `apply`, whose plan, the step before `apply`, needs the bootstrap",
@@ -857,6 +858,8 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"`workloads wake <id> [--wait] [--timeout <d>]`",
 		"A refused nap, wake, pause, resume or `schedule set|clear` prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
 		"in `gcp routers show --json`'s `router` (as 0.11.0 printed it)",
+		"`pause <id> --reason <text>` (required, 1 to 256 characters)",
+		"dormeto aws settings set --idle-minutes 30 --wake-mode inherit",
 		"`--cloud-sql` is its old name, which still works, hidden, and says `--cloud-sql is now --database`",
 		"`--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today",
 		"Without a setting flag it shows each router's level",
@@ -899,6 +902,10 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"answers `409` with its message and the command that fixes it (`no_access`, `router_too_old`, `router_unknown`; it was a `502` `router_error`",
 		"AWS's now says `estimated: false`",
 		"a Google Cloud workload's note has no such clause",
+		"so does an AWS candidate's, as `dormeto aws workloads onboard` sends neither unless given",
+		"is printed with that message at once, where 0.11.0 tried a read three times, by every command of `dormeto aws` that reaches it",
+		"`dormeto aws workloads keep-awake --reason` is checked as every pause's reason: 1 to 256 characters once trimmed, before any call, one out of range exiting 2 (0.11.0 sent it, and the manager's refusal exited 1)",
+		"but `waiting-page set` and `clear`, which print the controller's answer as it is, and nothing when refused, as AWS's `waiting-page set` and `clear` do",
 		"the workload's cloud is its router's in `routers list`, read for the text, else the advice's `estimated`",
 		"needed `--yes` with `--json`, exit 2 even on a terminal: on a terminal they now ask there too, on stderr after what they would write",
 		"Every `--json` of `dormeto gcp`, `gcp check` and `gcp routers show` too, is indented as AWS's, by two spaces (it was one line)",
@@ -909,7 +916,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"AWS's advice has none", "would act on 2 workloads"} {
+	for _, gone := range []string{"AWS's advice has none", "would act on 2 workloads", "an AWS candidate's default stays `any`", "now a 409 with its message, was a 502"} {
 		if strings.Contains(log, gone) {
 			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
 		}
