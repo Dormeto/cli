@@ -553,9 +553,9 @@ func abs(f float64) float64 {
 	return f
 }
 
-// Text is the sentence of the advice, the windows tried (savings a month, or hours asleep a day when nothing is priced,
-// wakes and wait a day) and the notes the dashboard gives under them.
-// Text is the advice as text; target is the command's <router>/<workload>, named in the way to change the window.
+// Text is the advice as text: the sentence, the windows tried (savings a month, or hours asleep a day when nothing is
+// priced, wakes and wait a day) and the notes the dashboard gives under them. target is the command's
+// <router>/<workload>, named in the way to change the window.
 func (a IdleWindowAdvice) Text(target string, loc *time.Location) string {
 	measure := "ASLEEP A DAY"
 	if a.Priced {
@@ -614,7 +614,12 @@ func (a IdleWindowAdvice) Text(target string, loc *time.Location) string {
 	if !a.Priced {
 		notes = append(notes, "nothing priced yet (no nap described, or an item without a price): hours asleep instead of dollars")
 	}
-	notes = append(notes, fmt.Sprintf("to change it: dormeto aws workloads settings %s --idle-minutes %d (a workload onboarded with Terraform: idle_minutes in its module)", target, a.Recommended),
+	change := fmt.Sprintf("to change it: dormeto aws workloads settings %s --idle-minutes %d", target, a.Recommended)
+	if !a.Estimated {
+		// Terraform onboards AWS workloads only: a Google Cloud workload has no module to name.
+		change += " (a workload onboarded with Terraform: idle_minutes in its module)"
+	}
+	notes = append(notes, change,
 		"every request counts as activity and as a wake; computed "+When(a.ComputedAt, loc)+", from the 14 days to "+When(a.To, loc))
 	return out + "\n" + strings.Join(notes, "\n") + "\n"
 }

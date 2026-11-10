@@ -206,3 +206,22 @@ func TestWorkloadsShowSaysWhereEachSettingComesFrom(t *testing.T) {
 		t.Errorf("an older router's values have no source: %s", old.stdout)
 	}
 }
+
+// The four commands that set a level name Google Cloud's limits on its flags: a wake timeout of 60 to 1700, and a hold,
+// a held-request count and a drain of 0 (only inherit is accepted there).
+func TestTheLevelCommandsHelpNamesGoogleCloudsLimits(t *testing.T) {
+	for _, command := range [][]string{{"aws", "workloads", "settings"}, {"aws", "routers", "settings"}, {"aws", "settings", "set"}, {"aws", "types", "set"}} {
+		out, _, code := executed(t, build{}, append(command[:len(command):len(command)], "--help")...)
+		if code != 0 {
+			t.Fatalf("%v: %d", command, code)
+		}
+		if line := helpLine(out, "--wake-timeout-seconds"); !strings.Contains(line, "60 to 1700 on Google Cloud") {
+			t.Errorf("%v --wake-timeout-seconds: %q", command, line)
+		}
+		for _, flag := range []string{"--wait-seconds", "--max-holders", "--drain-seconds"} {
+			if line := helpLine(out, flag); !strings.Contains(line, "0 on Google Cloud") {
+				t.Errorf("%v %s: %q", command, flag, line)
+			}
+		}
+	}
+}

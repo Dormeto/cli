@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/gcponboard"
 )
 
 const (
@@ -228,14 +229,14 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.SortFlags = false // the shared flags first, in gcp workloads onboard's order, then AWS's own
-	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's or backend service's name)")
-	fl.StringArrayVar(&setTags, "set-tag", nil, "a Dormeto tag of the workload, key=value (repeatable; administrators)")
-	fl.IntVar(&idle, "idle-minutes", 0, "the idle window, 5 to 1440 minutes (default: the levels', 15 built in)")
-	fl.StringVar(&wakeMode, "wake-mode", "", "what wakes the workload: any request that passes the filters, or browser (default: the levels', any built in)")
-	fl.IntVar(&wakeTimeout, "wake-timeout-seconds", 0, "how long a wake may take, 60 to 3600 seconds (default: the levels')")
-	fl.StringVar(&hibernate, "hibernate", "", "hibernate the instances at a nap: true or false (default: inherit)")
-	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium, or Compute Engine machine type such as e2-medium (repeatable, at most 5)")
-	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name (repeatable)")
+	fl.StringVar(&name, "name", "", sharedOnboardHelp["name"])
+	fl.StringArrayVar(&setTags, "set-tag", nil, sharedOnboardHelp["set-tag"])
+	fl.IntVar(&idle, "idle-minutes", 0, sharedOnboardHelp["idle-minutes"])
+	fl.StringVar(&wakeMode, "wake-mode", "", sharedOnboardHelp["wake-mode"])
+	fl.IntVar(&wakeTimeout, "wake-timeout-seconds", 0, sharedOnboardHelp["wake-timeout-seconds"])
+	fl.StringVar(&hibernate, "hibernate", "", sharedOnboardHelp["hibernate"])
+	fl.StringArrayVar(&fallbacks, "fallback-type", nil, sharedOnboardHelp["fallback-type"])
+	fl.StringArrayVar(&databases, "database", nil, sharedOnboardHelp["database"])
 	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the router to onboard a global candidate on when its project has several (a regional one goes on its region's router)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
@@ -485,4 +486,17 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&asJSON, "json", false, "print the operations, as the manager last said them")
 	wait.bind(cmd)
 	return cmd
+}
+
+// sharedOnboardHelp is what each flag both onboards take says, one description for both, a cloud's own limit said in
+// the same sentence (the flags are listed in one order, aws workloads onboard's and gcp workloads onboard's alike).
+var sharedOnboardHelp = map[string]string{
+	"name":                 "the workload's display name, up to 64 characters (default: the target group's or backend service's name)",
+	"set-tag":              "a Dormeto tag of the workload, key=value (repeatable, at most 50; the dormeto: prefix is reserved; AWS: administrators)",
+	"idle-minutes":         "the idle window, 5 to 1440 minutes (default: the levels', 15 built in)",
+	"wake-mode":            "what wakes the workload: any request that passes the filters, or browser (default: the levels', any built in; behind Google Cloud's global load balancer the waiting page wakes by browser alone)",
+	"wake-timeout-seconds": fmt.Sprintf("how long a wake may take, 60 to 3600 seconds, %d to %d on Google Cloud (default: the levels')", gcponboard.MinWakeTimeout, gcponboard.MaxWakeTimeout),
+	"hibernate":            "hibernate at a nap: true or false (AWS: the instances launched with hibernation; Google Cloud: the VMs that can be suspended; default: inherit)",
+	"fallback-type":        "a fallback instance type such as t3a.medium (AWS) or machine type such as e2-medium (Google Cloud: for the VMs of unmanaged instance groups and zonal network endpoint groups; a wake out of capacity runs them on it) (repeatable, at most 5)",
+	"database":             "a companion RDS instance identifier, or cluster:<identifier> (AWS); a Cloud SQL instance name (Google Cloud: tagged as you, down after the application, up before it) (repeatable)",
 }

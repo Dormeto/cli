@@ -728,11 +728,39 @@ func flagOrder(t *testing.T, help string, flags []string) []string {
 	return seen
 }
 
-func TestBothOnboardsListTheSharedFlagsInTheSameOrder(t *testing.T) {
+// flagLines are the shared flags' help lines of one onboard, by flag, with the spaces of the columns collapsed.
+func flagLines(help string) map[string]string {
+	lines := map[string]string{}
+	_, flagsOnly, _ := strings.Cut(help, "\nFlags:\n")
+	for _, line := range strings.Split(flagsOnly, "\n") {
+		for _, f := range sharedOnboardFlags {
+			if strings.HasPrefix(strings.TrimSpace(line), f+" ") {
+				lines[f] = strings.Join(strings.Fields(line), " ")
+			}
+		}
+	}
+	return lines
+}
+
+func TestBothOnboardsListTheSharedFlagsInTheSameOrderAndWords(t *testing.T) {
+	var all []map[string]string
 	for _, args := range [][]string{{"aws", "workloads", "onboard", "--help"}, {"gcp", "workloads", "onboard", "--help"}} {
 		out, _, _ := executed(t, build{}, args...)
 		if got := flagOrder(t, out, sharedOnboardFlags); !slices.Equal(got, sharedOnboardFlags) {
 			t.Errorf("%v lists %v\n%s", args, got, out)
 		}
+		all = append(all, flagLines(out))
+	}
+	for _, f := range sharedOnboardFlags {
+		if all[0][f] == "" || all[0][f] != all[1][f] {
+			t.Errorf("%s: aws says %q, gcp says %q", f, all[0][f], all[1][f])
+		}
+	}
+	// the levels' words, and a cloud's limit in the same sentence where it differs
+	if got := all[1]["--idle-minutes"]; !strings.Contains(got, "the levels', 15 built in") || strings.Contains(got, "router's") {
+		t.Errorf("--idle-minutes: %q", got)
+	}
+	if got := all[1]["--wake-timeout-seconds"]; !strings.Contains(got, "60 to 3600") || !strings.Contains(got, "60 to 1700 on Google Cloud") {
+		t.Errorf("--wake-timeout-seconds: %q", got)
 	}
 }

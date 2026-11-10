@@ -300,7 +300,7 @@ func (x *run) pauseWorkload() error {
 	}
 	var raw json.RawMessage
 	if err := x.controllerSince035(http.MethodPost, path+"/pause", in, &raw); err != nil {
-		return x.refusedWrite(err)
+		return x.refusedWorkloadWrite(err)
 	}
 	w, err := decodeWorkload(raw)
 	if err != nil {
@@ -332,7 +332,7 @@ func (x *run) resumeWorkload() error {
 	}
 	var raw json.RawMessage
 	if err := x.controllerSince035(http.MethodPost, path+"/resume", map[string]any{"by": by}, &raw); err != nil {
-		return x.refusedWrite(err)
+		return x.refusedWorkloadWrite(err)
 	}
 	if _, err := decodeWorkload(raw); err != nil {
 		return err

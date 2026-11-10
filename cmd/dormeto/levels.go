@@ -51,12 +51,21 @@ func (l *levelFlags) rangeOf(s fleet.LevelSetting) (int, int) {
 	return s.Min, s.Max
 }
 
+// onGoogleCloud is what a setting's flag says of Google Cloud's limit, where it differs: the wake timeout stops at 1700,
+// and the hold, the held requests and the drain are 0 (the Google Cloud commands say their own).
+var onGoogleCloud = map[string]string{
+	"wake-timeout-seconds": " (60 to 1700 on Google Cloud)",
+	"wait-seconds":         " (0 on Google Cloud, where only inherit is accepted)",
+	"max-holders":          " (0 on Google Cloud, where only inherit is accepted)",
+	"drain-seconds":        " (0 on Google Cloud, where only inherit is accepted)",
+}
+
 func bindLevelFlags(cmd *cobra.Command, unset string, aliases ...string) *levelFlags {
 	l := &levelFlags{unset: unset, aliases: aliases, numbers: map[string]*string{}}
 	for _, s := range levelSettings3 {
 		v := new(string)
 		l.numbers[s.Flag] = v
-		cmd.Flags().StringVar(v, s.Flag, "", fmt.Sprintf("the %s, %d to %d, or %s", s.Label, s.Min, s.Max, unset))
+		cmd.Flags().StringVar(v, s.Flag, "", fmt.Sprintf("the %s, %d to %d%s, or %s", s.Label, s.Min, s.Max, onGoogleCloud[s.Flag], unset))
 	}
 	cmd.Flags().StringVar(&l.wakeMode, "wake-mode", "", "any, browser, or "+unset)
 	cmd.Flags().StringVar(&l.noWake, "no-wake-rules-file", "", "a JSON list of no-wake rules (a path, - for the standard input), or "+unset)

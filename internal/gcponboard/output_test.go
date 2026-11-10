@@ -636,3 +636,30 @@ func TestWorkloadsOnboardDryRunJSONIsTheReleasedShape(t *testing.T) {
 		t.Fatalf("exit %d, %v: %s", code, err, stdout)
 	}
 }
+
+// A refused nap, wake, pause or resume prints AWS's head, "<router>/<workload>: <refusal>", as AWS's applyAll does, on the
+// standard error, exit 1; the paused workload's nap says it too.
+func TestWorkloadsWritesRefusedPrintTheTargetAsTheirHead(t *testing.T) {
+	g := newWorkloadsRig(t)
+	var out, errs strings.Builder
+	g.d.Out, g.d.Err = &out, &errs
+	r := workloadsEurope
+	r.ID, r.Reason = "nope", "freeze"
+	for name, f := range map[string]func(context.Context, Deps, Request) int{"nap": WorkloadsNap, "wake": WorkloadsWake,
+		"pause": WorkloadsPause, "resume": WorkloadsResume} {
+		out.Reset()
+		errs.Reset()
+		code := f(context.Background(), g.d, r)
+		if want := "dmtr-dormeto-dev-europe-west1/nope: no workload nope\n"; code != 1 || errs.String() != want || out.String() != "" {
+			t.Errorf("%s: exit %d, stderr %q (want %q), stdout %q", name, code, errs.String(), want, out.String())
+		}
+	}
+	g.s.Workloads["shop"] = "AWAKE"
+	r.ID = "shop"
+	g.call(t, WorkloadsPause, r)
+	out.Reset()
+	errs.Reset()
+	if code := WorkloadsNap(context.Background(), g.d, r); code != 1 || errs.String() != shopTarget+": workload shop is paused by me@example.com: freeze\n" {
+		t.Errorf("exit %d, stderr %q", code, errs.String())
+	}
+}

@@ -308,14 +308,26 @@ func TestWorkloadsShowPrintsTheCloudAndTheProjectOfAGoogleCloudWorkload(t *testi
 	}
 }
 
-func TestWorkloadsIdleWindowNamesTheSettingsCommandNotATerraformModuleOnly(t *testing.T) {
-	body := strings.Replace(idleWindowAnswer, `"priced":true`, `"priced":true,"estimated":true`, 1)
-	r := runShow(t, &showAPI{status: 200, body: body}, "idle-window", "prod-eu/w-1")
+func TestWorkloadsIdleWindowNamesTheSettingsCommandAndTheTerraformClauseForAnAWSWorkloadOnly(t *testing.T) {
+	gcp := strings.Replace(idleWindowAnswer, `"priced":true`, `"priced":true,"estimated":true`, 1)
+	r := runShow(t, &showAPI{status: 200, body: gcp}, "idle-window", "dmtr-dormeto-dev-europe-west2/w-1")
 	out := strings.Join(strings.Fields(r.stdout), " ")
-	mustContain(t, out, "to change it: dormeto aws workloads settings prod-eu/w-1 --idle-minutes 30 (a workload onboarded with Terraform: idle_minutes in its module)")
-	if strings.Contains(out, "offboard") {
-		t.Errorf("still says to offboard:\n%s", out)
+	mustContain(t, out, "to change it: dormeto aws workloads settings dmtr-dormeto-dev-europe-west2/w-1 --idle-minutes 30 every request")
+	if strings.Contains(out, "Terraform") || strings.Contains(out, "offboard") {
+		t.Errorf("a Google Cloud workload's note names Terraform or offboarding:\n%s", out)
 	}
+	for _, estimated := range []string{"", `,"estimated":false`} {
+		body := strings.Replace(idleWindowAnswer, `"priced":true`, `"priced":true`+estimated, 1)
+		r = runShow(t, &showAPI{status: 200, body: body}, "idle-window", "prod-eu/w-1")
+		out = strings.Join(strings.Fields(r.stdout), " ")
+		mustContain(t, out, "to change it: dormeto aws workloads settings prod-eu/w-1 --idle-minutes 30 (a workload onboarded with Terraform: idle_minutes in its module)")
+	}
+}
+
+// The command's target is printed as it was read, trimmed, as every other command prints it.
+func TestWorkloadsIdleWindowPrintsTheNormalisedTarget(t *testing.T) {
+	r := runShow(t, &showAPI{status: 200, body: idleWindowAnswer}, "idle-window", " prod-eu/w-1 ")
+	mustContain(t, r.stdout, "dormeto aws workloads settings prod-eu/w-1 --idle-minutes")
 }
 
 func TestWorkloadsIdleWindowSaysWhichRequestsWereNotFound(t *testing.T) {

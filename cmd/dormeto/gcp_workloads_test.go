@@ -651,7 +651,8 @@ func TestGcpWorkloadsOnboardTakesDatabaseAndTheOldCloudSQL(t *testing.T) {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	calls, _, _ = gcpRan(t, 0, append(strings.Fields(onboardArgs), "--cloud-sql", "db1", "--database", "db2")...)
-	if len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db2", "db1"}) && !slices.Equal(calls[0].r.CloudSQL, []string{"db1", "db2"}) {
+	// --database's, then the old flag's: the order the code sends
+	if len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db2", "db1"}) {
 		t.Fatalf("%v", calls)
 	}
 	out, _, _ := executed(t, build{}, "gcp", "workloads", "onboard", "--help")

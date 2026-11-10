@@ -109,7 +109,7 @@ func newWorkloadsIdleWindow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := api.Get(ctx, t.Path("/idle-window"), nil, &raw); err != nil {
 					return err
 				}
-				return printRead(c, raw, asJSON, func(a fleet.IdleWindowAdvice) string { return a.Text(args[0], deps.now().Location()) })
+				return printRead(c, raw, asJSON, func(a fleet.IdleWindowAdvice) string { return a.Text(t.String(), deps.now().Location()) })
 			})
 		},
 	}

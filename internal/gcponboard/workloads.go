@@ -547,7 +547,7 @@ func (x *run) moves(verb string) error {
 	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodPost, path+"/"+verb, nil, &raw); err != nil {
-		return x.refusedWrite(err)
+		return x.refusedWorkloadWrite(err)
 	}
 	w, err := decodeWorkload(raw)
 	if err != nil {

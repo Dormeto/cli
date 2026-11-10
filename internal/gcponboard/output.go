@@ -158,6 +158,15 @@ func (x *run) refusedWrite(err error) error {
 	return err
 }
 
+// refusedWorkloadWrite is refusedWrite for a nap, a wake, a pause or a resume: the refusal printed as AWS's applyAll prints
+// a workload's, "<router>/<workload>: <refusal>", exit 1. An interrupt stays one.
+func (x *run) refusedWorkloadWrite(err error) error {
+	if x.ctx.Err() == nil {
+		err = &stop{1, x.target(x.r.ID) + ": " + refusal(err)}
+	}
+	return x.refusedWrite(err)
+}
+
 // answeringRefusal runs a write that, under --json, prints AWS's map of no answer, {}, when it is refused (exit 1) before it
 // printed anything on the standard output, as refusedWrite does: not for a bad flag, a decline or an interrupt.
 func (x *run) answeringRefusal(write func() error) error {
