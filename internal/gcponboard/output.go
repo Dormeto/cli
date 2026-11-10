@@ -26,11 +26,6 @@ func needsYes(noun string) *stop {
 	return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on 1 %s without a terminal", noun)}
 }
 
-// needsYesWithJSON is needsYes of a command whose question --json does not ask: its stdout is JSON alone.
-func needsYesWithJSON(noun string) *stop {
-	return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on 1 %s with --json", noun)}
-}
-
 // sharedKinds are the shared names of the controller's backend kinds.
 var sharedKinds = map[string]string{"vm": "instance", "mig": "asg", kindPods: "k8s", kindDatabase: "cloudsql-instance"}
 
@@ -140,11 +135,17 @@ func (x *run) answeredWorkload(id string, raw json.RawMessage, lines ...string) 
 
 // printAnswers prints AWS's map of answers, by target, on the standard output.
 func (x *run) printAnswers(answers map[string]json.RawMessage) error {
-	b, err := json.Marshal(answers)
+	return writeJSON(x.d.Out, answers)
+}
+
+// writeJSON prints v on w as AWS's commands print their JSON: indented by two spaces, a line feed after it (a raw answer
+// of the controller's indented too).
+func writeJSON(w io.Writer, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(x.d.Out, "%s\n", b)
+	_, err = fmt.Fprintf(w, "%s\n", b)
 	return err
 }
 
@@ -158,8 +159,8 @@ func (x *run) refusedWrite(err error) error {
 	return err
 }
 
-// refusedWorkloadWrite is refusedWrite for a nap, a wake, a pause or a resume: the refusal printed as AWS's applyAll prints
-// a workload's, "<router>/<workload>: <refusal>", exit 1. An interrupt stays one.
+// refusedWorkloadWrite is refusedWrite for a nap, a wake, a pause, a resume or a schedule's set or clear: the refusal printed
+// as AWS's applyAll prints a workload's, "<router>/<workload>: <refusal>", exit 1. An interrupt stays one.
 func (x *run) refusedWorkloadWrite(err error) error {
 	if x.ctx.Err() == nil {
 		err = &stop{1, x.target(x.r.ID) + ": " + refusal(err)}
@@ -217,12 +218,7 @@ func (x *run) printList(rows []json.RawMessage, all []workload) error {
 		}
 		list.Workloads = append(list.Workloads, shared)
 	}
-	b, err := json.Marshal(list)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(x.d.Out, "%s\n", b)
-	return err
+	return writeJSON(x.d.Out, list)
 }
 
 // dryRequest is a request a dry run says, the shape of both subtrees' (fleet.DryRequest): what it addresses (the

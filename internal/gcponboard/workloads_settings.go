@@ -70,9 +70,7 @@ func (x *run) printStop(key string, value bool, names []string) error {
 	if !x.r.JSON {
 		return nil
 	}
-	b, _ := json.Marshal(map[string]any{key: value, "targets": names})
-	fmt.Fprintf(x.d.Out, "%s\n", b)
-	return nil
+	return writeJSON(x.d.Out, map[string]any{key: value, "targets": names})
 }
 
 // stopped tells that an error is a stop: the run ends there, for every workload.
@@ -154,11 +152,9 @@ func (x *run) workloadsSettings() error {
 		}
 	}
 	if x.r.JSON {
-		out, err := json.Marshal(answers)
-		if err != nil {
+		if err := writeJSON(x.d.Out, answers); err != nil {
 			return err
 		}
-		fmt.Fprintf(x.d.Out, "%s\n", out)
 	}
 	if failed {
 		return &stop{1, ""}

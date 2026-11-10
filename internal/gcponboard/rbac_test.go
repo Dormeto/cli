@@ -424,17 +424,17 @@ func TestRbacGrantWithoutATerminalNeedsYes(t *testing.T) {
 	}
 }
 
-func TestRbacGrantWithJSONNeedsYesBeforeAnyCall(t *testing.T) {
+// Under --json, a grant without a terminal needs --yes as one without --json does: exit 2, nothing written, stdout empty.
+func TestRbacGrantWithJSONWithoutATerminalNeedsYesAndWritesNothing(t *testing.T) {
 	g := newRbacRig(t)
 	r := shopAccess
 	r.Yes, r.JSON = false, true
-	mark := len(g.s.Calls())
-	code, out := g.call(t, WorkloadsAccessGrant, r)
-	if code != 2 || !strings.Contains(out, "--yes") {
-		t.Fatalf("exit %d:\n%s", code, out)
+	code, stdout, stderr := g.split(t, WorkloadsAccessGrant, r)
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "confirmation needed: pass --yes to act on 1 workload without a terminal") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
-	if c := g.s.Calls()[mark:]; len(c) != 0 || len(g.k.callList()) != 0 {
-		t.Errorf("calls: %v %v", c, g.k.callList())
+	if w := g.k.writes(0); len(w) != 0 {
+		t.Errorf("written: %v", w)
 	}
 }
 

@@ -204,7 +204,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			"--dry-run stops after the eligibility check.\n"+
 			"--database (a Cloud SQL instance) needs the feature cloud-sql of the router's install, and --gke-cluster its feature gke. With --gke-cluster the\n"+
 			"Service's owner is read in the cluster, as you, and the Role and RoleBinding dormeto-<workload> of its namespace are\n"+
-			"printed, asked (--yes without a terminal or with --json) and applied before the onboarding; a refused onboarding removes\n"+
+			"printed, asked (--yes without a terminal; on stderr under --json) and applied before the onboarding; a refused onboarding removes\n"+
 			"what this run added. No tag is bound for pods. On a Standard cluster, scaling pods saves money only with the node autoscaler freeing a node: it warns of that.\n"+
 			"The idle check reads the load balancer's request logs when the backend service logs every request, and ignores what the\n"+
 			"waker ignores (scanners, IP lists); else it counts every request, and the onboarding warns of that. --request-logs sets\n"+
@@ -380,13 +380,13 @@ func newGcpWorkloadsAccess(runs gcpWorkloadRuns, version string) *cobra.Command 
 		newGcpWorkloadsAccessVerb("show", "Show what is in the cluster and what grant would write (read-only)",
 			"Show, read-only, the Role and RoleBinding dormeto-<workload> in the namespace, and what grant would write.", runs.accessShow, version, false),
 		newGcpWorkloadsAccessVerb("grant", "Write a workload's Role and RoleBinding",
-			"Print the Role and RoleBinding dormeto-<workload>, ask (--yes without a terminal or with --json), list them in the install\n"+
+			"Print the Role and RoleBinding dormeto-<workload>, ask (--yes without a terminal; on stderr under --json), list them in the install\n"+
 				"record, then write what differs: run again, it writes nothing. A Role or RoleBinding of that name without the label is refused, nothing changed.\n"+
 				"The binding's other subjects stay; another router's service account (dmtr-*@…) among them is refused, nothing changed.\n"+
 				"Kubernetes lets no one grant rights they do not hold: without them you need container.roles.escalate and container.roles.bind.",
 			runs.accessGrant, version, true),
 		newGcpWorkloadsAccessVerb("revoke", "Remove a workload's Role and RoleBinding",
-			"Print what it removes, ask (--yes without a terminal or with --json), remove the RoleBinding and the Role\n"+
+			"Print what it removes, ask (--yes without a terminal; on stderr under --json), remove the RoleBinding and the Role\n"+
 				"dormeto-<workload> that are Dormeto's, and take them out of the install record. One of that name without the label is left and said; such a RoleBinding leaves the\n"+
 				"Role too, as it may name it. While another subject holds\n"+
 				"the binding, only the router's subject goes, and both objects stay; another router's service account among them is refused,\n"+

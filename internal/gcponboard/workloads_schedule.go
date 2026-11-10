@@ -149,11 +149,10 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 		if method == http.MethodGet {
 			return x.needsRecurrenceRouter(err)
 		}
-		return x.refusedWrite(x.needsRecurrenceRouter(err))
+		return x.refusedWorkloadWrite(x.needsRecurrenceRouter(err))
 	}
 	if x.r.JSON && method == http.MethodGet {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		return writeJSON(x.d.Out, raw)
 	}
 	var view struct {
 		Schedule   *scheduleOf `json:"schedule"`

@@ -130,7 +130,7 @@ func (x *run) filtered(raw json.RawMessage) (keptRows []json.RawMessage, kept, e
 		_ = json.Unmarshal(row, &fields)
 		if _, ok := fields["tags"]; !ok && len(x.r.HasTags) > 0 {
 			return nil, nil, nil, &stop{1, fmt.Sprintf("router %s does not answer its workloads' tags: --tag needs router %s or later: dormeto gcp routers install --version %s",
-				x.n.router, nameAndTagsRouterVersion, embeddedRouterVersion())}
+				x.n.managed, nameAndTagsRouterVersion, embeddedRouterVersion())}
 		}
 		every = append(every, w)
 		if x.matches(w) {

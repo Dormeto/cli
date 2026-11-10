@@ -514,12 +514,7 @@ func listOrNone(l []string) string {
 
 // PrintJSON prints the report as one JSON object.
 func PrintJSON(w io.Writer, r Report) error {
-	b, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "%s\n", b)
-	return err
+	return writeJSON(w, r)
 }
 
 // RunCheck is `dormeto gcp check`: the report printed, and the exit code: 0 when every command is allowed, 1 when

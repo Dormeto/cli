@@ -854,7 +854,8 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		// gcp's own
 		"A nap of a workload asleep already says `not awake (ASLEEP)`, as AWS words its refusal, but exits 0, since the controller does not refuse it (AWS exits 1)",
 		"`workloads wake <id> [--wait] [--timeout <d>]`",
-		"A refused nap, wake, pause or resume prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
+		"A refused nap, wake, pause, resume or `schedule set|clear` prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
+		"in `gcp routers show --json`'s `router` (as 0.11.0 printed it)",
 		"`--cloud-sql` is its old name, which still works, hidden, and says `--cloud-sql is now --database`",
 		"`--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today",
 		"Without a setting flag it shows each router's level",
@@ -884,7 +885,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"`dormeto gcp workloads offboard` now confirms as AWS's does",
 		"without one it exits 2 with `confirmation needed: pass --yes to act on 1 workload without a terminal` and changes nothing",
 		"a rerun that only finishes the untag and the access cleanup, because the controller no longer holds the workload, needs it too",
-		"A refused `gcp` nap, wake, pause or resume prints AWS's head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
+		"A refused `gcp` nap, wake, pause, resume or `schedule set|clear` prints AWS's head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
 		"`dormeto gcp workloads wake --wait [--timeout <d>]`",
 		"`gcp workloads list` takes `--state`, `--search` and `--tag`",
 		"`gcp workloads pause` takes `--for` and `--until`",
@@ -897,6 +898,8 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"answers `409` with its message and the command that fixes it (`no_access`, `router_too_old`, `router_unknown`; it was a `502` `router_error`",
 		"AWS's now says `estimated: false`",
 		"a Google Cloud workload's note has no such clause",
+		"needed `--yes` with `--json`, exit 2 even on a terminal: on a terminal they now ask there too, on stderr after what they would write",
+		"Every `--json` of `dormeto gcp`, `gcp check` and `gcp routers show` too, is indented as AWS's, by two spaces (it was one line)",
 		"printed what they would act on, `dry run: nap 2 workloads, nothing sent` and the targets below it: they now say each request in that form too, in the order of the targets",
 		"their `--json` is unchanged",
 	} {

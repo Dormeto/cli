@@ -170,7 +170,7 @@ func TestWorkloadsListSaysWhenThereIsNone(t *testing.T) {
 	}
 	r := workloadsEurope
 	r.JSON = true
-	if _, out = g.call(t, WorkloadsList, r); strings.TrimSpace(out) != `{"workloads":[],"total":0,"byState":{},"cursor":null,"errors":[]}` {
+	if _, out = g.call(t, WorkloadsList, r); compacted(out) != `{"workloads":[],"total":0,"byState":{},"cursor":null,"errors":[]}` {
 		t.Fatalf("%q", out)
 	}
 }
@@ -441,14 +441,13 @@ func TestWorkloadsOnboardRefusesBadIDsAndSettingsBeforeAnyCall(t *testing.T) {
 		"six fallback types": {func(r *Request) {
 			r.FallbackTypes = []string{"e2-small", "e2-medium", "n1-standard-1", "n2-standard-2", "n2-standard-4", "c2-standard-4"}
 		}, []string{"--fallback-type", "at most 5"}},
-		"fallback type, EC2's":      {func(r *Request) { r.FallbackTypes = []string{"t3a.medium"} }, []string{"--fallback-type", "t3a.medium", "machine type"}},
-		"fallback type twice":       {func(r *Request) { r.FallbackTypes = []string{"e2-small", "e2-small"} }, []string{"--fallback-type", "e2-small", "twice"}},
-		"cluster, no slash":         {func(r *Request) { r.GKECluster = "shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
-		"cluster, bad name":         {func(r *Request) { r.GKECluster = "europe-west1-b/Shop" }, []string{"--gke-cluster", "<location>/<name>"}},
-		"cluster, no location":      {func(r *Request) { r.GKECluster = "/shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
-		"cloud sql, bad name":       {func(r *Request) { r.CloudSQL = []string{"db", "Bad_Name"} }, []string{"--cloud-sql", "Bad_Name"}},
-		"cloud sql, twice":          {func(r *Request) { r.CloudSQL = []string{"db", "db"} }, []string{"--cloud-sql", "db", "twice"}},
-		"cluster with json, no yes": {func(r *Request) { r.GKECluster, r.JSON = "europe-west1-b/shop-cluster", true }, []string{"--yes"}},
+		"fallback type, EC2's": {func(r *Request) { r.FallbackTypes = []string{"t3a.medium"} }, []string{"--fallback-type", "t3a.medium", "machine type"}},
+		"fallback type twice":  {func(r *Request) { r.FallbackTypes = []string{"e2-small", "e2-small"} }, []string{"--fallback-type", "e2-small", "twice"}},
+		"cluster, no slash":    {func(r *Request) { r.GKECluster = "shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
+		"cluster, bad name":    {func(r *Request) { r.GKECluster = "europe-west1-b/Shop" }, []string{"--gke-cluster", "<location>/<name>"}},
+		"cluster, no location": {func(r *Request) { r.GKECluster = "/shop-cluster" }, []string{"--gke-cluster", "<location>/<name>"}},
+		"cloud sql, bad name":  {func(r *Request) { r.CloudSQL = []string{"db", "Bad_Name"} }, []string{"--cloud-sql", "Bad_Name"}},
+		"cloud sql, twice":     {func(r *Request) { r.CloudSQL = []string{"db", "db"} }, []string{"--cloud-sql", "db", "twice"}},
 	} {
 		r := shopOnboarding
 		c.change(&r)

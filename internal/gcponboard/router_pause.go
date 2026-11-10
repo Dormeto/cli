@@ -109,12 +109,7 @@ func (x *run) resumeRouter() error {
 // printByRouter prints the controller's answer under the router's name in the manager, as AWS's routers pause and resume print
 // theirs: {"<router>": <answer>}.
 func (x *run) printByRouter(answer json.RawMessage) error {
-	b, err := json.Marshal(map[string]json.RawMessage{x.n.managed: answer})
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(x.d.Out, "%s\n", b)
-	return err
+	return writeJSON(x.d.Out, map[string]json.RawMessage{x.n.managed: answer})
 }
 
 // routerDryRun says what the pause or resume would send, to which router, and stops: no call (sayDry).

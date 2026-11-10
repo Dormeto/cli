@@ -5,6 +5,7 @@ package gcponboard
 // shared names (workloadId, pauses each with its scope, the shared kinds), whatever the router's version.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"slices"
@@ -117,7 +118,7 @@ func TestWorkloadWritesJSONIsAWSMapByTarget(t *testing.T) {
 		}{{WorkloadsPause, shopTarget + ": paused until resumed\n"}, {WorkloadsNap, ""}, {WorkloadsResume, shopTarget + ": resumed\n"}, {WorkloadsNap, shopTarget + ": nap requested\n"}} {
 			code, stdout, stderr := g.split(t, c.run, r)
 			if c.line == "" { // a paused workload's nap is refused: AWS's map of no answer
-				if code != 1 || strings.TrimSpace(stdout) != "{}" || !strings.Contains(stderr, "paused") {
+				if code != 1 || compacted(stdout) != "{}" || !strings.Contains(stderr, "paused") {
 					t.Fatalf("refused: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 				}
 				continue
@@ -184,7 +185,7 @@ func TestWorkloadsListJSONIsAWSListObject(t *testing.T) {
 		}
 		if err := json.Unmarshal([]byte(stdout), &got); code != 0 || err != nil || got.Total != 2 || len(got.Workloads) != 2 ||
 			got.ByState["AWAKE"] != 1 || got.ByState["ASLEEP"] != 1 || got.Cursor != nil || got.Errors == nil || len(got.Errors) != 0 ||
-			!strings.Contains(stdout, `"cursor":null`) {
+			!strings.Contains(stdout, `"cursor": null`) {
 			t.Fatalf("exit %d, %v: %s", code, err, stdout)
 		}
 		api, shop := got.Workloads[0], got.Workloads[1]
@@ -209,7 +210,7 @@ func TestWorkloadsListJSONIsAWSListObject(t *testing.T) {
 	g := newWorkloadsRig(t)
 	r := workloadsEurope
 	r.JSON = true
-	if _, stdout, _ := g.split(t, WorkloadsList, r); strings.TrimSpace(stdout) != `{"workloads":[],"total":0,"byState":{},"cursor":null,"errors":[]}` {
+	if _, stdout, _ := g.split(t, WorkloadsList, r); compacted(stdout) != `{"workloads":[],"total":0,"byState":{},"cursor":null,"errors":[]}` {
 		t.Fatalf("none: %q", stdout)
 	}
 }
@@ -321,7 +322,7 @@ func TestWorkloadsSettingsPrintsAndKeysByTarget(t *testing.T) {
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
 	r.Yes = false
 	code, stdout, stderr := g.split(t, WorkloadsSettings, r)
-	if code != 0 || strings.TrimSpace(stdout) != `{"confirmed":false,"targets":["`+shopTarget+`","`+shopRouter+`/api"]}` || !strings.Contains(stderr, "not confirmed: nothing sent\n") {
+	if code != 0 || compacted(stdout) != `{"confirmed":false,"targets":["`+shopTarget+`","`+shopRouter+`/api"]}` || !strings.Contains(stderr, "not confirmed: nothing sent\n") {
 		t.Fatalf("declined: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -360,18 +361,18 @@ func TestDryRunsSayEachRequestByTarget(t *testing.T) {
 	}
 	r.JSON = true
 	code, stdout, stderr := g.split(t, WorkloadsPause, r)
-	if code != 0 || strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` ||
+	if code != 0 || compacted(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` ||
 		!strings.HasPrefix(stderr, "dry run: ") {
 		t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	// A router's, and several workloads' settings: one request each.
 	r = workloadsEurope
 	r.DryRun, r.JSON, r.Reason = true, true, "freeze"
-	if _, stdout, _ = g.split(t, RouterPause, r); strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopRouter+`"]}` {
+	if _, stdout, _ = g.split(t, RouterPause, r); compacted(stdout) != `{"dryRun":true,"targets":["`+shopRouter+`"]}` {
 		t.Fatalf("router: %q", stdout)
 	}
 	r.IDs, r.Levels = []string{"shop", "api"}, map[string]any{"idleMinutes": 30}
-	if _, stdout, _ = g.split(t, WorkloadsSettings, r); strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`","`+shopRouter+`/api"]}` {
+	if _, stdout, _ = g.split(t, WorkloadsSettings, r); compacted(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`","`+shopRouter+`/api"]}` {
 		t.Fatalf("settings: %q", stdout)
 	}
 	if m := g.changes(mark); len(m) != 0 {
@@ -443,10 +444,27 @@ func TestConfirmationsSayAWSLines(t *testing.T) {
 			}
 			g.d.Terminal = false
 		}
-		// Under --json, the question needs --yes as before, said as AWS's.
+		// Under --json, as offboard and AWS's commands: the question, after what it is about, on stderr, and stdout JSON alone.
 		r.JSON = true
-		if code, out := g.call(t, WorkloadsAccessGrant, r); code != 2 || !strings.Contains(out, "confirmation needed: pass --yes to act on 1 workload with --json\n") {
-			t.Fatalf("--json: exit %d:\n%s", code, out)
+		if code, stdout, stderr := g.split(t, WorkloadsAccessGrant, r); code != 2 || stdout != "" || !strings.HasSuffix(stderr, noTerminal("workload")) {
+			t.Fatalf("--json without a terminal: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		code, stdout, stderr := g.asked(t, WorkloadsAccessGrant, r, "n")
+		if code != 0 || compacted(stdout) != `{"confirmed":false,"targets":["shop/dormeto-shop"]}` || len(g.k.writes(0)) != 0 ||
+			!strings.Contains(stderr, "Kubernetes access of workload shop, namespace shop") || !strings.Contains(stderr, "Apply these to namespace shop of cluster europe-west1-b/shop-cluster? [y/N]: ") ||
+			!strings.HasSuffix(stderr, "not confirmed: nothing sent\n") {
+			t.Fatalf("--json declined: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		code, stdout, stderr = g.asked(t, WorkloadsAccessGrant, r, "y")
+		var granted map[string]any
+		if err := json.Unmarshal([]byte(stdout), &granted); code != 0 || err != nil || granted["namespace"] != "shop" || len(g.k.writes(0)) == 0 {
+			t.Fatalf("--json confirmed: exit %d, %v, stdout %q, stderr %q", code, err, stdout, stderr)
+		}
+		mark := len(g.k.writes(0))
+		code, stdout, stderr = g.asked(t, WorkloadsAccessRevoke, r, "n")
+		if code != 0 || compacted(stdout) != `{"confirmed":false,"targets":["shop/dormeto-shop"]}` || len(g.k.writes(0)) != mark ||
+			!strings.Contains(stderr, "Remove these from namespace shop of cluster europe-west1-b/shop-cluster? [y/N]: ") {
+			t.Fatalf("revoke --json declined: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 	})
 	t.Run("connect and disconnect", func(t *testing.T) {
@@ -515,12 +533,12 @@ func TestRefusedOnboardAndOffboardPrintNoAnswerUnderJSON(t *testing.T) {
 	g.s.OnboardingRefused = "the backend service changed"
 	r := shopOnboarding
 	r.JSON = true
-	if code, stdout, stderr := g.split(t, WorkloadsOnboard, r); code != 1 || strings.TrimSpace(stdout) != "{}" || !strings.Contains(stderr, "the backend service changed") {
+	if code, stdout, stderr := g.split(t, WorkloadsOnboard, r); code != 1 || compacted(stdout) != "{}" || !strings.Contains(stderr, "the backend service changed") {
 		t.Fatalf("onboard: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	r = workloadsEurope
 	r.ID, r.JSON = "ghost", true
-	if code, stdout, stderr := g.split(t, WorkloadsOffboard, confirmed(r)); code != 1 || strings.TrimSpace(stdout) != "{}" || !strings.Contains(stderr, "no workload ghost") {
+	if code, stdout, stderr := g.split(t, WorkloadsOffboard, confirmed(r)); code != 1 || compacted(stdout) != "{}" || !strings.Contains(stderr, "no workload ghost") {
 		t.Fatalf("offboard: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
@@ -601,20 +619,43 @@ func TestConfirmationsUnderJSONKeepStdoutJSON(t *testing.T) {
 		if code, stdout, stderr := g.split(t, WorkloadsSettings, r); code != 2 || stdout != "" || !strings.Contains(stderr, "confirmation needed: pass --yes to act on 2 workloads without a terminal\n") {
 			t.Fatalf("settings: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
+		// offboard --json without a terminal and without --yes: exit 2, stdout clean, nothing changed (the workload still held).
 		r = workloadsEurope
 		r.ID, r.JSON = "shop", true
+		mark := len(g.s.Calls())
 		if code, stdout, stderr := g.split(t, WorkloadsOffboard, r); code != 2 || stdout != "" || !strings.HasSuffix(stderr, noTerminal("workload")) {
 			t.Fatalf("offboard: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		if m := g.changes(mark); len(m) != 0 || g.s.Workloads["shop"] != "AWAKE" {
+			t.Fatalf("offboard changed: %v, the workload %q", m, g.s.Workloads["shop"])
 		}
 	})
 	t.Run("onboard on GKE", func(t *testing.T) {
 		g, _ := newGKERig(t)
 		r := shopOnGKE
 		r.Yes, r.JSON = false, true
-		if code, stdout, stderr := g.split(t, WorkloadsOnboard, r); code != 2 || stdout != "" || !strings.Contains(stderr, "confirmation needed: pass --yes to act on 1 workload with --json\n") {
+		mark := len(g.s.Calls())
+		if code, stdout, stderr := g.split(t, WorkloadsOnboard, r); code != 2 || stdout != "" || !strings.HasSuffix(stderr, noTerminal("workload")) {
 			t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
+		code, stdout, stderr := g.asked(t, WorkloadsOnboard, r, "n")
+		changed := slices.DeleteFunc(g.changes(mark), func(c string) bool { return strings.HasSuffix(c, "/v1/workloads?dryRun=true") }) // the controller's dry runs
+		if code != 0 || compacted(stdout) != `{"confirmed":false,"targets":["shop/dormeto-shop"]}` || len(g.k.writes(0)) != 0 || len(changed) != 0 ||
+			!strings.Contains(stderr, "Apply these to namespace shop of cluster") || !strings.HasSuffix(stderr, "not confirmed: nothing sent\n") {
+			t.Fatalf("declined: exit %d, stdout %q, stderr %q, changes %v", code, stdout, stderr, changed)
+		}
 	})
+}
+
+// asked runs f on a terminal that answers answer, its question on the standard error as the CLI's prompter writes it under
+// --json: the standard output and the standard error apart.
+func (g *rbacRig) asked(t *testing.T, f func(context.Context, Deps, Request) int, r Request, answer string) (code int, stdout, stderr string) {
+	t.Helper()
+	var o, e strings.Builder
+	d := g.d
+	d.Out, d.Err, d.Terminal = &o, &e, true
+	d.Prompter = install.NewPrompter(strings.NewReader(answer+"\n"), &e, true)
+	return f(context.Background(), d, r), o.String(), e.String()
 }
 
 // The onboarding's dry run is the released shape too, the controller's eligibility beside it.
@@ -661,5 +702,78 @@ func TestWorkloadsWritesRefusedPrintTheTargetAsTheirHead(t *testing.T) {
 	errs.Reset()
 	if code := WorkloadsNap(context.Background(), g.d, r); code != 1 || errs.String() != shopTarget+": workload shop is paused by me@example.com: freeze\n" {
 		t.Errorf("exit %d, stderr %q", code, errs.String())
+	}
+}
+
+// A refused schedule set or clear is headed by its target too, as AWS's are; a router too old for recurrences keeps its words.
+func TestWorkloadsScheduleRefusedPrintTheTargetAsTheirHead(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := workloadsEurope
+	r.ID, r.Schedule = "nope", json.RawMessage(parisSchedule)
+	for name, f := range map[string]func(context.Context, Deps, Request) int{"set": WorkloadsScheduleSet, "clear": WorkloadsScheduleClear} {
+		code, stdout, stderr := g.split(t, f, r)
+		if want := shopRouter + "/nope: no workload nope\n"; code != 1 || stderr != want || stdout != "" {
+			t.Errorf("%s: exit %d, stderr %q (want %q), stdout %q", name, code, stderr, want, stdout)
+		}
+	}
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.ScheduleProblem = "windows[0].repeat: unknown field"
+	r.ID, r.Schedule = "shop", json.RawMessage(recurringSchedule)
+	code, stdout, stderr := g.split(t, WorkloadsScheduleSet, r)
+	if code != 1 || stdout != "" || !strings.HasPrefix(stderr, shopTarget+": windows[0].repeat: unknown field\nRecurrences and joined windows need a router of version 0.36.0") {
+		t.Errorf("recurrence: exit %d, stderr %q, stdout %q", code, stderr, stdout)
+	}
+	// Under --json, AWS's map of no answer.
+	r.JSON = true
+	if code, stdout, stderr := g.split(t, WorkloadsScheduleSet, r); code != 1 || compacted(stdout) != "{}" || !strings.HasPrefix(stderr, shopTarget+": ") {
+		t.Errorf("--json: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// compacted is the JSON s compact, as a test compares it (s trimmed when it is not JSON).
+func compacted(s string) string {
+	var b bytes.Buffer
+	if json.Compact(&b, []byte(s)) != nil {
+		return strings.TrimSpace(s)
+	}
+	return b.String()
+}
+
+// indentedAsAWS tells whether s is JSON as AWS's commands print theirs: indented by two spaces, a line feed after it.
+func indentedAsAWS(s string) bool {
+	var compact, indented bytes.Buffer
+	if json.Compact(&compact, []byte(s)) != nil || json.Indent(&indented, compact.Bytes(), "", "  ") != nil {
+		return false
+	}
+	return indented.String()+"\n" == s
+}
+
+// One JSON style on both subtrees: every --json of gcp's is indented as AWS's.
+func TestJSONIsIndentedAsAWSs(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.JSON = true
+	shop := r
+	shop.ID = "shop"
+	dry := shop
+	dry.DryRun, dry.Reason = true, "freeze"
+	settings := r
+	settings.IDs, settings.Levels = []string{"shop"}, map[string]any{"idleMinutes": 30}
+	pause := r
+	pause.Reason = "freeze"
+	for _, c := range []struct {
+		name string
+		run  func(context.Context, Deps, Request) int
+		r    Request
+	}{
+		{"list", WorkloadsList, r}, {"show", WorkloadsShow, shop}, {"nap", WorkloadsNap, shop}, {"pause --dry-run", WorkloadsPause, dry},
+		{"settings", WorkloadsSettings, settings}, {"routers pause", RouterPause, pause}, {"routers settings", RouterSettings, r},
+		{"schedule show", WorkloadsScheduleShow, shop},
+	} {
+		code, stdout, stderr := g.split(t, c.run, c.r)
+		if code != 0 || !indentedAsAWS(stdout) {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", c.name, code, stdout, stderr)
+		}
 	}
 }

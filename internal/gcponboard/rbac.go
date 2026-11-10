@@ -670,7 +670,7 @@ func clusterOf(cluster string) (location, name string, err error) {
 	return location, name, nil
 }
 
-// rbacRequest validates the flags, before any call. A write with --json is not asked: the answer is for a program.
+// rbacRequest validates the flags, before any call.
 func (x *run) rbacRequest(writes bool) (Rbac, error) {
 	if err := x.validate(); err != nil {
 		return Rbac{}, err
@@ -683,8 +683,6 @@ func (x *run) rbacRequest(writes bool) (Rbac, error) {
 		return Rbac{}, &stop{2, fmt.Sprintf("--namespace: %q is not a Kubernetes namespace", x.r.Namespace)}
 	case !workloadIDPattern.MatchString(x.r.ID):
 		return Rbac{}, &stop{2, fmt.Sprintf("--workload: %q is not a valid workload ID: %s", x.r.ID, workloadIDRule)}
-	case writes && x.r.JSON && !x.r.Yes && !x.r.DryRun:
-		return Rbac{}, needsYesWithJSON("workload")
 	}
 	return Rbac{Cluster: x.r.GKECluster, Namespace: x.r.Namespace, Workload: x.r.ID, ServiceAccount: x.n.email}, nil
 }
@@ -727,7 +725,12 @@ func (x *run) tell(format string, a ...any) {
 }
 
 func (x *run) rbacHeader(p RbacPlan) {
-	x.tell("Kubernetes access of workload %s, namespace %s, cluster %s (%s):", p.Workload, p.Namespace, p.Cluster, p.Endpoint)
+	x.tell("%s", rbacHeaderLine(p))
+}
+
+// rbacHeaderLine is the line that heads what is said of an access.
+func rbacHeaderLine(p RbacPlan) string {
+	return fmt.Sprintf("Kubernetes access of workload %s, namespace %s, cluster %s (%s):", p.Workload, p.Namespace, p.Cluster, p.Endpoint)
 }
 
 // printWrites prints what a grant would write, each object in full; with replaced, what an update replaces too.
@@ -762,12 +765,7 @@ func (x *run) printWrites(p RbacPlan, replaced bool) {
 }
 
 func (x *run) printJSON(v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(x.d.Out, "%s\n", b)
-	return nil
+	return writeJSON(x.d.Out, v)
 }
 
 func (x *run) accessShow() error {
@@ -855,19 +853,26 @@ func (x *run) revokeWrites(rb Rbac, plan RbacPlan, removal rbacRemovalPlan) []dr
 
 // confirm goes on with --yes or a yes on a terminal, AWS's lines said otherwise: --yes without a terminal, "not confirmed:
 // nothing sent" when declined.
-func (x *run) confirm(question string) error {
+func (x *run) confirm(question, target string, asked func()) error {
 	if x.r.Yes {
 		return nil
 	}
 	if !x.d.Terminal {
 		return needsYes("workload")
 	}
-	ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+	out := x.textOut()
+	if x.r.JSON { // what is asked, said on stdout without --json, goes with the question to stderr
+		x.writeTo(out, asked)
+	}
+	ok, err := install.Prompted(x.ctx, out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
 	if err != nil {
 		return err
 	}
 	if !ok {
-		fmt.Fprintln(x.textOut(), notConfirmed)
+		fmt.Fprintln(out, notConfirmed)
+		if err := x.printStop("confirmed", false, []string{target}); err != nil {
+			return err
+		}
 		return &stop{0, ""}
 	}
 	return nil
@@ -957,7 +962,12 @@ func (x *run) grantRbac(rb Rbac) (rbacGrant, error) {
 		g.listed, err = x.recordRbac(rb)
 		return g, err
 	}
-	if err := x.confirm(fmt.Sprintf("Apply these to namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
+	asked := func() { // the plan, said under --json before its question: the words on stderr
+		x.say("%s", rbacHeaderLine(g.plan))
+		x.printWrites(g.plan, true)
+		x.warn(g.warnings)
+	}
+	if err := x.confirm(fmt.Sprintf("Apply these to namespace %s of cluster %s?", rb.Namespace, rb.Cluster), accessTarget(rb), asked); err != nil {
 		return g, err
 	}
 	// A prompt can wait long: what is listed is read again, so that an entry revoked meanwhile is listed again.
@@ -1049,18 +1059,21 @@ func (x *run) accessRevoke() error {
 		return err
 	}
 	removal := plan.removal()
-	for _, c := range removal.deleted {
-		x.tell("  - %s", c.Wanted)
+	sayRemoval := func(say func(format string, a ...any)) {
+		for _, c := range removal.deleted {
+			say("  - %s", c.Wanted)
+		}
+		if removal.stripped != nil {
+			say("  - %s", removal.subject)
+		}
+		for _, l := range removal.foreign {
+			say("  = %s is not Dormeto's: left as it is", l)
+		}
+		for _, k := range removal.kept {
+			say("  = %s stays: %s", k.name, k.why)
+		}
 	}
-	if removal.stripped != nil {
-		x.tell("  - %s", removal.subject)
-	}
-	for _, l := range removal.foreign {
-		x.tell("  = %s is not Dormeto's: left as it is", l)
-	}
-	for _, k := range removal.kept {
-		x.tell("  = %s stays: %s", k.name, k.why)
-	}
+	sayRemoval(x.tell)
 	if len(removal.deleted) == 0 && removal.stripped == nil {
 		x.tell("  nothing to remove")
 		if x.r.DryRun {
@@ -1071,7 +1084,11 @@ func (x *run) accessRevoke() error {
 	if x.r.DryRun {
 		return x.accessDryRun(rb, x.revokeWrites(rb, plan, removal), "")
 	}
-	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
+	asked := func() { // what is removed, said under --json before its question: the words on stderr
+		x.say("%s", rbacHeaderLine(plan))
+		sayRemoval(x.say)
+	}
+	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster), accessTarget(rb), asked); err != nil {
 		return err
 	}
 	out, err := x.RemoveRbac(rb)

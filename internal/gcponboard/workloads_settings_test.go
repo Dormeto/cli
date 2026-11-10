@@ -76,9 +76,9 @@ func TestWorkloadsSettingsJSONPrintsTheAnswersByWorkload(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	var answers map[string]struct{ Level string }
-	// The lines go to stderr under --json, the answers to stdout (the rig's buffer holds both): the answers are the last line.
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &answers); err != nil || answers[shopTarget].Level != "workload" || answers[shopRouter+"/web"].Level != "workload" {
+	// The lines go to stderr under --json, the answers to stdout (the rig's buffer holds both): the answers follow the lines.
+	_, answer, _ := strings.Cut(out, "\n{")
+	if err := json.Unmarshal([]byte("{"+answer), &answers); err != nil || answers[shopTarget].Level != "workload" || answers[shopRouter+"/web"].Level != "workload" {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 }
@@ -219,7 +219,7 @@ func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t 
 	r.Levels = map[string]any{"idleMinutes": 30}
 	r.DryRun = true
 	code, out := g.call(t, WorkloadsSettings, r)
-	if want := `{"dryRun":true,"targets":["` + shopTarget + `","` + shopRouter + `/web"]}` + "\n"; code != 0 || out != want {
+	if want := `{"dryRun":true,"targets":["` + shopTarget + `","` + shopRouter + `/web"]}`; code != 0 || compacted(out) != want || !indentedAsAWS(out) {
 		t.Fatalf("dry run: exit %d, stdout %q, want %q", code, out, want)
 	}
 	contains(t, errs.String(), "dry run: "+shopTarget+": would PUT /v1/workloads/shop/settings, nothing sent\n")
@@ -228,7 +228,7 @@ func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t 
 	g.d.Terminal = true
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), &errs, true)
 	code, out = g.call(t, WorkloadsSettings, r)
-	if want := `{"confirmed":false,"targets":["` + shopTarget + `","` + shopRouter + `/web"]}` + "\n"; code != 0 || out != want {
+	if want := `{"confirmed":false,"targets":["` + shopTarget + `","` + shopRouter + `/web"]}`; code != 0 || compacted(out) != want || !indentedAsAWS(out) {
 		t.Fatalf("declined: exit %d, stdout %q, want %q", code, out, want)
 	}
 	contains(t, errs.String(), "Set its settings for "+shopTarget+", "+shopRouter+"/web? [y/N]: ", "not confirmed: nothing sent")
@@ -237,7 +237,7 @@ func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t 
 	r.Levels = map[string]any{"hibernate": ptr(true)}
 	errs.Reset()
 	code, out = g.call(t, RouterSettings, r)
-	if want := `{"dryRun":true,"targets":["` + shopRouter + `"]}` + "\n"; code != 0 || out != want {
+	if want := `{"dryRun":true,"targets":["` + shopRouter + `"]}`; code != 0 || compacted(out) != want || !indentedAsAWS(out) {
 		t.Fatalf("router dry run: exit %d, stdout %q, want %q", code, out, want)
 	}
 	contains(t, errs.String(), "dry run: "+shopRouter+": would PUT /v1/settings, nothing sent\n")

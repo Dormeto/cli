@@ -19,7 +19,6 @@ package gcponboard
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -789,12 +788,7 @@ func (x *link) printJSON(v any) error {
 		v = maps.Clone(m)
 		v.(map[string]any)["warnings"] = x.warnings
 	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(x.jsonOut, "%s\n", b)
-	return err
+	return writeJSON(x.jsonOut, v)
 }
 
 // planManagerAPIs turns on the manager's APIs that are off in the host project, then reads its policy again: what Google

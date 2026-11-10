@@ -1609,8 +1609,12 @@ the flags renamed to AWS's: `--cloud-sql` is now `--database`, the `refresh=` of
 `--wake-timeout` now `--wake-timeout-seconds`, each saying so on stderr. Every writing command takes `--yes` (accepted
 and ignored where it asks nothing) and `--dry-run` (says each request it would send, and sends nothing), as the
 manager's commands do, and prints AWS's lines, `<router>/<workload>: <what happened>`, the router named as the manager
-names it. A refused nap, wake, pause or resume prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit
-1.
+names it. A refused nap, wake, pause, resume or `schedule set|clear` prints the same head, `<router>/<workload>:
+<refusal>`, on stderr, exit 1. The router's two names each have their outputs: the manager's, `dmtr-<project>-<region>`,
+is in what both subtrees share (the lines `<router>/<workload>: …` and `<router>: …`, the keys of `--json`'s maps, its
+`targets` and a workload row's `router`); the project's, `dmtr-<region>` (its Cloud Run services' prefix), is in the
+text of `gcp routers install`, `uninstall` and `show`, in `gcp routers show --json`'s `router` (as 0.11.0 printed it),
+and where a message names the router to install or upgrade.
 
 ```sh
 dormeto gcp check --project my-project --region europe-west1
@@ -2190,12 +2194,12 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 ```
 
 - `access show` is read-only: what is in the cluster, and what `grant` would write.
-- `access grant` prints the objects, asks (`--yes` without a terminal and with `--json`), lists them in the install
+- `access grant` prints the objects, asks (`--yes` without a terminal; on stderr under `--json`), lists them in the install
   record, then writes what differs: run again, it writes nothing. A Role or RoleBinding of that name without the label is
   refused, nothing changed. The binding's other subjects stay; another router's service account (`dmtr-*@…`) among them
   is refused. Kubernetes lets no one grant rights they do not hold: without them, you need `container.roles.escalate`
   (Google lists it as testing in custom roles) and `container.roles.bind`.
-- `access revoke` prints what it removes and asks (`--yes` without a terminal and with `--json`), then removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
+- `access revoke` prints what it removes and asks (`--yes` without a terminal; on stderr under `--json`), then removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
   name without the label is left and said. While another subject holds the binding, only the router's subject goes, and
   both objects stay. It works after `dormeto gcp routers uninstall`, which lists what it leaves in a cluster.
 - The CLI and the router reach the cluster on its DNS endpoint, which must be open to traffic from outside its network:

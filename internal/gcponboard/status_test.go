@@ -223,7 +223,7 @@ func TestStatusWithoutARouterInTheProject(t *testing.T) {
 	}
 	r := Request{Project: "dormeto-dev", JSON: true}
 	code, out = g.status(t, r)
-	if code != 1 || out != `{"project":{"id":"dormeto-dev","number":"1034397096264","parent":""},"routers":[]}`+"\n" {
+	if code != 1 || compacted(out) != `{"project":{"id":"dormeto-dev","number":"1034397096264","parent":""},"routers":[]}` || !indentedAsAWS(out) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }

@@ -102,8 +102,7 @@ func (x *run) waitingPage(workload bool, method string) error {
 		return pageRefusal(err)
 	}
 	if x.r.JSON {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		return writeJSON(x.d.Out, raw)
 	}
 	var v fleet.PageView
 	if err := json.Unmarshal(raw, &v); err != nil {

@@ -69,7 +69,7 @@ func TestWorkloadWritesDryRunSendNothingAndSayTheRequest(t *testing.T) {
 			// --json: the released {"dryRun":true,"targets":[…]} on stdout, the words on stderr.
 			r.JSON = true
 			code, stdout, stderr := g.split(t, c.run, r)
-			if code != 0 || strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` {
+			if code != 0 || compacted(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` {
 				t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if !strings.Contains(stderr, "dry run: ") || len(g.changes(mark)) != 0 {
@@ -153,7 +153,7 @@ func TestWorkloadsOffboardAsksOnATerminalAndADeclineSendsNothing(t *testing.T) {
 	g.d.Out, g.d.Err = &stdout, &stderr
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), &stderr, true)
 	r.JSON = true
-	if code := WorkloadsOffboard(context.Background(), g.d, r); code != 0 || strings.TrimSpace(stdout.String()) != `{"confirmed":false,"targets":["`+shopTarget+`"]}` {
+	if code := WorkloadsOffboard(context.Background(), g.d, r); code != 0 || compacted(stdout.String()) != `{"confirmed":false,"targets":["`+shopTarget+`"]}` {
 		t.Fatalf("--json: exit %d, stdout %q", code, stdout.String())
 	}
 	g.d.Out, g.d.Err = g.out, g.out
@@ -310,7 +310,8 @@ func TestWorkloadsListTagOnARouterThatAnswersNoTagsSaysSo(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "--tag needs router 0.40.0 or later")
+	// The router named as the rows name it, the manager's name.
+	contains(t, out, "router "+shopRouter+" does not answer its workloads' tags: --tag needs router 0.40.0 or later")
 }
 
 func TestRbacGrantAndRevokeDryRunPrintTheirPlanAndChangeNothing(t *testing.T) {
@@ -332,7 +333,7 @@ func TestRbacGrantAndRevokeDryRunPrintTheirPlanAndChangeNothing(t *testing.T) {
 	var stdout, stderr strings.Builder
 	g.d.Out, g.d.Err = &stdout, &stderr
 	r.JSON = true
-	if code := WorkloadsAccessGrant(context.Background(), g.d, r); code != 0 || strings.TrimSpace(stdout.String()) != `{"dryRun":true,"targets":["shop/dormeto-shop"]}` {
+	if code := WorkloadsAccessGrant(context.Background(), g.d, r); code != 0 || compacted(stdout.String()) != `{"dryRun":true,"targets":["shop/dormeto-shop"]}` {
 		t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 	g.d.Out, g.d.Err = g.out, g.out

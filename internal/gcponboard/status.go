@@ -382,10 +382,7 @@ func RunStatus(ctx context.Context, d Deps, r Request) int {
 	rep, err := Status(ctx, d, r)
 	if err == nil {
 		if r.JSON {
-			var body []byte
-			if body, err = json.Marshal(rep); err == nil {
-				_, err = fmt.Fprintf(d.Out, "%s\n", body)
-			}
+			err = writeJSON(d.Out, rep)
 		} else {
 			err = PrintStatus(d.Out, rep)
 		}

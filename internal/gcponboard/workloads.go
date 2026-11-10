@@ -413,8 +413,7 @@ func (x *run) print(raw json.RawMessage, text func(w workload)) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(x.d.Out, "%s\n", shared)
-		return nil
+		return writeJSON(x.d.Out, shared)
 	}
 	w, err := decodeWorkload(raw)
 	if err != nil {
@@ -648,9 +647,6 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 		if err != nil {
 			return in, err
 		}
-		if r.JSON && !r.Yes && !r.DryRun {
-			return in, needsYesWithJSON("workload")
-		}
 		in.GKE = &onboardingGKE{Cluster: gkeCluster{location, name}}
 	}
 	if v := r.WakeTimeout; v != nil {
@@ -799,11 +795,9 @@ func (x *run) onboard() error {
 	if x.r.DryRun {
 		if x.r.JSON {
 			// The released dry run's shape, the controller's eligibility beside it.
-			b, err := json.Marshal(map[string]any{"dryRun": true, "targets": []string{x.target(in.ID)}, "eligibility": raw})
-			if err != nil {
+			if err := writeJSON(x.d.Out, map[string]any{"dryRun": true, "targets": []string{x.target(in.ID)}, "eligibility": raw}); err != nil {
 				return err
 			}
-			fmt.Fprintf(x.d.Out, "%s\n", b)
 			x.warnCount(logs.BackendService, now, unread, older)
 			return nil
 		}

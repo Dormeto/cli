@@ -198,12 +198,7 @@ func (x *run) planObject(key string, value bool) error {
 	if key != "" {
 		v[key] = value
 	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(x.object, "%s\n", b)
-	return err
+	return writeJSON(x.object, v)
 }
 
 func (x *run) install() error {

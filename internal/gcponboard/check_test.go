@@ -321,7 +321,7 @@ func TestJSONShape(t *testing.T) {
 		t.Fatalf("%s", out)
 	}
 	for _, k := range []string{`"missing":[]`, `"warnings":[]`, `"billing":{"checked":true,"enabled":true}`} {
-		if !strings.Contains(out.String(), k) {
+		if !strings.Contains(compacted(out.String()), k) || !indentedAsAWS(out.String()) {
 			t.Errorf("no %s in %s", k, out)
 		}
 	}
@@ -382,7 +382,7 @@ func TestServicesListingDeniedStillReports(t *testing.T) {
 	if code := RunCheck(context.Background(), d, Request{Project: "dormeto-dev", JSON: true}); code != 1 {
 		t.Fatalf("exit %d", code)
 	}
-	if !strings.Contains(out.String(), `"apis":{"enabled":[],"missing":[]}`) {
+	if !strings.Contains(out.String(), "\"apis\": {\n    \"enabled\": [],\n    \"missing\": []\n  }") {
 		t.Fatal(out)
 	}
 }
