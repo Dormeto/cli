@@ -213,7 +213,7 @@ func TestRoutersSettingsSendsTheJoinItIsGiven(t *testing.T) {
 
 func TestRoutersSettingsRefusesABadJoinOrNothingToSet(t *testing.T) {
 	for _, args := range [][]string{
-		{"r1"}, {"r1", "--join-minutes", "7"}, {"r1", "--join-minutes", "125"}, {"r1", "--join-minutes", ""}, {"r1", "--hibernate", "true", "--join-minutes", "soon"}, {"--join-minutes", "15"},
+		{"r1", "--join-minutes", "7"}, {"r1", "--join-minutes", "125"}, {"r1", "--join-minutes", ""}, {"r1", "--hibernate", "true", "--join-minutes", "soon"}, {"--join-minutes", "15"},
 	} {
 		a := &wrAPI{}
 		r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, append([]string{"routers", "settings"}, args...)...)
@@ -281,7 +281,7 @@ func TestRoutersSettingsSeveralWithoutTerminalOrYesSendNothing(t *testing.T) {
 
 func TestRoutersSettingsRefusesABadValue(t *testing.T) {
 	a := &wrAPI{}
-	for _, args := range [][]string{{"r1", "--hibernate", "maybe"}, {"r1"}, {"--hibernate", "true"}} {
+	for _, args := range [][]string{{"r1", "--hibernate", "maybe"}, {"--hibernate", "true"}} {
 		r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, append([]string{"routers", "settings"}, args...)...)
 		if r.exit != 2 || len(a.writes) != 0 {
 			t.Errorf("%q: exit %d, writes %q", args, r.exit, a.writes)

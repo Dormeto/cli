@@ -27,7 +27,7 @@ var gcpFixedReasons = []struct{ flag, key, reason, why string }{
 func gcpFixedRefusal(c *cobra.Command, levels *levelFlags) error {
 	var reasons []string
 	for _, f := range gcpFixedReasons {
-		if c.Flags().Changed(f.flag) && strings.TrimSpace(*levels.numbers[f.flag]) != levels.unset {
+		if c.Flags().Changed(f.flag) && !levels.unsets(strings.TrimSpace(*levels.numbers[f.flag])) {
 			reasons = append(reasons, fmt.Sprintf("--%s: %s", f.flag, f.reason))
 		}
 	}

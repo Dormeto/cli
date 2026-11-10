@@ -13,12 +13,57 @@ import (
 )
 
 // RouterSettings is a router's own settings: Hibernate nil when it inherits, JoinMinutes null too, and empty for a router
-// that does not have it.
+// that does not have it; Defaults the workload settings it sets for its workloads (none: absent).
 type RouterSettings struct {
 	Hibernate   *bool           `json:"hibernate"`
 	JoinMinutes json.RawMessage `json:"joinMinutes"`
+	Defaults    map[string]any  `json:"defaults"`
 	By          string          `json:"by"`
 	At          string          `json:"at"`
+}
+
+// Level is the router's own level, as RouterLevel words it.
+func (s RouterSettings) Level() RouterLevel {
+	var join *int
+	_ = json.Unmarshal(s.JoinMinutes, &join)
+	return RouterLevel{Hibernate: s.Hibernate, JoinMinutes: join, Defaults: s.Defaults, By: s.By, At: s.At}
+}
+
+// RouterLevel is a router's own level of settings, as both clouds' routers answer it: Hibernate and JoinMinutes nil when they
+// inherit, Defaults the workload settings it sets for its workloads, By and At who changed it last and when.
+type RouterLevel struct {
+	Hibernate   *bool          `json:"hibernate"`
+	JoinMinutes *int           `json:"joinMinutes"`
+	Defaults    map[string]any `json:"defaults"`
+	By          string         `json:"by"`
+	At          string         `json:"at"`
+}
+
+// Text is the level as `routers settings` shows it without a flag, on both clouds: "Settings of router r1 (changed by ann at
+// 2026-10-19 10:00 UTC):", then its hibernate, join windows and workload settings, each inherit or none when it sets none.
+func (l RouterLevel) Text(router string, loc *time.Location) string {
+	changed := "never changed"
+	if l.By != "" || l.At != "" {
+		var who []string
+		if l.By != "" {
+			who = append(who, "by "+l.By)
+		}
+		if l.At != "" {
+			who = append(who, "at "+When(l.At, loc))
+		}
+		changed = "changed " + strings.Join(who, " ")
+	}
+	hibernate, join, defaults := "inherit", "inherit", "none"
+	if l.Hibernate != nil {
+		hibernate = OnOff(*l.Hibernate)
+	}
+	if l.JoinMinutes != nil {
+		join = schedule.JoinGap(*l.JoinMinutes)
+	}
+	if lines := LevelLines(l.Defaults); len(lines) > 0 {
+		defaults = strings.Join(lines, ", ")
+	}
+	return fmt.Sprintf("Settings of router %s (%s):\n  hibernate: %s\n  join windows: %s\n  workload settings: %s\n", router, changed, hibernate, join, defaults)
 }
 
 // ManagerSettings is what a router last read of the manager's settings; URL is nil when it reads none. A Google Cloud router's

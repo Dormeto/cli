@@ -373,7 +373,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		levels          *levelFlags
 	)
 	cmd := &cobra.Command{
-		Use: "settings <router>... [--hibernate true|false|inherit] [--join-minutes <minutes>|inherit] [--idle-minutes <minutes>|inherit] ...", Short: "Set the hibernation, the join of windows and the workload settings of routers",
+		Use: "settings <router>... [--hibernate true|false|inherit] [--join-minutes <minutes>|inherit] [--idle-minutes <minutes>|inherit] ...", Short: "Show or set the hibernation, the join of windows and the workload settings of routers",
 		SilenceErrors: true,
 		Long: "Set whether the EC2 instances launched with hibernation are hibernated, not stopped, when the routers'\n" +
 			"workloads nap: true or false for the router, inherit to follow the manager's default (`dormeto aws settings set`). A\n" +
@@ -384,7 +384,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"and later. The workload settings (--idle-minutes, --wait-seconds, --drain-seconds, --wake-timeout-seconds,\n" +
 			"--max-holders, --failed-retry-seconds, --wake-mode and the rules files) are the router's defaults for its workloads\n" +
 			"whose own value and type's set none; inherit removes one (the organization's, then the built-in value). Routers\n" +
-			"0.37.0 and later. What is not given stays as it was.\n" +
+			"0.37.0 and later. What is not given stays as it was. With no flag, each router's level is shown (--json: by router).\n" +
 			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +
 			"the others (exit 1). Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
@@ -394,7 +394,13 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err == nil {
 				defaults, err = levels.body(c)
 			}
-			if err == nil && (c.Flags().Changed("hibernate") || c.Flags().Changed("join-minutes") || len(defaults) == 0) {
+			// No flag: the routers' level is shown, as `dormeto gcp routers settings` shows it.
+			if err == nil && !c.Flags().Changed("hibernate") && !c.Flags().Changed("join-minutes") && len(defaults) == 0 {
+				return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
+					return showRouterLevels(ctx, c, api, names, asJSON, deps.now().Location())
+				})
+			}
+			if err == nil && (c.Flags().Changed("hibernate") || c.Flags().Changed("join-minutes")) {
 				settings, err = readLevelSettings(c, hibernate, join, true)
 			}
 			if err == nil && len(defaults) > 0 {
@@ -452,4 +458,46 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	levels = bindLevelFlags(cmd, "inherit")
 	return cmd
+}
+
+// showRouterLevels prints each router's own level as the manager answers it (GET /routers/{router}), or under --json each
+// router's settings by its name. One that cannot be read, or a router before 0.32.0 that reports none, is said for itself on
+// stderr and the others are shown (exit 1).
+func showRouterLevels(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string, asJSON bool, loc *time.Location) error {
+	levels := map[string]json.RawMessage{}
+	failed := false
+	for _, name := range names {
+		var raw json.RawMessage
+		err := api.Get(ctx, routerPath(name, ""), nil, &raw)
+		var d struct {
+			Settings *fleet.RouterSettings `json:"settings"`
+			Member   struct {
+				Settings json.RawMessage `json:"settings"`
+			} `json:"-"`
+		}
+		if err == nil {
+			if err = json.Unmarshal(raw, &d); err == nil {
+				err = json.Unmarshal(raw, &d.Member)
+			}
+		}
+		switch {
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case err != nil:
+			fmt.Fprintf(c.ErrOrStderr(), "%s: %s\n", name, err)
+			failed = true
+		case d.Settings == nil:
+			fmt.Fprintf(c.ErrOrStderr(), "%s: the router reports no settings: they need router 0.32.0 or later\n", name)
+			failed = true
+		case asJSON:
+			levels[name] = d.Member.Settings
+		default:
+			fmt.Fprint(c.OutOrStdout(), d.Settings.Level().Text(name, loc))
+		}
+	}
+	var err error
+	if failed {
+		err = exitCode(1)
+	}
+	return printResult(c, asJSON, levels, err)
 }

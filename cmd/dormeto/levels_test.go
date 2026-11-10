@@ -45,9 +45,8 @@ func TestSettingsSetRefusesABadDefaultBeforeSending(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"--idle-minutes", "4"}, {"--idle-minutes", "1441"}, {"--wait-seconds", "soon"}, {"--wake-mode", "never"}, {"--wake-mode", "inherit"},
+		{"--idle-minutes", "4"}, {"--idle-minutes", "1441"}, {"--wait-seconds", "soon"}, {"--wake-mode", "never"},
 		{"--max-holders", "0"}, {"--failed-retry-seconds", "5"}, {"--no-wake-rules-file", notList}, {"--wake-rules-file", filepath.Join(t.TempDir(), "none.json")},
-		{"--idle-minutes", "inherit"},
 	} {
 		a := &globalAPI{}
 		r := runSettings(t, a, append([]string{"set"}, args...)...)

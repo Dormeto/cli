@@ -198,14 +198,8 @@ func workloadSaid(levels map[string]any) string {
 
 // routerLevel is the answer of GET and PUT /v1/settings.
 type routerLevel struct {
-	Level    string `json:"level"`
-	Settings struct {
-		Hibernate   *bool          `json:"hibernate"`
-		JoinMinutes *int           `json:"joinMinutes"`
-		Defaults    map[string]any `json:"defaults"`
-		By          string         `json:"by"`
-		At          string         `json:"at"`
-	} `json:"settings"`
+	Level    string            `json:"level"`
+	Settings fleet.RouterLevel `json:"settings"`
 }
 
 func (x *run) routerSettings() error {
@@ -290,32 +284,8 @@ func (x *run) showRouterSettings() error {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("the controller's answer is not the router's settings: %w", err)
 	}
-	s := a.Settings
-	changed := "never changed"
-	if s.By != "" || s.At != "" {
-		var who []string
-		if s.By != "" {
-			who = append(who, "by "+s.By)
-		}
-		if s.At != "" {
-			who = append(who, "at "+s.At)
-		}
-		changed = "changed " + strings.Join(who, " ")
-	}
-	x.say("Settings of router %s (%s):", x.n.router, changed)
-	hibernate, join, defaults := "inherit", "inherit", "none"
-	if s.Hibernate != nil {
-		hibernate = fleet.OnOff(*s.Hibernate)
-	}
-	if s.JoinMinutes != nil {
-		join = schedule.JoinGap(*s.JoinMinutes)
-	}
-	if lines := fleet.LevelLines(s.Defaults); len(lines) > 0 {
-		defaults = strings.Join(lines, ", ")
-	}
-	x.say("  hibernate: %s", hibernate)
-	x.say("  join windows: %s", join)
-	x.say("  workload settings: %s", defaults)
+	// AWS's words, as `dormeto aws routers settings` shows a router's level.
+	fmt.Fprint(x.d.Out, a.Settings.Text(x.n.router, x.d.Now().Location()))
 	return nil
 }
 

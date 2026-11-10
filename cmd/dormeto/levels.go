@@ -1,8 +1,9 @@
 package main
 
 // Settings at scale (vision settings at scale design §10): the workload settings of a level, the same flags at the
-// organization (`settings set`, default unsets), a router (`routers settings`, inherit), a workload (`workloads
-// settings`, inherit) and a type (`types set`, default), and the organization's types.
+// organization (`settings set`), a router (`routers settings`), a workload (`workloads settings`) and a type (`types set`),
+// inherit unsetting a value on every level (default, its old name, too at the organization's and the types'), and the
+// organization's types.
 
 import (
 	"context"
@@ -28,9 +29,11 @@ var builtInTypes = []string{"instance", "asg", "ecs", "k8s", "databases"}
 
 var typeName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
-// levelFlags are the flags of one level; unset is the word that leaves a setting to the levels below.
+// levelFlags are the flags of one level; unset is the word that leaves a setting to the levels below (inherit, on every
+// level), aliases the other words read as it (default, its old name at the organization's and the types').
 type levelFlags struct {
 	unset     string
+	aliases   []string
 	numbers   map[string]*string
 	wakeMode  string
 	noWake    string
@@ -47,8 +50,8 @@ func (l *levelFlags) rangeOf(s fleet.LevelSetting) (int, int) {
 	return s.Min, s.Max
 }
 
-func bindLevelFlags(cmd *cobra.Command, unset string) *levelFlags {
-	l := &levelFlags{unset: unset, numbers: map[string]*string{}}
+func bindLevelFlags(cmd *cobra.Command, unset string, aliases ...string) *levelFlags {
+	l := &levelFlags{unset: unset, aliases: aliases, numbers: map[string]*string{}}
 	for _, s := range levelSettings3 {
 		v := new(string)
 		l.numbers[s.Flag] = v
@@ -60,6 +63,9 @@ func bindLevelFlags(cmd *cobra.Command, unset string) *levelFlags {
 	return l
 }
 
+// unsets tells whether a value is the unset word, or one of its aliases.
+func (l *levelFlags) unsets(v string) bool { return v == l.unset || slices.Contains(l.aliases, v) }
+
 // body reads the flags given, each refused before any call: a value in its range, or the unset word for null.
 func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 	out := map[string]any{}
@@ -68,7 +74,7 @@ func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 			continue
 		}
 		v := strings.TrimSpace(*l.numbers[s.Flag])
-		if v == l.unset {
+		if l.unsets(v) {
 			out[s.Key] = nil
 			continue
 		}
@@ -80,10 +86,10 @@ func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 		out[s.Key] = n
 	}
 	if c.Flags().Changed("wake-mode") {
-		switch l.wakeMode {
-		case "any", "browser":
+		switch {
+		case l.wakeMode == "any" || l.wakeMode == "browser":
 			out["wakeMode"] = l.wakeMode
-		case l.unset:
+		case l.unsets(l.wakeMode):
 			out["wakeMode"] = nil
 		default:
 			return nil, usagef("--wake-mode: give any, browser or %s", l.unset)
@@ -93,7 +99,7 @@ func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 		if !c.Flags().Changed(r.flag) {
 			continue
 		}
-		if r.value == l.unset {
+		if l.unsets(r.value) {
 			out[r.key] = nil
 			continue
 		}
@@ -269,14 +275,14 @@ func newTypesSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		tags        []string
 	)
 	cmd := &cobra.Command{
-		Use: "set <name> [--description <text>] [--tag k=v]... [--idle-minutes <minutes>|default] ...", Short: "Add or change a workload type",
+		Use: "set <name> [--description <text>] [--tag k=v]... [--idle-minutes <minutes>|inherit] ...", Short: "Add or change a workload type",
 		Args: cobra.ExactArgs(1), SilenceErrors: true,
 		Long: "Add a custom type (lower-case letters, digits and hyphens, at least one --tag that selects it), or change one:\n" +
 			"its description, its tags (given, they replace the old ones), its defaults (each given value replaces the one held,\n" +
-			"default removes it). A built-in type (instance, asg, ecs, k8s, databases) takes defaults only. The routers apply\n" +
-			"it at their next check, within 5 minutes. Needs an administrator.",
+			"inherit removes it, as on every level; default, its old name, too). A built-in type (instance, asg, ecs, k8s,\n" +
+			"databases) takes defaults only. The routers apply it at their next check, within 5 minutes. Needs an administrator.",
 	}
-	levels := bindLevelFlags(cmd, "default")
+	levels := bindLevelFlags(cmd, "inherit", "default")
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		name := args[0]
 		builtIn := slices.Contains(builtInTypes, name)
@@ -355,11 +361,11 @@ func newTypesDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return &cobra.Command{
 		Use: "delete <name>", Short: "Remove a custom workload type", Args: cobra.ExactArgs(1), SilenceErrors: true,
 		Long: "Remove a custom type: its workloads take the next type their tags select, else their built-in one. A built-in\n" +
-			"type stays: set its defaults to default instead. Needs an administrator.",
+			"type stays: set its defaults to inherit instead. Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name := args[0]
 			if slices.Contains(builtInTypes, name) {
-				return finish(c, usagef("%s is a built-in type: set its defaults to default instead", name))
+				return finish(c, usagef("%s is a built-in type: set its defaults to inherit instead", name))
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				a, err := readTypes(ctx, api)
