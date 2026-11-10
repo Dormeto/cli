@@ -859,6 +859,9 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"`--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today",
 		"Without a setting flag it shows each router's level",
 		"`inherit` removes a value on every level, the organization's and a type's too, and `default` is its old name there",
+		"The settings that Google Cloud fixes or limits say so in their flags' help, as each level has them: at a router's and a workload's, which the Google Cloud router checks, it refuses a wake timeout past 1700 and any hold, held requests or drain (they are 0; `inherit` is accepted); the organization's and the types' take any value, and a Google Cloud workload takes 0, and at most 1700 for the wake timeout, whatever they set",
+		// one dry-run text
+		"and `--dry-run`, which asks nothing, says each request it would send, one per target",
 		// the acceptance
 		"*Accepted in `dormeto-dev` on 2026-11-09 and 2026-11-10, not released*: `gcp connect` and `gcp disconnect`",
 	} {
@@ -866,7 +869,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 			t.Errorf("README.md lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"*Not run against Google yet*: `gcp connect`", "prints the controller's answer as it is. `onboard`"} {
+	for _, gone := range []string{"*Not run against Google yet*: `gcp connect`", "prints the controller's answer as it is. `onboard`", "`--dry-run` lists the targets", "`--dry-run`, which lists its targets"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("README.md still says %q", gone)
 		}
@@ -889,17 +892,21 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"says `<router>/<workload>: not awake (ASLEEP)`, AWS's refusal words, as an answer: it exits 0, as 0.11.0 did, since the controller does not refuse it (AWS exits 1)",
 		"`dormeto aws routers settings <router>...` without a setting flag shows each router's level (it was a usage error, exit 2)",
 		"`inherit` unsets a setting on every level, the organization's (`aws settings set`) and a type's (`aws types set`) too, and `default`, their old word",
-		"name Google Cloud's limits: a wake timeout of 60 to 1700, and a hold, held requests and a drain of 0",
+		"name Google Cloud's limits as their level has them: at a router's and a workload's, which the Google Cloud router checks, a wake timeout of 60 to 1700 and a hold, held requests and a drain of 0 (any value refused, `inherit` accepted); at the organization's and the types', which the manager takes for both clouds and refuses none of, a Google Cloud workload takes 0, and at most 1700 for the wake timeout, whatever they set",
 		"have one description each, in one order, with the levels' defaults",
 		"answers `409` with its message and the command that fixes it (`no_access`, `router_too_old`, `router_unknown`; it was a `502` `router_error`",
 		"AWS's now says `estimated: false`",
 		"a Google Cloud workload's note has no such clause",
+		"printed what they would act on, `dry run: nap 2 workloads, nothing sent` and the targets below it: they now say each request in that form too, in the order of the targets",
+		"their `--json` is unchanged",
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
 		}
 	}
-	if strings.Contains(log, "AWS's advice has none") {
-		t.Error("CHANGELOG.md's Unreleased still says AWS's advice has no estimated field")
+	for _, gone := range []string{"AWS's advice has none", "would act on 2 workloads"} {
+		if strings.Contains(log, gone) {
+			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
+		}
 	}
 }

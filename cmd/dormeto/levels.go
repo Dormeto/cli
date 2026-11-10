@@ -51,16 +51,29 @@ func (l *levelFlags) rangeOf(s fleet.LevelSetting) (int, int) {
 	return s.Min, s.Max
 }
 
-// onGoogleCloud is what a setting's flag says of Google Cloud's limit, where it differs: the wake timeout stops at 1700,
-// and the hold, the held requests and the drain are 0 (the Google Cloud commands say their own).
-var onGoogleCloud = map[string]string{
+// googleCloudRefuses is what a router's and a workload's level flags say of Google Cloud's limits, where they differ: the
+// Google Cloud router checks these levels, and refuses a wake timeout past 1700 and any value of the hold, the held
+// requests and the drain, fixed at 0 (the Google Cloud commands say their own).
+var googleCloudRefuses = map[string]string{
 	"wake-timeout-seconds": " (60 to 1700 on Google Cloud)",
 	"wait-seconds":         " (fixed at 0 on Google Cloud: give inherit, any value is refused)",
 	"max-holders":          " (fixed at 0 on Google Cloud: give inherit, any value is refused)",
 	"drain-seconds":        " (fixed at 0 on Google Cloud: give inherit, any value is refused)",
 }
 
-func bindLevelFlags(cmd *cobra.Command, unset string, aliases ...string) *levelFlags {
+// googleCloudBrings is what the organization's and the types' level flags say of them: the manager takes these levels for
+// both clouds and refuses none of their values, which a Google Cloud workload brings to 0, and to at most 1700 for the
+// wake timeout.
+var googleCloudBrings = map[string]string{
+	"wake-timeout-seconds": " (a Google Cloud workload takes at most 1700, whatever this level sets)",
+	"wait-seconds":         " (a Google Cloud workload takes 0, whatever this level sets)",
+	"max-holders":          " (a Google Cloud workload takes 0, whatever this level sets)",
+	"drain-seconds":        " (a Google Cloud workload takes 0, whatever this level sets)",
+}
+
+// bindLevelFlags binds a level's flags, each saying what onGoogleCloud says of its flag (googleCloudRefuses or
+// googleCloudBrings, as the level has it).
+func bindLevelFlags(cmd *cobra.Command, onGoogleCloud map[string]string, unset string, aliases ...string) *levelFlags {
 	l := &levelFlags{unset: unset, aliases: aliases, numbers: map[string]*string{}}
 	for _, s := range levelSettings3 {
 		v := new(string)
@@ -309,7 +322,7 @@ func newTypesSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"inherit removes it, as on every level; default, its old name, too). A built-in type (instance, asg, ecs, k8s,\n" +
 			"databases) takes defaults only. The routers apply it at their next check, within 5 minutes. Needs an administrator.",
 	}
-	levels := bindLevelFlags(cmd, "inherit", "default")
+	levels := bindLevelFlags(cmd, googleCloudBrings, "inherit", "default")
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		name := args[0]
 		builtIn := slices.Contains(builtInTypes, name)

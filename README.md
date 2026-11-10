@@ -1037,9 +1037,11 @@ built-in value. Its no-wake and wake rules add up across the levels, the organiz
 (`instance`, `asg`, `ecs`, `k8s`, or `databases` for a workload with RDS or Aurora) or one of the organization's, picked
 by `--type` on the workload, else by its tags. `inherit` removes a value on every level, the organization's and a type's
 too, and `default` is its old name there, read the same (the settings of a router or a workload never took it). The
-settings that Google Cloud fixes or limits say so in their flags' help: a wake timeout of 60 to 1700, and a hold, held
-requests and a drain of 0. The CLI refuses a value out of its range before any call; a rules file is a JSON list, `-`
-for the standard input. A workload written by Terraform is refused: set it in its workload module. A router before
+settings that Google Cloud fixes or limits say so in their flags' help, as each level has them: at a router's and a
+workload's, which the Google Cloud router checks, it refuses a wake timeout past 1700 and any hold, held requests or
+drain (they are 0; `inherit` is accepted); the organization's and the types' take any value, and a Google Cloud
+workload takes 0, and at most 1700 for the wake timeout, whatever they set. The CLI refuses a value out of its range
+before any call; a rules file is a JSON list, `-` for the standard input. A workload written by Terraform is refused: set it in its workload module. A router before
 0.37.0 answers that it must be upgraded.
 
 ### Joined windows

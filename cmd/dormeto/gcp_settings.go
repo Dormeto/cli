@@ -63,7 +63,7 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 			r.IDs, r.Levels = ids, body
 			return run(ctx, d, r)
 		})
-	levels = bindLevelFlags(cmd, "inherit")
+	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	gcpLevelFlagsHelp(cmd, levels)
 	cmd.Args = func(c *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -141,7 +141,7 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 			r.Levels = body
 			return run(ctx, d, r)
 		})
-	levels = bindLevelFlags(cmd, "inherit")
+	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	gcpLevelFlagsHelp(cmd, levels)
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {

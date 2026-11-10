@@ -276,7 +276,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd.Flags().StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5; inherit unsets it (default 15)")
 	cmd.Flags().StringVar(&ended, "ended-window-days", "", "days after its last occurrence a window stays, 30 to 3650, 0 keeps them; inherit unsets it (365)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
-	levels = bindLevelFlags(cmd, "inherit", "default")
+	levels = bindLevelFlags(cmd, googleCloudBrings, "inherit", "default")
 	return cmd
 }
 
@@ -301,7 +301,7 @@ func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"others go on (exit 1). Several targets are confirmed on a terminal. Needs an operator.",
 		SilenceErrors: true,
 	}
-	levels = bindLevelFlags(cmd, "inherit")
+	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		err := w.targets.check(args, false)
 		body := map[string]any{}

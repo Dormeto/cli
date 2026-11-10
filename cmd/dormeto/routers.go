@@ -465,7 +465,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
-	levels = bindLevelFlags(cmd, "inherit")
+	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	return cmd
 }
 

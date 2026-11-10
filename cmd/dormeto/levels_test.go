@@ -207,20 +207,32 @@ func TestWorkloadsShowSaysWhereEachSettingComesFrom(t *testing.T) {
 	}
 }
 
-// The four commands that set a level name Google Cloud's limits on its flags: a wake timeout of 60 to 1700, and a hold,
-// a held-request count and a drain of 0 (only inherit is accepted there).
-func TestTheLevelCommandsHelpNamesGoogleCloudsLimits(t *testing.T) {
-	for _, command := range [][]string{{"aws", "workloads", "settings"}, {"aws", "routers", "settings"}, {"aws", "settings", "set"}, {"aws", "types", "set"}} {
-		out, _, code := executed(t, build{}, append(command[:len(command):len(command)], "--help")...)
+// The four commands that set a level name Google Cloud's limits on its flags, as each level has them: the Google Cloud
+// router checks a router's and a workload's level, and refuses a wake timeout past 1700 and any hold, held-request count
+// or drain (0, only inherit accepted); the manager refuses nothing at the organization's and the types', of which a
+// Google Cloud workload takes 0, and at most 1700 s, whatever they set.
+func TestTheLevelCommandsHelpNamesGoogleCloudsLimitsAsTheirLevelHasThem(t *testing.T) {
+	for _, c := range []struct {
+		command      []string
+		wake, fixed  string
+		checkedThere bool
+	}{
+		{[]string{"aws", "workloads", "settings"}, "60 to 1700 on Google Cloud", "fixed at 0 on Google Cloud: give inherit, any value is refused", true},
+		{[]string{"aws", "routers", "settings"}, "60 to 1700 on Google Cloud", "fixed at 0 on Google Cloud: give inherit, any value is refused", true},
+		{[]string{"aws", "settings", "set"}, "a Google Cloud workload takes at most 1700, whatever this level sets", "a Google Cloud workload takes 0, whatever this level sets", false},
+		{[]string{"aws", "types", "set"}, "a Google Cloud workload takes at most 1700, whatever this level sets", "a Google Cloud workload takes 0, whatever this level sets", false},
+	} {
+		out, _, code := executed(t, build{}, append(c.command[:len(c.command):len(c.command)], "--help")...)
 		if code != 0 {
-			t.Fatalf("%v: %d", command, code)
+			t.Fatalf("%v: %d", c.command, code)
 		}
-		if line := helpLine(out, "--wake-timeout-seconds"); !strings.Contains(line, "60 to 1700 on Google Cloud") {
-			t.Errorf("%v --wake-timeout-seconds: %q", command, line)
+		if line := helpLine(out, "--wake-timeout-seconds"); !strings.Contains(line, c.wake) || !strings.Contains(line, "60 to 3600") {
+			t.Errorf("%v --wake-timeout-seconds: %q", c.command, line)
 		}
 		for _, flag := range []string{"--wait-seconds", "--max-holders", "--drain-seconds"} {
-			if line := helpLine(out, flag); !strings.Contains(line, "fixed at 0 on Google Cloud") {
-				t.Errorf("%v %s: %q", command, flag, line)
+			line := helpLine(out, flag)
+			if !strings.Contains(line, c.fixed) || strings.Contains(line, "refused") != c.checkedThere {
+				t.Errorf("%v %s: %q", c.command, flag, line)
 			}
 		}
 	}
