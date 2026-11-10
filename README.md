@@ -1479,8 +1479,8 @@ dormeto aws savings discounts --compute 20 --databases 15
   the discounts for commitments the prices are reduced by.
 - `savings discounts` sets those discounts, in whole percent from 0 to 90, off the list prices of compute (EC2,
   Fargate, EKS nodes; Compute Engine VMs, never Spot) and of databases (RDS, Aurora; Cloud SQL), where Google Cloud's
-  committed use and sustained use discounts are entered. Both are required (what is not given would be reset); they apply from the next
-  day the job computes.
+  committed use and sustained use discounts are entered. Both are required (what is not given would be reset); they
+  apply from the next day the job computes.
 - `alerts list` lists the open health alarms (level, kind, name, age, problems), then the alert topic's subscriptions:
   how many are confirmed and pending, and each endpoint, masked. `no alerts configured` when the manager has none.
 - `ip-lists list` lists the manager's IP lists: name, action (`defer`: a request from a listed address does not wake a
