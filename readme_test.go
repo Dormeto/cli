@@ -781,3 +781,39 @@ func TestDocsSayOnboardOffboardExcludeAndCandidatesOnGoogleCloud(t *testing.T) {
 		}
 	}
 }
+
+// G2 plan 3: the README and the CHANGELOG say what the savings and the idle window advice do for Google Cloud, as the code does.
+func TestDocsSaySavingsAndIdleWindowOnGoogleCloud(t *testing.T) {
+	text := strings.Join(strings.Fields(readme(t)), " ")
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
+	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
+	log := strings.Join(strings.Fields(unreleased), " ")
+	for _, want := range []string{
+		"what is not priced (how many workloads; a Google Cloud item without its Google list price counts there, never at $0; `--json` has their hours)",
+		"(EC2, Fargate, EKS nodes, Compute Engine VMs; never off Spot)",
+		"priced at Google's list prices when the manager has them",
+		"`Google's request counts are estimates.` is printed",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("README.md lacks %q", want)
+		}
+	}
+	if strings.Contains(text, "is listed there with its hours") {
+		t.Error("README.md still says the not-priced items are listed with their hours")
+	}
+	for _, want := range []string{
+		"`dormeto aws workloads idle-window` prints `Google's request counts are estimates.`",
+		"`dormeto aws savings show` and `dormeto aws workloads idle-window` serve both clouds",
+		"The `savings discounts` help names Compute Engine and Cloud SQL",
+		"`savings show`'s not-priced text says `the list prices`",
+		"`idle-window` names `dormeto aws workloads settings <router>/<workload> --idle-minutes <n>` to change the window",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+		}
+	}
+}

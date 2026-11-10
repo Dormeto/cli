@@ -307,3 +307,32 @@ func TestWorkloadsShowPrintsTheCloudAndTheProjectOfAGoogleCloudWorkload(t *testi
 		}
 	}
 }
+
+func TestWorkloadsIdleWindowNamesTheSettingsCommandNotATerraformModuleOnly(t *testing.T) {
+	body := strings.Replace(idleWindowAnswer, `"priced":true`, `"priced":true,"estimated":true`, 1)
+	r := runShow(t, &showAPI{status: 200, body: body}, "idle-window", "prod-eu/w-1")
+	out := strings.Join(strings.Fields(r.stdout), " ")
+	mustContain(t, out, "to change it: dormeto aws workloads settings prod-eu/w-1 --idle-minutes 30 (a workload onboarded with Terraform: idle_minutes in its module)")
+	if strings.Contains(out, "offboard") {
+		t.Errorf("still says to offboard:\n%s", out)
+	}
+}
+
+func TestWorkloadsIdleWindowSaysWhichRequestsWereNotFound(t *testing.T) {
+	gone := strings.Replace(idleWindowAnswer, `"wakerTargetGroup":true`, `"wakerTargetGroup":false`, 1)
+	r := runShow(t, &showAPI{status: 200, body: gone}, "idle-window", "prod-eu/w-1")
+	mustContain(t, r.stdout, "the waker target group was not found")
+	est := strings.Replace(gone, `"priced":true`, `"priced":true,"estimated":true`, 1)
+	r = runShow(t, &showAPI{status: 200, body: est}, "idle-window", "prod-eu/w-1")
+	mustContain(t, r.stdout, "the waker backend service's requests were not found")
+	if strings.Contains(r.stdout, "target group was not found") {
+		t.Errorf("Google Cloud has no target group:\n%s", r.stdout)
+	}
+}
+
+func TestWorkloadsIdleWindowHelpMentionsTheGoogleEstimate(t *testing.T) {
+	out, _, code := executed(t, build{}, "aws", "workloads", "idle-window", "--help")
+	if code != 0 || !strings.Contains(strings.Join(strings.Fields(out), " "), "Google's request counts are estimates") {
+		t.Errorf("exit %d:\n%s", code, out)
+	}
+}

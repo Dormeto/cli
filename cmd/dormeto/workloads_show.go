@@ -95,8 +95,9 @@ func newWorkloadsIdleWindow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "idle-window <router>/<workload>", Short: "Show the advice on a workload's idle window",
 		Long: "Show the manager's advice on the idle window: the last 14 days of requests replayed against windows from 5 to\n" +
 			"120 minutes, each with its savings a month (hours asleep a day when nothing is priced), wakes and wait a day,\n" +
-			"the current and the recommended window marked. The manager computes it once a day; the first read may take a\n" +
-			"while. --json prints the manager's answer.",
+			"the current and the recommended window marked. A Google Cloud workload's request counts are estimates, and the\n" +
+			"advice says so (Google's request counts are estimates.). The manager computes it once a day; the first read may\n" +
+			"take a while. --json prints the manager's answer.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			t, err := oneTarget(args)
@@ -108,7 +109,7 @@ func newWorkloadsIdleWindow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := api.Get(ctx, t.Path("/idle-window"), nil, &raw); err != nil {
 					return err
 				}
-				return printRead(c, raw, asJSON, func(a fleet.IdleWindowAdvice) string { return a.Text(deps.now().Location()) })
+				return printRead(c, raw, asJSON, func(a fleet.IdleWindowAdvice) string { return a.Text(args[0], deps.now().Location()) })
 			})
 		},
 	}

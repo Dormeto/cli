@@ -496,7 +496,7 @@ type IdleWindowAdvice struct {
 		Noisy         bool `json:"noisy"`
 	} `json:"actual"`
 	WakerTargetGroup bool `json:"wakerTargetGroup"`
-	// Estimated is set for a Google Cloud workload: its request counts are estimates.
+	// Estimated is set for a Google Cloud workload: the waker's requests are counted (Google's counts are estimates).
 	Estimated bool `json:"estimated"`
 }
 
@@ -555,7 +555,8 @@ func abs(f float64) float64 {
 
 // Text is the sentence of the advice, the windows tried (savings a month, or hours asleep a day when nothing is priced,
 // wakes and wait a day) and the notes the dashboard gives under them.
-func (a IdleWindowAdvice) Text(loc *time.Location) string {
+// Text is the advice as text; target is the command's <router>/<workload>, named in the way to change the window.
+func (a IdleWindowAdvice) Text(target string, loc *time.Location) string {
 	measure := "ASLEEP A DAY"
 	if a.Priced {
 		measure = "SAVINGS A MONTH"
@@ -601,7 +602,11 @@ func (a IdleWindowAdvice) Text(loc *time.Location) string {
 		notes = append(notes, "no wake measured yet: the visitors' wait is unknown")
 	}
 	if !a.WakerTargetGroup {
-		notes = append(notes, "the waker target group was not found: only the requests while awake are replayed")
+		what := "the waker target group was not found"
+		if a.Estimated {
+			what = "the waker backend service's requests were not found"
+		}
+		notes = append(notes, what+": only the requests while awake are replayed")
 	}
 	if a.Estimated {
 		notes = append(notes, "Google's request counts are estimates.")
@@ -609,7 +614,7 @@ func (a IdleWindowAdvice) Text(loc *time.Location) string {
 	if !a.Priced {
 		notes = append(notes, "nothing priced yet (no nap described, or an item without a price): hours asleep instead of dollars")
 	}
-	notes = append(notes, "to change it: idle_minutes in the workload's Terraform module, or offboard the workload and onboard it again with the new window",
+	notes = append(notes, fmt.Sprintf("to change it: dormeto aws workloads settings %s --idle-minutes %d (a workload onboarded with Terraform: idle_minutes in its module)", target, a.Recommended),
 		"every request counts as activity and as a wake; computed "+When(a.ComputedAt, loc)+", from the 14 days to "+When(a.To, loc))
 	return out + "\n" + strings.Join(notes, "\n") + "\n"
 }

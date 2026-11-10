@@ -840,8 +840,8 @@ dormeto aws workloads idle-window <router>/<workload> [--json]
 - `idle-window`: the manager's advice on the idle window: the last 14 days of requests replayed against windows from 5
   to 120 minutes, each with its savings a month (hours asleep a day when nothing is priced), its wakes and wait a day,
   the current and the recommended window marked. It serves both clouds: for a Google Cloud workload the savings are
-  Google's list prices and the line `Google's request counts are estimates.` is printed (`estimated` in `--json`; AWS's
-  advice has none). The manager computes it once a day: the first read may take a while.
+  priced at Google's list prices when the manager has them (less the discounts; else hours asleep) and the line `Google's request counts are estimates.` is printed (`estimated` in `--json`; AWS's
+  advice has none); it names `dormeto aws workloads settings <router>/<workload> --idle-minutes <n>` to change the window. The manager computes it once a day: the first read may take a while.
 
 ### Waking, napping, pausing, renaming and tagging workloads
 
@@ -1474,11 +1474,12 @@ dormeto aws savings discounts --compute 20 --databases 15
   `--who` and `--target` a part of the text, in any case; `--limit` the newest entries only (100 by default; 0 for
   all). `--json` prints `{entries}` as the manager sends them, after the filters.
 - `savings show` shows the estimate of the daily job as the Savings card does, for both clouds: the last 30 days,
-  this month, since the first day computed, Dormeto's own cost and the net, the top savers, what is not priced (a
-  Google Cloud item whose Google list price the manager does not have is listed there with its hours, never at $0), and
+  this month, since the first day computed, Dormeto's own cost and the net, the top savers, what is not priced
+  (how many workloads; a Google Cloud item without its Google list price counts there, never at $0; `--json` has their
+  hours), and
   the discounts for commitments the prices are reduced by.
 - `savings discounts` sets those discounts, in whole percent from 0 to 90, off the list prices of compute (EC2,
-  Fargate, EKS nodes; Compute Engine VMs, never Spot) and of databases (RDS, Aurora; Cloud SQL), where Google Cloud's
+  Fargate, EKS nodes, Compute Engine VMs; never off Spot) and of databases (RDS, Aurora; Cloud SQL), where Google Cloud's
   committed use and sustained use discounts are entered. Both are required (what is not given would be reset); they
   apply from the next day the job computes.
 - `alerts list` lists the open health alarms (level, kind, name, age, problems), then the alert topic's subscriptions:

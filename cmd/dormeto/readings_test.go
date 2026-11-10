@@ -234,3 +234,16 @@ func TestOverviewTreatsA404AsNotAvailableNotAFailure(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
+
+func TestSavingsDiscountsHelpNamesBothClouds(t *testing.T) {
+	out, errs, code := executed(t, build{}, "aws", "savings", "discounts", "--help")
+	out = strings.Join(strings.Fields(out), " ")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, errors %q", code, errs)
+	}
+	for _, want := range []string{"Compute Engine", "Cloud SQL", "EC2", "(EC2, Fargate, EKS nodes, Compute Engine VMs; never off Spot)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}

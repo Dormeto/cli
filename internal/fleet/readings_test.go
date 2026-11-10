@@ -87,7 +87,7 @@ func TestSavingsText(t *testing.T) {
 	 "settings":{"compute":10,"databases":0,"updatedAt":"2026-10-19T09:00:00Z","updatedBy":"arn:aws:sts::1:assumed-role/Ci/run-42"}}`)
 	got := a.Text(time.UTC)
 	for _, want := range []string{"$100.00, 1,234 hours asleep", "since 2026-10-14", "net               about $95.00 over the 5 days computed", "business hours (weekdays 08:00 to 20:00, Europe/Paris)",
-		"2 workloads (a router before 0.27.0, or what the cloud's list prices do not name)", "r/w", "$5.00", "compute 10%, databases 0% off the list prices (set by Ci/run-42 2026-10-19 09:00 UTC)"} {
+		"2 workloads (a router before 0.27.0, or what the router could not describe (GKE pods among them), or what the list prices do not name)", "r/w", "$5.00", "compute 10%, databases 0% off the list prices (set by Ci/run-42 2026-10-19 09:00 UTC)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lacks %q: %q", want, got)
 		}

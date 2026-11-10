@@ -188,7 +188,7 @@ func unpricedText(s *SavingsSummary) string {
 	if s.Unpriced.Workloads == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d %s (a router before 0.27.0, or what the cloud's list prices do not name)", s.Unpriced.Workloads, Plural(s.Unpriced.Workloads, "workload"))
+	return fmt.Sprintf("%d %s (a router before 0.27.0, or what the router could not describe (GKE pods among them), or what the list prices do not name)", s.Unpriced.Workloads, Plural(s.Unpriced.Workloads, "workload"))
 }
 
 // commas writes n with thousands separators.
