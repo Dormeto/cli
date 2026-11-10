@@ -1473,11 +1473,13 @@ dormeto aws savings discounts --compute 20 --databases 15
   midnight); `--action` an action's name (repeatable or comma-separated, such as `pause` or `operation-onboard`);
   `--who` and `--target` a part of the text, in any case; `--limit` the newest entries only (100 by default; 0 for
   all). `--json` prints `{entries}` as the manager sends them, after the filters.
-- `savings show` shows the estimate of the daily job as the Savings card does: the last 30 days, this month, since the
-  first day computed, Dormeto's own cost and the net, the top savers, what is not priced, and the discounts for
-  commitments the prices are reduced by.
+- `savings show` shows the estimate of the daily job as the Savings card does, for both clouds: the last 30 days,
+  this month, since the first day computed, Dormeto's own cost and the net, the top savers, what is not priced (a
+  Google Cloud item whose Google list price the manager does not have is listed there with its hours, never at $0), and
+  the discounts for commitments the prices are reduced by.
 - `savings discounts` sets those discounts, in whole percent from 0 to 90, off the list prices of compute (EC2,
-  Fargate, EKS nodes) and of databases. Both are required (what is not given would be reset); they apply from the next
+  Fargate, EKS nodes; Compute Engine VMs, never Spot) and of databases (RDS, Aurora; Cloud SQL), where Google Cloud's
+  committed use and sustained use discounts are entered. Both are required (what is not given would be reset); they apply from the next
   day the job computes.
 - `alerts list` lists the open health alarms (level, kind, name, age, problems), then the alert topic's subscriptions:
   how many are confirmed and pending, and each endpoint, masked. `no alerts configured` when the manager has none.

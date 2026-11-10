@@ -247,3 +247,15 @@ func TestAwsWorkloadsSettingsHelpSaysWhatHibernateDoesOnEachCloud(t *testing.T) 
 		t.Fatalf("still says EC2 only:\n%s", out)
 	}
 }
+
+func TestSavingsDiscountsHelpNamesBothClouds(t *testing.T) {
+	out, errs, code := executed(t, build{}, "aws", "savings", "discounts", "--help")
+	if code != 0 || errs != "" {
+		t.Fatalf("exit %d, errors %q", code, errs)
+	}
+	for _, want := range []string{"Compute Engine", "Cloud SQL", "never Spot", "EC2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}

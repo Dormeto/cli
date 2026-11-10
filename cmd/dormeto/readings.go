@@ -154,8 +154,9 @@ func newSavingsDiscounts(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "discounts --compute <0..90> --databases <0..90>", Short: "Set the discounts for commitments the savings are priced with", Args: noArgs, SilenceErrors: true,
 		Long: "Set the average discounts, in whole percent from 0 to 90, that the savings estimate takes off the list prices of\n" +
-			"compute (EC2, Fargate, EKS nodes) and of databases. Both are required: what is not given would be reset. They apply\n" +
-			"from the next day the job computes. Needs an administrator. --json prints the manager's answer.",
+			"compute (EC2, Fargate, EKS nodes; Compute Engine VMs, never Spot) and of databases (RDS, Aurora; Cloud SQL), the\n" +
+			"committed use and sustained use discounts of Google Cloud among them. Both are required: what is not given would\n" +
+			"be reset. They apply from the next day the job computes. Needs an administrator. --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var err error
 			switch fl := c.Flags(); {
