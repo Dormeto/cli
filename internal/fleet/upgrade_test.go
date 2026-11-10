@@ -64,7 +64,7 @@ func TestPlanUpgradeOfGoogleCloudRouters(t *testing.T) {
 	lost.Error = "timed out"
 	p := PlanUpgrade([]Router{gcp("old", "0.39.0"), gcp("same", "0.40.0"), gcp("ahead", "0.41.0-dev.1"), gcp("blind", ""), lost}, "0.40.0")
 	want := map[string]string{
-		"old":   "a Google Cloud router: upgrade it with dormeto gcp install --project dormeto-dev --region europe-west2 --version 0.40.0",
+		"old":   "a Google Cloud router: upgrade it with dormeto gcp routers install --project dormeto-dev --region europe-west2 --version 0.40.0",
 		"same":  "up to date",
 		"ahead": "newer than the version available",
 		"blind": "its version is unknown",

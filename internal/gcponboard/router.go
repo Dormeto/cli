@@ -1,6 +1,6 @@
 package gcponboard
 
-// The router's steps of `dormeto gcp install`, after the access: cloudRun (the controller, its invoker binding to the
+// The router's steps of `dormeto gcp routers install`, after the access: cloudRun (the controller, its invoker binding to the
 // router, the waker with its invoker check off), neg (the waker's serverless network endpoint group) and job (the check
 // every 5 minutes). The image is checked while planning, before any change. Its tag is the router's version: set in
 // DMT_VERSION, recorded, and what the controller's health must answer. Dormeto's public image is deployed by its digest

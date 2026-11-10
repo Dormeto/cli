@@ -54,14 +54,19 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 	v, _, _ := b.resolve()
 	// The AWS commands live under `dormeto aws`; the old top-level names are the same commands built a second time
 	// (a cobra command has one parent), hidden, and run through aws by execute with a notice.
-	aws := &cobra.Command{Use: "aws", Short: "Dormeto in AWS", Args: noArgs, SilenceErrors: true}
+	aws := &cobra.Command{Use: "aws", Short: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers", Args: noArgs, SilenceErrors: true,
+		Long: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers. The manager's commands (routers list,\n" +
+			"workloads list, discovery, savings, users, settings...) cover both clouds, a Google Cloud project being the account of\n" +
+			"its rows; the commands that change a Google Cloud router are under `dormeto gcp`.\n\n" + regionRule}
 	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
 	// Born under aws (settings at scale): no hidden twin at the top level.
-	aws.AddCommand(newTypes(fleet))
+	types := newTypes(fleet)
+	sayBothClouds(types)
+	aws.AddCommand(types)
 	root.AddCommand(aws)
 	for _, old := range awsCommands(b, fleet, installs, orDefault(v, "dev")) {
 		old.Hidden = true
-		old.Annotations = map[string]string{movedAnnotation: "aws"}
+		old.Annotations = map[string]string{movedAnnotation: "aws " + old.Name()}
 		root.AddCommand(old)
 	}
 	root.AddCommand(newGcp(gcps, fleet, orDefault(v, "dev")))
@@ -78,6 +83,8 @@ func managerCommands(deps fleetDeps) []*cobra.Command {
 	cmds := []*cobra.Command{newRouters(deps), newWorkloads(deps), newDiscovery(deps), newExclusions(deps), newUsers(deps), newGroups(deps), newOperations(deps), newOverview(deps), newAlerts(deps), newIPLists(deps), newSavings(deps), newAudit(deps), newManager(deps), newSettings(deps), newWhoami(deps), newAPI(deps)}
 	for _, c := range cmds {
 		acceptYes(c)
+		sayBothClouds(c)
+		aliasProject(c, "routers install")
 	}
 	return cmds
 }

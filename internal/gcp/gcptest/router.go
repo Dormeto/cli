@@ -1,6 +1,6 @@
 package gcptest
 
-// The resources of `dormeto gcp install --image`: Cloud Run services and their policies and operations, the serverless
+// The resources of `dormeto gcp routers install --image`: Cloud Run services and their policies and operations, the serverless
 // network endpoint group and its Compute Engine operations, the Cloud Scheduler job, the manifests of Artifact Registry
 // (on *-docker.pkg.dev) and the controller's GET /v1/health and /v1/workloads… (on *.run.app). Every handler here runs under the server's
 // lock.

@@ -613,3 +613,41 @@ func TestDiscoveryCandidatesChecksTheRegionAgainstTheAccountsCloud(t *testing.T)
 		}
 	}
 }
+
+func TestDiscoveryCandidatesCloudKeepsOneCloudsRowsAndAProjectIsAnAccount(t *testing.T) {
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {
+		row("111111111111", "api", "pending-onboarding"),
+		`{"id":"projects/dormeto-dev/global/backendServices/web","cloud":"gcp","account":"dormeto-dev","region":"global","targetGroup":"web","status":"pending-onboarding"}`,
+	}}}
+	r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates", "--cloud", "gcp", "--json")
+	var got struct{ Candidates []struct{ Cloud string } }
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || len(got.Candidates) != 1 || got.Candidates[0].Cloud != "gcp" {
+		t.Errorf("exit %d %v: %q", r.exit, err, r.stdout)
+	}
+	if r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates", "--cloud", "azure"); r.exit != 2 {
+		t.Errorf("azure exits %d", r.exit)
+	}
+	runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates", "--project", "dormeto-dev")
+	if !strings.Contains(a.requests[len(a.requests)-1], "account=dormeto-dev") {
+		t.Errorf("requests %q", a.requests)
+	}
+}
+
+func TestDiscoveryAccessCloudKeepsOneCloudsAccounts(t *testing.T) {
+	a := &disAPI{access: []string{
+		`{"account":"111111111111","cloud":"aws","name":"prod","discovery":{"ok":false,"reason":"no role"},"command":{"ok":true}}`,
+		`{"account":"dormeto-dev","cloud":"gcp","name":"Dormeto dev","discovery":{"ok":true},"command":{"ok":false,"reason":"no binding"}}`,
+	}}
+	r := runDiscovery(t, a, nil, "", "access", "--cloud", "gcp", "--json")
+	var got struct{ Accounts []struct{ Account string } }
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || len(got.Accounts) != 1 || got.Accounts[0].Account != "dormeto-dev" {
+		t.Errorf("exit %d %v: %q", r.exit, err, r.stdout)
+	}
+	r = runDiscovery(t, a, nil, "", "access", "--cloud", "aws")
+	if strings.Contains(r.stdout, "Dormeto dev") || !strings.Contains(r.stdout, "prod") {
+		t.Errorf("table:\n%s", r.stdout)
+	}
+	if r := runDiscovery(t, a, nil, "", "access", "--cloud", "azure"); r.exit != 2 {
+		t.Errorf("azure exits %d", r.exit)
+	}
+}

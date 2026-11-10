@@ -52,7 +52,7 @@ func (x *run) withRoutes(words, method, path string, in, out any) error {
 		if herr != nil || version == "" {
 			version = "of " + x.n.router
 		}
-		return &stop{1, fmt.Sprintf("router %s doesn't have %s: dormeto gcp install --version %s", version, words, embeddedRouterVersion())}
+		return &stop{1, fmt.Sprintf("router %s doesn't have %s: dormeto gcp routers install --version %s", version, words, embeddedRouterVersion())}
 	}
 	return err
 }

@@ -1,6 +1,6 @@
 package gcponboard
 
-// `dormeto gcp install`: the access of a Dormeto router in a project and a region and the router itself (spec §5), from
+// `dormeto gcp routers install`: the access of a Dormeto router in a project and a region and the router itself (spec §5), from
 // Dormeto's public image by default or --image, the access alone with --access-only (image.go says which router a run
 // installs). It checks the caller's permissions (a ✗ stops it before any change) and the image, reads what is there,
 // prints the plan, asks (or takes --yes), applies the steps in order — apis, database (and the record), logView, roles,
@@ -156,7 +156,7 @@ func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a
 
 func (x *run) now() string { return x.d.Now().UTC().Format(time.RFC3339) }
 
-// Install is `dormeto gcp install`: 0 when installed or up to date (or the plan only, with DryRun, or declined), 1 when a
+// Install is `dormeto gcp routers install`: 0 when installed or up to date (or the plan only, with DryRun, or declined), 1 when a
 // check fails or Google refuses, 2 for a bad region, image or version, flags that contradict one another, or no --yes
 // without a terminal, 130 when interrupted.
 func Install(ctx context.Context, d Deps, r Request) int {
@@ -290,7 +290,7 @@ func (x *run) checks() error {
 	}
 	x.number, x.parent = rep.Project.Number, rep.Project.Parent
 	x.turningOn, x.enabled = rep.APIs.Missing, rep.APIs.Enabled
-	x.say("Checked: %s holds every permission dormeto gcp install needs in project %s.", rep.Account, x.n.project)
+	x.say("Checked: %s holds every permission dormeto gcp routers install needs in project %s.", rep.Account, x.n.project)
 	for _, w := range rep.Warnings {
 		x.say("  ! %s", w)
 	}

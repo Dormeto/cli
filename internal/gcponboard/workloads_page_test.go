@@ -82,7 +82,7 @@ func TestWaitingPageSetOfACustomPageWhileTheSwitchIsOffPrintsTheRoutersWords(t *
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "custom pages are off on this router: an administrator turns them on with dormeto gcp install --custom-pages")
+	contains(t, out, "custom pages are off on this router: an administrator turns them on with dormeto gcp routers install --custom-pages")
 }
 
 func TestWaitingPageJSONPrintsTheRoutersAnswer(t *testing.T) {
@@ -99,7 +99,7 @@ func TestWaitingPageSaysAnOlderRouterByItsVersion(t *testing.T) {
 	g.s.ControllerBeforeWaitingPage = true
 	g.s.HealthVersion = "0.38.0"
 	r.ID, r.Page = "shop", &fleet.PageDoc{Mode: "template", Title: str("x")}
-	want := "router 0.38.0 doesn't have the waiting page: dormeto gcp install --version " + embeddedRouterVersion()
+	want := "router 0.38.0 doesn't have the waiting page: dormeto gcp routers install --version " + embeddedRouterVersion()
 	for name, f := range map[string]func() (int, string){
 		"show":   func() (int, string) { return g.call(t, WorkloadsPageShow, r) },
 		"set":    func() (int, string) { return g.call(t, WorkloadsPageSet, r) },

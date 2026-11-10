@@ -767,7 +767,7 @@ func (x *run) onboard() error {
 		case err != nil && x.r.RequestLogs:
 			return &stop{1, fmt.Sprintf("The version of router %s is not read, and --request-logs needs %s or later: %s\nNothing was changed.", x.n.router, requestLogsRouterVersion, refusal(err))}
 		case err == nil && !reads && x.r.RequestLogs:
-			return &stop{2, fmt.Sprintf("--request-logs needs router %s or later: dormeto gcp install --version %s\nNothing was changed.", requestLogsRouterVersion, embeddedRouterVersion())}
+			return &stop{2, fmt.Sprintf("--request-logs needs router %s or later: dormeto gcp routers install --version %s\nNothing was changed.", requestLogsRouterVersion, embeddedRouterVersion())}
 		}
 		older = err == nil && !reads
 	}
@@ -822,7 +822,7 @@ func (x *run) onboard() error {
 			return err
 		}
 		if !found {
-			return &stop{1, fmt.Sprintf("The tag dormeto/managed does not exist in project %s: run dormeto gcp install first.\nNothing was changed.", x.n.project)}
+			return &stop{1, fmt.Sprintf("The tag dormeto/managed does not exist in project %s: run dormeto gcp routers install first.\nNothing was changed.", x.n.project)}
 		}
 	}
 	var grant *rbacGrant

@@ -49,7 +49,7 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 	root.SetErr(&errs)
 	root.SetIn(strings.NewReader(""))
 	root.SetArgs(args)
-	exit = execute(root)
+	exit = execute(root, args...)
 	return calls, errs.String(), exit
 }
 
@@ -86,7 +86,7 @@ func TestGcpCheckIsWiredInTheRoot(t *testing.T) {
 func TestGcpInstallFlagsReadIntoTheRequest(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	calls, errs, exit := gcpRan(t, 0, "gcp", "install", "--project", "dormeto-dev", "--region", "europe-west1", "--yes", "--dry-run",
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "install", "--project", "dormeto-dev", "--region", "europe-west1", "--yes", "--dry-run",
 		"--gcloud-configuration", "dormeto-dev")
 	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "install" {
 		t.Fatalf("%d %q %v", exit, errs, calls)
@@ -106,21 +106,21 @@ func TestGcpInstallCacheDefaultsToTheHomeCache(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", "")
 	t.Setenv("HOME", home)
-	calls, _, exit := gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1")
+	calls, _, exit := gcpRan(t, 0, "gcp", "routers", "install", "--project", "p", "--region", "europe-west1")
 	if exit != 0 || len(calls) != 1 || calls[0].d.Cache != filepath.Join(home, ".cache") {
 		t.Fatalf("%d %+v", exit, calls)
 	}
 }
 
 func TestGcpInstallExitCodes(t *testing.T) {
-	if _, _, exit := gcpRan(t, 1, "gcp", "install", "--project", "p", "--region", "europe-west1"); exit != 1 {
+	if _, _, exit := gcpRan(t, 1, "gcp", "routers", "install", "--project", "p", "--region", "europe-west1"); exit != 1 {
 		t.Fatalf("exit %d", exit)
 	}
 	for _, args := range [][]string{
-		{"gcp", "install", "--region", "europe-west1"},
-		{"gcp", "install", "--project", "p"},
-		{"gcp", "install", "--project", "p", "--region", "europe-west1", "--nope"},
-		{"gcp", "install", "--project", "p", "--region", "europe-west1", "extra"},
+		{"gcp", "routers", "install", "--region", "europe-west1"},
+		{"gcp", "routers", "install", "--project", "p"},
+		{"gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "--nope"},
+		{"gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "extra"},
 	} {
 		calls, errs, exit := gcpRan(t, 0, args...)
 		if exit != 2 || len(calls) != 0 || errs == "" {
@@ -130,7 +130,7 @@ func TestGcpInstallExitCodes(t *testing.T) {
 }
 
 func TestGcpInstallIsWiredInTheRoot(t *testing.T) {
-	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	out, _, code := executed(t, build{}, "gcp", "routers", "install", "--help")
 	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--yes", "--dry-run"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
@@ -139,7 +139,7 @@ func TestGcpInstallIsWiredInTheRoot(t *testing.T) {
 }
 
 func TestGcpInstallImageReadIntoTheRequest(t *testing.T) {
-	calls, errs, exit := gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1", "--image", "europe-west1-docker.pkg.dev/p/d/router:0.34.0")
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "--image", "europe-west1-docker.pkg.dev/p/d/router:0.34.0")
 	if exit != 0 || errs != "" || len(calls) != 1 {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
@@ -171,7 +171,7 @@ func TestGcpInstallVersionAndAccessOnlyReadIntoTheRequest(t *testing.T) {
 		{[]string{"--version", "0.38.0"}, gcponboard.Request{Project: "p", Region: "europe-west1", Version: "0.38.0"}},
 		{[]string{"--access-only"}, gcponboard.Request{Project: "p", Region: "europe-west1", AccessOnly: true}},
 	} {
-		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "install", "--project", "p", "--region", "europe-west1"}, tc.flags...)...)
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "install", "--project", "p", "--region", "europe-west1"}, tc.flags...)...)
 		if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r, tc.want) {
 			t.Fatalf("%v: %d %q %+v", tc.flags, exit, errs, calls)
 		}
@@ -179,7 +179,7 @@ func TestGcpInstallVersionAndAccessOnlyReadIntoTheRequest(t *testing.T) {
 }
 
 func TestGcpInstallHelpNamesThePublicImageAndItsFlags(t *testing.T) {
-	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	out, _, code := executed(t, build{}, "gcp", "routers", "install", "--help")
 	for _, want := range []string{"--version", "--access-only", "dormeto-releases/router/router:<version>", "europe, us or asia"} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Errorf("%d: lacks %q in:\n%s", code, want, out)
@@ -191,14 +191,14 @@ func TestGcpInstallHelpNamesThePublicImageAndItsFlags(t *testing.T) {
 }
 
 func TestGcpInstallImageIsInItsHelp(t *testing.T) {
-	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	out, _, code := executed(t, build{}, "gcp", "routers", "install", "--help")
 	if code != 0 || !strings.Contains(out, "--image") || !strings.Contains(out, "dmtr-<region>-controller") {
 		t.Fatalf("%d %s", code, out)
 	}
 }
 
 func TestGcpStatusFlagsReadIntoTheRequest(t *testing.T) {
-	calls, errs, exit := gcpRan(t, 0, "gcp", "status", "--project", "p", "--region", "europe-west1", "--json", "--gcloud-configuration", "c")
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "show", "--project", "p", "--region", "europe-west1", "--json", "--gcloud-configuration", "c")
 	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "status" {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
@@ -206,17 +206,17 @@ func TestGcpStatusFlagsReadIntoTheRequest(t *testing.T) {
 	if !reflect.DeepEqual(calls[0].r, want) {
 		t.Fatalf("%+v", calls[0].r)
 	}
-	calls, _, exit = gcpRan(t, 0, "gcp", "status", "--project", "p")
+	calls, _, exit = gcpRan(t, 0, "gcp", "routers", "show", "--project", "p")
 	if exit != 0 || len(calls) != 1 || !reflect.DeepEqual(calls[0].r, gcponboard.Request{Project: "p"}) {
 		t.Fatalf("%d %+v", exit, calls)
 	}
 }
 
 func TestGcpStatusExitCodes(t *testing.T) {
-	if _, _, exit := gcpRan(t, 1, "gcp", "status", "--project", "p"); exit != 1 {
+	if _, _, exit := gcpRan(t, 1, "gcp", "routers", "show", "--project", "p"); exit != 1 {
 		t.Fatalf("exit %d", exit)
 	}
-	for _, args := range [][]string{{"gcp", "status"}, {"gcp", "status", "--project", "p", "--nope"}, {"gcp", "status", "--project", "p", "extra"}} {
+	for _, args := range [][]string{{"gcp", "routers", "show"}, {"gcp", "routers", "show", "--project", "p", "--nope"}, {"gcp", "routers", "show", "--project", "p", "extra"}} {
 		calls, errs, exit := gcpRan(t, 0, args...)
 		if exit != 2 || len(calls) != 0 || errs == "" {
 			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
@@ -225,7 +225,7 @@ func TestGcpStatusExitCodes(t *testing.T) {
 }
 
 func TestGcpStatusIsWiredInTheRoot(t *testing.T) {
-	out, _, code := executed(t, build{}, "gcp", "status", "--help")
+	out, _, code := executed(t, build{}, "gcp", "routers", "show", "--help")
 	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--json"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
@@ -234,7 +234,7 @@ func TestGcpStatusIsWiredInTheRoot(t *testing.T) {
 }
 
 func TestGcpUninstallFlagsReadIntoTheRequest(t *testing.T) {
-	calls, errs, exit := gcpRan(t, 0, "gcp", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--force", "--dry-run", "--gcloud-configuration", "c")
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--force", "--dry-run", "--gcloud-configuration", "c")
 	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "uninstall" {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
@@ -245,13 +245,13 @@ func TestGcpUninstallFlagsReadIntoTheRequest(t *testing.T) {
 }
 
 func TestGcpUninstallExitCodes(t *testing.T) {
-	if _, _, exit := gcpRan(t, 1, "gcp", "uninstall", "--project", "p", "--region", "europe-west1"); exit != 1 {
+	if _, _, exit := gcpRan(t, 1, "gcp", "routers", "uninstall", "--project", "p", "--region", "europe-west1"); exit != 1 {
 		t.Fatalf("exit %d", exit)
 	}
 	for _, args := range [][]string{
-		{"gcp", "uninstall", "--region", "europe-west1"},
-		{"gcp", "uninstall", "--project", "p"},
-		{"gcp", "uninstall", "--project", "p", "--region", "europe-west1", "--nope"},
+		{"gcp", "routers", "uninstall", "--region", "europe-west1"},
+		{"gcp", "routers", "uninstall", "--project", "p"},
+		{"gcp", "routers", "uninstall", "--project", "p", "--region", "europe-west1", "--nope"},
 	} {
 		calls, errs, exit := gcpRan(t, 0, args...)
 		if exit != 2 || len(calls) != 0 || errs == "" {
@@ -261,7 +261,7 @@ func TestGcpUninstallExitCodes(t *testing.T) {
 }
 
 func TestGcpUninstallIsWiredInTheRoot(t *testing.T) {
-	out, _, code := executed(t, build{}, "gcp", "uninstall", "--help")
+	out, _, code := executed(t, build{}, "gcp", "routers", "uninstall", "--help")
 	for _, flag := range []string{"--project", "--region", "--gcloud-configuration", "--yes", "--dry-run", "--force"} {
 		if code != 0 || !strings.Contains(out, flag) {
 			t.Errorf("%d %s lacks %s", code, out, flag)
@@ -270,12 +270,12 @@ func TestGcpUninstallIsWiredInTheRoot(t *testing.T) {
 }
 
 func TestGcpWithIsCommaSeparatedAndRepeatable(t *testing.T) {
-	for _, cmd := range []string{"check", "install", "uninstall"} {
-		calls, errs, exit := gcpRan(t, 0, "gcp", cmd, "--project", "p", "--region", "europe-west1", "--with", "cloud-sql,gke", "--with", "gke")
+	for _, cmd := range []string{"check", "routers install", "routers uninstall"} {
+		calls, errs, exit := gcpRan(t, 0, append(append([]string{"gcp"}, strings.Fields(cmd)...), "--project", "p", "--region", "europe-west1", "--with", "cloud-sql,gke", "--with", "gke")...)
 		if exit != 0 || errs != untriedWarning || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.With, []string{"cloud-sql", "gke", "gke"}) {
 			t.Errorf("%s: %d %q %+v", cmd, exit, errs, calls)
 		}
-		calls, _, _ = gcpRan(t, 0, "gcp", cmd, "--project", "p", "--region", "europe-west1")
+		calls, _, _ = gcpRan(t, 0, append(append([]string{"gcp"}, strings.Fields(cmd)...), "--project", "p", "--region", "europe-west1")...)
 		if len(calls) != 1 || calls[0].r.With != nil {
 			t.Errorf("%s without --with: %+v", cmd, calls)
 		}
@@ -283,13 +283,13 @@ func TestGcpWithIsCommaSeparatedAndRepeatable(t *testing.T) {
 }
 
 func TestGcpInstallIPListFlagsReadIntoTheRequest(t *testing.T) {
-	calls, errs, exit := gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1",
+	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "install", "--project", "p", "--region", "europe-west1",
 		"--ip-list", "name=scanners,url=https://example.com/s.txt", "--ip-list", "name=bots,url=http://example.com/b.txt?a=1,refresh=6")
 	want := []gcponboard.IPList{{Name: "scanners", URL: "https://example.com/s.txt", RefreshHours: 24}, {Name: "bots", URL: "http://example.com/b.txt?a=1", RefreshHours: 6}}
 	if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.IPLists, want) || calls[0].r.NoIPLists {
 		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
-	calls, _, exit = gcpRan(t, 0, "gcp", "install", "--project", "p", "--region", "europe-west1", "--no-ip-lists")
+	calls, _, exit = gcpRan(t, 0, "gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "--no-ip-lists")
 	if exit != 0 || len(calls) != 1 || !calls[0].r.NoIPLists || calls[0].r.IPLists != nil {
 		t.Fatalf("%d %+v", exit, calls)
 	}
@@ -307,7 +307,7 @@ func TestGcpInstallCustomPagesReadIntoTheRequest(t *testing.T) {
 		{[]string{"--custom-pages=true"}, &on},
 		{[]string{"--custom-pages=false"}, &off},
 	} {
-		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "install", "--project", "p", "--region", "europe-west1"}, tc.flags...)...)
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "install", "--project", "p", "--region", "europe-west1"}, tc.flags...)...)
 		if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.CustomPages, tc.want) {
 			t.Fatalf("%v: %d %q %+v", tc.flags, exit, errs, calls)
 		}
@@ -315,7 +315,7 @@ func TestGcpInstallCustomPagesReadIntoTheRequest(t *testing.T) {
 }
 
 func TestGcpInstallHelpNamesCustomPages(t *testing.T) {
-	out, _, code := executed(t, build{}, "gcp", "install", "--help")
+	out, _, code := executed(t, build{}, "gcp", "routers", "install", "--help")
 	for _, want := range []string{"--custom-pages", "DMT_CUSTOM_PAGES", "--custom-pages=false"} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Errorf("%d: lacks %q in:\n%s", code, want, out)
@@ -333,7 +333,7 @@ func TestGcpInstallRefusesABadIPListBeforeAnyRun(t *testing.T) {
 		{"--ip-list", "name=a,url=https://example.com", "--ip-list", "name=a,url=https://example.org"},
 		{"--ip-list", "name=a,url=https://example.com", "--no-ip-lists"},
 	} {
-		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "install", "--project", "p", "--region", "europe-west1"}, args...)...)
+		calls, errs, exit := gcpRan(t, 0, append([]string{"gcp", "routers", "install", "--project", "p", "--region", "europe-west1"}, args...)...)
 		if exit != 2 || len(calls) != 0 || errs == "" {
 			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
 		}
@@ -346,8 +346,8 @@ const untriedWarning = ""
 func TestGcpNoLongerWarnsOfCloudSQLAndGKE(t *testing.T) {
 	for name, args := range map[string][]string{
 		"check --with":      {"gcp", "check", "--project", "p", "--with", "cloud-sql"},
-		"install --with":    {"gcp", "install", "--project", "p", "--region", "europe-west1", "--yes", "--with", "cloud-sql,gke"},
-		"uninstall --with":  {"gcp", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--with", "gke"},
+		"install --with":    {"gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "--yes", "--with", "cloud-sql,gke"},
+		"uninstall --with":  {"gcp", "routers", "uninstall", "--project", "p", "--region", "europe-west1", "--yes", "--with", "gke"},
 		"onboard cloud-sql": {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--cloud-sql", "db"},
 		"onboard gke":       {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c"},
 		"onboard both":      {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b", "--gke-cluster", "z/c", "--cloud-sql", "a", "--cloud-sql", "b2"},
@@ -369,7 +369,7 @@ func TestGcpNoLongerWarnsOfCloudSQLAndGKE(t *testing.T) {
 func TestGcpDoesNotWarnWithoutThoseFlags(t *testing.T) {
 	for name, args := range map[string][]string{
 		"check":   {"gcp", "check", "--project", "p"},
-		"install": {"gcp", "install", "--project", "p", "--region", "europe-west1", "--yes"},
+		"install": {"gcp", "routers", "install", "--project", "p", "--region", "europe-west1", "--yes"},
 		"onboard": {"gcp", "workloads", "onboard", "--project", "p", "--region", "r", "--url-map", "m", "--backend-service", "b"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -496,5 +496,63 @@ func TestGcpRoutersPauseAndResumeTakeDryRunAndYes(t *testing.T) {
 	calls, errs, exit = gcpRan(t, 0, "gcp", "routers", "resume", "--project", "p", "--region", "europe-west1", "--dry-run", "--yes")
 	if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.DryRun || !calls[0].r.Yes {
 		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+}
+
+const gcpMoved = "dormeto: \"dormeto gcp %s\" is now \"dormeto gcp routers %s\"; the old name goes in a later release.\n"
+
+// A script written for 0.11.0 runs the old names, hidden, with one notice line and the new form's run and exit code.
+func TestGcpOldInstallUninstallAndStatusRunAsTheRoutersCommandsWithOneNotice(t *testing.T) {
+	for _, tc := range []struct{ old, new, run string }{{"install", "install", "install"}, {"uninstall", "uninstall", "uninstall"}, {"status", "show", "status"}} {
+		for _, code := range []int{0, 1} {
+			args := []string{"--project", "p", "--region", "europe-west1"}
+			oldCalls, oldErr, oldExit := gcpRan(t, code, append([]string{"gcp", tc.old}, args...)...)
+			newCalls, newErr, newExit := gcpRan(t, code, append([]string{"gcp", "routers", tc.new}, args...)...)
+			if oldExit != code || newExit != code || len(oldCalls) != 1 || len(newCalls) != 1 || oldCalls[0].run != tc.run || !reflect.DeepEqual(oldCalls[0].r, newCalls[0].r) {
+				t.Errorf("%s: old exit %d calls %+v, new exit %d calls %+v", tc.old, oldExit, oldCalls, newExit, newCalls)
+			}
+			if want := fmt.Sprintf(gcpMoved, tc.old, tc.new); oldErr != want || newErr != "" {
+				t.Errorf("%s: old stderr %q (want %q), new %q", tc.old, oldErr, want, newErr)
+			}
+		}
+	}
+}
+
+func TestGcpHelpOfAnOldNameSaysItAndGivesTheNewOnes(t *testing.T) {
+	oldOut, oldErr, oldCode := executed(t, build{}, "help", "gcp", "install")
+	newOut, newErr, newCode := executed(t, build{}, "help", "gcp", "routers", "install")
+	if oldOut != newOut || oldCode != newCode || oldErr != fmt.Sprintf(gcpMoved, "install", "install")+newErr {
+		t.Errorf("old %d %q %q, new %d %q %q", oldCode, oldOut, oldErr, newCode, newOut, newErr)
+	}
+	_, errs, _ := executed(t, build{}, "gcp", "status", "--help")
+	if errs != fmt.Sprintf(gcpMoved, "status", "show") {
+		t.Errorf("stderr %q", errs)
+	}
+}
+
+func TestGcpHelpListsRoutersNotTheOldNamesAndSaysWhereTheManagersCommandsAre(t *testing.T) {
+	out, errs, code := executed(t, build{}, "gcp", "--help")
+	if code != 0 || errs != "" {
+		t.Fatalf("%d %q", code, errs)
+	}
+	for _, old := range []string{"install", "uninstall", "status"} {
+		if strings.Contains(out, "\n  "+old+" ") {
+			t.Errorf("the old %q is listed:\n%s", old, out)
+		}
+	}
+	if !strings.Contains(out, "\n  routers ") || strings.Count(out, "dormeto aws") != 1 {
+		t.Errorf("routers, or one mention of dormeto aws, missing:\n%s", out)
+	}
+}
+
+func TestTheGcpRoutersCommandListsInstallUninstallAndShow(t *testing.T) {
+	out, _, _ := executed(t, build{}, "gcp", "routers", "--help")
+	for _, want := range []string{"install", "uninstall", "show"} {
+		if !strings.Contains(out, "\n  "+want+" ") {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "gcp status") {
+		t.Errorf("the old name in\n%s", out)
 	}
 }

@@ -1,6 +1,6 @@
 package gcponboard
 
-// The router's custom waiting pages switch (`dormeto gcp install --custom-pages`, `--custom-pages=false`): written as
+// The router's custom waiting pages switch (`dormeto gcp routers install --custom-pages`, `--custom-pages=false`): written as
 // DMT_CUSTOM_PAGES=1 on both Cloud Run services and in the install record (customPages), absent when off. Custom HTML runs
 // on the application's address, and on Google Cloud anyone who can invoke the controller is an operator, so the pages are
 // off unless an administrator's install turns them on (vision design 2026-11-08 §5.2). Off, the router refuses a custom

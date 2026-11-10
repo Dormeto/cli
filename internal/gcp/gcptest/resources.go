@@ -1,6 +1,6 @@
 package gcptest
 
-// The resources of `dormeto gcp install`: custom roles, service accounts, tags, Firestore, Cloud Tasks, their policies
+// The resources of `dormeto gcp routers install`: custom roles, service accounts, tags, Firestore, Cloud Tasks, their policies
 // and the long-running operations. Every handler here runs under the server's lock.
 
 import (

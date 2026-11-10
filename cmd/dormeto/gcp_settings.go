@@ -118,8 +118,8 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 
 func newGcpRouters(runs gcpRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "routers", Short: "The Dormeto router of a region in Google Cloud", Args: noArgs, SilenceErrors: true,
-		Long: "The settings, pause and waiting page of the router dmtr-<region>. Its status is `dormeto gcp status`."}
-	cmd.AddCommand(newGcpRoutersSettings(runs.routerSettings, version), newGcpRoutersPause(runs.routerPause, version), newGcpRoutersResume(runs.routerResume, version),
+		Long: "Install, uninstall, show, settings, pause and waiting page of the router dmtr-<region> of a project."}
+	cmd.AddCommand(newGcpInstall(runs.install, version), newGcpUninstall(runs.uninstall, version), newGcpStatus(runs.status, "show", version), newGcpRoutersSettings(runs.routerSettings, version), newGcpRoutersPause(runs.routerPause, version), newGcpRoutersResume(runs.routerResume, version),
 		newGcpWaitingPage(runs.routerPage, version, false))
 	return cmd
 }

@@ -115,7 +115,7 @@ func (x *run) useRouter() error {
 		x.setAccessOnly(false)
 		return x.usePublic(x.r.Version)
 	case x.r.AccessOnly && x.rec.Image != "":
-		return &stop{2, fmt.Sprintf("--access-only: router %s is installed, version %s, and the install removes no router: dormeto gcp uninstall removes it with its access.\nNothing was changed.",
+		return &stop{2, fmt.Sprintf("--access-only: router %s is installed, version %s, and the install removes no router: dormeto gcp routers uninstall removes it with its access.\nNothing was changed.",
 			x.n.router, x.rec.RouterVersion)}
 	case x.r.AccessOnly:
 		x.setAccessOnly(true)
@@ -123,7 +123,7 @@ func (x *run) useRouter() error {
 	// An older CLI's finished install without an image ran without --image, as the docs said then: the access only. An
 	// unfinished one goes on as a first install.
 	case x.rec.AccessOnly, x.recorded && !x.resumed && x.rec.Image == "":
-		x.notice("the router isn't installed: dormeto gcp install --version %s", def)
+		x.notice("the router isn't installed: dormeto gcp routers install --version %s", def)
 		return nil
 	case x.rec.Image != "" && x.rec.Digest == "":
 		return x.keepOwnImage(def)
@@ -142,7 +142,7 @@ func (x *run) keepOwnImage(def string) error {
 	x.r.Image, x.image, x.version, x.keepsRouter = x.rec.Image, x.rec.Image, tag, true
 	x.say("Using the recorded image %s.", x.image)
 	if !install.IsVersion(tag) || install.CompareVersions(tag, def) <= 0 {
-		x.notice("router %s is available: dormeto gcp install --version %s", def, def)
+		x.notice("router %s is available: dormeto gcp routers install --version %s", def, def)
 	}
 	if err := x.requireRouter(); err != nil {
 		return err
@@ -214,7 +214,7 @@ func (x *run) installCommand(flags, image string) string {
 		rec = &read
 	}
 	if rec.Image != "" && rec.Digest == "" {
-		return "dormeto gcp install " + flags + " --image " + image
+		return "dormeto gcp routers install " + flags + " --image " + image
 	}
-	return "dormeto gcp install " + flags + " --version " + embeddedRouterVersion()
+	return "dormeto gcp routers install " + flags + " --version " + embeddedRouterVersion()
 }

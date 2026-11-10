@@ -834,7 +834,7 @@ func (x *run) grantWarnings() []string {
 
 // installWith is the command that adds features to the router.
 func (x *run) installWith(features ...string) string {
-	hint := fmt.Sprintf("dormeto gcp install --project %s --region %s --with %s", x.n.project, x.n.region, strings.Join(features, ","))
+	hint := fmt.Sprintf("dormeto gcp routers install --project %s --region %s --with %s", x.n.project, x.n.region, strings.Join(features, ","))
 	if x.r.Configuration != "" {
 		hint += " --gcloud-configuration " + x.r.Configuration
 	}
@@ -842,7 +842,7 @@ func (x *run) installWith(features ...string) string {
 }
 
 func (x *run) noRouter() error {
-	return &stop{1, fmt.Sprintf("No router %s is installed in project %s: there is no install record. Run dormeto gcp install first.\nNothing was changed.", x.n.router, x.n.project)}
+	return &stop{1, fmt.Sprintf("No router %s is installed in project %s: there is no install record. Run dormeto gcp routers install first.\nNothing was changed.", x.n.router, x.n.project)}
 }
 
 func (x *run) accessGrant() error {

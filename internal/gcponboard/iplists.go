@@ -1,6 +1,6 @@
 package gcponboard
 
-// The router's IP lists (`dormeto gcp install --ip-list name=<n>,url=<u>[,refresh=<hours>]`, `--no-ip-lists`): written
+// The router's IP lists (`dormeto gcp routers install --ip-list name=<n>,url=<u>[,refresh=<hours>]`, `--no-ip-lists`): written
 // as DMT_IP_LISTS on both Cloud Run services and in the install record. Only the action ignore exists on Google Cloud
 // (design §5): in the shared classifier, defer means "only the waiting page's probe wakes", and here every wake already
 // is the probe's. A list's name becomes a Firestore document ID, hence its pattern.

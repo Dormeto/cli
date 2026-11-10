@@ -574,7 +574,7 @@ func TestRbacGrantWithoutARouterIsRefused(t *testing.T) {
 	r := shopAccess
 	r.Region = "europe-north1"
 	code, out := g.call(t, WorkloadsAccessGrant, r)
-	if code != 1 || !strings.Contains(out, "dmtr-europe-north1") || !strings.Contains(out, "dormeto gcp install") || !strings.Contains(out, "Nothing was changed.") {
+	if code != 1 || !strings.Contains(out, "dmtr-europe-north1") || !strings.Contains(out, "dormeto gcp routers install") || !strings.Contains(out, "Nothing was changed.") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if c := g.k.callList(); len(c) != 0 {
@@ -1780,7 +1780,7 @@ func TestRbacGrantWarnsWhenTheRecordLacksTheFeatureGke(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	warning := "  ! the install record lacks the feature gke: router dmtr-europe-west1 holds no container.clusters.connect, so its calls to this cluster would answer 403, whatever this Role allows. Add it with: dormeto gcp install --project dormeto-dev --region europe-west1 --with gke\n"
+	warning := "  ! the install record lacks the feature gke: router dmtr-europe-west1 holds no container.clusters.connect, so its calls to this cluster would answer 403, whatever this Role allows. Add it with: dormeto gcp routers install --project dormeto-dev --region europe-west1 --with gke\n"
 	if i := strings.Index(out, warning); i < 0 || i > strings.Index(out, "[y/N]") {
 		t.Errorf("not said before asking:\n%s", out)
 	}

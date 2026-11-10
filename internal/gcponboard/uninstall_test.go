@@ -970,7 +970,7 @@ func TestUninstallForceWithABrokenControllerNamesTheWayOutOfANetworkEndpointGrou
 			t.Fatalf("exit %d:\n%s", code, out)
 		}
 		contains(t, out, "  ✗ neg: ", "already being used",
-			"dormeto gcp install --project dormeto-dev --region europe-west1 --gcloud-configuration c --image <a good image>",
+			"dormeto gcp routers install --project dormeto-dev --region europe-west1 --gcloud-configuration c --image <a good image>",
 			"dormeto gcp workloads offboard <workload> --project dormeto-dev --region europe-west1 --gcloud-configuration c")
 	}
 }
@@ -987,7 +987,7 @@ func TestUninstallForceWithABrokenControllerOfThePublicImageNamesTheVersion(t *t
 	if code != 1 || strings.Contains(out, "--image") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "The way out: install the router again (dormeto gcp install --project dormeto-dev --region europe-west1 --gcloud-configuration c --version "+embeddedRouterVersion()+")")
+	contains(t, out, "The way out: install the router again (dormeto gcp routers install --project dormeto-dev --region europe-west1 --gcloud-configuration c --version "+embeddedRouterVersion()+")")
 }
 
 func TestUninstallDoesNotNameThatWayOutWhenTheControllerAnswers(t *testing.T) {

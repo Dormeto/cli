@@ -27,7 +27,7 @@ type Skip struct {
 // given, as the manager and the dashboard say it: the manager's operations don't change a project's services (the manager
 // never changes Google Cloud).
 func GcpInstallCommand(r Router, version string) string {
-	command := fmt.Sprintf("dormeto gcp install --project %s --region %s", r.Account, r.Region)
+	command := fmt.Sprintf("dormeto gcp routers install --project %s --region %s", r.Account, r.Region)
 	if version != "" {
 		command += " --version " + version
 	}

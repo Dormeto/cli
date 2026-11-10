@@ -3,7 +3,7 @@
 // host and path, holds state the tests set and inspect, and records the calls made. Tasks that need more resources add
 // routes with Route.
 //
-// Besides the project (its IAM policy, its permissions, its services, its billing), it holds what `dormeto gcp install`
+// Besides the project (its IAM policy, its permissions, its services, its billing), it holds what `dormeto gcp routers install`
 // creates: custom roles, service accounts, tag keys and values, Firestore databases and documents, Cloud Tasks queues,
 // Cloud Run services, serverless network endpoint groups, Cloud Scheduler jobs, the log views of the _Default bucket, the
 // policies of service accounts, queues and services, and long-running operations, done after OperationPolls polls; the

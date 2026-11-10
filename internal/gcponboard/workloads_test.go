@@ -514,7 +514,7 @@ func TestWorkloadsOnboardStopsWhenTheDryRunIgnoresTheLoadBalancer(t *testing.T) 
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "--load-balancer", "0.35.0", "Nothing was changed.",
-		"Install a newer router first: dormeto gcp install --project dormeto-dev --region europe-west1 --image <the router's image, 0.35.0 or later>.\n")
+		"Install a newer router first: dormeto gcp routers install --project dormeto-dev --region europe-west1 --image <the router's image, 0.35.0 or later>.\n")
 	if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 {
 		t.Fatalf("changes %v", m)
 	}
@@ -551,7 +551,7 @@ func TestWorkloadsOnboardNeedsTheInstalledTag(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "dormeto/managed", "dormeto gcp install")
+	contains(t, out, "dormeto/managed", "dormeto gcp routers install")
 	if len(g.s.Workloads) != 0 {
 		t.Fatal("onboarded")
 	}
@@ -1202,7 +1202,7 @@ func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "windows[0].repeat: unknown field; windows[0].from: unknown field\n",
-		"Recurrences and joined windows need a router of version 0.36.0 or later. Upgrade it with: dormeto gcp install --project "+r.Project+" --region "+r.Region+" --image <the router's image, 0.36.0 or later>")
+		"Recurrences and joined windows need a router of version 0.36.0 or later. Upgrade it with: dormeto gcp routers install --project "+r.Project+" --region "+r.Region+" --image <the router's image, 0.36.0 or later>")
 	// This router's own refusal, in a recurrence: its words alone.
 	g.s.ScheduleProblem = "windows[0].repeat.cron: five fields: minute hour day-of-month month day-of-week"
 	code, out = g.call(t, WorkloadsScheduleSet, r)
@@ -1611,7 +1611,7 @@ func TestWorkloadsOnboardNeedsTheFeaturesOfItsFlagsInTheRecord(t *testing.T) {
 			t.Errorf("%s: exit %d:\n%s", name, code, out)
 			continue
 		}
-		contains(t, out, "dormeto gcp install --project dormeto-dev --region europe-west1 "+c.want+"--gcloud-configuration c", "Nothing was changed.")
+		contains(t, out, "dormeto gcp routers install --project dormeto-dev --region europe-west1 "+c.want+"--gcloud-configuration c", "Nothing was changed.")
 		if m := g.changes(mark); len(m) != 0 {
 			t.Errorf("%s: changes %v", name, m)
 		}
@@ -2712,7 +2712,7 @@ func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *te
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "does not answer", "may not be offboarded", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db",
-		"installing the router again brings it back: dormeto gcp install --project dormeto-dev --region europe-west1 --image <a good image>")
+		"installing the router again brings it back: dormeto gcp routers install --project dormeto-dev --region europe-west1 --image <a good image>")
 	if len(g.bindings()) != 2 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -3219,7 +3219,7 @@ func TestWorkloadsHintsOnARouterOfThePublicImageNameTheVersion(t *testing.T) {
 	if install.CompareVersions(def, minRouterVersion) < 0 || install.CompareVersions(def, schedule.RecurrenceRouter) < 0 {
 		t.Fatalf("the CLI's router %s is older than what the hints need", def)
 	}
-	upgrade := "dormeto gcp install --project dormeto-dev --region europe-west1 --version " + def
+	upgrade := "dormeto gcp routers install --project dormeto-dev --region europe-west1 --version " + def
 	t.Run("recurrences", func(t *testing.T) {
 		g := newPublicWorkloadsRig(t)
 		g.s.Workloads["shop"] = "AWAKE"
@@ -3462,7 +3462,7 @@ func TestWorkloadsOnboardNameOrTagsOnARouterBelow040IsRefusedBeforeAnyChange(t *
 			if code != 1 {
 				t.Fatalf("%s, dry run %t: exit %d:\n%s", flags, dry, code, out)
 			}
-			contains(t, out, "Router dmtr-europe-west1 is 0.39.9-dev.2, older than 0.40.0, which reads "+flags+". Install a newer router first: dormeto gcp install --project dormeto-dev --region europe-west1 ",
+			contains(t, out, "Router dmtr-europe-west1 is 0.39.9-dev.2, older than 0.40.0, which reads "+flags+". Install a newer router first: dormeto gcp routers install --project dormeto-dev --region europe-west1 ",
 				"\nNothing was changed.\n")
 			if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 {
 				t.Errorf("%s, dry run %t: changes %v, bindings %v", flags, dry, m, g.bindings())
@@ -3609,7 +3609,7 @@ func TestRouterPauseAndResumeSayAnOlderRouterByItsVersion(t *testing.T) {
 	g.s.HealthVersion = "0.39.0"
 	r := workloadsEurope
 	r.Reason = "x"
-	want := "router 0.39.0 doesn't have the router's pause: dormeto gcp install --version " + embeddedRouterVersion()
+	want := "router 0.39.0 doesn't have the router's pause: dormeto gcp routers install --version " + embeddedRouterVersion()
 	for name, run := range map[string]func(context.Context, Deps, Request) int{"pause": RouterPause, "resume": RouterResume} {
 		if code, out := g.call(t, run, r); code != 1 || !strings.Contains(out, want) {
 			t.Errorf("%s: exit %d, want %q in:\n%s", name, code, want, out)

@@ -1,6 +1,6 @@
 package gcponboard
 
-// `dormeto gcp uninstall`: removes exactly what `dormeto gcp install` added (spec §5), from the install record. It checks
+// `dormeto gcp routers uninstall`: removes exactly what `dormeto gcp routers install` added (spec §5), from the install record. It checks
 // the caller's permissions (with --force the offboard command's too: a ✗ stops it before any change), reads the record,
 // refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
 // removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
@@ -28,7 +28,7 @@ import (
 	"github.com/Dormeto/cli/internal/install"
 )
 
-// Uninstall is `dormeto gcp uninstall`: 0 when uninstalled (or the plan only, with DryRun, or declined), 1 when a check
+// Uninstall is `dormeto gcp routers uninstall`: 0 when uninstalled (or the plan only, with DryRun, or declined), 1 when a check
 // fails, workloads are onboarded without Force, there is no router or Google refuses, 2 for a bad region or no --yes
 // without a terminal, 130 when interrupted.
 func Uninstall(ctx context.Context, d Deps, r Request) int {
@@ -110,7 +110,7 @@ func (x *run) uninstallChecks() error {
 	}
 	// An API that is off has no resource to remove: reading one is a miss, not a wait for Google to propagate it.
 	x.number, x.turningOn = rep.Project.Number, rep.APIs.Missing
-	x.say("Checked: %s holds every permission dormeto gcp uninstall needs in project %s.", rep.Account, x.n.project)
+	x.say("Checked: %s holds every permission dormeto gcp routers uninstall needs in project %s.", rep.Account, x.n.project)
 	return nil
 }
 

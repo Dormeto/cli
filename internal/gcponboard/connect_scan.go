@@ -297,7 +297,7 @@ func (x *link) findTagValues(required bool) error {
 		}
 		if required {
 			region := x.routers[slices.IndexFunc(x.routers, func(r fleet.GoogleRouter) bool { return r.Project == p })].Region
-			return &stop{1, fmt.Sprintf("router dmtr-%s of project %s has no tag value %s/dormeto/managed: dormeto gcp install --project %s --region %s creates it\nNothing was changed.",
+			return &stop{1, fmt.Sprintf("router dmtr-%s of project %s has no tag value %s/dormeto/managed: dormeto gcp routers install --project %s --region %s creates it\nNothing was changed.",
 				region, p, p, p, region)}
 		}
 	}

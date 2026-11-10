@@ -77,7 +77,7 @@ func TestWorkloadsOnboardRequestLogsOnARouterBelow038IsRefusedBeforeAnyChange(t 
 			if code != 2 {
 				t.Fatalf("%s, dry run %t: exit %d:\n%s", version, dry, code, out)
 			}
-			contains(t, out, "--request-logs needs router 0.38.0 or later: dormeto gcp install --version "+embeddedRouterVersion()+"\n", "Nothing was changed.\n")
+			contains(t, out, "--request-logs needs router 0.38.0 or later: dormeto gcp routers install --version "+embeddedRouterVersion()+"\n", "Nothing was changed.\n")
 			if m := g.changes(mark); len(m) != 1 || len(g.bindings()) != 0 || len(g.patches(mark)) != 0 {
 				t.Errorf("%s, dry run %t: changes %v, bindings %v", version, dry, m, g.bindings())
 			}

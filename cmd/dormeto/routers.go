@@ -108,7 +108,7 @@ func newRoutersInstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if region == "" {
 					region = "<region>"
 				}
-				err = usagef("--account: %s is a Google Cloud project, whose routers the manager does not install: run dormeto gcp install --project %s --region %s", account, account, region)
+				err = usagef("--account: %s is a Google Cloud project, whose routers the manager does not install: run dormeto gcp routers install --project %s --region %s", account, account, region)
 			}
 			if err == nil && !discover.IsAccountID(account) {
 				err = usagef("--account: %q is not 12 digits", account)
@@ -208,7 +208,7 @@ func skipGoogleCloud(ctx context.Context, c *cobra.Command, api *fleet.Client, n
 			continue
 		}
 		r := routers.Rows[i]
-		fmt.Fprintf(c.ErrOrStderr(), "%s: a Google Cloud router: uninstall it with dormeto gcp uninstall --project %s --region %s\n", name, r.Account, r.Region)
+		fmt.Fprintf(c.ErrOrStderr(), "%s: a Google Cloud router: uninstall it with dormeto gcp routers uninstall --project %s --region %s\n", name, r.Account, r.Region)
 	}
 	return kept
 }

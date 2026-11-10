@@ -420,3 +420,22 @@ func (d DiscoveryConfig) Text() string {
 	}
 	return string(config) + "\n"
 }
+
+// OnlyCloud is the report with the accounts of one cloud (aws or gcp; "" keeps both), their raw rows with them; the
+// counts and the rest stay the whole report's.
+func (r AccessReport) OnlyCloud(cloud string) AccessReport {
+	if cloud == "" {
+		return r
+	}
+	accounts, rows := []AccessRow{}, []json.RawMessage{}
+	for i, a := range r.Accounts {
+		if a.cloud() == cloud {
+			accounts = append(accounts, a)
+			if i < len(r.rows) {
+				rows = append(rows, r.rows[i])
+			}
+		}
+	}
+	r.Accounts, r.rows = accounts, rows
+	return r
+}

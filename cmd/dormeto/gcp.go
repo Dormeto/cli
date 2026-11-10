@@ -43,11 +43,28 @@ var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install
 
 // newGcp is the gcp commands; connect and disconnect reach the manager with the fleet commands' dependencies.
 func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
-	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud", Args: noArgs, SilenceErrors: true}
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpInstall(runs.install, version), newGcpStatus(runs.status, version), newGcpUninstall(runs.uninstall, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
+	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud: the routers and the workloads' onboarding", Args: noArgs, SilenceErrors: true,
+		Long: "Dormeto in Google Cloud: the routers (install, uninstall, show, settings, pause, waiting page), the workloads'\n" +
+			"onboarding and the manager's connection to a project. The manager's own commands (routers list, workloads list,\n" +
+			"savings, users...) serve AWS and Google Cloud and live under `dormeto aws`.\n\n" + regionRule}
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
 		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
+	// The 0.11.0 names, hidden, run as the new ones with a notice (execute).
+	for _, old := range []struct {
+		cmd *cobra.Command
+		to  string
+	}{{newGcpInstall(runs.install, version), "gcp routers install"}, {newGcpStatus(runs.status, "status", version), "gcp routers show"}, {newGcpUninstall(runs.uninstall, version), "gcp routers uninstall"}} {
+		old.cmd.Hidden = true
+		old.cmd.Annotations = map[string]string{movedAnnotation: old.to}
+		cmd.AddCommand(old.cmd)
+	}
 	return cmd
 }
+
+// regionRule is §4.1's rule of --region, said in both subtrees' help: the manager's --region is where its API is
+// (the manager's region), a router's is where the router runs.
+const regionRule = "--region: on the manager's commands it is the manager's own region; on a router's commands\n" +
+	"(dormeto gcp routers, dormeto gcp workloads) it is the router's, a Google Cloud region such as europe-west1."
 
 // gcpFlags are the flags of the gcp commands.
 type gcpFlags struct {
@@ -200,9 +217,9 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 	return cmd
 }
 
-func newGcpStatus(run gcpRun, version string) *cobra.Command {
+func newGcpStatus(run gcpRun, name, version string) *cobra.Command {
 	var f gcpFlags
-	cmd := gcpCommand("status", "Show a project's Dormeto routers: their install records and live states (read-only)",
+	cmd := gcpCommand(name, "Show a project's Dormeto routers: their install records and live states (read-only)",
 		"Show, read-only, the Dormeto router of a project and region, or every router of the project without --region:\n"+
 			"what its install record says (version, image, who installed it, the bindings Google added), and the live state of\n"+
 			"its Cloud Run services, the controller's health, its network endpoint group, queue, job, database and grants. Exit 1\n"+
@@ -215,8 +232,8 @@ func newGcpStatus(run gcpRun, version string) *cobra.Command {
 
 func newGcpUninstall(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	cmd := gcpCommand("uninstall", "Remove what dormeto gcp install added for a router in a Google Cloud project and region",
-		"Remove exactly what dormeto gcp install added for the router dmtr-<region>, from its install record: the check job,\n"+
+	cmd := gcpCommand("uninstall", "Remove what dormeto gcp routers install added for a router in a Google Cloud project and region",
+		"Remove exactly what dormeto gcp routers install added for the router dmtr-<region>, from its install record: the check job,\n"+
 			"the waker's network endpoint group, the Cloud Run services, the queue, the database with the record, the grants it\n"+
 			"added to the project (never a binding that existed before it, nor someone else's member of a role), the secure tag,\n"+
 			"the service account and the custom roles dormetoRouter and dormetoRouterBackends. The roles and the tag stay while\n"+

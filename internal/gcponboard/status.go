@@ -1,6 +1,6 @@
 package gcponboard
 
-// `dormeto gcp status`: a project's routers, one for --region, else one for each database named dmtr-<region>: what the
+// `dormeto gcp routers show`: a project's routers, one for --region, else one for each database named dmtr-<region>: what the
 // install record says (its IP lists and Kubernetes access too), and what Google and the controller answer now. It reads; it never writes. Exit 0 when every
 // router is as recorded; 1 when one is not, there is none, or Google refuses; 2 for a bad region.
 
@@ -371,7 +371,7 @@ func PrintStatus(w io.Writer, rep StatusReport) error {
 	return err
 }
 
-// RunStatus is `dormeto gcp status`: the report printed, and the exit code.
+// RunStatus is `dormeto gcp routers show`: the report printed, and the exit code.
 func RunStatus(ctx context.Context, d Deps, r Request) int {
 	if r.Region != "" {
 		x := newRun(ctx, d, r)

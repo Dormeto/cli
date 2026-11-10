@@ -37,7 +37,7 @@ func (e exitCode) Error() string { return fmt.Sprintf("exit code %d", int(e)) }
 // default is the process's).
 func execute(root *cobra.Command, args ...string) int {
 	if len(args) > 0 {
-		args = runAsAws(root, args)
+		args = runMoved(root, args)
 		root.SetArgs(args)
 	}
 	err := root.Execute()
@@ -51,29 +51,41 @@ func execute(root *cobra.Command, args ...string) int {
 	return 0
 }
 
-// movedAnnotation marks the hidden top-level commands that moved under the command it names.
+// movedAnnotation marks a hidden command that moved: its value is the whole new path, below dormeto (a top-level
+// command to `aws <name>`, `gcp install` to `gcp routers install`).
 const movedAnnotation = "moved-to"
 
-// runAsAws runs an old top-level name as the new one: when the command line (or `help` of it) starts with a hidden
-// top-level command that moved under aws, it says so once on stderr and gives the line with aws put before the name.
-// The new form's tree answers, so its output is the new form's, with the new names in its usage.
-func runAsAws(root *cobra.Command, args []string) []string {
-	at := slices.IndexFunc(args, func(a string) bool { return !strings.HasPrefix(a, "-") })
-	if at < 0 {
+// runMoved runs an old command as the new one: when the command line (or `help` of it) goes down the tree to a hidden
+// command that moved, it says so once on stderr and gives the line with the old path replaced by the new one. The new
+// form's tree answers, so its output is the new form's, with the new names in its usage.
+func runMoved(root *cobra.Command, args []string) []string {
+	start := slices.IndexFunc(args, func(a string) bool { return !strings.HasPrefix(a, "-") })
+	if start < 0 {
 		return args
 	}
-	if args[at] == "help" {
-		at++
+	if args[start] == "help" {
+		start++
 	}
-	if at >= len(args) {
-		return args
-	}
-	for _, c := range root.Commands() {
-		if c.Annotations[movedAnnotation] == "" || (c.Name() != args[at] && !slices.Contains(c.Aliases, args[at])) {
+	cur := root
+	for at := start; at < len(args); at++ {
+		if strings.HasPrefix(args[at], "-") {
 			continue
 		}
-		fmt.Fprintf(root.ErrOrStderr(), "dormeto: %q is now %q; the old name goes in a later release.\n", "dormeto "+c.Name(), "dormeto "+c.Annotations[movedAnnotation]+" "+c.Name())
-		return slices.Insert(slices.Clone(args), at, c.Annotations[movedAnnotation])
+		var next *cobra.Command
+		for _, c := range cur.Commands() {
+			if c.Name() == args[at] || slices.Contains(c.Aliases, args[at]) {
+				next = c
+				break
+			}
+		}
+		if next == nil {
+			return args
+		}
+		if to := next.Annotations[movedAnnotation]; to != "" {
+			fmt.Fprintf(root.ErrOrStderr(), "dormeto: %q is now %q; the old name goes in a later release.\n", "dormeto "+strings.TrimPrefix(next.CommandPath(), root.Name()+" "), "dormeto "+to)
+			return slices.Concat(args[:start], strings.Fields(to), args[at+1:])
+		}
+		cur = next
 	}
 	return args
 }

@@ -594,7 +594,7 @@ func (s *Server) waitingPage(w http.ResponseWriter, r *http.Request, level strin
 	case http.MethodGet:
 	case http.MethodPut:
 		if in.Page["mode"] == "custom" && s.CustomPagesOff {
-			controllerFail(w, 400, "bad-request", "custom pages are off on this router: an administrator turns them on with dormeto gcp install --custom-pages")
+			controllerFail(w, 400, "bad-request", "custom pages are off on this router: an administrator turns them on with dormeto gcp routers install --custom-pages")
 			return
 		}
 		doc := map[string]any{}

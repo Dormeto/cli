@@ -1294,7 +1294,7 @@ func TestInstallWarnsWhenBillingIsNotReadable(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
+	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp routers install needs in project dormeto-dev.\n"+
 		"  ! billing not checked: google: 403 PERMISSION_DENIED: The caller does not have permission\n")
 }
 
@@ -1318,7 +1318,7 @@ func TestInstallPlansOnceAnAPIAnswersAfterAPropagationFailure(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp install needs in project dormeto-dev.\n"+
+	contains(t, out, "Checked: me@example.com holds every permission dormeto gcp routers install needs in project dormeto-dev.\n"+
 		"  … iam.googleapis.com is on but does not answer yet: waiting for Google to propagate it (up to 5 minutes)\n"+
 		"Plan for project dormeto-dev, router dmtr-europe-west1:\n"+
 		"  + role dormetoRouter \"Dormeto router\" (32 permissions)\n", "  ✓ roles: created dormetoRouter, created dormetoRouterBackends\n",
@@ -2188,7 +2188,7 @@ func TestInstallKeepsAnImageOfImageAndSaysWhichPublicVersionIsAvailable(t *testi
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "Using the recorded image "+routerImage+".\n",
-		"  ! router "+def+" is available: dormeto gcp install --version "+def+"\n",
+		"  ! router "+def+" is available: dormeto gcp routers install --version "+def+"\n",
 		"Router dmtr-europe-west1 in project dormeto-dev is up to date: version 0.34.0.\n")
 	if c := g.changes(mark); len(c) != 0 {
 		t.Fatalf("changes: %v", c)
@@ -2209,8 +2209,8 @@ func TestInstallNoticesGoToTheOutput(t *testing.T) {
 			g := publicRig(t, def)
 			g.run(t, europe)
 			return g
-		}, "  ! the router isn't installed: dormeto gcp install --version " + def + "\n"},
-		"--image": {routerInstalled, "  ! router " + def + " is available: dormeto gcp install --version " + def + "\n"},
+		}, "  ! the router isn't installed: dormeto gcp routers install --version " + def + "\n"},
+		"--image": {routerInstalled, "  ! router " + def + " is available: dormeto gcp routers install --version " + def + "\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := tc.setup(t)
@@ -2240,7 +2240,7 @@ func TestInstallAccessOnlyIsRecordedAndKeptUntilAVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ! the router isn't installed: dormeto gcp install --version "+def+"\n",
+	contains(t, out, "  ! the router isn't installed: dormeto gcp routers install --version "+def+"\n",
 		"The access of router dmtr-europe-west1 in project dormeto-dev is up to date.\n")
 	if c := g.changes(mark); len(c) != 0 || len(callsOf(g.s.Calls()[mark:], "HEAD")) != 0 {
 		t.Fatalf("changes: %v", c)
@@ -2262,7 +2262,7 @@ func TestInstallAccessOnlyOnAnInstalledRouterIsRefused(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "--access-only: router dmtr-europe-west1 is installed, version 0.34.0, and the install removes no router: dormeto gcp uninstall removes it with its access.\nNothing was changed.\n")
+	contains(t, out, "--access-only: router dmtr-europe-west1 is installed, version 0.34.0, and the install removes no router: dormeto gcp routers uninstall removes it with its access.\nNothing was changed.\n")
 	if c := g.changes(mark); len(c) != 0 {
 		t.Fatalf("changes: %v", c)
 	}
@@ -2283,7 +2283,7 @@ func TestInstallReadsAnOlderCLIsRecordWithoutImageAsTheAccessOnly(t *testing.T) 
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ! the router isn't installed: dormeto gcp install --version "+def+"\n",
+	contains(t, out, "  ! the router isn't installed: dormeto gcp routers install --version "+def+"\n",
 		"The access of router dmtr-europe-west1 in project dormeto-dev is up to date.\n")
 	if c := g.changes(mark); len(c) != 0 {
 		t.Fatalf("changes: %v", c)

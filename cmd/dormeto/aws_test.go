@@ -50,7 +50,7 @@ func shape(c *cobra.Command, path string, into map[string]string) {
 func TestEveryOldCommandIsUnderAwsAndHidden(t *testing.T) {
 	root := newRoot(build{})
 	aws := child(root, "aws")
-	if aws == nil || aws.Short != "Dormeto in AWS" {
+	if aws == nil || aws.Short != awsShort {
 		t.Fatalf("aws: %+v", aws)
 	}
 	for _, name := range movedToAws {
@@ -245,5 +245,51 @@ func TestAwsWorkloadsSettingsHelpSaysWhatHibernateDoesOnEachCloud(t *testing.T) 
 	}
 	if strings.Contains(out, "Set whether the EC2 instances") {
 		t.Fatalf("still says EC2 only:\n%s", out)
+	}
+}
+
+const awsShort = "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers"
+
+// The commands of the manager that print both clouds say so in their help.
+func TestTheManagersCommandsThatPrintBothCloudsNameGoogleCloudInTheirHelp(t *testing.T) {
+	aws := child(newRoot(build{}), "aws")
+	for _, path := range []string{"routers list", "routers show", "workloads list", "workloads show", "discovery candidates", "discovery access", "settings", "types", "savings",
+		"workloads keep-awake", "workloads resume", "workloads nap", "workloads wake", "workloads offboard"} {
+		c := aws
+		for _, name := range strings.Fields(path) {
+			if c = child(c, name); c == nil {
+				t.Fatalf("no aws %s", path)
+			}
+		}
+		if !strings.Contains(c.Short+" "+c.Long, "Google Cloud") {
+			t.Errorf("aws %s: its help does not name Google Cloud:\n%s\n%s", path, c.Short, c.Long)
+		}
+	}
+}
+
+func TestBothSubtreesHelpSayWhatRegionIs(t *testing.T) {
+	for _, args := range [][]string{{"gcp", "--help"}, {"aws", "--help"}} {
+		out, _, code := executed(t, build{}, args...)
+		if code != 0 || !strings.Contains(strings.Join(strings.Fields(out), " "), "--region: on the manager's commands it is the manager's own region") {
+			t.Errorf("%v: %d\n%s", args, code, out)
+		}
+	}
+}
+
+// --project is --account on the manager's commands that take --account; the others do not have it.
+func TestProjectIsAnAliasOfAccountOnTheManagersCommands(t *testing.T) {
+	aws := child(newRoot(build{}), "aws")
+	for _, path := range []string{"routers list", "routers upgrade", "discovery candidates", "exclusions add"} {
+		c := aws
+		for _, name := range strings.Fields(path) {
+			c = child(c, name)
+		}
+		account, project := c.Flags().Lookup("account"), c.Flags().Lookup("project")
+		if account == nil || project == nil || account.Value != project.Value {
+			t.Errorf("aws %s: --account %v, --project %v", path, account != nil, project != nil)
+		}
+	}
+	if f := child(child(aws, "routers"), "install").Flags().Lookup("project"); f != nil {
+		t.Errorf("routers install takes an AWS account only, yet has --project")
 	}
 }

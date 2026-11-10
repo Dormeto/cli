@@ -26,7 +26,7 @@ func newGcpWaitingPage(runs gcpPageRuns, version string, workload bool) *cobra.C
 	cmd := &cobra.Command{Use: "waiting-page", Short: "Show, set or clear the " + noun + "'s waiting page", Args: noArgs, SilenceErrors: true,
 		Long: "Show, set or clear the " + noun + "'s waiting page, as AWS's waiting-page commands do, through the router's controller. A level's own\n" +
 			"document replaces what it had; a field a template leaves out is inherited from the level above. A custom page (--html) is\n" +
-			"served only when the router's custom pages are on (dormeto gcp install --custom-pages)."}
+			"served only when the router's custom pages are on (dormeto gcp routers install --custom-pages)."}
 	cmd.AddCommand(newGcpPageShow(runs.show, version, workload, noun), newGcpPageSet(runs.set, version, workload, noun), newGcpPageClear(runs.clear, version, workload, noun))
 	return cmd
 }
@@ -89,7 +89,7 @@ func newGcpPageSet(run gcpRun, version string, workload bool, noun string) *cobr
 			"application; none; or an image file: PNG, JPEG, WebP, SVG or ICO, at most 64 KiB, its type taken from its bytes), --title (at most\n"+
 			"80 characters, one line) and --description (at most 500 characters); a field left out is inherited from the level above.\n"+
 			"--html writes a custom page instead (a file or - for standard input: UTF-8, not blank, at most 256 KiB); it cannot go with\n"+
-			"the template's flags, and the router refuses it unless its custom pages are on (dormeto gcp install --custom-pages).\n"+
+			"the template's flags, and the router refuses it unless its custom pages are on (dormeto gcp routers install --custom-pages).\n"+
 			"The file is checked before any call (exit 2). The page's warnings are printed. --json prints the controller's answer.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.Page = doc

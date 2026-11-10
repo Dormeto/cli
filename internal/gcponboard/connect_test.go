@@ -785,7 +785,7 @@ func TestConnectTestsTheRouterProjectsBeforeReadingTheirTagValues(t *testing.T) 
 	s.Withheld["projects/dormeto-dev"] = map[string]bool{"resourcemanager.tagValues.get": true}
 	m := newFakeManager()
 	code, out := runConnect(t, s, connectRequest(m))
-	if code != 1 || !strings.HasSuffix(out, "  ✗ connect in project dormeto-dev: missing resourcemanager.tagValues.get\nNothing was changed.\n") || strings.Contains(out, "dormeto gcp install") {
+	if code != 1 || !strings.HasSuffix(out, "  ✗ connect in project dormeto-dev: missing resourcemanager.tagValues.get\nNothing was changed.\n") || strings.Contains(out, "dormeto gcp routers install") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if mut := s.Mutations(); len(mut) != 0 || len(m.puts) != 0 {

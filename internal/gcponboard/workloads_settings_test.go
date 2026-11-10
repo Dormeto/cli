@@ -90,7 +90,7 @@ func TestSettingsSayAnOlderRouterByItsVersion(t *testing.T) {
 	r.IDs = []string{"shop"}
 	r.Levels = map[string]any{"idleMinutes": 30}
 	code, out := g.call(t, WorkloadsSettings, r)
-	want := "router 0.38.0 doesn't have the settings levels: dormeto gcp install --version " + embeddedRouterVersion()
+	want := "router 0.38.0 doesn't have the settings levels: dormeto gcp routers install --version " + embeddedRouterVersion()
 	if code != 1 || !strings.Contains(out, want) {
 		t.Fatalf("exit %d, want %q in:\n%s", code, want, out)
 	}

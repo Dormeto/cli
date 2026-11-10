@@ -420,12 +420,12 @@ func TestRoutersShowPrintsTheCloudAndNamesTheProjectOfAGoogleCloudRouter(t *test
 func TestRoutersInstallOfAProjectIsRefusedWithTheGoogleCloudCommand(t *testing.T) {
 	a := &routersAPI{}
 	r := runRouters(t, a, nil, "install", "--account", "dormeto-dev", "--router-region", "europe-west2")
-	want := "dormeto gcp install --project dormeto-dev --region europe-west2"
+	want := "dormeto gcp routers install --project dormeto-dev --region europe-west2"
 	if r.exit != 2 || len(a.posted) != 0 || len(r.api.requests) != 0 || !strings.Contains(r.stderr, want) {
 		t.Errorf("exit %d, posted %v, requests %d, stderr %q", r.exit, a.posted, len(r.api.requests), r.stderr)
 	}
 	r = runRouters(t, a, nil, "install", "--account", "dormeto-dev")
-	if r.exit != 2 || !strings.Contains(r.stderr, "dormeto gcp install --project dormeto-dev --region <region>") {
+	if r.exit != 2 || !strings.Contains(r.stderr, "dormeto gcp routers install --project dormeto-dev --region <region>") {
 		t.Errorf("no region: exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
@@ -436,7 +436,7 @@ func TestRoutersUninstallSkipsGoogleCloudRoutersNamingTheirCommand(t *testing.T)
 	if r.exit != 0 || len(a.posted) != 1 || a.posted[0] != `/operations {"router":"prod-eu","type":"uninstall-router"}` {
 		t.Fatalf("exit %d, posted %v, stderr %q", r.exit, a.posted, r.stderr)
 	}
-	want := "dmtr-dormeto-dev-europe-west2: a Google Cloud router: uninstall it with dormeto gcp uninstall --project dormeto-dev --region europe-west2\n"
+	want := "dmtr-dormeto-dev-europe-west2: a Google Cloud router: uninstall it with dormeto gcp routers uninstall --project dormeto-dev --region europe-west2\n"
 	if r.stderr != want {
 		t.Errorf("stderr %q, want %q", r.stderr, want)
 	}
@@ -470,5 +470,34 @@ func TestRoutersShowOfAGoogleCloudRouterTheManagerCannotReachPrintsItsMessageAtO
 		if r.exit != 1 || len(api.requests) != 1 || !strings.Contains(r.stderr, message) {
 			t.Errorf("%s: exit %d, %d requests, stderr %q", code, r.exit, len(api.requests), r.stderr)
 		}
+	}
+}
+
+func TestRoutersListCloudKeepsOneCloudsRows(t *testing.T) {
+	for cloud, kept := range map[string]string{"gcp": "dmtr-dormeto-dev-europe-west2", "aws": "prod-eu"} {
+		r := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list", "--cloud", cloud, "--json")
+		var got struct{ Routers []struct{ Name string } }
+		if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || len(got.Routers) != 1 || got.Routers[0].Name != kept {
+			t.Errorf("--cloud %s: exit %d %v %q", cloud, r.exit, err, r.stdout)
+		}
+	}
+	r := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list", "--cloud", "gcp")
+	if strings.Contains(r.stdout, "prod-eu") || !strings.Contains(r.stdout, "dmtr-dormeto-dev-europe-west2") {
+		t.Errorf("table:\n%s", r.stdout)
+	}
+}
+
+func TestRoutersListACloudOtherThanAwsOrGcpExits2(t *testing.T) {
+	r := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list", "--cloud", "azure")
+	if r.exit != 2 || !strings.Contains(r.stderr, `--cloud: "azure" is not aws or gcp`) || len(r.api.requests) != 0 {
+		t.Errorf("exit %d, stderr %q, requests %d", r.exit, r.stderr, len(r.api.requests))
+	}
+}
+
+func TestRoutersListProjectIsAccount(t *testing.T) {
+	a := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list", "--project", "dormeto-dev")
+	b := runFleet(t, &fakeAPI{routers: mixedRoutersAnswer}, "eu-west-1", "routers", "list", "--account", "dormeto-dev")
+	if a.exit != 0 || a.stdout != b.stdout || !strings.Contains(a.stdout, "dmtr-dormeto-dev-europe-west2") || strings.Contains(a.stdout, "prod-eu") {
+		t.Errorf("--project:\n%s\n--account:\n%s", a.stdout, b.stdout)
 	}
 }

@@ -298,7 +298,7 @@ func newGcpWorkloadsAccess(runs gcpWorkloadRuns, version string) *cobra.Command 
 				"and take them out of the install record. One of that name without the label is left and said; such a RoleBinding leaves the\n"+
 				"Role too, as it may name it. While another subject holds\n"+
 				"the binding, only the router's subject goes, and both objects stay; another router's service account among them is refused,\n"+
-				"nothing changed. It works after dormeto gcp uninstall, which lists what it leaves in a cluster.",
+				"nothing changed. It works after dormeto gcp routers uninstall, which lists what it leaves in a cluster.",
 			runs.accessRevoke, version, true))
 	return cmd
 }

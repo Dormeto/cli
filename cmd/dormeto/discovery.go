@@ -190,15 +190,17 @@ var gcpRegionName = regexp.MustCompile(`^(global|[a-z]+-[a-z]+\d{1,2})$`)
 func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		status, account, region string
+		cloud                   cloudFilter
 		limit                   int
 		asJSON                  bool
 	)
 	cmd := &cobra.Command{
-		Use: "candidates", Short: "List the discovery candidates of a status", Args: noArgs, SilenceErrors: true,
+		Use: "candidates", Short: "List the discovery candidates of a status, of both clouds", Args: noArgs, SilenceErrors: true,
 		Long: "List the candidates of one status (default pending-onboarding): target group or backend service, cloud, account\n" +
 			"or project, region, hosts, idle hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
 			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
-			"manager's). --json prints the manager's answer, {candidates}, every page in it.",
+			"manager's). --cloud (aws or gcp) keeps one cloud's candidates: the list has AWS's target groups and Google Cloud's\n" +
+			"backend services. --json prints the manager's answer, {candidates}, every page in it.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var err error
 			switch {
@@ -215,6 +217,9 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			default:
 				err = checkLimit(limit)
 			}
+			if err == nil {
+				err = cloud.check()
+			}
 			if err != nil {
 				return finish(c, err)
 			}
@@ -223,6 +228,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				cs = onlyCloud(cloud, cs, func(c fleet.Candidate) string { return c.Cloud })
 				if asJSON { // every page merged: no cursor
 					return printJSON(c.OutOrStdout(), map[string]any{"candidates": orEmpty(cs)})
 				}
@@ -235,6 +241,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&status, "status", "pending-onboarding", "the status: "+strings.Join(fleet.CandidateStatuses, ", "))
 	fl.StringVar(&account, "account", "", "only the candidates of this AWS account (12 digits) or Google Cloud project")
 	fl.StringVar(&region, "candidate-region", "", "only the candidates in this region of --account (--region is the manager's)")
+	cloud.bind(cmd)
 	fl.IntVar(&limit, "limit", 0, "stop at this many candidates (0, the default: all)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answer, {candidates}, every page in it")
 	return cmd
@@ -443,15 +450,22 @@ func resolveCandidates(cs []fleet.Candidate, refs []string, status string) ([]fl
 func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		limit  int
+		cloud  cloudFilter
 		asJSON bool
 	)
 	cmd := &cobra.Command{
-		Use: "access", Short: "Show the accounts whose discovery or command role is missing", Args: noArgs, SilenceErrors: true,
+		Use: "access", Short: "Show the accounts and projects whose discovery or command access is missing", Args: noArgs, SilenceErrors: true,
 		Long: "Show the organization access of the last run: how many accounts are ready, the delegation policy, the event\n" +
 			"forwarders, and a table of the accounts that are not ready with what is missing. Every page is read unless\n" +
-			"--limit stops at that many accounts (0: all). --json prints the manager's answer, every page in it.",
+			"--limit stops at that many accounts (0: all). The report lists AWS accounts and Google Cloud projects: --cloud\n" +
+			"(aws or gcp) keeps one cloud's, the counts staying the whole report's. --json prints the manager's answer, every\n" +
+			"page in it.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if err := checkLimit(limit); err != nil {
+			err := checkLimit(limit)
+			if err == nil {
+				err = cloud.check()
+			}
+			if err != nil {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
@@ -459,6 +473,7 @@ func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				r = r.OnlyCloud(string(cloud))
 				if asJSON {
 					return printJSON(c.OutOrStdout(), r)
 				}
@@ -467,6 +482,7 @@ func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
+	cloud.bind(cmd)
 	cmd.Flags().IntVar(&limit, "limit", 0, "stop at this many accounts (0, the default: all)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd

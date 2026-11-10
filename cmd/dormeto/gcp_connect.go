@@ -4,7 +4,7 @@ package main
 // commands find it (--profile, --env, --api-url, and --manager-region for their --region, which every dormeto gcp command
 // uses for a Google Cloud region), then internal/gcponboard's runs with the real Google dependencies. The manager says its
 // version (/health), its AWS account (the caller's ARN, /me: the API admits IAM callers of its own account only), its
-// environment (/update), and the date of its last disconnect of a host (its audit). Exit codes as `dormeto gcp install`.
+// environment (/update), and the date of its last disconnect of a host (its audit). Exit codes as `dormeto gcp routers install`.
 
 import (
 	"context"
@@ -154,7 +154,7 @@ func newGcpConnect(run gcpConnectRun, deps fleetDeps, version string) *cobra.Com
 			"(read only, at the scopes) and dmt-<env>-command (invokes the routers' controllers and binds their tag), through\n"+
 			"workload identity federation from its AWS roles. The manager is found as dormeto aws's fleet commands find it\n"+
 			"(--profile, --env, --manager-region, --api-url) and read first: its version (0.24.0 or later), its AWS account and its\n"+
-			"environment, which name the roles the trust admits. Then, as dormeto gcp install: your permissions are tested at the\n"+
+			"environment, which name the roles the trust admits. Then, as dormeto gcp routers install: your permissions are tested at the\n"+
 			"host and at each scope (a missing one stops the run before any change), the routers at the scopes are found (their\n"+
 			"Cloud Run services dmtr-<region>-controller), and the plan is printed: the APIs iam, iamcredentials, sts,\n"+
 			"cloudresourcemanager and cloudbilling in the host; the custom roles dormetoDiscovery (in each project scope, or in the\n"+

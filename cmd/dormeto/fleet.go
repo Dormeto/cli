@@ -270,16 +270,20 @@ func newRouters(deps fleetDeps) *cobra.Command {
 func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		filters  routerFilters
+		cloud    cloudFilter
 		outdated bool
 		asJSON   bool
 	)
 	cmd := &cobra.Command{
-		Use: "list", Short: "List the routers, their versions, health and workloads", Args: noArgs, SilenceErrors: true,
+		Use: "list", Short: "List the routers of both clouds, their versions, health and workloads", Args: noArgs, SilenceErrors: true,
 		Long: "List the manager's routers: name, cloud (aws or gcp), account or project, region, source, version (with the version\n" +
 			"available when it is higher), health and workloads. --tag keeps the routers that serve a workload with those Dormeto\n" +
 			"tags. A router that does not answer is listed, its error on stderr.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			sel, err := filters.selection(nil, false, false)
+			if err == nil {
+				err = cloud.check()
+			}
 			if err != nil {
 				return finish(c, err)
 			}
@@ -288,6 +292,7 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := api.Get(ctx, "/routers", nil, &all); err != nil {
 					return err
 				}
+				all.Rows = onlyCloud(cloud, all.Rows, func(r fleet.Router) string { return r.Cloud })
 				warnings := newRouterWarnings(c)
 				var tagged map[string]bool
 				if len(sel.Tags) > 0 {
@@ -321,6 +326,7 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	filters.bind(cmd)
+	cloud.bind(cmd)
 	cmd.Flags().BoolVar(&outdated, "outdated", false, "only the routers below the version available")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the API's answer, its rows after the filters")
 	return cmd
@@ -352,15 +358,20 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		states, tags []string
 		router, text string
+		cloud        cloudFilter
 		asJSON       bool
 	)
 	cmd := &cobra.Command{
-		Use: "list", Short: "List the workloads, their state and tags", Args: noArgs, SilenceErrors: true,
+		Use: "list", Short: "List the workloads of both clouds, their state and tags", Args: noArgs, SilenceErrors: true,
 		Long: "List the manager's workloads: router, id, name, state, Dormeto tags (k=v) and the time since the last change.\n" +
-			"A router that does not answer is reported on stderr, the others are listed.",
+			"A router that does not answer is reported on stderr, the others are listed. The workloads of both clouds are\n" +
+			"listed, Google Cloud's and AWS's: --cloud aws or gcp keeps one cloud's rows.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if _, err := fleet.ParseTags(tags); err != nil {
 				return finish(c, usageError{err})
+			}
+			if err := cloud.check(); err != nil {
+				return finish(c, err)
 			}
 			q := url.Values{}
 			if s := upper(states); len(s) > 0 {
@@ -388,6 +399,14 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				for _, e := range w.Errors {
 					warnings.warn(e.Router, e.Message, "")
 				}
+				if cloud != "" {
+					w.Rows = onlyCloud(cloud, w.Rows, func(r fleet.Workload) string { return r.Cloud })
+					w.Total = len(w.Rows)
+					var err error
+					if raw, err = filterWorkloadsJSON(raw, cloud); err != nil {
+						return fmt.Errorf("decode the manager's answer: %w", err)
+					}
+				}
 				out := c.OutOrStdout()
 				if asJSON {
 					var b bytes.Buffer
@@ -410,6 +429,7 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&router, "router", "", "only the workloads of this router")
 	fl.StringArrayVar(&tags, "tag", nil, "only the workloads with this Dormeto tag, key=value (repeatable: all must match)")
 	fl.StringVar(&text, "search", "", "only the workloads whose name or id contains this text")
+	cloud.bind(cmd)
 	fl.BoolVar(&asJSON, "json", false, "print the API's answer")
 	return cmd
 }

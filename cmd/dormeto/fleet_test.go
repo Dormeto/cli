@@ -519,3 +519,27 @@ func TestAccountFilterHelpNamesAWSAccountsAndGoogleCloudProjects(t *testing.T) {
 		t.Errorf("exit %d:\n%s", r.exit, r.stdout)
 	}
 }
+
+const mixedWorkloadsAnswer = `{"workloads":[
+ {"workloadId":"w-1","name":"api","cloud":"aws","router":"prod-eu","account":"111111111111","region":"eu-west-1","state":"ASLEEP","stateAt":"2026-10-19T09:00:00Z"},
+ {"workloadId":"w-2","name":"web","cloud":"gcp","router":"dmtr-dormeto-dev-europe-west2","account":"dormeto-dev","region":"europe-west2","state":"AWAKE","stateAt":"2026-10-19T09:00:00Z"}
+],"total":2,"cursor":null}`
+
+func TestWorkloadsListCloudKeepsOneCloudsRowsInTheTableAndTheJSON(t *testing.T) {
+	api := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, mixedWorkloadsAnswer) }}
+	r := runFleet(t, api, "eu-west-1", "workloads", "list", "--cloud", "gcp")
+	if r.exit != 0 || strings.Contains(r.stdout, "prod-eu") || !strings.Contains(r.stdout, "dmtr-dormeto-dev-europe-west2") {
+		t.Errorf("exit %d:\n%s", r.exit, r.stdout)
+	}
+	r = runFleet(t, api, "eu-west-1", "workloads", "list", "--cloud", "aws", "--json")
+	var got struct {
+		Workloads []struct{ WorkloadID string }
+		Total     int
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Workloads) != 1 || got.Workloads[0].WorkloadID != "w-1" || got.Total != 1 {
+		t.Errorf("%v: %q", err, r.stdout)
+	}
+	if r := runFleet(t, api, "eu-west-1", "workloads", "list", "--cloud", "azure"); r.exit != 2 {
+		t.Errorf("azure exits %d", r.exit)
+	}
+}
