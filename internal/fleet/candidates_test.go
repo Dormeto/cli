@@ -116,3 +116,37 @@ func TestResolveCandidatesAmbiguousNameNamesTheCloudsResources(t *testing.T) {
 		}
 	}
 }
+
+// With a filter, the pages read are full ones: the rows kept are sparse, and a page shrunk to the limit's rest would take
+// hundreds of reads (discovery candidates --cloud gcp --limit 2 over many AWS candidates).
+func TestListCandidatesWhereReadsFullPagesUnderAFilter(t *testing.T) {
+	var q []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		q = append(q, r.URL.RawQuery)
+		from, _ := strconv.Atoi(r.URL.Query().Get("cursor"))
+		size, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		to := min(from+size, 1000)
+		var rows []string
+		for i := from; i < to; i++ {
+			cloud := "aws"
+			if i%300 == 299 {
+				cloud = "gcp"
+			}
+			rows = append(rows, fmt.Sprintf(`{"id":"id-%d","cloud":%q,"status":"pending-onboarding"}`, i, cloud))
+		}
+		cursor := "null"
+		if to < 1000 {
+			cursor = strconv.Quote(strconv.Itoa(to))
+		}
+		io.WriteString(w, `{"candidates":[`+strings.Join(rows, ",")+`],"cursor":`+cursor+`}`)
+	})
+	got, err := ListCandidatesWhere(context.Background(), c, "pending-onboarding", "", "", 2, func(c Candidate) bool { return c.Cloud == "gcp" })
+	if err != nil || len(got) != 2 || got[0].ID != "id-299" || got[1].ID != "id-599" || len(q) != 3 {
+		t.Fatalf("got %+v, %d requests, %v", got, len(q), err)
+	}
+	for _, query := range q {
+		if !strings.Contains(query, "limit=200") {
+			t.Errorf("a page shrunk: %q", query)
+		}
+	}
+}

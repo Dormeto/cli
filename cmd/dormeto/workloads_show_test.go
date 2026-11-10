@@ -245,7 +245,8 @@ func TestWorkloadsIdleWindowPrintsTheCandidates(t *testing.T) {
 		t.Fatalf("exit %d: %s", r.exit, r.stderr)
 	}
 	t.Logf("\n%s", r.stdout)
-	if len(a.requests) != 1 || a.requests[0] != "/iam/workloads/prod-eu/w-1/idle-window?" {
+	// The advice, then the routers, for the workload's cloud (the note names its resources).
+	if len(a.requests) != 2 || a.requests[0] != "/iam/workloads/prod-eu/w-1/idle-window?" || a.requests[1] != "/iam/routers?" {
 		t.Errorf("requests %q", a.requests)
 	}
 	mustContain(t, r.stdout,
@@ -321,6 +322,49 @@ func TestWorkloadsIdleWindowNamesTheSettingsCommandAndTheTerraformClauseForAnAWS
 		r = runShow(t, &showAPI{status: 200, body: body}, "idle-window", "prod-eu/w-1")
 		out = strings.Join(strings.Fields(r.stdout), " ")
 		mustContain(t, out, "to change it: dormeto aws workloads settings prod-eu/w-1 --idle-minutes 30 (a workload onboarded with Terraform: idle_minutes in its module)")
+	}
+}
+
+// The note is keyed on the workload's cloud, its router's in the manager's list, not on whether the counts are estimates:
+// the Terraform clause and the waker target group for an AWS workload, the waker backend service for a Google Cloud one.
+// When the routers can't be read, the advice's estimate (Google Cloud's alone) says the cloud.
+func TestWorkloadsIdleWindowKeysTheNoteOnTheWorkloadsCloud(t *testing.T) {
+	const routers = `{"routers":[{"name":"prod-eu","cloud":"aws","region":"eu-west-1"},{"name":"dmtr-p-europe-west2","cloud":"gcp","region":"europe-west2"}]}`
+	run := func(target, estimated string, listed bool) string {
+		body := strings.Replace(strings.Replace(idleWindowAnswer, `"priced":true`, `"priced":true`+estimated, 1), `"wakerTargetGroup":true`, `"wakerTargetGroup":false`, 1)
+		api := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/iam/routers" && listed:
+				io.WriteString(w, routers)
+			case strings.HasSuffix(r.URL.Path, "/idle-window"):
+				io.WriteString(w, body)
+			default:
+				w.WriteHeader(500)
+				io.WriteString(w, `{"error":"internal","message":"down"}`)
+			}
+		}}
+		r := runFleet(t, api, "eu-west-1", "workloads", "idle-window", target)
+		if r.exit != 0 {
+			t.Fatalf("%s: exit %d: %s", target, r.exit, r.stderr)
+		}
+		return strings.Join(strings.Fields(r.stdout), " ")
+	}
+	// A Google Cloud router whose advice says estimated false: no Terraform clause, the waker backend service.
+	out := run("dmtr-p-europe-west2/w-1", `,"estimated":false`, true)
+	if strings.Contains(out, "Terraform") || !strings.Contains(out, "the waker backend service's requests were not found") {
+		t.Errorf("gcp: %s", out)
+	}
+	// An AWS router whose advice says estimated: the clause, the waker target group.
+	out = run("prod-eu/w-1", `,"estimated":true`, true)
+	if !strings.Contains(out, "(a workload onboarded with Terraform: idle_minutes in its module)") || !strings.Contains(out, "the waker target group was not found") {
+		t.Errorf("aws: %s", out)
+	}
+	// The routers unread: the estimate says it.
+	if out = run("dmtr-p-europe-west2/w-1", `,"estimated":true`, false); strings.Contains(out, "Terraform") {
+		t.Errorf("unread, estimated: %s", out)
+	}
+	if out = run("prod-eu/w-1", `,"estimated":false`, false); !strings.Contains(out, "Terraform") {
+		t.Errorf("unread, not estimated: %s", out)
 	}
 }
 

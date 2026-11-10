@@ -839,6 +839,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		// the clouds, --yes and --dry-run
 		"`discovery candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before any call)",
 		"every command that takes `--account` takes `--project` too",
+		"the counts staying the manager's, of both clouds (`workloads list --json`'s `byState`, `discovery access`'s counts)",
 		"Every writing command of both subtrees takes `--yes`, a no-op where nothing is asked, and `--dry-run`",
 		"Four commands have no `--dry-run`: `aws install`, `aws uninstall` and their `apply`, whose plan, the step before `apply`, needs the bootstrap",
 		"the plan is the look before acting",
@@ -898,6 +899,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"answers `409` with its message and the command that fixes it (`no_access`, `router_too_old`, `router_unknown`; it was a `502` `router_error`",
 		"AWS's now says `estimated: false`",
 		"a Google Cloud workload's note has no such clause",
+		"the workload's cloud is its router's in `routers list`, read for the text, else the advice's `estimated`",
 		"needed `--yes` with `--json`, exit 2 even on a terminal: on a terminal they now ask there too, on stderr after what they would write",
 		"Every `--json` of `dormeto gcp`, `gcp check` and `gcp routers show` too, is indented as AWS's, by two spaces (it was one line)",
 		"printed what they would act on, `dry run: nap 2 workloads, nothing sent` and the targets below it: they now say each request in that form too, in the order of the targets",

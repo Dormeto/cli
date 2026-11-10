@@ -109,12 +109,31 @@ func newWorkloadsIdleWindow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := api.Get(ctx, t.Path("/idle-window"), nil, &raw); err != nil {
 					return err
 				}
-				return printRead(c, raw, asJSON, func(a fleet.IdleWindowAdvice) string { return a.Text(t.String(), deps.now().Location()) })
+				return printRead(c, raw, asJSON, func(a fleet.IdleWindowAdvice) string {
+					return a.Text(t.String(), workloadCloud(ctx, api, t.Router, a), deps.now().Location())
+				})
 			})
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
+}
+
+// workloadCloud is the cloud of a router's workloads, as the manager lists the router (aws or gcp); when the routers can't
+// be read, or the router isn't among them, the advice says it: the manager estimates Google Cloud's request counts alone.
+func workloadCloud(ctx context.Context, api *fleet.Client, router string, a fleet.IdleWindowAdvice) string {
+	var rs fleet.Routers
+	if api.Get(ctx, "/routers", nil, &rs) == nil {
+		for _, r := range rs.Rows {
+			if r.Name == router {
+				return fleet.CloudName(r.Cloud)
+			}
+		}
+	}
+	if a.Estimated {
+		return "gcp"
+	}
+	return "aws"
 }
 
 // printRead prints the manager's answer as it is under --json, else the text of its decoding.

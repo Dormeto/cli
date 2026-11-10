@@ -224,7 +224,11 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				cs, err := fleet.ListCandidatesWhere(ctx, api, status, account, region, limit, func(cand fleet.Candidate) bool { return cloud.keeps(cand.Cloud) })
+				var keep func(fleet.Candidate) bool // none without --cloud: the pages ask for the limit's rest, as before it
+				if cloud != "" {
+					keep = func(cand fleet.Candidate) bool { return cloud.keeps(cand.Cloud) }
+				}
+				cs, err := fleet.ListCandidatesWhere(ctx, api, status, account, region, limit, keep)
 				if err != nil {
 					return err
 				}

@@ -57,7 +57,8 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 	aws := &cobra.Command{Use: "aws", Short: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers", Args: noArgs, SilenceErrors: true,
 		Long: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers. The manager's commands (routers list,\n" +
 			"workloads list, discovery, savings, users, settings...) cover both clouds, a Google Cloud project being the account of\n" +
-			"its rows; the commands that change a Google Cloud router are under `dormeto gcp`.\n\n" + regionRule}
+			"its rows, and change a Google Cloud router's pause, settings and workloads; the commands that install, upgrade and\n" +
+			"remove a Google Cloud router are under `dormeto gcp`.\n\n" + regionRule}
 	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
 	// Born under aws (settings at scale): no hidden twin at the top level.
 	types := newTypes(fleet)

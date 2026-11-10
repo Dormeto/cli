@@ -555,8 +555,10 @@ func abs(f float64) float64 {
 
 // Text is the advice as text: the sentence, the windows tried (savings a month, or hours asleep a day when nothing is
 // priced, wakes and wait a day) and the notes the dashboard gives under them. target is the command's
-// <router>/<workload>, named in the way to change the window.
-func (a IdleWindowAdvice) Text(target string, loc *time.Location) string {
+// <router>/<workload>, named in the way to change the window; cloud is the workload's (aws or gcp), whose resources the
+// notes name.
+func (a IdleWindowAdvice) Text(target, cloud string, loc *time.Location) string {
+	google := CloudName(cloud) == "gcp"
 	measure := "ASLEEP A DAY"
 	if a.Priced {
 		measure = "SAVINGS A MONTH"
@@ -603,7 +605,7 @@ func (a IdleWindowAdvice) Text(target string, loc *time.Location) string {
 	}
 	if !a.WakerTargetGroup {
 		what := "the waker target group was not found"
-		if a.Estimated {
+		if google {
 			what = "the waker backend service's requests were not found"
 		}
 		notes = append(notes, what+": only the requests while awake are replayed")
@@ -615,7 +617,7 @@ func (a IdleWindowAdvice) Text(target string, loc *time.Location) string {
 		notes = append(notes, "nothing priced yet (no nap described, or an item without a price): hours asleep instead of dollars")
 	}
 	change := fmt.Sprintf("to change it: dormeto aws workloads settings %s --idle-minutes %d", target, a.Recommended)
-	if !a.Estimated {
+	if !google {
 		// Terraform onboards AWS workloads only: a Google Cloud workload has no module to name.
 		change += " (a workload onboarded with Terraform: idle_minutes in its module)"
 	}

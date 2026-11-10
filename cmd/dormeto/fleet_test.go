@@ -542,6 +542,18 @@ func TestWorkloadsListCloudKeepsOneCloudsRowsInTheTableAndTheJSON(t *testing.T) 
 	if r := runFleet(t, api, "eu-west-1", "workloads", "list", "--cloud", "azure"); r.exit != 2 {
 		t.Errorf("azure exits %d", r.exit)
 	}
+	// byState stays the manager's, which counts every workload of both clouds whatever the filters; the help says so.
+	withCounts := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, strings.Replace(mixedWorkloadsAnswer, `"total":2,`, `"total":2,"byState":{"ASLEEP":7,"AWAKE":3},`, 1))
+	}}
+	r = runFleet(t, withCounts, "eu-west-1", "workloads", "list", "--cloud", "aws", "--json")
+	var counted struct{ ByState map[string]int }
+	if err := json.Unmarshal([]byte(r.stdout), &counted); err != nil || counted.ByState["ASLEEP"] != 7 || counted.ByState["AWAKE"] != 3 {
+		t.Errorf("byState: %v: %q", err, r.stdout)
+	}
+	if h := child(child(child(newRoot(build{}), "aws"), "workloads"), "list").Long; !strings.Contains(h, "byState stays the manager's") {
+		t.Errorf("help: %s", h)
+	}
 }
 
 // The manager's total is kept for a page that has more: --cloud filters the page read, and says so.

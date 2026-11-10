@@ -667,6 +667,17 @@ func TestDiscoveryCandidatesCloudFiltersBeforeTheLimit(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || len(got.Candidates) != 2 || got.Candidates[0].TargetGroup != "g1" || got.Candidates[1].TargetGroup != "g2" {
 		t.Errorf("exit %d %v: %q", r.exit, err, r.stdout)
 	}
+	// Its pages are full ones (the rows kept may be sparse); without --cloud a page asks for the limit as before.
+	for _, q := range a.requests {
+		if !strings.Contains(q, "limit=200") {
+			t.Errorf("--cloud: a page shrunk to the limit: %q", q)
+		}
+	}
+	b := &disAPI{candidates: a.candidates}
+	runFleetWith(t, &fakeAPI{custom: b.handler()}, "eu-west-1", nil, "discovery", "candidates", "--limit", "2", "--json")
+	if len(b.requests) == 0 || !strings.Contains(b.requests[0], "limit=2") {
+		t.Errorf("without --cloud: %q", b.requests)
+	}
 }
 
 func TestAProjectGivenNamesItsOwnFlagInAnError(t *testing.T) {
@@ -677,5 +688,11 @@ func TestAProjectGivenNamesItsOwnFlagInAnError(t *testing.T) {
 	r = runFleetWith(t, &fakeAPI{custom: (&disAPI{}).handler()}, "eu-west-1", nil, "discovery", "candidates", "--account", "123")
 	if r.exit != 2 || !strings.Contains(r.stderr, "--account: ") {
 		t.Errorf("exit %d: %q", r.exit, r.stderr)
+	}
+	// exclusions add, given a project beside another target: the flags named as given.
+	r = runFleetWith(t, &fakeAPI{custom: (&disAPI{}).handler()}, "eu-west-1", nil, "exclusions", "add", "--project", "dormeto-dev",
+		"--target-group", "projects/dormeto-dev/global/backendServices/web", "--reason", "r")
+	if r.exit != 2 || !strings.Contains(r.stderr, "give exactly one of --target-group, --load-balancer and --project") || strings.Contains(r.stderr, "--account") {
+		t.Errorf("exclusions add: exit %d: %q", r.exit, r.stderr)
 	}
 }

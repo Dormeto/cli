@@ -104,13 +104,14 @@ func ListCandidates(ctx context.Context, c *Client, status, account, region stri
 }
 
 // ListCandidatesWhere is ListCandidates keeping only the candidates keep accepts (nil: all), before the limit counts
-// them: with a limit, it reads on until that many are kept or the pages end.
+// them: with a limit, it reads on until that many are kept or the pages end. A page asks for the limit's rest without a
+// filter, and is a full one with it: the rows kept may be sparse.
 func ListCandidatesWhere(ctx context.Context, c *Client, status, account, region string, limit int, keep func(Candidate) bool) ([]Candidate, error) {
 	var out []Candidate
 	cursor := ""
 	for {
 		size := candidatePage
-		if limit > 0 {
+		if limit > 0 && keep == nil {
 			size = min(size, limit-len(out))
 		}
 		q := url.Values{"status": {status}, "limit": {strconv.Itoa(size)}}

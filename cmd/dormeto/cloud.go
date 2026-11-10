@@ -43,8 +43,9 @@ func onlyCloud[T any](c cloudFilter, rows []T, cloud func(T) string) []T {
 	return out
 }
 
-// filterWorkloadsJSON is the manager's workloads answer with the rows of one cloud, its total and counts per state
-// those of the rows kept when the listing is complete; every other field is passed as it was.
+// filterWorkloadsJSON is the manager's workloads answer with the rows of one cloud, its total that of the rows kept when the
+// listing is complete; every other field is passed as it was, byState too: the manager's counts every workload the caller
+// sees, of both clouds, whatever the filters.
 func filterWorkloadsJSON(raw json.RawMessage, c cloudFilter, complete bool) (json.RawMessage, error) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -59,19 +60,14 @@ func filterWorkloadsJSON(raw json.RawMessage, c cloudFilter, complete bool) (jso
 		return nil, err
 	}
 	kept := []json.RawMessage{}
-	states := map[string]int{}
 	for i, r := range rows {
 		if c.keeps(r.Cloud) {
 			kept = append(kept, all[i])
-			states[r.State]++
 		}
 	}
 	m["workloads"], _ = json.Marshal(kept)
-	if complete { // a partial page keeps the manager's total and counts, which are of both clouds and all the pages
+	if complete { // a partial page keeps the manager's total, which is of both clouds and all the pages
 		m["total"], _ = json.Marshal(len(kept))
-		if _, ok := m["byState"]; ok {
-			m["byState"], _ = json.Marshal(states)
-		}
 	}
 	return json.Marshal(m)
 }

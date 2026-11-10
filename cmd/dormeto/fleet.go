@@ -385,8 +385,9 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "list", Short: "List the workloads of both clouds, their state and tags", Args: noArgs, SilenceErrors: true,
 		Long: "List the manager's workloads: router, id, name, state, Dormeto tags (k=v) and the time since the last change.\n" +
 			"A router that does not answer is reported on stderr, the others are listed. The workloads of both clouds are\n" +
-			"listed, Google Cloud's and AWS's: --cloud aws or gcp keeps one cloud's rows, of the page read when the manager lists\n" +
-			"only a page (its total then counts both clouds).",
+			"listed, Google Cloud's and AWS's: --cloud aws or gcp keeps one cloud's rows and their total, of the page read when the\n" +
+			"manager lists only a page (its total then counts both clouds). --json's byState stays the manager's, which counts\n" +
+			"every workload of both clouds whatever the filters.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if _, err := fleet.ParseTags(tags); err != nil {
 				return finish(c, usageError{err})

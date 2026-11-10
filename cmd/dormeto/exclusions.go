@@ -83,7 +83,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			var err error
 			switch {
 			case given != 1:
-				err = usagef("give exactly one of --target-group, --load-balancer and --account")
+				err = usagef("give exactly one of --target-group, --load-balancer and %s", accountFlag(c))
 			case tg != "" && !fleet.IsTargetGroupARN(tg) && !fleet.IsBackendServicePath(tg):
 				err = usagef("--target-group: %q is neither the ARN of an application target group nor the path of a backend service (projects/<project>/global|regions/<region>/backendServices/<name>)", tg)
 			case lb != "" && !fleet.IsLoadBalancerARN(lb) && !fleet.IsURLMapPath(lb):

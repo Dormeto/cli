@@ -528,8 +528,9 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   region such as `europe-west1`.
 - **Clouds.** The manager's commands serve AWS and Google Cloud. `routers list`, `workloads list`, `discovery
   candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before
-  any call), and every command that takes `--account` takes `--project` too, the same flag under the name of a Google
-  Cloud project (`routers install`, which installs in an AWS account only, takes `--account` alone). A Google Cloud
+  any call), the counts staying the manager's, of both clouds (`workloads list --json`'s `byState`, `discovery
+  access`'s counts), and every command that takes `--account` takes `--project` too, the same flag under the name of a
+  Google Cloud project (`routers install`, which installs in an AWS account only, takes `--account` alone). A Google Cloud
   router is named `dmtr-<project>-<region>`, a Google Cloud workload `<router>/<workload id>` as an AWS one, and its
   backends are `instance`, `asg`, `k8s` and `cloudsql-instance` in the text and in `--json` (the router's own values,
   `vm`, `mig`, `k8s` and `cloudsql`, stay on its wire).
@@ -861,8 +862,12 @@ dormeto aws workloads idle-window <router>/<workload> [--json]
 - `idle-window`: the manager's advice on the idle window: the last 14 days of requests replayed against windows from 5
   to 120 minutes, each with its savings a month (hours asleep a day when nothing is priced), its wakes and wait a day,
   the current and the recommended window marked. It serves both clouds: for a Google Cloud workload the savings are
-  priced at Google's list prices when the manager has them (less the discounts; else hours asleep) and the line `Google's request counts are estimates.` is printed (`estimated` in `--json`; AWS's
-  advice has none); it names `dormeto aws workloads settings <router>/<workload> --idle-minutes <n>` to change the window. The manager computes it once a day: the first read may take a while.
+  priced at Google's list prices when the manager has them (less the discounts; else hours asleep) and the line
+  `Google's request counts are estimates.` is printed (`estimated` in `--json`, `false` on AWS's advice). It names
+  `dormeto aws workloads settings <router>/<workload> --idle-minutes <n>` to change the window, and for an AWS workload
+  `idle_minutes` in its Terraform module; its notes name the workload's cloud's resources (the waker's target group or
+  backend service), the cloud read from the router's row in `routers list` (else from `estimated`). The manager
+  computes it once a day: the first read may take a while.
 
 ### Waking, napping, pausing, renaming and tagging workloads
 

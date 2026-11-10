@@ -267,6 +267,17 @@ func TestTheManagersCommandsThatPrintBothCloudsNameGoogleCloudInTheirHelp(t *tes
 	}
 }
 
+// The manager's commands change a Google Cloud router too (its pause, settings, workloads): only its install, upgrade and
+// removal are under dormeto gcp, which aws's help says.
+func TestAwsHelpSaysWhichGoogleCloudRouterCommandsAreUnderGcp(t *testing.T) {
+	out, _, code := executed(t, build{}, "aws", "--help")
+	out = strings.Join(strings.Fields(out), " ")
+	if code != 0 || !strings.Contains(out, "the commands that install, upgrade and remove a Google Cloud router are under `dormeto gcp`") ||
+		strings.Contains(out, "the commands that change a Google Cloud router are under") {
+		t.Errorf("%d\n%s", code, out)
+	}
+}
+
 func TestBothSubtreesHelpSayWhatRegionIs(t *testing.T) {
 	for _, args := range [][]string{{"gcp", "--help"}, {"aws", "--help"}} {
 		out, _, code := executed(t, build{}, args...)
