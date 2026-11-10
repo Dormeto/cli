@@ -108,6 +108,16 @@ func (s *Server) workloadBody(id string) map[string]any {
 		out[k] = v
 	}
 	out["id"], out["state"] = id, s.Workloads[id]
+	if s.SharedNames {
+		out["workloadId"] = id
+		pauses := []any{}
+		if p, ok := out["paused"].(map[string]any); ok {
+			scoped := map[string]any{"scope": "workload"}
+			maps.Copy(scoped, p)
+			pauses, out["paused"] = append(pauses, scoped), scoped
+		}
+		out["pauses"] = pauses
+	}
 	if f := s.OnFallback[id]; len(f) > 0 {
 		out["fallbacks"] = fallbacksOf(f)
 	}

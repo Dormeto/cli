@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -135,8 +136,7 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 		return err
 	}
 	if x.r.DryRun && method != http.MethodGet {
-		verb := map[string]string{http.MethodPut: "set the schedule of", http.MethodDelete: "clear the schedule of"}[method]
-		return x.workloadDryRun(verb, method, path+"/schedule", shown)
+		return x.workloadDryRun(method, path+"/schedule", shown)
 	}
 	var in any
 	if body != nil {
@@ -146,9 +146,12 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 	}
 	var raw json.RawMessage
 	if err := x.controllerSince035(method, path+"/schedule", in, &raw); err != nil {
-		return x.needsRecurrenceRouter(err)
+		if method == http.MethodGet {
+			return x.needsRecurrenceRouter(err)
+		}
+		return x.refusedWrite(x.needsRecurrenceRouter(err))
 	}
-	if x.r.JSON {
+	if x.r.JSON && method == http.MethodGet {
 		fmt.Fprintf(x.d.Out, "%s\n", raw)
 		return nil
 	}
@@ -160,23 +163,32 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 	if err := json.Unmarshal(raw, &view); err != nil {
 		return fmt.Errorf("the controller's answer is not a schedule: %w", err)
 	}
+	// The writes: AWS's line, "<target>: schedule set" and the schedule under it, or "<target>: schedule cleared".
+	target := x.target(x.r.ID)
+	var b strings.Builder
 	switch {
-	case view.Schedule == nil && method == http.MethodDelete:
-		x.say("The schedule of workload %s is cleared.", x.r.ID)
+	case method == http.MethodDelete:
+		return x.answered(x.r.ID, raw, target+": schedule cleared")
+	case method == http.MethodPut:
+		fmt.Fprintf(&b, "%s: schedule set\n", target)
+		if view.Schedule != nil {
+			x.printSchedule(&b, *view.Schedule, view.NextEvents, view.Line())
+		}
+		return x.answered(x.r.ID, raw, strings.TrimSuffix(b.String(), "\n"))
 	case view.Schedule == nil:
 		x.say("Workload %s has no schedule.", x.r.ID)
 	default:
-		if method == http.MethodPut {
-			x.say("The schedule of workload %s is set.", x.r.ID)
-		}
-		x.printSchedule(*view.Schedule, view.NextEvents, view.Line())
+		fmt.Fprintf(&b, "Schedule of workload %s (set by %s, %s):\n", x.r.ID, view.Schedule.By, view.Schedule.At)
+		x.printSchedule(&b, *view.Schedule, view.NextEvents, view.Line())
+		fmt.Fprint(x.d.Out, b.String())
 	}
 	return nil
 }
 
-func (x *run) printSchedule(s scheduleOf, events []nextEvent, join string) {
-	x.say("Schedule of workload %s (set by %s, %s):", x.r.ID, s.By, s.At)
-	x.say("  time zone: %s", s.TimeZone)
+// printSchedule writes a schedule's lines, under the line that names it.
+func (x *run) printSchedule(out io.Writer, s scheduleOf, events []nextEvent, join string) {
+	say := func(format string, a ...any) { fmt.Fprintf(out, format+"\n", a...) }
+	say("  time zone: %s", s.TimeZone)
 	for _, w := range s.Windows {
 		line := fmt.Sprintf("  %s window: %s %s-%s", w.Kind, strings.Join(w.Days, ","), w.Start, w.End)
 		if !w.Plain() {
@@ -185,41 +197,42 @@ func (x *run) printSchedule(s scheduleOf, events []nextEvent, join string) {
 		if w.Wake != "" {
 			line += ", wake " + w.Wake
 		}
-		x.say("%s", line)
+		say("%s", line)
 	}
 	if len(s.Exceptions) > 0 {
-		x.say("  exceptions: %s", strings.Join(s.Exceptions, ", "))
+		say("  exceptions: %s", strings.Join(s.Exceptions, ", "))
 	}
 	if s.MaxNapDays != nil {
-		x.say("  maxNapDays: %d", *s.MaxNapDays)
+		say("  maxNapDays: %d", *s.MaxNapDays)
 	}
 	if join != "" {
-		x.say("  %s", join)
+		say("  %s", join)
 	}
 	if len(events) == 0 {
-		x.say("No next event.")
+		say("No next event.")
 		return
 	}
-	x.say("Next events:")
+	say("Next events:")
 	zone, err := time.LoadLocation(s.TimeZone)
 	for _, e := range events {
 		at, perr := time.Parse(time.RFC3339, e.At)
 		what := strings.Replace(e.Kind, "-start", " starts", 1)
 		what = strings.Replace(what, "-end", " ends", 1)
 		if perr != nil {
-			x.say("  %s  %s", e.At, what)
+			say("  %s  %s", e.At, what)
 			continue
 		}
 		if err != nil {
-			x.say("  %s UTC  %s", at.UTC().Format("2006-01-02 15:04"), what)
+			say("  %s UTC  %s", at.UTC().Format("2006-01-02 15:04"), what)
 			continue
 		}
-		x.say("  %s (%s)  %s", at.In(zone).Format("2006-01-02 15:04 MST"), s.TimeZone, what)
+		say("  %s (%s)  %s", at.In(zone).Format("2006-01-02 15:04 MST"), s.TimeZone, what)
 	}
 }
 
-// pausedOf is a workload's active pause.
+// pausedOf is a workload's active pause: its own, or (scope router) its router's.
 type pausedOf struct {
+	Scope      string  `json:"scope"`
 	By         string  `json:"by"`
 	At         string  `json:"at"`
 	Reason     string  `json:"reason"`
@@ -229,6 +242,9 @@ type pausedOf struct {
 
 func (p pausedOf) String() string {
 	text := fmt.Sprintf("paused by %s: %s", p.By, p.Reason)
+	if p.Scope == "router" {
+		text = "router " + text
+	}
 	if p.KeepAsleep {
 		text += " (keep asleep)"
 	}
@@ -239,7 +255,7 @@ func (p pausedOf) String() string {
 }
 
 // pauseIn validates --reason, --keep-asleep and --until before any call and gives the pause's body, without `by`, and how its
-// end reads in the lines.
+// end reads in the lines, as AWS's: "until resumed", or "until <the local time>".
 func (x *run) pauseIn() (map[string]any, string, error) {
 	reason := strings.TrimSpace(x.r.Reason)
 	switch {
@@ -252,15 +268,14 @@ func (x *run) pauseIn() (map[string]any, string, error) {
 	if x.r.KeepAsleep {
 		in["keepAsleep"] = true
 	}
-	ends := "until it is resumed"
+	ends := "until resumed"
 	if x.r.Until != "" {
 		until, err := time.Parse(time.RFC3339, x.r.Until)
 		if err != nil {
 			return nil, "", &stop{2, fmt.Sprintf("--until: %q is not a time in RFC 3339, such as 2026-12-01T08:00:00+01:00", x.r.Until)}
 		}
-		at := until.UTC().Format(time.RFC3339)
-		in["until"] = at
-		ends = "until " + at + ", unless it is resumed sooner"
+		in["until"] = until.UTC().Format(time.RFC3339)
+		ends = "until " + until.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
 	}
 	return in, ends, nil
 }
@@ -270,7 +285,6 @@ func (x *run) pauseWorkload() error {
 	if err != nil {
 		return err
 	}
-	reason := in["reason"].(string)
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
@@ -279,40 +293,31 @@ func (x *run) pauseWorkload() error {
 		return err
 	}
 	if x.r.DryRun {
-		return x.workloadDryRun("pause", http.MethodPost, path+"/pause", in)
+		return x.workloadDryRun(http.MethodPost, path+"/pause", in)
 	}
 	if in["by"], err = x.d.Google.Tokens.Account(x.ctx); err != nil {
 		return err
 	}
 	var raw json.RawMessage
 	if err := x.controllerSince035(http.MethodPost, path+"/pause", in, &raw); err != nil {
+		return x.refusedWrite(err)
+	}
+	w, err := decodeWorkload(raw)
+	if err != nil {
 		return err
 	}
-	return x.print(raw, func(w workload) {
-		x.say("Workload %s is paused (%s): none of its naps runs %s.", w.ID, reason, ends)
-		if x.r.KeepAsleep {
-			x.say("It stays as it is (%s): a visitor still wakes the workload, and scheduled and maintenance wakes wait until the pause ends.", strings.ToLower(w.State))
-		} else {
-			x.say("%s", pausedState(w.State))
+	// AWS's line: "<target>: paused until resumed[; woken <workload>]". The answer's state is the one as the pause was asked: one
+	// asleep or failed is woken in the background, one napping once its nap ends, unless kept asleep.
+	line := fmt.Sprintf("%s: paused %s", x.target(x.r.ID), ends)
+	if !x.r.KeepAsleep {
+		switch w.State {
+		case "ASLEEP", "FAILED":
+			line += "; woken " + x.r.ID
+		case "NAPPING":
+			line += "; woken " + x.r.ID + " once its nap ends"
 		}
-		x.say("End it with: %s", strings.Replace(x.showCommand(w.ID), " show ", " resume ", 1))
-	})
-}
-
-// pausedState says what a plain pause makes of a workload, from its state in the answer, as the pause was asked: one asleep
-// is woken in the background.
-func pausedState(state string) string {
-	switch state {
-	case "AWAKE":
-		return "It stays awake."
-	case "ASLEEP":
-		return "It was asleep: it is being woken, and then stays awake."
-	case "FAILED":
-		return "It had failed: it is being woken, and then stays awake."
-	case "NAPPING":
-		return "It is napping: it wakes once its nap ends, and then stays awake."
 	}
-	return "It is " + strings.ToLower(state) + ", and then stays awake."
+	return x.answeredWorkload(x.r.ID, raw, line)
 }
 
 func (x *run) resumeWorkload() error {
@@ -324,7 +329,7 @@ func (x *run) resumeWorkload() error {
 		return err
 	}
 	if x.r.DryRun {
-		return x.workloadDryRun("resume", http.MethodPost, path+"/resume", nil)
+		return x.workloadDryRun(http.MethodPost, path+"/resume", nil)
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
 	if err != nil {
@@ -332,13 +337,16 @@ func (x *run) resumeWorkload() error {
 	}
 	var raw json.RawMessage
 	if err := x.controllerSince035(http.MethodPost, path+"/resume", map[string]any{"by": by}, &raw); err != nil {
+		return x.refusedWrite(err)
+	}
+	w, err := decodeWorkload(raw)
+	if err != nil {
 		return err
 	}
-	return x.print(raw, func(w workload) {
-		if w.Paused != nil {
-			x.say("Workload %s is still %s.", w.ID, w.Paused)
-			return
-		}
-		x.say("Workload %s is resumed: its naps run again.", w.ID)
-	})
+	// AWS's line, "<target>: resumed"; a pause of the router, which stays, is said after it.
+	line := x.target(x.r.ID) + ": resumed"
+	if w.Paused != nil {
+		line += "; still " + w.Paused.String()
+	}
+	return x.answeredWorkload(x.r.ID, raw, line)
 }

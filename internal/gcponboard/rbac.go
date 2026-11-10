@@ -805,11 +805,47 @@ func (x *run) accessShow() error {
 	return nil
 }
 
-// accessDryRun ends a grant or a revoke under --dry-run, its plan printed: what it would do, and nothing sent. Under --json,
-// stdout is {"dryRun":true,"targets":[<namespace>/<the objects' name>]}, as AWS's.
-func (x *run) accessDryRun(rb Rbac, what string) error {
-	fmt.Fprintf(x.textOut(), "dry run: would %s, nothing sent\n", what)
-	return x.printStop("dryRun", true, []string{rb.Namespace + "/" + rb.name()})
+// accessDryRun ends a grant or a revoke under --dry-run, its plan printed: each write it would send to Kubernetes, by the workload
+// as AWS's commands name one (sayDry), or what it would do when it writes nothing there; nothing is sent.
+func (x *run) accessDryRun(rb Rbac, writes []dryRequest, what string) error {
+	if len(writes) == 0 {
+		return x.sayDry(nil, fmt.Sprintf("dry run: %s: would %s, nothing sent", x.target(rb.Workload), what))
+	}
+	return x.sayDry(writes)
+}
+
+// kubeRequest is a Kubernetes write as a dry run says it: its path on the cluster's endpoint.
+func (x *run) kubeRequest(rb Rbac, endpoint, method, url string, body any) dryRequest {
+	return dryRequestOf(x.target(rb.Workload), method, strings.TrimPrefix(url, "https://"+endpoint), body)
+}
+
+// grantWrites are the writes ApplyRbac would send for the plan.
+func (x *run) grantWrites(rb Rbac, plan RbacPlan) []dryRequest {
+	var out []dryRequest
+	for _, c := range []rbacChange{plan.Role, plan.RoleBinding} {
+		switch c.Action {
+		case rbacCreate:
+			out = append(out, x.kubeRequest(rb, plan.Endpoint, http.MethodPost, kubeCollectionURL(plan.Endpoint, c.Wanted), c.Wanted))
+		case rbacUpdate:
+			o := c.Wanted
+			o.Metadata = c.Current.Metadata
+			out = append(out, x.kubeRequest(rb, plan.Endpoint, http.MethodPut, kubeObjectURL(plan.Endpoint, o), o))
+		}
+	}
+	return out
+}
+
+// revokeWrites are the writes RemoveRbac would send for the plan's removal.
+func (x *run) revokeWrites(rb Rbac, plan RbacPlan, removal rbacRemovalPlan) []dryRequest {
+	var out []dryRequest
+	if o := removal.stripped; o != nil {
+		out = append(out, x.kubeRequest(rb, plan.Endpoint, http.MethodPut, kubeObjectURL(plan.Endpoint, *o), *o))
+	}
+	for _, c := range removal.deleted {
+		o := *c.Current
+		out = append(out, x.kubeRequest(rb, plan.Endpoint, http.MethodDelete, kubeObjectURL(plan.Endpoint, o), deleteOptions(o)))
+	}
+	return out
 }
 
 // confirm goes on with --yes or a yes on a terminal.
@@ -907,7 +943,7 @@ func (x *run) grantRbac(rb Rbac) (rbacGrant, error) {
 		return g, err
 	}
 	if x.r.DryRun {
-		return g, x.accessDryRun(rb, fmt.Sprintf("apply these to namespace %s of cluster %s", rb.Namespace, rb.Cluster))
+		return g, x.accessDryRun(rb, x.grantWrites(rb, g.plan), "write nothing: the access is as it should be")
 	}
 	if !g.plan.Changes() {
 		// A record that lost it is whole again.
@@ -995,7 +1031,7 @@ func (x *run) accessRevoke() error {
 	case errors.As(err, &gone):
 		x.tell("Cluster %s is not found in project %s: no access is left in it.", gone.cluster, gone.project)
 		if x.r.DryRun {
-			return x.accessDryRun(rb, "take the access out of the install record")
+			return x.accessDryRun(rb, nil, "take the access out of the install record")
 		}
 		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: []string{}})
 	case err != nil:
@@ -1021,12 +1057,12 @@ func (x *run) accessRevoke() error {
 	if len(removal.deleted) == 0 && removal.stripped == nil {
 		x.tell("  nothing to remove")
 		if x.r.DryRun {
-			return x.accessDryRun(rb, "take the access out of the install record")
+			return x.accessDryRun(rb, nil, "take the access out of the install record")
 		}
 		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: removal.left(), Subjects: removal.others})
 	}
 	if x.r.DryRun {
-		return x.accessDryRun(rb, fmt.Sprintf("remove these from namespace %s of cluster %s", rb.Namespace, rb.Cluster))
+		return x.accessDryRun(rb, x.revokeWrites(rb, plan, removal), "")
 	}
 	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
 		return err

@@ -1,7 +1,6 @@
 package gcponboard
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -185,7 +184,7 @@ func TestWorkloadsOnboardRequestLogsTurnsOnTheLogsOfASampledBackendService(t *te
 	if _, there := g.body(t, "POST", controllerHost, "/v1/workloads?dryRun=true")["requestLogs"]; there {
 		t.Fatal("the dry run is sent requestLogs")
 	}
-	contains(t, out, "Onboarded workload shop", "  request logs: on, sample rate 1.0 (before: sample rate 0.5)\n")
+	contains(t, out, shopTarget+": onboarded", "  request logs: on, sample rate 1.0 (before: sample rate 0.5)\n")
 	if strings.Contains(out, "! the idle check") {
 		t.Fatalf("warned:\n%s", out)
 	}
@@ -243,7 +242,7 @@ func TestWorkloadsOnboardWithoutRequestLogsWarnsAfterItsOutput(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s: exit %d:\n%s", name, code, out)
 		}
-		if !strings.HasSuffix(out, countWarningLine) || !strings.Contains(out, "Onboarded workload shop") {
+		if !strings.HasSuffix(out, countWarningLine) || !strings.Contains(out, shopTarget+": onboarded") {
 			t.Errorf("%s:\n%s", name, out)
 		}
 		if got := g.patches(mark); len(got) != 0 {
@@ -258,17 +257,16 @@ func TestWorkloadsOnboardWithoutRequestLogsWarnsAfterItsOutput(t *testing.T) {
 func TestWorkloadsOnboardJSONWarnsOnTheErrorStream(t *testing.T) {
 	g := newLogsRig(t)
 	g.logging("global", nil)
-	var stderr bytes.Buffer
-	g.d.Err = &stderr
 	r := shopOnboarding
 	r.JSON = true
-	code, out := g.call(t, WorkloadsOnboard, r)
+	code, out, stderr := g.split(t, WorkloadsOnboard, r)
 	var w map[string]any
-	if err := json.Unmarshal([]byte(out), &w); code != 0 || err != nil || w["id"] != "shop" {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &w); code != 0 || err != nil || w["workloadId"] != "shop" {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
-	if stderr.String() != countWarningLine {
-		t.Fatalf("stderr %q", stderr.String())
+	// The onboarding's lines, then the warning.
+	if !strings.HasPrefix(stderr, shopTarget+": onboarded (AWAKE)\n") || !strings.HasSuffix(stderr, countWarningLine) {
+		t.Fatalf("stderr %q", stderr)
 	}
 }
 
@@ -697,7 +695,7 @@ func TestWorkloadsOffboardSetsTheRequestLogsBackAfterTheController(t *testing.T)
 	if got := g.logConfig("global"); !jsonEqual(got, map[string]any{"enable": true, "sampleRate": 0.5}) {
 		t.Fatalf("logConfig %v", got)
 	}
-	contains(t, out, "Offboarded workload shop", "  restored: the request logs of backend service shop (sample rate 0.5)\n")
+	contains(t, out, shopTarget+": offboarded", "  restored: the request logs of backend service shop (sample rate 0.5)\n")
 	if _, err := os.Stat(g.offboardFile()); !os.IsNotExist(err) {
 		t.Fatalf("the file stays: %v", err)
 	}
@@ -726,9 +724,9 @@ func TestWorkloadsOffboardJSONSaysTheRequestLogsRestored(t *testing.T) {
 	g.onboardedWithLogs(t)
 	r := offboardShop
 	r.JSON = true
-	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
+	code, out, _ := g.split(t, WorkloadsOffboard, confirmed(r))
 	var got struct{ Restored []string }
-	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !slices.Equal(got.Restored, []string{"the request logs of backend service shop (sample rate 0.5)"}) {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &got); code != 0 || err != nil || !slices.Equal(got.Restored, []string{"the request logs of backend service shop (sample rate 0.5)"}) {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 }

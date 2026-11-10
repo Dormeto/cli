@@ -58,7 +58,7 @@ func (x *run) pauseRouter() error {
 		return fmt.Errorf("the controller's answer is not a pause: %w", err)
 	}
 	// AWS's line: <router>: paused[ until <local time>][, keeping asleep][, woke <workloads>].
-	line := x.n.router + ": paused"
+	line := x.n.managed + ": paused"
 	if until, ok := in["until"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, until); err == nil {
 			line += " until " + t.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
@@ -99,17 +99,17 @@ func (x *run) resumeRouter() error {
 		return fmt.Errorf("the controller's answer is not a resume: %w", err)
 	}
 	if a.Resumed {
-		x.say("%s: resumed", x.n.router)
+		x.say("%s: resumed", x.n.managed)
 	} else {
-		x.say("%s: not paused", x.n.router)
+		x.say("%s: not paused", x.n.managed)
 	}
 	return nil
 }
 
-// printByRouter prints the controller's answer under the router's name, as AWS's routers pause and resume print theirs:
-// {"<router>": <answer>}.
+// printByRouter prints the controller's answer under the router's name in the manager, as AWS's routers pause and resume print
+// theirs: {"<router>": <answer>}.
 func (x *run) printByRouter(answer json.RawMessage) error {
-	b, err := json.Marshal(map[string]json.RawMessage{x.n.router: answer})
+	b, err := json.Marshal(map[string]json.RawMessage{x.n.managed: answer})
 	if err != nil {
 		return err
 	}
@@ -117,8 +117,10 @@ func (x *run) printByRouter(answer json.RawMessage) error {
 	return err
 }
 
-// routerDryRun says what the pause or resume would send, to which router, and stops: no call. Under --json, stdout is
-// {"dryRun":true,"targets":[router]}, as AWS's.
+// routerDryRun says what the pause or resume would send, to which router, and stops: no call (sayDry).
 func (x *run) routerDryRun(verb string, in map[string]any) error {
-	return x.dryRun(verb+" router", x.n.router, http.MethodPost, "/v1/"+verb, in)
+	if len(in) == 0 {
+		in = nil
+	}
+	return x.routerDryRunOf(http.MethodPost, "/v1/"+verb, in)
 }

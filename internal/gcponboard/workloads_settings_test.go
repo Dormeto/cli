@@ -78,7 +78,7 @@ func TestWorkloadsSettingsJSONPrintsTheAnswersByWorkload(t *testing.T) {
 	var answers map[string]struct{ Level string }
 	// The lines go to stderr under --json, the answers to stdout (the rig's buffer holds both): the answers are the last line.
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &answers); err != nil || answers["shop"].Level != "workload" || answers["web"].Level != "workload" {
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &answers); err != nil || answers[shopTarget].Level != "workload" || answers[shopRouter+"/web"].Level != "workload" {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 }
@@ -128,7 +128,14 @@ func TestRouterSettingsSetShowAndDryRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "dmtr-europe-west1", "hibernate: on", "join windows: up to 30 min apart", "workload settings: idle window 45 min", "me@example.com")
+	contains(t, out, "Settings of router "+shopRouter, "hibernate: on", "join windows: up to 30 min apart", "workload settings: idle window 45 min", "me@example.com")
+	// --json, as AWS's: the router's settings by its name.
+	r.JSON = true
+	code, out, _ = g.split(t, RouterSettings, r)
+	var level struct{ Hibernate *bool }
+	if err := json.Unmarshal(byTarget(t, out, shopRouter), &level); code != 0 || err != nil || level.Hibernate == nil || !*level.Hibernate {
+		t.Fatalf("--json: exit %d, %v: %s", code, err, out)
+	}
 }
 
 func TestRouterSettingsShowAnEmptyLevel(t *testing.T) {
@@ -199,7 +206,8 @@ func TestWorkloadsSettingsDryRunSendsNothingAndSaysWhatItWouldSet(t *testing.T) 
 	if code != 0 || len(g.controllerCalls(mark)) != 0 {
 		t.Fatalf("exit %d %v:\n%s", code, g.controllerCalls(mark), out)
 	}
-	contains(t, out, "dry run: its settings: would act on 2 workloads, nothing sent\n", "  shop", "  web")
+	contains(t, out, "dry run: "+shopTarget+": would PUT /v1/workloads/shop/settings, nothing sent\n  {\"idleMinutes\":30}\n",
+		"dry run: "+shopRouter+"/web: would PUT /v1/workloads/web/settings, nothing sent\n")
 }
 
 // Under --json stdout is JSON, as AWS's: the text goes to stderr and a dry run or a declined question prints its shape.
@@ -211,28 +219,29 @@ func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t 
 	r.Levels = map[string]any{"idleMinutes": 30}
 	r.DryRun = true
 	code, out := g.call(t, WorkloadsSettings, r)
-	if want := `{"dryRun":true,"targets":["shop","web"]}` + "\n"; code != 0 || out != want {
+	if want := `{"dryRun":true,"requests":[{"target":"` + shopTarget + `","method":"PUT","path":"/v1/workloads/shop/settings","body":{"idleMinutes":30}},` +
+		`{"target":"` + shopRouter + `/web","method":"PUT","path":"/v1/workloads/web/settings","body":{"idleMinutes":30}}]}` + "\n"; code != 0 || out != want {
 		t.Fatalf("dry run: exit %d, stdout %q, want %q", code, out, want)
 	}
-	contains(t, errs.String(), "dry run: its settings: would act on 2 workloads, nothing sent\n")
+	contains(t, errs.String(), "dry run: "+shopTarget+": would PUT /v1/workloads/shop/settings, nothing sent\n")
 	r.DryRun = false
 	errs.Reset()
 	g.d.Terminal = true
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), &errs, true)
 	code, out = g.call(t, WorkloadsSettings, r)
-	if want := `{"confirmed":false,"targets":["shop","web"]}` + "\n"; code != 0 || out != want {
+	if want := `{"confirmed":false,"targets":["` + shopTarget + `","` + shopRouter + `/web"]}` + "\n"; code != 0 || out != want {
 		t.Fatalf("declined: exit %d, stdout %q, want %q", code, out, want)
 	}
-	contains(t, errs.String(), "Set its settings for shop, web? [y/N]: ", "not confirmed: nothing sent")
+	contains(t, errs.String(), "Set its settings for "+shopTarget+", "+shopRouter+"/web? [y/N]: ", "not confirmed: nothing sent")
 	// A router's level: its dry run is JSON on stdout too.
 	r.DryRun, r.IDs = true, nil
 	r.Levels = map[string]any{"hibernate": ptr(true)}
 	errs.Reset()
 	code, out = g.call(t, RouterSettings, r)
-	if want := `{"dryRun":true,"targets":["dmtr-europe-west1"]}` + "\n"; code != 0 || out != want {
+	if want := `{"dryRun":true,"requests":[{"target":"` + shopRouter + `","method":"PUT","path":"/v1/settings","body":{"hibernate":true}}]}` + "\n"; code != 0 || out != want {
 		t.Fatalf("router dry run: exit %d, stdout %q, want %q", code, out, want)
 	}
-	contains(t, errs.String(), "dmtr-europe-west1: would set")
+	contains(t, errs.String(), "dry run: "+shopRouter+": would PUT /v1/settings, nothing sent\n")
 }
 
 func TestWorkloadsSettingsAskForSeveralWorkloadsOnly(t *testing.T) {
@@ -249,12 +258,12 @@ func TestWorkloadsSettingsAskForSeveralWorkloadsOnly(t *testing.T) {
 	g.d.Terminal = true
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
 	code, out = g.call(t, WorkloadsSettings, r)
-	if code != 0 || len(g.controllerCalls(mark)) != 0 || !strings.Contains(out, "Set its settings for shop, web? [y/N]: ") || !strings.Contains(out, "not confirmed: nothing sent") {
+	if code != 0 || len(g.controllerCalls(mark)) != 0 || !strings.Contains(out, "Set its settings for "+shopTarget+", "+shopRouter+"/web? [y/N]: ") || !strings.Contains(out, "not confirmed: nothing sent") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g.d.Prompter = install.NewPrompter(strings.NewReader("y\n"), g.out, true)
 	code, out = g.call(t, WorkloadsSettings, r)
-	if code != 0 || !strings.Contains(out, "shop: its settings") || !strings.Contains(out, "web: its settings") {
+	if code != 0 || !strings.Contains(out, shopTarget+": its settings\n") || !strings.Contains(out, shopRouter+"/web: its settings\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	// --yes skips the question; one workload asks nothing.

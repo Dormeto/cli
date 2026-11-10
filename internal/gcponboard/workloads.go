@@ -79,10 +79,12 @@ type backend struct {
 	Owner     *kubernetes.Owner `json:"owner,omitempty"`
 }
 
+// String names the backend by its shared kind (sharedKind): instance web-1 (europe-west1-b), asg web-mig (europe-west1),
+// cloudsql-instance shop-db, or a GKE workload's owner.
 func (b backend) String() string {
 	switch b.Kind {
 	case kindDatabase:
-		return "Cloud SQL instance " + b.Name
+		return sharedKind(kindDatabase) + " " + b.Name
 	case kindPods:
 		owner := "Service " + b.Service
 		if b.Owner != nil {
@@ -94,16 +96,13 @@ func (b backend) String() string {
 		}
 		return fmt.Sprintf("%s (namespace %s%s)", owner, b.Namespace, cluster)
 	}
-	kind := "group"
-	if b.Kind == "vm" {
-		kind = "vm"
-	}
-	return fmt.Sprintf("%s %s (%s)", kind, b.Name, b.Location)
+	return fmt.Sprintf("%s %s (%s)", sharedKind(b.Kind), b.Name, b.Location)
 }
 
-// workload is the controller's Workload.
+// workload is the controller's Workload: from router 0.40.0 with workloadId and pauses beside id and paused (decodeWorkload).
 type workload struct {
 	ID                  string   `json:"id"`
+	WorkloadID          string   `json:"workloadId"`
 	State               string   `json:"state"`
 	URLMap              string   `json:"urlMap"`
 	BackendService      string   `json:"backendService"`
@@ -124,8 +123,9 @@ type workload struct {
 		Reason string `json:"reason"`
 		At     string `json:"at"`
 	} `json:"napAborted"`
-	Paused *pausedOf `json:"paused"`
-	LB     *lbRef    `json:"lb"`
+	Paused *pausedOf  `json:"paused"`
+	Pauses []pausedOf `json:"pauses"`
+	LB     *lbRef     `json:"lb"`
 	// The Cloud SQL instances named at its onboarding that no longer exist, as the router last read them.
 	CompanionsGone []string `json:"companionsGone"`
 	// What its onboarding found of the backend service's request logs, when it turned them on; and what the idle check read at
@@ -404,14 +404,19 @@ func (x *run) workloadPath() (string, error) {
 	return "/v1/workloads/" + esc(x.r.ID), nil
 }
 
+// print prints a workload the controller answered, of a read: text(w), or under --json the workload by the shared names.
 func (x *run) print(raw json.RawMessage, text func(w workload)) error {
 	if x.r.JSON {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
+		shared, err := sharedWorkload(raw)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(x.d.Out, "%s\n", shared)
 		return nil
 	}
-	var w workload
-	if err := json.Unmarshal(raw, &w); err != nil {
-		return fmt.Errorf("the controller's answer is not a workload: %w", err)
+	w, err := decodeWorkload(raw)
+	if err != nil {
+		return err
 	}
 	text(w)
 	return nil
@@ -425,16 +430,12 @@ func (x *run) list() error {
 	if err := x.controller(http.MethodGet, "/v1/workloads", nil, &raw); err != nil {
 		return err
 	}
-	rows, all, err := x.filtered(raw)
+	rows, all, every, err := x.filtered(raw)
 	if err != nil {
 		return err
 	}
 	if x.r.JSON {
-		if x.filtering() {
-			raw, _ = json.Marshal(rows)
-		}
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		return x.printList(rows, every)
 	}
 	switch {
 	case len(all) == 0 && x.filtering():
@@ -540,27 +541,29 @@ func (x *run) moves(verb string) error {
 		return err
 	}
 	if x.r.DryRun {
-		return x.workloadDryRun(verb, http.MethodPost, path+"/"+verb, nil)
+		return x.workloadDryRun(http.MethodPost, path+"/"+verb, nil)
 	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodPost, path+"/"+verb, nil, &raw); err != nil {
+		return x.refusedWrite(err)
+	}
+	w, err := decodeWorkload(raw)
+	if err != nil {
 		return err
 	}
-	err = x.print(raw, func(w workload) {
-		// The controller acts only from another state, and answers at once: a workload there already was asked nothing.
-		if there := map[string]string{"nap": "ASLEEP", "wake": "AWAKE"}[verb]; w.State == there {
-			x.say("Workload %s is already %s: nothing was asked.", w.ID, strings.ToLower(there))
-			return
-		}
-		switch {
-		case verb == "wake" && w.State == "NAPPING":
-			x.say("Wake of workload %s asked while it is napping: the wake is kept and runs once the nap ends; current state: %s.", w.ID, w.State)
-		default:
-			x.say("%s of workload %s asked: the controller runs it through Cloud Tasks; current state: %s.", strings.ToUpper(verb[:1])+verb[1:], w.ID, w.State)
-		}
-		x.say("Follow it with: %s", x.showCommand(w.ID))
-	})
-	if err != nil || verb != "wake" || !x.r.Wait {
+	// AWS's lines: "<target>: nap requested", "<target>: wake requested (<state>)". The controller answers at once with the state
+	// as it is, and acts only from another state: a workload there already was asked nothing.
+	target := x.target(x.r.ID)
+	line := target + ": nap requested"
+	switch there := map[string]string{"nap": "ASLEEP", "wake": "AWAKE"}[verb]; {
+	case w.State == there:
+		line = fmt.Sprintf("%s: already %s: nothing requested", target, strings.ToLower(there))
+	case verb == "wake" && w.State == "NAPPING":
+		line = fmt.Sprintf("%s: wake requested (%s): it runs once the nap ends", target, w.State)
+	case verb == "wake":
+		line = fmt.Sprintf("%s: wake requested (%s)", target, w.State)
+	}
+	if err := x.answeredWorkload(x.r.ID, raw, line); err != nil || verb != "wake" || !x.r.Wait {
 		return err
 	}
 	return x.waitAwake(path)
@@ -939,10 +942,15 @@ func (x *run) onboard() error {
 		}
 		return x.ended(fmt.Sprintf("The controller's answer to the onboarding is lost (%s): the workload may be onboarded. %s\nCheck with: %s\nNot there, run the same command again: %s.%s", refusal(err), stays, x.showCommand(in.ID), again, giveUp))
 	}
-	// Onboarded: the controller holds what was found.
+	// Onboarded: the controller holds what was found. AWS's line, "<target>: onboarded (<state>)", and what it holds under it.
 	x.forgetLogs(&requestLogs{entry: x.onboardingPath(in.ID)})
-	err = x.print(raw, func(w workload) {
-		x.say("Onboarded workload %s: %s", w.ID, w.State)
+	w, err := decodeWorkload(raw)
+	if err != nil {
+		return err
+	}
+	var b strings.Builder
+	x.writeTo(&b, func() {
+		x.say("%s: onboarded (%s)", x.target(w.ID), w.State)
 		x.details(w)
 		for _, t := range targets {
 			x.say("  tagged: %s", t.label)
@@ -951,6 +959,7 @@ func (x *run) onboard() error {
 			x.say("  request logs: on, sample rate 1.0 (before: %s)", logs.Before)
 		}
 	})
+	err = x.answeredWorkload(w.ID, raw, strings.TrimSuffix(b.String(), "\n"))
 	x.warnCount(logs.BackendService, now, unread, older)
 	return err
 }
@@ -1156,20 +1165,10 @@ func (x *run) offboard() error {
 		return err
 	}
 	left := slices.Concat(out.tagsLeft, out.accessLeft, out.logsLeft)
-	if x.r.JSON {
-		answer := map[string]any{"id": id, "offboarded": true, "untagged": out.untagged, "left": leftDown(forced.Left)}
-		if len(forced.Fallbacks) > 0 {
-			answer["fallbacks"] = forced.Fallbacks
-		}
-		for key, value := range map[string][]string{"removed": out.removed, "restored": out.restored, "kept": out.kept, "notRemoved": left, "notGivenBack": forced.NotGivenBack} {
-			if len(value) > 0 {
-				answer[key] = value
-			}
-		}
-		b, _ := json.Marshal(answer)
-		fmt.Fprintf(x.d.Out, "%s\n", b)
-	} else {
-		x.say("Offboarded workload %s", id)
+	// AWS's line, "<target>: offboarded", and what was done under it; under --json on the standard error, the answer by target.
+	var lines strings.Builder
+	x.writeTo(&lines, func() {
+		x.say("%s: offboarded", x.target(id))
 		if len(forced.Left) > 0 {
 			x.say("  left down: %s", strings.Join(leftDown(forced.Left), ", "))
 		}
@@ -1191,6 +1190,19 @@ func (x *run) offboard() error {
 		for _, l := range left {
 			x.say("  ! %s", l)
 		}
+	})
+	answer := map[string]any{"workloadId": id, "offboarded": true, "untagged": out.untagged, "left": leftDown(forced.Left)}
+	if len(forced.Fallbacks) > 0 {
+		answer["fallbacks"] = forced.Fallbacks
+	}
+	for key, value := range map[string][]string{"removed": out.removed, "restored": out.restored, "kept": out.kept, "notRemoved": left, "notGivenBack": forced.NotGivenBack} {
+		if len(value) > 0 {
+			answer[key] = value
+		}
+	}
+	b, _ := json.Marshal(answer)
+	if err := x.answered(id, b, strings.TrimSuffix(lines.String(), "\n")); err != nil {
+		return err
 	}
 	if len(left) > 0 {
 		return x.ended("Run the same command again to finish what is not removed.")

@@ -57,13 +57,14 @@ func pageRefusal(err error) error {
 }
 
 func (x *run) waitingPage(workload bool, method string) error {
+	// The level as AWS's commands name it: the router by its name in the manager, a workload as <router>/<workload>.
 	level, path := "router", "/v1/waiting-page"
-	label := x.n.router
+	label := x.n.managed
 	if workload {
 		if x.r.ID == "" {
 			return &stop{2, "the workload's ID is needed"}
 		}
-		level, path, label = "workload", "/v1/workloads/"+esc(x.r.ID)+"/waiting-page", x.r.ID
+		level, path, label = "workload", "/v1/workloads/"+esc(x.r.ID)+"/waiting-page", x.target(x.r.ID)
 	}
 	if method == http.MethodPut && x.r.Page == nil {
 		return &stop{2, "give --title, --description or --icon for a template, or --html for a custom page"}
@@ -72,15 +73,14 @@ func (x *run) waitingPage(workload bool, method string) error {
 		return err
 	}
 	if x.r.DryRun && method != http.MethodGet {
-		verb := map[string]string{http.MethodPut: "set the waiting page of", http.MethodDelete: "clear the waiting page of"}[method]
 		var shown any
 		if method == http.MethodPut {
 			shown = map[string]any{"page": x.r.Page}
 		}
 		if workload {
-			return x.workloadDryRun(verb, method, path, shown)
+			return x.workloadDryRun(method, path, shown)
 		}
-		return x.dryRun(verb+" router", x.n.router, method, path, shown)
+		return x.routerDryRunOf(method, path, shown)
 	}
 	var in any
 	if method != http.MethodGet {

@@ -26,20 +26,27 @@ func confirmed(r Request) Request {
 
 func TestWorkloadWritesDryRunSendNothingAndSayTheRequest(t *testing.T) {
 	page := &fleet.PageDoc{Mode: "template", Title: str("Back soon")}
+	dry := func(method, path string) string {
+		return "dry run: " + shopTarget + ": would " + method + " " + path + ", nothing sent\n"
+	}
 	for name, c := range map[string]struct {
 		run  func(context.Context, Deps, Request) int
 		r    func(r Request) Request
 		want []string
+		// request is the --json's request: {target, method, path[, body]}.
+		request string
 	}{
-		"nap":            {WorkloadsNap, nil, []string{"dry run: would nap 1 workload, nothing sent\n", "  " + shopTarget + ": POST /v1/workloads/shop/nap\n"}},
-		"wake":           {WorkloadsWake, nil, []string{"dry run: would wake 1 workload, nothing sent\n", "  " + shopTarget + ": POST /v1/workloads/shop/wake\n"}},
-		"pause":          {WorkloadsPause, func(r Request) Request { r.Reason, r.Until = "freeze", "2026-12-01T07:00:00Z"; return r }, []string{"dry run: would pause 1 workload, nothing sent\n", `  ` + shopTarget + `: POST /v1/workloads/shop/pause {"reason":"freeze","until":"2026-12-01T07:00:00Z"}` + "\n"}},
-		"resume":         {WorkloadsResume, nil, []string{"dry run: would resume 1 workload, nothing sent\n", "  " + shopTarget + ": POST /v1/workloads/shop/resume\n"}},
-		"schedule set":   {WorkloadsScheduleSet, func(r Request) Request { r.Schedule = json.RawMessage(parisSchedule); return r }, []string{"dry run: would set the schedule of 1 workload, nothing sent\n", "  " + shopTarget + `: PUT /v1/workloads/shop/schedule {"maxNapDays":14,"timeZone":"Europe/Paris"`}},
-		"schedule clear": {WorkloadsScheduleClear, nil, []string{"dry run: would clear the schedule of 1 workload, nothing sent\n", "  " + shopTarget + ": DELETE /v1/workloads/shop/schedule\n"}},
-		"page set":       {WorkloadsPageSet, func(r Request) Request { r.Page = page; return r }, []string{"dry run: would set the waiting page of 1 workload, nothing sent\n", "  " + shopTarget + `: PUT /v1/workloads/shop/waiting-page {"page":{"mode":"template","title":"Back soon"}}` + "\n"}},
-		"page clear":     {WorkloadsPageClear, nil, []string{"dry run: would clear the waiting page of 1 workload, nothing sent\n", "  " + shopTarget + ": DELETE /v1/workloads/shop/waiting-page\n"}},
-		"offboard":       {WorkloadsOffboard, nil, []string{"dry run: would offboard 1 workload, nothing sent\n", "  " + shopTarget + ": DELETE /v1/workloads/shop\n", "  then untag: vm web-1 (europe-west1-b)\n"}},
+		"nap":    {WorkloadsNap, nil, []string{dry("POST", "/v1/workloads/shop/nap")}, `"method":"POST","path":"/v1/workloads/shop/nap"`},
+		"wake":   {WorkloadsWake, nil, []string{dry("POST", "/v1/workloads/shop/wake")}, `"method":"POST","path":"/v1/workloads/shop/wake"`},
+		"pause":  {WorkloadsPause, func(r Request) Request { r.Reason, r.Until = "freeze", "2026-12-01T07:00:00Z"; return r }, []string{dry("POST", "/v1/workloads/shop/pause") + `  {"reason":"freeze","until":"2026-12-01T07:00:00Z"}` + "\n"}, `"method":"POST","path":"/v1/workloads/shop/pause","body":{"reason":"freeze","until":"2026-12-01T07:00:00Z"}`},
+		"resume": {WorkloadsResume, nil, []string{dry("POST", "/v1/workloads/shop/resume")}, `"method":"POST","path":"/v1/workloads/shop/resume"`},
+		"schedule set": {WorkloadsScheduleSet, func(r Request) Request { r.Schedule = json.RawMessage(parisSchedule); return r }, []string{dry("PUT", "/v1/workloads/shop/schedule") + `  {"maxNapDays":14,"timeZone":"Europe/Paris"`},
+			`"method":"PUT","path":"/v1/workloads/shop/schedule","body":{`},
+		"schedule clear": {WorkloadsScheduleClear, nil, []string{dry("DELETE", "/v1/workloads/shop/schedule")}, `"method":"DELETE","path":"/v1/workloads/shop/schedule"`},
+		"page set": {WorkloadsPageSet, func(r Request) Request { r.Page = page; return r }, []string{dry("PUT", "/v1/workloads/shop/waiting-page") + `  {"page":{"mode":"template","title":"Back soon"}}` + "\n"},
+			`"method":"PUT","path":"/v1/workloads/shop/waiting-page","body":{"page":{"mode":"template","title":"Back soon"}}`},
+		"page clear": {WorkloadsPageClear, nil, []string{dry("DELETE", "/v1/workloads/shop/waiting-page")}, `"method":"DELETE","path":"/v1/workloads/shop/waiting-page"`},
+		"offboard":   {WorkloadsOffboard, nil, []string{dry("DELETE", "/v1/workloads/shop"), "  then untag: instance web-1 (europe-west1-b)\n"}, `"method":"DELETE","path":"/v1/workloads/shop"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newWorkloadsRig(t)
@@ -59,15 +66,14 @@ func TestWorkloadWritesDryRunSendNothingAndSayTheRequest(t *testing.T) {
 			if m := g.changes(mark); len(m) != 0 {
 				t.Fatalf("changes: %v", m)
 			}
-			// --json: AWS's {"dryRun":true,"targets":[…]} on stdout, the words on stderr.
-			var stdout, stderr strings.Builder
-			g.d.Out, g.d.Err = &stdout, &stderr
+			// --json: {"dryRun":true,"requests":[{target, method, path, body}]} on stdout, the words on stderr.
 			r.JSON = true
-			if code := c.run(context.Background(), g.d, r); code != 0 || strings.TrimSpace(stdout.String()) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` {
-				t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+			code, stdout, stderr := g.split(t, c.run, r)
+			if code != 0 || !strings.HasPrefix(strings.TrimSpace(stdout), `{"dryRun":true,"requests":[{"target":"`+shopTarget+`",`+c.request) {
+				t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
-			if !strings.Contains(stderr.String(), "dry run: ") || len(g.changes(mark)) != 0 {
-				t.Fatalf("--json: stderr %q, changes %v", stderr.String(), g.changes(mark))
+			if !strings.Contains(stderr, "dry run: ") || len(g.changes(mark)) != 0 {
+				t.Fatalf("--json: stderr %q, changes %v", stderr, g.changes(mark))
 			}
 		})
 	}
@@ -82,12 +88,12 @@ func TestRouterWaitingPageDryRunSendsNothingAndSaysTheRequest(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "dry run: would set the waiting page of router, nothing sent\n", `  dmtr-europe-west1: PUT /v1/waiting-page {"page":{"mode":"template","title":"Back soon"}}`+"\n")
+	contains(t, out, "dry run: "+shopRouter+": would PUT /v1/waiting-page, nothing sent\n"+`  {"page":{"mode":"template","title":"Back soon"}}`+"\n")
 	r.Page = nil
 	if code, out = g.call(t, RouterPageClear, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "dry run: would clear the waiting page of router, nothing sent\n", "  dmtr-europe-west1: DELETE /v1/waiting-page\n")
+	contains(t, out, "dry run: "+shopRouter+": would DELETE /v1/waiting-page, nothing sent\n")
 	if m := g.changes(mark); len(m) != 0 {
 		t.Fatalf("changes: %v", m)
 	}
@@ -156,7 +162,7 @@ func TestWorkloadsOffboardAsksOnATerminalAndADeclineSendsNothing(t *testing.T) {
 	if code, out = g.call(t, WorkloadsOffboard, r); code != 0 || len(g.s.Workloads) != 0 {
 		t.Fatalf("yes: exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Offboarded workload shop")
+	contains(t, out, shopTarget+": offboarded")
 }
 
 // waitRig is a rig whose clock moves by what it sleeps.
@@ -263,19 +269,22 @@ func TestWorkloadsListFiltersByStateSearchAndTag(t *testing.T) {
 			if !slices.Equal(listed, c.want) {
 				t.Fatalf("listed %v, want %v:\n%s", listed, c.want, out)
 			}
-			// --json: the controller's rows, those that match alone.
+			// --json: AWS's list object of the rows that match alone, their total.
 			r.JSON = true
 			_, out = g.call(t, WorkloadsList, r)
-			var rows []map[string]any
-			if err := json.Unmarshal([]byte(out), &rows); err != nil {
+			var list struct {
+				Workloads []map[string]any
+				Total     int
+			}
+			if err := json.Unmarshal([]byte(out), &list); err != nil {
 				t.Fatalf("%v:\n%s", err, out)
 			}
 			var ids []string
-			for _, row := range rows {
-				ids = append(ids, row["id"].(string))
+			for _, row := range list.Workloads {
+				ids = append(ids, row["workloadId"].(string))
 			}
-			if !slices.Equal(ids, c.want) {
-				t.Fatalf("--json %v, want %v", ids, c.want)
+			if !slices.Equal(ids, c.want) || list.Total != len(c.want) {
+				t.Fatalf("--json %v (total %d), want %v", ids, list.Total, c.want)
 			}
 		})
 	}
@@ -313,15 +322,23 @@ func TestRbacGrantAndRevokeDryRunPrintTheirPlanAndChangeNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "+ Role dormeto-shop", "+ RoleBinding dormeto-shop", "dry run: would apply these to namespace shop of cluster europe-west1-b/shop-cluster, nothing sent\n")
+	contains(t, out, "+ Role dormeto-shop", "+ RoleBinding dormeto-shop",
+		"dry run: "+shopTarget+": would POST /apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles, nothing sent\n",
+		"dry run: "+shopTarget+": would POST /apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings, nothing sent\n")
 	if w := g.k.writes(mark); len(w) != 0 || len(g.rbacOf(t)) != 0 || len(g.changes(changes)) != 0 || strings.Contains(out, "up to date") {
 		t.Fatalf("written: %v, record %v, changes %v:\n%s", w, g.rbacOf(t), g.changes(changes), out)
 	}
-	// --json takes --dry-run without --yes: AWS's {"dryRun":true,"targets":[…]} alone on stdout.
+	// --json takes --dry-run without --yes: {"dryRun":true,"requests":[…]} alone on stdout, each Kubernetes write by the workload.
 	var stdout, stderr strings.Builder
 	g.d.Out, g.d.Err = &stdout, &stderr
 	r.JSON = true
-	if code := WorkloadsAccessGrant(context.Background(), g.d, r); code != 0 || strings.TrimSpace(stdout.String()) != `{"dryRun":true,"targets":["shop/dormeto-shop"]}` {
+	var got struct {
+		DryRun   bool
+		Requests []struct{ Target, Method, Path string }
+	}
+	code = WorkloadsAccessGrant(context.Background(), g.d, r)
+	if err := json.Unmarshal([]byte(stdout.String()), &got); code != 0 || err != nil || !got.DryRun || len(got.Requests) != 2 || got.Requests[0].Target != shopTarget ||
+		got.Requests[1].Method != "POST" || got.Requests[1].Path != "/apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings" {
 		t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 	g.d.Out, g.d.Err = g.out, g.out
@@ -334,7 +351,9 @@ func TestRbacGrantAndRevokeDryRunPrintTheirPlanAndChangeNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "- RoleBinding dormeto-shop", "- Role dormeto-shop", "dry run: would remove these from namespace shop of cluster europe-west1-b/shop-cluster, nothing sent\n")
+	contains(t, out, "- RoleBinding dormeto-shop", "- Role dormeto-shop",
+		"dry run: "+shopTarget+": would DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings/dormeto-shop, nothing sent\n",
+		"dry run: "+shopTarget+": would DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles/dormeto-shop, nothing sent\n")
 	if w := g.k.writes(mark); len(w) != 0 || len(g.rbacOf(t)) != 1 || len(g.changes(changes)) != 0 {
 		t.Fatalf("written: %v, record %v, changes %v", w, g.rbacOf(t), g.changes(changes))
 	}

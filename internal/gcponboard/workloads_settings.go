@@ -92,27 +92,30 @@ func (x *run) workloadsSettings() error {
 		return err
 	}
 	said := workloadSaid(x.r.Levels)
+	targets := make([]string, len(x.r.IDs))
+	for i, id := range x.r.IDs {
+		targets[i] = x.target(id)
+	}
 	if x.r.DryRun {
-		out := x.textOut()
-		fmt.Fprintf(out, "dry run: %s: would act on %d %s, nothing sent\n", said, len(x.r.IDs), fleet.Plural(len(x.r.IDs), "workload"))
-		for _, id := range x.r.IDs {
-			fmt.Fprintf(out, "  %s\n", id)
+		var requests []dryRequest
+		for i, id := range x.r.IDs {
+			requests = append(requests, dryRequestOf(targets[i], http.MethodPut, "/v1/workloads/"+esc(id)+"/settings", x.r.Levels))
 		}
-		return x.printStop("dryRun", true, x.r.IDs)
+		return x.sayDry(requests)
 	}
 	// As AWS's: several workloads are confirmed on a terminal, and need --yes without one.
 	if n := len(x.r.IDs); n > 1 && !x.r.Yes {
 		if !x.d.Terminal {
 			return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on %d workloads without a terminal", n)}
 		}
-		question := fmt.Sprintf("Set %s for %s?", said, strings.Join(x.r.IDs, ", "))
+		question := fmt.Sprintf("Set %s for %s?", said, strings.Join(targets, ", "))
 		ok, err := install.Prompted(x.ctx, x.textOut(), func() (bool, error) { return x.d.Prompter.Confirm(question) })
 		if err != nil {
 			return err
 		}
 		if !ok {
 			fmt.Fprintln(x.textOut(), "not confirmed: nothing sent")
-			return x.printStop("confirmed", false, x.r.IDs)
+			return x.printStop("confirmed", false, targets)
 		}
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
@@ -125,22 +128,22 @@ func (x *run) workloadsSettings() error {
 	}
 	answers := map[string]json.RawMessage{}
 	failed := false
-	for _, id := range x.r.IDs {
+	for i, id := range x.r.IDs {
 		var raw json.RawMessage
 		if err := x.withLevels(http.MethodPut, "/v1/workloads/"+esc(id)+"/settings", in, &raw); err != nil {
 			if stopped(err) {
 				return err
 			}
-			fmt.Fprintf(x.d.Err, "%s: %s\n", id, refusal(err))
+			fmt.Fprintf(x.d.Err, "%s: %s\n", targets[i], refusal(err))
 			failed = true
 			continue
 		}
-		answers[id] = raw
+		answers[targets[i]] = raw
 		var a struct {
 			Hibernation *fleet.Hibernation `json:"hibernation"`
 		}
 		_ = json.Unmarshal(raw, &a)
-		line := fmt.Sprintf("%s: %s", id, said)
+		line := fmt.Sprintf("%s: %s", targets[i], said)
 		if _, ok := x.r.Levels["hibernate"]; ok && a.Hibernation != nil {
 			line += " (effective: " + a.Hibernation.Text() + ")"
 		}
@@ -209,10 +212,8 @@ func (x *run) routerSettings() error {
 	if len(x.r.Levels) == 0 {
 		return x.showRouterSettings()
 	}
-	said := routerSaid(x.r.Levels)
 	if x.r.DryRun {
-		fmt.Fprintf(x.textOut(), "%s: would set %s\n", x.n.router, said)
-		return x.printStop("dryRun", true, []string{x.n.router})
+		return x.routerDryRunOf(http.MethodPut, "/v1/settings", x.r.Levels)
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
 	if err != nil {
@@ -227,8 +228,7 @@ func (x *run) routerSettings() error {
 		return err
 	}
 	if x.r.JSON {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		return x.printByRouter(raw)
 	}
 	var a routerLevel
 	if err := json.Unmarshal(raw, &a); err != nil {
@@ -248,27 +248,8 @@ func (x *run) routerSettings() error {
 			out = append(out, schedule.JoinText(*a.Settings.JoinMinutes))
 		}
 	}
-	x.say("%s: %s", x.n.router, strings.Join(out, ", "))
+	x.say("%s: %s", x.n.managed, strings.Join(out, ", "))
 	return nil
-}
-
-// routerSaid says what the router's flags set, for a dry run.
-func routerSaid(levels map[string]any) string {
-	var words []string
-	if v, ok := levels["hibernate"]; ok {
-		words = append(words, "hibernate to "+hibernateWord(v))
-	}
-	if v, ok := levels["joinMinutes"]; ok {
-		word := "inherit"
-		if m, ok := v.(*int); ok && m != nil {
-			word = fmt.Sprint(*m)
-		}
-		words = append(words, "join minutes to "+word)
-	}
-	if _, ok := levels["defaults"]; ok {
-		words = append(words, "the workload settings")
-	}
-	return strings.Join(words, " and ")
 }
 
 func (x *run) showRouterSettings() error {
@@ -277,15 +258,21 @@ func (x *run) showRouterSettings() error {
 		return err
 	}
 	if x.r.JSON {
-		fmt.Fprintf(x.d.Out, "%s\n", raw)
-		return nil
+		// AWS's: the router's settings by its name.
+		var a struct {
+			Settings json.RawMessage `json:"settings"`
+		}
+		if err := json.Unmarshal(raw, &a); err != nil || len(a.Settings) == 0 {
+			return fmt.Errorf("the controller's answer is not the router's settings: %s", raw)
+		}
+		return x.printByRouter(a.Settings)
 	}
 	var a routerLevel
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("the controller's answer is not the router's settings: %w", err)
 	}
 	// AWS's words, as `dormeto aws routers settings` shows a router's level.
-	fmt.Fprint(x.d.Out, a.Settings.Text(x.n.router, x.d.Now().Location()))
+	fmt.Fprint(x.d.Out, a.Settings.Text(x.n.managed, x.d.Now().Location()))
 	return nil
 }
 

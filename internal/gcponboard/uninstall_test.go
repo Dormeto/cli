@@ -655,7 +655,7 @@ func TestUninstallForceLeavesTheBackendsOfAWorkloadThatCannotWakeDown(t *testing
 	if !slices.Equal(deletes, []string{"/v1/workloads/shop", "/v1/workloads/shop?force=true"}) {
 		t.Fatalf("%v", deletes)
 	}
-	contains(t, out, "left down", "vm web-1 (europe-west1-b)", "group web-mig (europe-west1)")
+	contains(t, out, "left down", "instance web-1 (europe-west1-b)", "asg web-mig (europe-west1)")
 	g.nothingLeft(t, "europe-west1")
 	g.s.Lock()
 	defer g.s.Unlock()
@@ -1015,7 +1015,7 @@ func TestUninstallForceGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *testi
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ! the tag bindings of vm web-1 (europe-west1-b) are not read")
+	contains(t, out, "  ! the tag bindings of instance web-1 (europe-west1-b) are not read")
 	g.nothingLeft(t, "europe-west1")
 }
 
@@ -1295,7 +1295,7 @@ func TestUninstallForceStopsOnADatabasesTagItCouldNotRemove(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Cloud SQL instance shop-db", "boom", "Run the same command again")
+	contains(t, out, "cloudsql-instance shop-db", "boom", "Run the same command again")
 	if code, out = g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", Yes: true, Force: true}); code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
@@ -1312,7 +1312,7 @@ func TestUninstallForceStopsOnADatabasesTagWhoseBindingsAreDenied(t *testing.T) 
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Cloud SQL instance shop-db", forbidden, "Run the same command again")
+	contains(t, out, "cloudsql-instance shop-db", forbidden, "Run the same command again")
 }
 
 func TestUninstallForceStopsOnAWorkloadsReadAnswering404NotTheControllers(t *testing.T) {

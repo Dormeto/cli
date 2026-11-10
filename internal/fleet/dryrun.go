@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -36,8 +38,10 @@ func (d *DryRun) JSON() map[string]any {
 	return out
 }
 
-// DryRequest is a write a dry run kept: its method, its path under /iam and its body (none: absent).
+// DryRequest is a write a dry run kept, as both subtrees' dry runs say theirs: what it addresses (RequestTarget), its method,
+// its path under /iam and its body (none: absent).
 type DryRequest struct {
+	Target string          `json:"target"`
 	Method string          `json:"method"`
 	Path   string          `json:"path"`
 	Body   json.RawMessage `json:"body,omitempty"`
@@ -50,7 +54,8 @@ func (d *DryRun) Requests() []DryRequest {
 	return append([]DryRequest{}, d.requests...)
 }
 
-// keep says the write, "dry run: would PUT /iam/settings/workloads, nothing sent" and its body on the next line, and keeps it.
+// keep says the write as DryRunText says it, "dry run: r1: would PUT /iam/routers/r1/description, nothing sent" and its body on
+// the next line, and keeps it.
 func (d *DryRun) keep(method, path string, payload []byte) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -58,14 +63,59 @@ func (d *DryRun) keep(method, path string, payload []byte) {
 	if len(bytes.TrimSpace(payload)) > 0 {
 		r.Body = append(json.RawMessage(nil), payload...)
 	}
+	r.Target = RequestTarget(path, r.Body)
 	d.requests = append(d.requests, r)
-	if d.Out == nil {
-		return
+	if d.Out != nil {
+		fmt.Fprint(d.Out, DryRunText(r.Target, method, "/iam"+path, r.Body))
 	}
-	fmt.Fprintf(d.Out, "dry run: would %s /iam%s, nothing sent\n", method, path)
-	if r.Body != nil {
-		fmt.Fprintf(d.Out, "  %s\n", DryRunBody(r.Body))
+}
+
+// DryRunText is a request as a dry run says it, the same on both subtrees: "dry run: <target>: would <method> <path>, nothing
+// sent" ("dry run: would …" for a request that addresses no target), then its body on the next line, indented (DryRunBody).
+func DryRunText(target, method, path string, body json.RawMessage) string {
+	var b strings.Builder
+	b.WriteString("dry run: ")
+	if target != "" {
+		b.WriteString(target + ": ")
 	}
+	fmt.Fprintf(&b, "would %s %s, nothing sent\n", method, path)
+	if len(body) > 0 {
+		fmt.Fprintf(&b, "  %s\n", DryRunBody(body))
+	}
+	return b.String()
+}
+
+// RequestTarget is what a write to the manager addresses, as its command names it: the <router>/<workload>, router, user,
+// group or exclusion of its path; for a new user or group, the one its body names; for an operation, the router, the account
+// or the candidate its body names; "" for the organization's (its settings, discovery, the manager).
+func RequestTarget(path string, body json.RawMessage) string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i, p := range parts {
+		if u, err := url.PathUnescape(p); err == nil {
+			parts[i] = u
+		}
+	}
+	var fields map[string]any
+	_ = json.Unmarshal(body, &fields)
+	named := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := fields[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	switch {
+	case parts[0] == "workloads" && len(parts) >= 3:
+		return parts[1] + "/" + parts[2]
+	case slices.Contains([]string{"routers", "users", "groups", "exclusions"}, parts[0]) && len(parts) >= 2:
+		return parts[1]
+	case parts[0] == "users" || parts[0] == "groups":
+		return named("email", "name")
+	case parts[0] == "operations":
+		return named("router", "account", "candidateId")
+	}
+	return ""
 }
 
 // maxShown is the longest string a dry run's body shows: a longer one (an icon, a custom page) is said by its size.

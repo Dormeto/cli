@@ -22,14 +22,14 @@ func TestWaitingPageSetSendsThePageAsTheOperatorAndSaysIt(t *testing.T) {
 	if page["mode"] != "template" || page["title"] != "Back soon" || body["by"] != "me@example.com" {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, "shop: waiting page set (template)")
+	contains(t, out, shopTarget+": waiting page set (template)")
 	r.ID = ""
 	code, out = g.call(t, RouterPageSet, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g.body(t, "PUT", controllerHost, "/v1/waiting-page")
-	contains(t, out, "dmtr-europe-west1: waiting page set (template)")
+	contains(t, out, shopRouter+": waiting page set (template)")
 }
 
 func TestWaitingPageShowSaysAwsLines(t *testing.T) {
@@ -41,16 +41,16 @@ func TestWaitingPageShowSaysAwsLines(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "shop: waiting page, template (from the workload)", "title", "Back soon (from the workload)", "set on this workload by me@example.com")
+	contains(t, out, shopTarget+": waiting page, template (from the workload)", "title", "Back soon (from the workload)", "set on this workload by me@example.com")
 	// The router's level, and clearing.
 	g.call(t, RouterPageSet, r)
 	_, out = g.call(t, RouterPageShow, r)
-	contains(t, out, "dmtr-europe-west1: waiting page, template", "set on this router by me@example.com")
+	contains(t, out, shopRouter+": waiting page, template", "set on this router by me@example.com")
 	code, out = g.call(t, WorkloadsPageClear, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "shop: waiting page cleared")
+	contains(t, out, shopTarget+": waiting page cleared")
 	_, out = g.call(t, WorkloadsPageShow, r)
 	contains(t, out, "no document at this level: it shows what it inherits")
 }

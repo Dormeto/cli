@@ -156,8 +156,8 @@ func TestWorkloadsListCallsTheControllerAsTheOperator(t *testing.T) {
 	r := workloadsEurope
 	r.JSON = true
 	code, out = g.call(t, WorkloadsList, r)
-	var list []map[string]any
-	if err := json.Unmarshal([]byte(out), &list); code != 0 || err != nil || len(list) != 2 || list[1]["id"] != "shop" {
+	var list struct{ Workloads []map[string]any }
+	if err := json.Unmarshal([]byte(out), &list); code != 0 || err != nil || len(list.Workloads) != 2 || list.Workloads[1]["workloadId"] != "shop" {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 }
@@ -170,7 +170,7 @@ func TestWorkloadsListSaysWhenThereIsNone(t *testing.T) {
 	}
 	r := workloadsEurope
 	r.JSON = true
-	if _, out = g.call(t, WorkloadsList, r); strings.TrimSpace(out) != "[]" {
+	if _, out = g.call(t, WorkloadsList, r); strings.TrimSpace(out) != `{"workloads":[],"total":0,"byState":{},"cursor":null,"errors":[]}` {
 		t.Fatalf("%q", out)
 	}
 }
@@ -190,7 +190,7 @@ func TestWorkloadsShowPrintsTheWorkload(t *testing.T) {
 	if got := g.controllerCalls(mark); !slices.Equal(got, []string{"GET /v1/workloads/shop"}) {
 		t.Fatalf("%v", got)
 	}
-	contains(t, out, "shop", "AWAKE", "shop-map", "shop-be", "dmtr-europe-west1-shop", "vm web-1 (europe-west1-b)")
+	contains(t, out, "shop", "AWAKE", "shop-map", "shop-be", "dmtr-europe-west1-shop", "instance web-1 (europe-west1-b)")
 	r.JSON = true
 	_, out = g.call(t, WorkloadsShow, r)
 	var w map[string]any
@@ -216,12 +216,16 @@ func TestWorkloadsNapAndWakePostToTheController(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	// The answer is at once and the action runs through Cloud Tasks: the state read is the current one, not the result.
-	contains(t, out, "Nap of workload shop asked", "current state: AWAKE", "workloads show shop")
+	if out != shopTarget+": nap requested\n" {
+		t.Fatalf("%q", out)
+	}
 	code, out = g.call(t, WorkloadsWake, r)
 	if code != 0 || g.s.Workloads["shop"] != "AWAKE" {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Wake of workload shop asked", "current state: ASLEEP", "workloads show shop")
+	if out != shopTarget+": wake requested (ASLEEP)\n" {
+		t.Fatalf("%q", out)
+	}
 	if got := g.controllerCalls(mark); !slices.Equal(got, []string{"POST /v1/workloads/shop/nap", "POST /v1/workloads/shop/wake"}) {
 		t.Fatalf("%v", got)
 	}
@@ -309,7 +313,7 @@ func TestWorkloadsOnboardDryRunThenTagThenOnboard(t *testing.T) {
 	if g.s.Workloads["shop"] != "AWAKE" {
 		t.Fatalf("%v", g.s.Workloads)
 	}
-	contains(t, out, "workload shop", "AWAKE", "web-1", "web-mig")
+	contains(t, out, shopTarget+": onboarded (AWAKE)", "web-1", "web-mig")
 	if !slices.Contains(*g.audiences, "https://"+controllerHost) {
 		t.Fatalf("audiences %v", *g.audiences)
 	}
@@ -335,9 +339,9 @@ func TestWorkloadsOnboardJSONPrintsTheWorkload(t *testing.T) {
 	g := newWorkloadsRig(t)
 	r := shopOnboarding
 	r.JSON = true
-	code, out := g.call(t, WorkloadsOnboard, r)
+	code, out, _ := g.split(t, WorkloadsOnboard, r)
 	var w map[string]any
-	if err := json.Unmarshal([]byte(out), &w); code != 0 || err != nil || w["id"] != "shop" || w["state"] != "AWAKE" {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &w); code != 0 || err != nil || w["workloadId"] != "shop" || w["state"] != "AWAKE" {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 }
@@ -585,7 +589,7 @@ func TestWorkloadsOffboardDeletesThenRemovesTheTagBindings(t *testing.T) {
 		!strings.HasPrefix(changes[2], "DELETE "+regionHost+"/v3/tagBindings/"+groupParent+"/tagValues/") {
 		t.Fatalf("changes:\n%s", strings.Join(changes, "\n"))
 	}
-	contains(t, out, "Offboarded workload shop", "web-1", "web-mig")
+	contains(t, out, shopTarget+": offboarded", "web-1", "web-mig")
 }
 
 func TestWorkloadsOffboardOfAnUnknownWorkloadChangesNothing(t *testing.T) {
@@ -611,13 +615,13 @@ func TestWorkloadsOffboardJSONSaysWhatItUntagged(t *testing.T) {
 	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}}
 	r := workloadsEurope
 	r.ID, r.JSON = "shop", true
-	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
+	code, out, _ := g.split(t, WorkloadsOffboard, confirmed(r))
 	var got struct {
-		ID         string
+		WorkloadID string `json:"workloadId"`
 		Offboarded bool
 		Untagged   []string
 	}
-	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || got.ID != "shop" || !got.Offboarded || len(got.Untagged) != 1 {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &got); code != 0 || err != nil || got.WorkloadID != "shop" || !got.Offboarded || len(got.Untagged) != 1 {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 }
@@ -678,7 +682,7 @@ func TestWorkloadsOffboardRerunFinishesTheUnbindsAfterAFailure(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Offboarded workload shop", "web-1", "web-mig")
+	contains(t, out, shopTarget+": offboarded", "web-1", "web-mig")
 	if len(g.bindings()) != 0 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -730,7 +734,7 @@ func TestWorkloadsOnboardRefusedSaysWhichBindingItCouldNotRemove(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, refusedOnboarding, "not removed", "group web-mig (europe-west1)", "boom")
+	contains(t, out, refusedOnboarding, "not removed", "asg web-mig (europe-west1)", "boom")
 	if len(g.bindings()) != 1 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -745,11 +749,13 @@ func TestWorkloadsWakeDuringANapIsKeptPending(t *testing.T) {
 	if code != 0 || g.s.Workloads["shop"] != "NAPPING" {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "napping", "kept", "once the nap ends", "current state: NAPPING", "workloads show shop")
+	if out != shopTarget+": wake requested (NAPPING): it runs once the nap ends\n" {
+		t.Fatalf("%q", out)
+	}
 	r.JSON = true
-	_, out = g.call(t, WorkloadsWake, r)
+	_, out, _ = g.split(t, WorkloadsWake, r)
 	var w map[string]any
-	if err := json.Unmarshal([]byte(out), &w); err != nil || w["state"] != "NAPPING" || w["id"] != "shop" {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &w); err != nil || w["state"] != "NAPPING" || w["workloadId"] != "shop" {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 }
@@ -804,7 +810,7 @@ func TestWorkloadsOffboardForceLeavesTheBackendsDownAndRemovesTheTags(t *testing
 	if !slices.Equal(deletes, []string{"DELETE /v1/workloads/shop", "DELETE /v1/workloads/shop?force=true"}) {
 		t.Fatalf("%v", deletes)
 	}
-	contains(t, out, "Offboarded workload shop", "left down", "vm web-1 (europe-west1-b)", "group web-mig (europe-west1)")
+	contains(t, out, shopTarget+": offboarded", "left down", "instance web-1 (europe-west1-b)", "asg web-mig (europe-west1)")
 	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
 		t.Fatalf("workloads %v bindings %v", g.s.Workloads, g.bindings())
 	}
@@ -832,7 +838,7 @@ func TestWorkloadsNapAndWakeSayAlreadyWhenNothingWasAsked(t *testing.T) {
 		state string
 		run   func(context.Context, Deps, Request) int
 		want  string
-	}{{"ASLEEP", WorkloadsNap, "Workload shop is already asleep: nothing was asked.\n"}, {"AWAKE", WorkloadsWake, "Workload shop is already awake: nothing was asked.\n"}} {
+	}{{"ASLEEP", WorkloadsNap, shopTarget + ": already asleep: nothing requested\n"}, {"AWAKE", WorkloadsWake, shopTarget + ": already awake: nothing requested\n"}} {
 		g.s.Workloads["shop"] = c.state
 		code, out := g.call(t, c.run, r)
 		if code != 0 {
@@ -901,7 +907,7 @@ func TestWorkloadsOnboardStopsOnABindingAbortedRatherThanTakeItAsBound(t *testin
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "the tag is not bound to group web-mig (europe-west1)", "try again", "vm web-1 (europe-west1-b)")
+	contains(t, out, "the tag is not bound to asg web-mig (europe-west1)", "try again", "instance web-1 (europe-west1-b)")
 	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
 		t.Fatalf("bindings %v workloads %v", g.bindings(), g.s.Workloads)
 	}
@@ -959,18 +965,16 @@ func TestWorkloadsOffboardGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *te
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: zoneHost, Path: "/v3/tagBindings", Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
 	r := workloadsEurope
 	r.ID, r.JSON = "shop", true
-	var errs bytes.Buffer
-	g.d.Err = &errs
-	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
+	code, out, errs := g.split(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 {
-		t.Fatalf("exit %d:\n%s\n%s", code, out, errs.String())
+		t.Fatalf("exit %d:\n%s\n%s", code, out, errs)
 	}
 	// The warning is the error stream's: the answer stays JSON.
 	var got struct{ Untagged []string }
-	if err := json.Unmarshal([]byte(out), &got); err != nil || !slices.Equal(got.Untagged, []string{"group web-mig (europe-west1)"}) {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &got); err != nil || !slices.Equal(got.Untagged, []string{"asg web-mig (europe-west1)"}) {
 		t.Fatalf("%v: %s", err, out)
 	}
-	contains(t, errs.String(), "  ! the tag bindings of vm web-1 (europe-west1-b) are not read", "it may be gone", forbidden)
+	contains(t, errs, "  ! the tag bindings of instance web-1 (europe-west1-b) are not read", "it may be gone", forbidden)
 	if len(g.bindings()) != 0 {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -1292,12 +1296,16 @@ func TestWorkloadsPauseAndResumePostToTheController(t *testing.T) {
 	if _, ok := body["until"]; ok {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, "paused", "release freeze", "asleep", "woken")
+	if out != shopTarget+": paused until resumed; woken shop\n" {
+		t.Fatalf("%q", out)
+	}
 	code, out = g.call(t, WorkloadsResume, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "resumed")
+	if out != shopTarget+": resumed\n" {
+		t.Fatalf("%q", out)
+	}
 	if body := g.body(t, "POST", controllerHost, "/v1/workloads/shop/resume"); body["by"] != "me@example.com" {
 		t.Fatalf("%v", body)
 	}
@@ -1320,9 +1328,10 @@ func TestWorkloadsPauseKeepAsleepAndUntilSayWhatTheyDo(t *testing.T) {
 	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, "a visitor still wakes the workload", "scheduled and maintenance wakes wait")
-	if strings.Contains(out, "woken") {
-		t.Fatalf("%s", out)
+	// AWS's line, the end in the local time; kept asleep, nothing is woken.
+	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).In(g.d.Now().Location()).Format("2006-01-02 15:04 MST")
+	if out != shopTarget+": paused until "+local+"\n" {
+		t.Fatalf("%q", out)
 	}
 }
 
@@ -1417,14 +1426,15 @@ func TestWorkloadsScheduleOfAnUnknownWorkloadSaysSo(t *testing.T) {
 	}
 }
 
-// The answer's state is the one as the pause was asked: it must not read as a contradiction.
+// The answer's state is the one as the pause was asked: one asleep or failed is woken, one napping once its nap ends, as AWS's
+// line says it ("; woken <workload>").
 func TestWorkloadsPauseSaysWhatBecomesOfTheWorkloadByItsState(t *testing.T) {
 	for state, want := range map[string]string{
-		"ASLEEP":  "It was asleep: it is being woken, and then stays awake.\n",
-		"FAILED":  "It had failed: it is being woken, and then stays awake.\n",
-		"NAPPING": "It is napping: it wakes once its nap ends, and then stays awake.\n",
-		"WAKING":  "It is waking, and then stays awake.\n",
-		"AWAKE":   "It stays awake.\n",
+		"ASLEEP":  shopTarget + ": paused until resumed; woken shop\n",
+		"FAILED":  shopTarget + ": paused until resumed; woken shop\n",
+		"NAPPING": shopTarget + ": paused until resumed; woken shop once its nap ends\n",
+		"WAKING":  shopTarget + ": paused until resumed\n",
+		"AWAKE":   shopTarget + ": paused until resumed\n",
 	} {
 		g := newWorkloadsRig(t)
 		g.s.Workloads["shop"] = state
@@ -1434,9 +1444,8 @@ func TestWorkloadsPauseSaysWhatBecomesOfTheWorkloadByItsState(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s: exit %d:\n%s", state, code, out)
 		}
-		contains(t, out, want, "none of its naps runs until it is resumed.\n")
-		if strings.Contains(out, "(now ") {
-			t.Errorf("%s:\n%s", state, out)
+		if out != want {
+			t.Errorf("%s: %q", state, out)
 		}
 	}
 }
@@ -1450,10 +1459,11 @@ func TestWorkloadsPauseWithUntilSaysTheTime(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "none of its naps runs until 2026-12-01T07:00:00Z, unless it is resumed sooner.\n")
+	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).In(g.d.Now().Location()).Format("2006-01-02 15:04 MST")
+	contains(t, out, shopTarget+": paused until "+local+"\n")
 }
 
-func TestWorkloadsPauseKeepAsleepNamesMaintenanceWakes(t *testing.T) {
+func TestWorkloadsPauseKeepAsleepWakesNothing(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "ASLEEP"
 	r := workloadsEurope
@@ -1462,7 +1472,9 @@ func TestWorkloadsPauseKeepAsleepNamesMaintenanceWakes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "It stays as it is (asleep): a visitor still wakes the workload, and scheduled and maintenance wakes wait until the pause ends.\n")
+	if out != shopTarget+": paused until resumed\n" {
+		t.Fatalf("%q", out)
+	}
 }
 
 // As the router: a paused workload's nap is refused only when it would act, on an AWAKE one.
@@ -1563,7 +1575,7 @@ func TestWorkloadsOnboardBindsTheDatabasesTagOnItsParentBeforeTheOnboarding(t *t
 			t.Fatalf("%v", in)
 		}
 	}
-	contains(t, out, "backend: Cloud SQL instance shop-db", "tagged: Cloud SQL instance shop-db")
+	contains(t, out, "backend: cloudsql-instance shop-db", "tagged: cloudsql-instance shop-db")
 }
 
 func TestWorkloadsOnboardDryRunNamesTheDatabaseAndBindsNothing(t *testing.T) {
@@ -1574,7 +1586,7 @@ func TestWorkloadsOnboardDryRunNamesTheDatabaseAndBindsNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Cloud SQL instance shop-db")
+	contains(t, out, "cloudsql-instance shop-db")
 	if len(g.bindings()) != 0 || len(g.s.Workloads) != 0 {
 		t.Fatal("something was changed")
 	}
@@ -1651,7 +1663,7 @@ func TestWorkloadsOnboardRefusedRemovesTheDatabasesTagItBoundAndNoOther(t *testi
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, refusedOnboarding, "removed", "Cloud SQL instance shop-db")
+	contains(t, out, refusedOnboarding, "removed", "cloudsql-instance shop-db")
 	if got := g.bindings(); !slices.Equal(got, []gcptest.TagBinding{before}) {
 		t.Fatalf("bindings %v", got)
 	}
@@ -1678,7 +1690,7 @@ func TestWorkloadsOnboardRefusedSaysWhichDatabaseItCouldNotUntag(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, refusedOnboarding, "not removed", "Cloud SQL instance shop-db", "boom")
+	contains(t, out, refusedOnboarding, "not removed", "cloudsql-instance shop-db", "boom")
 }
 
 func TestWorkloadsOnboardChangesNothingWhenTheDatabasesRegionIsNotRead(t *testing.T) {
@@ -1812,7 +1824,7 @@ func TestWorkloadsOnboardGKEFollowsTheOrderOfTheDesign(t *testing.T) {
 	if !g.k.has(shopRole) || !g.k.has(shopBinding) || g.s.Workloads["shop"] != "AWAKE" {
 		t.Fatalf("role %v binding %v workloads %v", g.k.has(shopRole), g.k.has(shopBinding), g.s.Workloads)
 	}
-	contains(t, out, "Onboarded workload shop", "Deployment web", shopCluster)
+	contains(t, out, shopTarget+": onboarded", "Deployment web", shopCluster)
 }
 
 func TestWorkloadsOnboardGKESendsTheClusterThenTheOwner(t *testing.T) {
@@ -2106,7 +2118,7 @@ func TestWorkloadsOnboardGKEWhenATagIsRefusedRemovesTheRbacItAdded(t *testing.T)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "the tag is not bound to Cloud SQL instance shop-db", "no tag for you", "removed")
+	contains(t, out, "the tag is not bound to cloudsql-instance shop-db", "no tag for you", "removed")
 	if g.k.has(shopRole) || g.k.has(shopBinding) || len(g.s.Workloads) != 0 {
 		t.Fatalf("role %v binding %v workloads %v", g.k.has(shopRole), g.k.has(shopBinding), g.s.Workloads)
 	}
@@ -2149,7 +2161,7 @@ func TestWorkloadsOnboardGKEWithJSONKeepsItsWordsOutOfTheAnswer(t *testing.T) {
 	r.JSON = true
 	code, out := g.call(t, WorkloadsOnboard, r)
 	var w map[string]any
-	if err := json.Unmarshal([]byte(out), &w); code != 0 || err != nil || w["id"] != "shop" {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &w); code != 0 || err != nil || w["workloadId"] != "shop" {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 	contains(t, errs.String(), "saves money only on Autopilot", "created Role dormeto-shop", "created RoleBinding dormeto-shop", "namespace shop", shopCluster)
@@ -2330,7 +2342,7 @@ func TestWorkloadsOffboardRemovesTheTagOfADatabase(t *testing.T) {
 	if len(changes) != 3 || changes[0] != "DELETE "+controllerHost+"/v1/workloads/shop" || !strings.HasPrefix(changes[2], "DELETE "+databaseHost+"/v3/tagBindings/") {
 		t.Fatalf("changes:\n%s", strings.Join(changes, "\n"))
 	}
-	contains(t, out, "Offboarded workload shop", "untagged: vm web-1", "untagged: Cloud SQL instance shop-db")
+	contains(t, out, shopTarget+": offboarded", "untagged: instance web-1", "untagged: cloudsql-instance shop-db")
 }
 
 func TestWorkloadsOffboardGoesOnForADatabaseThatIsGone(t *testing.T) {
@@ -2384,7 +2396,7 @@ func TestWorkloadsOffboardSaysADatabasesTagIsLeftThenARerunFinishes(t *testing.T
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is offboarded, but the tag of Cloud SQL instance shop-db is not removed", "cloudsql.instances.get", "run the same command again")
+	contains(t, out, "workload shop is offboarded, but the tag of cloudsql-instance shop-db is not removed", "cloudsql.instances.get", "run the same command again")
 	if code, out = g.call(t, WorkloadsOffboard, confirmed(shopOffboard)); code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
@@ -2428,7 +2440,7 @@ func TestWorkloadsOffboardRemovesTheRbacAfterTheController(t *testing.T) {
 	if got := g.rbacOf(t); len(got) != 0 {
 		t.Fatalf("the record still lists %v", got)
 	}
-	contains(t, out, "Offboarded workload shop", "removed: RoleBinding dormeto-shop", "removed: Role dormeto-shop")
+	contains(t, out, shopTarget+": offboarded", "removed: RoleBinding dormeto-shop", "removed: Role dormeto-shop")
 	for _, c := range order.calls()[mark:] {
 		if strings.Contains(c, "tagValues") || strings.Contains(c, "tagBindings") {
 			t.Errorf("a GKE workload has no tag: %s", c)
@@ -2441,9 +2453,9 @@ func TestWorkloadsOffboardJSONSaysTheRbacItRemoved(t *testing.T) {
 	g.onboardedOnGKE(t)
 	r := shopOffboard
 	r.JSON = true
-	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
+	code, out, _ := g.split(t, WorkloadsOffboard, confirmed(r))
 	var got struct{ Removed []string }
-	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !slices.Equal(got.Removed, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &got); code != 0 || err != nil || !slices.Equal(got.Removed, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 }
@@ -2553,7 +2565,7 @@ func TestWorkloadsOffboardForceNamesEverythingItCouldNotRemove(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Offboarded workload shop", "the tag of vm web-1 (europe-west1-b) is not removed", "boom", "untagged: Cloud SQL instance shop-db",
+	contains(t, out, shopTarget+": offboarded", "the tag of instance web-1 (europe-west1-b) is not removed", "boom", "untagged: cloudsql-instance shop-db",
 		"Role and RoleBinding dormeto-shop, namespace shop, cluster "+shopCluster, "rolebindings is forbidden", "access revoke")
 	if len(g.s.Workloads) != 0 || !slices.Contains(g.rbacOf(t), shopEntry) {
 		t.Fatalf("workloads %v record %v", g.s.Workloads, g.rbacOf(t))
@@ -2576,7 +2588,7 @@ func TestWorkloadsOffboardForceJSONNamesWhatIsLeft(t *testing.T) {
 		Offboarded bool
 		NotRemoved []string
 	}
-	if err := json.Unmarshal([]byte(out), &got); code != 1 || err != nil || !got.Offboarded || len(got.NotRemoved) != 1 {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &got); code != 1 || err != nil || !got.Offboarded || len(got.NotRemoved) != 1 {
 		t.Fatalf("%d %v:\n%s", code, err, out)
 	}
 }
@@ -2629,15 +2641,14 @@ func TestWorkloadsOffboardForceJSONSaysWhatTheRouterCouldNotGiveBack(t *testing.
 	g.s.NotGivenBack = map[string][]string{"shop": {pausedLeft}}
 	r := shopOffboard
 	r.Force, r.JSON = true, true
-	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
+	code, out, _ := g.split(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	var answer struct {
 		NotGivenBack []string `json:"notGivenBack"`
 	}
-	line, _, _ := strings.Cut(out, "\n")
-	if err := json.Unmarshal([]byte(line), &answer); err != nil {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &answer); err != nil {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	if !slices.Equal(answer.NotGivenBack, []string{pausedLeft}) {
@@ -2703,7 +2714,7 @@ func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *te
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "does not answer", "may not be offboarded", "the tag dormeto=managed of vm web-1 (europe-west1-b)", "the tag dormeto=managed of Cloud SQL instance shop-db",
+	contains(t, out, "does not answer", "may not be offboarded", "the tag dormeto=managed of instance web-1 (europe-west1-b)", "the tag dormeto=managed of cloudsql-instance shop-db",
 		"installing the router again brings it back: dormeto gcp routers install --project dormeto-dev --region europe-west1 --image <a good image>")
 	if len(g.bindings()) != 2 {
 		t.Fatalf("bindings %v", g.bindings())
@@ -2724,10 +2735,10 @@ func TestWorkloadsOffboardForceNamesADatabasesTagWhoseBindingsAreDenied(t *testi
 		Offboarded bool
 		NotRemoved []string
 	}
-	if err := json.Unmarshal([]byte(out), &got); code != 1 || err != nil || !got.Offboarded || len(got.NotRemoved) != 1 {
+	if err := json.Unmarshal(byTarget(t, out, shopTarget), &got); code != 1 || err != nil || !got.Offboarded || len(got.NotRemoved) != 1 {
 		t.Fatalf("%d %v:\n%s\n%s", code, err, out, errs.String())
 	}
-	contains(t, got.NotRemoved[0], "the tag of Cloud SQL instance shop-db is not removed", forbidden)
+	contains(t, got.NotRemoved[0], "the tag of cloudsql-instance shop-db is not removed", forbidden)
 	if !slices.Contains(g.bindings(), gcptest.TagBinding{Parent: databaseParent, TagValue: g.tagValue(t)}) {
 		t.Fatalf("bindings %v", g.bindings())
 	}
@@ -2744,7 +2755,7 @@ func TestWorkloadsOffboardStopsOnADatabasesTagWhoseBindingsAreDeniedThenARerunFi
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "workload shop is offboarded, but the tag of Cloud SQL instance shop-db is not removed", forbidden, "run the same command again")
+	contains(t, out, "workload shop is offboarded, but the tag of cloudsql-instance shop-db is not removed", forbidden, "run the same command again")
 	if strings.Contains(out, "it may be gone") {
 		t.Fatalf("it was just read:\n%s", out)
 	}
@@ -2764,7 +2775,7 @@ func TestWorkloadsOnboardRefusedSaysADatabasesTagWhoseBindingsAreDenied(t *testi
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "The tag binding of Cloud SQL instance shop-db is not removed", forbidden)
+	contains(t, out, "The tag binding of cloudsql-instance shop-db is not removed", forbidden)
 }
 
 // cloudRun404 is Cloud Run's own 404: no controller answered, so it says nothing of the workload.
@@ -2815,7 +2826,7 @@ func TestWorkloadsOffboardWithAFileLeftAndA404NotTheControllersRemovesNothing(t 
 		contains(t, out, "no such service")
 		g.nothingRemoved(t, out)
 		if force {
-			contains(t, out, "does not answer", "the tag dormeto=managed of Cloud SQL instance shop-db", "access revoke")
+			contains(t, out, "does not answer", "the tag dormeto=managed of cloudsql-instance shop-db", "access revoke")
 		}
 	}
 }
@@ -2943,7 +2954,7 @@ func TestWorkloadsOnboardInterruptedAtATagRemovesWhatItAddedAndSaysSo(t *testing
 	r := shopOnGKE
 	r.CloudSQL = []string{"shop-db"}
 	out := g.interrupted(t, ctx, WorkloadsOnboard, r)
-	contains(t, out, "Interrupted before the onboarding was sent", "The tag of Cloud SQL instance shop-db may be bound", "removed", "RoleBinding dormeto-shop", "vm web-1 (europe-west1-b)", "run the same command again")
+	contains(t, out, "Interrupted before the onboarding was sent", "The tag of cloudsql-instance shop-db may be bound", "removed", "RoleBinding dormeto-shop", "instance web-1 (europe-west1-b)", "run the same command again")
 	if g.k.has(shopRole) || g.k.has(shopBinding) || len(g.bindings()) != 0 {
 		t.Fatalf("role %v binding %v bindings %v:\n%s", g.k.has(shopRole), g.k.has(shopBinding), g.bindings(), out)
 	}
@@ -3013,7 +3024,7 @@ func TestWorkloadsOffboardForceInterruptedSaysWhatIsLeftAsInterrupted(t *testing
 	r := shopOffboard
 	r.Force = true
 	out := g.interrupted(t, ctx, WorkloadsOffboard, confirmed(r))
-	contains(t, out, "Offboarded workload shop", "Role and RoleBinding dormeto-shop", "interrupted", "access revoke")
+	contains(t, out, shopTarget+": offboarded", "Role and RoleBinding dormeto-shop", "interrupted", "access revoke")
 	if strings.Contains(out, "context canceled") {
 		t.Fatalf("%s", out)
 	}
@@ -3029,7 +3040,7 @@ func TestWorkloadsOffboardInterruptedAtTheTagsSaysTheyAreLeft(t *testing.T) {
 		out := g.interrupted(t, ctx, WorkloadsOffboard, confirmed(r))
 		want := "workload shop is offboarded, but its tags are not removed: interrupted"
 		if force {
-			want = "the tag of Cloud SQL instance shop-db is not removed: interrupted"
+			want = "the tag of cloudsql-instance shop-db is not removed: interrupted"
 		}
 		contains(t, out, want)
 		if strings.Contains(out, "context canceled") || len(g.bindings()) != 2 {
@@ -3387,13 +3398,10 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 		g.s.OnFallback = map[string]map[string]map[string]string{"shop": onFallback}
 		g.s.Workloads["shop"] = "AWAKE"
 		r.Force, r.JSON = false, true
-		code, out = g.call(t, WorkloadsOffboard, confirmed(r))
-		// The rig's stdout and stderr share a buffer: the lines come first (on stderr), the answer last.
+		code, out, stderr := g.split(t, WorkloadsOffboard, confirmed(r))
 		answer := map[string]any{}
-		lines := strings.Split(strings.TrimSpace(out), "\n")
-		last := lines[len(lines)-1]
-		contains(t, out, "  VM web-1 is on e2-medium, its own is e2-small: it keeps")
-		if err := json.Unmarshal([]byte(last), &answer); err != nil || code != 0 || !jsonEqual(answer["fallbacks"], []map[string]string{{"instance": "web-1", "from": "e2-small", "to": "e2-medium"}, {"instance": "web-2", "from": "n2-standard-2", "to": "n2-standard-4"}}) {
+		contains(t, stderr, "  VM web-1 is on e2-medium, its own is e2-small: it keeps")
+		if err := json.Unmarshal(byTarget(t, out, shopTarget), &answer); err != nil || code != 0 || !jsonEqual(answer["fallbacks"], []map[string]string{{"instance": "web-1", "from": "e2-small", "to": "e2-medium"}, {"instance": "web-2", "from": "n2-standard-2", "to": "n2-standard-4"}}) {
 			t.Errorf("force %v json: %d %s", force, code, out)
 		}
 	}
@@ -3527,7 +3535,7 @@ func TestRouterPauseAndResumePostToTheController(t *testing.T) {
 	if body["reason"] != "release freeze" || body["by"] != "me@example.com" || len(body) != 2 {
 		t.Fatalf("not asked, keepAsleep and until are not sent: %v", body)
 	}
-	contains(t, out, "dmtr-europe-west1: paused, woke shop\n")
+	contains(t, out, shopRouter+": paused, woke shop\n")
 	code, out = g.call(t, RouterResume, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -3565,12 +3573,12 @@ func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
 	r.JSON = true
 	_, out = g.call(t, RouterPause, r)
 	var a map[string]map[string]any
-	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a["dmtr-europe-west1"]["pause"] == nil {
+	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a[shopRouter]["pause"] == nil {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	_, out = g.call(t, RouterResume, r)
 	a = nil
-	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a["dmtr-europe-west1"]["resumed"] != true {
+	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a[shopRouter]["resumed"] != true {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 }
@@ -3618,12 +3626,12 @@ func TestRouterPauseAndResumeDryRunSendNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "dry run", "dmtr-europe-west1", "nothing sent", `"reason":"freeze"`, `"keepAsleep":true`, `"until":"2026-12-01T07:00:00Z"`)
+	contains(t, out, "dry run: "+shopRouter+": would POST /v1/pause, nothing sent\n", `"reason":"freeze"`, `"keepAsleep":true`, `"until":"2026-12-01T07:00:00Z"`)
 	code, out = g.call(t, RouterResume, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "dry run", "dmtr-europe-west1", "nothing sent")
+	contains(t, out, "dry run: "+shopRouter+": would POST /v1/resume, nothing sent\n")
 	if got := g.controllerCalls(mark); len(got) != 0 {
 		t.Fatalf("%v", got)
 	}
@@ -3636,25 +3644,25 @@ func TestRouterPauseSaysAWSLines(t *testing.T) {
 	r.Reason, r.Until = "freeze", "2026-12-01T07:00:00Z"
 	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).Format("2006-01-02 15:04 MST") // the rig's clock is UTC
 	_, out := g.call(t, RouterPause, r)
-	want := "dmtr-europe-west1: paused until " + local + ", woke blog, shop\n"
+	want := shopRouter + ": paused until " + local + ", woke blog, shop\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	g.call(t, RouterResume, r)
 	r.KeepAsleep, r.Until = true, ""
 	_, out = g.call(t, RouterPause, r)
-	if want := "dmtr-europe-west1: paused, keeping asleep\n"; !strings.Contains(out, want) {
+	if want := shopRouter + ": paused, keeping asleep\n"; !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	r.Until, r.KeepAsleep = "2026-12-01T07:00:00Z", true
 	_, out = g.call(t, RouterPause, r)
-	if want := "dmtr-europe-west1: paused until " + local + ", keeping asleep\n"; !strings.Contains(out, want) {
+	if want := shopRouter + ": paused until " + local + ", keeping asleep\n"; !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	_, out = g.call(t, RouterResume, r)
-	contains(t, out, "dmtr-europe-west1: resumed\n")
+	contains(t, out, shopRouter+": resumed\n")
 	_, out = g.call(t, RouterResume, r)
-	contains(t, out, "dmtr-europe-west1: not paused\n")
+	contains(t, out, shopRouter+": not paused\n")
 }
 
 func TestWorkloadsOnboardSaysTheAccessMayStillPropagateWhenTheControllerFailsRightAfterTheInstall(t *testing.T) {

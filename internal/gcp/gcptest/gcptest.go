@@ -129,6 +129,8 @@ type Server struct {
 	// POST /v1/pause set, until POST /v1/resume.
 	ControllerBelow040 bool
 	RouterPause        map[string]any
+	// SharedNames plays the REST answers of router 0.40.0: workloadId beside id, and pauses (each with its scope) beside paused.
+	SharedNames bool
 	// ControllerBeforeSettings plays a router before G5: no route for the settings levels (a workload's settings, the router's).
 	// SettingsProblem, when set, makes a PUT of settings refuse with a 400 saying it; RouterLevel is the router's level as
 	// GET /v1/settings answers it.

@@ -179,7 +179,7 @@ func TestEveryWriteWithoutItsOwnDryRunTakesOneThatSendsNothing(t *testing.T) {
 		a := &writesAPI{}
 		api := &fakeAPI{custom: a.handler, stdin: `{"rules":[]}`}
 		r := runFleetWith(t, api, "eu-west-1", nil, append(c.args, "--dry-run")...)
-		if r.exit != 0 || len(a.writes) != 0 || !strings.Contains(r.stdout, "dry run: would "+c.says+", nothing sent\n") {
+		if r.exit != 0 || len(a.writes) != 0 || !strings.Contains(r.stdout, "would "+c.says+", nothing sent\n") || !strings.HasPrefix(r.stdout, "dry run: ") {
 			t.Errorf("%q: exit %d, writes %q, stdout %q, stderr %q", c.args, r.exit, a.writes, r.stdout, r.stderr)
 			continue
 		}
@@ -190,7 +190,7 @@ func TestEveryWriteWithoutItsOwnDryRunTakesOneThatSendsNothing(t *testing.T) {
 		if !jsonCommand(t, c.args) {
 			continue
 		}
-		// --json: {"dryRun":true,"requests":[{method, path, body}]} alone on stdout, the words on stderr.
+		// --json: {"dryRun":true,"requests":[{target, method, path, body}]} alone on stdout, the words on stderr.
 		r = runFleetWith(t, &fakeAPI{custom: a.handler, stdin: `{"rules":[]}`}, "eu-west-1", nil, append(c.args, "--dry-run", "--json")...)
 		var got struct {
 			DryRun   bool `json:"dryRun"`
@@ -202,7 +202,7 @@ func TestEveryWriteWithoutItsOwnDryRunTakesOneThatSendsNothing(t *testing.T) {
 		for _, req := range got.Requests {
 			said = said || (req.Method == method && "/iam"+req.Path == path)
 		}
-		if r.exit != 0 || err != nil || !got.DryRun || !said || len(a.writes) != 0 || !strings.Contains(r.stderr, "dry run: would ") {
+		if r.exit != 0 || err != nil || !got.DryRun || !said || len(a.writes) != 0 || !strings.Contains(r.stderr, "would "+c.says+", nothing sent") {
 			t.Errorf("%q --json: exit %d, %v, stdout %q, stderr %q", c.args, r.exit, err, r.stdout, r.stderr)
 		}
 	}
@@ -279,7 +279,7 @@ func TestOnboardDryRunSaysTheCandidateItsEligibilityAndTheBody(t *testing.T) {
 	r := runOB(t, a, nil, "workloads", "onboard", tgAPI, "--idle-minutes", "30", "--dry-run")
 	want := "candidate " + tgAPI + ": aws, account 111111111111, eu-west-1 (" + tgARN("111111111111", tgAPI) + ")\n" +
 		"eligibility, as discovery listed it: pending-onboarding; idle 7d 120h, requests 7d 42\n" +
-		"dry run: would POST /iam/operations, nothing sent\n" +
+		"dry run: " + tgARN("111111111111", tgAPI) + ": would POST /iam/operations, nothing sent\n" +
 		`  {"candidateId":"` + tgARN("111111111111", tgAPI) + `","databases":[],"settings":{"idleMinutes":30},"type":"onboard"}` + "\n"
 	if r.exit != 0 || len(a.writes) != 0 || r.stdout != want {
 		t.Fatalf("exit %d, writes %q, stdout:\n%s\nwant:\n%s\nstderr %q", r.exit, a.writes, r.stdout, want, r.stderr)

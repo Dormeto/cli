@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -154,6 +155,14 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 }
 
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
+
+// writeTo runs say's lines of f into w instead of the standard output.
+func (x *run) writeTo(w io.Writer, f func()) {
+	out := x.d.Out
+	x.d.Out = w
+	defer func() { x.d.Out = out }()
+	f()
+}
 
 func (x *run) now() string { return x.d.Now().UTC().Format(time.RFC3339) }
 

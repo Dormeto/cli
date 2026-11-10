@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/install"
 )
@@ -24,21 +23,14 @@ const followEvery = 5 * time.Second
 // target is a workload as AWS's commands name one: <router>/<workload>, the router by its name in the manager.
 func (x *run) target(id string) string { return x.n.managed + "/" + id }
 
-// dryRun says what a write would send, and stops: no call. what words it as AWS's ("nap 1 workload", "set the waiting page of
-// router"), on is the target, then the request: "<target>: POST /v1/… <body>". Under --json, stdout is {"dryRun":true,
-// "targets":[target]}, as AWS's.
-func (x *run) dryRun(what, on, method, path string, in any) error {
-	line := fmt.Sprintf("  %s: %s %s", on, method, path)
-	if in != nil {
-		line += " " + fleet.DryRunBody(in)
-	}
-	fmt.Fprintf(x.textOut(), "dry run: would %s, nothing sent\n%s\n", what, line)
-	return x.printStop("dryRun", true, []string{on})
+// workloadDryRun says the request a write of the run's workload would send, and stops: no call (sayDry).
+func (x *run) workloadDryRun(method, path string, in any) error {
+	return x.sayDry([]dryRequest{dryRequestOf(x.target(x.r.ID), method, path, in)})
 }
 
-// workloadDryRun is dryRun of the workload of the run.
-func (x *run) workloadDryRun(verb, method, path string, in any) error {
-	return x.dryRun(verb+" 1 workload", x.target(x.r.ID), method, path, in)
+// routerDryRunOf is workloadDryRun of a write of the router, which it addresses by its name in the manager.
+func (x *run) routerDryRunOf(method, path string, in any) error {
+	return x.sayDry([]dryRequest{dryRequestOf(x.n.managed, method, path, in)})
 }
 
 // confirmWorkload asks question on a terminal, the workload listed first, as AWS's commands ask before a destructive write:
@@ -120,30 +112,31 @@ func failureText(raw json.RawMessage) string {
 	return "no reason given"
 }
 
-// filtered is listing the list's filters keep: the rows as the controller answered them, and each decoded. A router before
-// 0.40.0 answers no tags: --tag is refused there rather than match nothing.
-func (x *run) filtered(raw json.RawMessage) ([]json.RawMessage, []workload, error) {
+// filtered is listing the list's filters keep: the rows as the controller answered them, and each decoded; every is all the
+// rows decoded. A router before 0.40.0 answers no tags: --tag is refused there rather than match nothing.
+func (x *run) filtered(raw json.RawMessage) (keptRows []json.RawMessage, kept, every []workload, err error) {
 	var rows []json.RawMessage
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, nil, fmt.Errorf("the controller's answer is not a list of workloads: %w", err)
+		return nil, nil, nil, fmt.Errorf("the controller's answer is not a list of workloads: %w", err)
 	}
-	keptRows, kept := []json.RawMessage{}, []workload{}
+	keptRows, kept = []json.RawMessage{}, []workload{}
 	for _, row := range rows {
-		var w workload
 		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(row, &w); err != nil {
-			return nil, nil, fmt.Errorf("the controller's answer is not a list of workloads: %w", err)
+		w, err := decodeWorkload(row)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("the controller's answer is not a list of workloads: %w", err)
 		}
 		_ = json.Unmarshal(row, &fields)
 		if _, ok := fields["tags"]; !ok && len(x.r.HasTags) > 0 {
-			return nil, nil, &stop{1, fmt.Sprintf("router %s does not answer its workloads' tags: --tag needs router %s or later: dormeto gcp routers install --version %s",
+			return nil, nil, nil, &stop{1, fmt.Sprintf("router %s does not answer its workloads' tags: --tag needs router %s or later: dormeto gcp routers install --version %s",
 				x.n.router, nameAndTagsRouterVersion, embeddedRouterVersion())}
 		}
+		every = append(every, w)
 		if x.matches(w) {
 			keptRows, kept = append(keptRows, row), append(kept, w)
 		}
 	}
-	return keptRows, kept, nil
+	return keptRows, kept, every, nil
 }
 
 // matches tells whether a workload passes the list's filters: one of the states, the text in its ID or name, every tag.
@@ -171,14 +164,15 @@ func (x *run) filtering() bool {
 // holds: a rerun), then the tags it would unbind, the Kubernetes access it would remove and the request logs it would set back.
 func (x *run) offboardDryRun(id string, p pendingOffboarding, there bool) error {
 	target := x.target(id)
-	out := x.textOut()
-	fmt.Fprintln(out, "dry run: would offboard 1 workload, nothing sent")
+	var requests []dryRequest
+	var after []string
 	if there {
-		line := fmt.Sprintf("  %s: DELETE /v1/workloads/%s", target, esc(id))
+		requests = append(requests, dryRequestOf(target, http.MethodDelete, "/v1/workloads/"+esc(id), nil))
 		if x.r.Force {
-			line += " (again with ?force=true if its wake fails)"
+			after = append(after, "  again with ?force=true if its wake fails")
 		}
-		fmt.Fprintln(out, line)
+	} else {
+		after = append(after, "dry run: "+target+": the controller no longer holds it, nothing sent")
 	}
 	var untag []string
 	pods := false
@@ -190,13 +184,13 @@ func (x *run) offboardDryRun(id string, p pendingOffboarding, there bool) error 
 		untag = append(untag, b.String())
 	}
 	if len(untag) > 0 {
-		fmt.Fprintf(out, "  then untag: %s\n", strings.Join(untag, ", "))
+		after = append(after, "  then untag: "+strings.Join(untag, ", "))
 	}
 	if pods || (x.rec != nil && len(x.recordedAccess(id)) > 0) {
-		fmt.Fprintf(out, "  then remove its Kubernetes access: the Role and RoleBinding dormeto-%s\n", id)
+		after = append(after, "  then remove its Kubernetes access: the Role and RoleBinding dormeto-"+id)
 	}
 	if p.RequestLogs != nil {
-		fmt.Fprintln(out, "  then set its backend service's request logs back")
+		after = append(after, "  then set its backend service's request logs back")
 	}
-	return x.printStop("dryRun", true, []string{target})
+	return x.sayDry(requests, after...)
 }
