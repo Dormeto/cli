@@ -5,12 +5,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcponboard"
 )
 
@@ -36,23 +39,25 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "workloads", Short: "Workloads of a Dormeto router in Google Cloud", Args: noArgs, SilenceErrors: true,
 		Long: "List, show, onboard, offboard, nap, wake, schedule, pause, resume, settings and waiting-page the workloads of the router dmtr-<region>, through its controller\n" +
 			"with your identity token (the Cloud Run invoker role on it). 'access' writes a GKE workload's Kubernetes RBAC, in the cluster."}
+	offboard := newGcpWorkloadsWrite("offboard", "Offboard a workload and remove its tag bindings and Kubernetes access",
+		"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
+			"unbound from its VMs, groups and databases, its Role and RoleBinding are removed from its cluster, and the request logs\n"+
+			"its onboarding turned on (--request-logs) are set back unless they changed since, as you. A workload\n"+
+			"that cannot wake is refused; --force offboards it anyway and leaves its backends down (they are listed). --force passes\n"+
+			"only a failed wake: a workload still NAPPING or WAKING is refused as busy, with or without it, until that ends or\n"+
+			"the router's check fails it. With --force, a tag or an access it cannot remove does not stop the rest: it names each,\n"+
+			"exit 1, and it names what is left when the controller does not answer, removing nothing. It is always confirmed on a\n"+
+			"terminal, as AWS's (--yes without one; --dry-run says what it would send and sends nothing).", runs.offboard, version, true)
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
 		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version, false),
 		newGcpWorkloadsOnboard(runs.onboard, version),
-		newGcpWorkloadsOne("offboard", "Offboard a workload and remove its tag bindings and Kubernetes access",
-			"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
-				"unbound from its VMs, groups and databases, its Role and RoleBinding are removed from its cluster, and the request logs\n"+
-				"its onboarding turned on (--request-logs) are set back unless they changed since, as you. A workload\n"+
-				"that cannot wake is refused; --force offboards it anyway and leaves its backends down (they are listed). --force passes\n"+
-				"only a failed wake: a workload still NAPPING or WAKING is refused as busy, with or without it, until that ends or\n"+
-				"the router's check fails it. With --force, a tag or an access it cannot remove does not stop the rest: it names each,\n"+
-				"exit 1, and it names what is left when the controller does not answer, removing nothing.", runs.offboard, version, true),
-		newGcpWorkloadsOne("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
-		newGcpWorkloadsOne("wake", "Wake a workload now", "Wake a workload now.", runs.wake, version, false),
+		offboard,
+		newGcpWorkloadsWrite("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
+		newGcpWorkloadsWake(runs.wake, version),
 		newGcpWorkloadsSchedule(runs, version),
 		newGcpWorkloadsPause(runs.pause, version),
-		newGcpWorkloadsOne("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false),
+		newGcpWorkloadsWrite("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false),
 		newGcpWorkloadsSettings(runs.settings, version),
 		newGcpWaitingPage(runs.pageRuns(), version, true),
 		newGcpWorkloadsAccess(runs, version))
@@ -67,8 +72,80 @@ func gcpRouterFlags(cmd *cobra.Command, f *gcpFlags) {
 
 func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	cmd := gcpCommand("list", "List the workloads of a router", "List the router's workloads and their states.", &f, []string{"project", "region"}, version, run)
+	var states, tags []string
+	var search string
+	var has map[string]string
+	cmd := gcpCommand("list", "List the workloads of a router",
+		"List the router's workloads and their states. --state, --search and --tag keep the workloads AWS's list would keep,\n"+
+			"applied to the controller's list (--tag needs router 0.40.0 or later, which answers the tags); --json prints the\n"+
+			"controller's rows they keep.",
+		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+			r.States, r.Search, r.HasTags = upper(states), search, has
+			return run(ctx, d, r)
+		})
+	prior := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := prior(c, args); err != nil {
+			return err
+		}
+		var err error
+		if has, err = fleet.ParseTags(tags); err != nil {
+			return finish(c, usageError{err})
+		}
+		if len(has) == 0 {
+			has = nil
+		}
+		return nil
+	}
 	gcpRouterFlags(cmd, &f)
+	fl := cmd.Flags()
+	fl.StringSliceVar(&states, "state", nil, "only the workloads in these states (repeatable or comma-separated; case-insensitive)")
+	fl.StringArrayVar(&tags, "tag", nil, "only the workloads with this Dormeto tag, key=value (repeatable: all must match)")
+	fl.StringVar(&search, "search", "", "only the workloads whose name or id contains this text")
+	return cmd
+}
+
+// newGcpWorkloadsWrite is a write on the one workload named by its argument, with AWS's --yes and --dry-run. With asks (the
+// offboarding), it is always confirmed on a terminal, --yes needed without one, and it takes --force.
+func newGcpWorkloadsWrite(verb, short, long string, run gcpRun, version string, asks bool) *cobra.Command {
+	var f gcpFlags
+	cmd := newGcpWorkloadsOneWith(verb, short, long, run, version, &f, asks)
+	if !asks {
+		gcpWriteFlags(cmd, &f)
+		return cmd
+	}
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	return cmd
+}
+
+func newGcpWorkloadsWake(run gcpRun, version string) *cobra.Command {
+	var f gcpFlags
+	var wait bool
+	var timeout time.Duration
+	cmd := newGcpWorkloadsOneWith("wake", "Wake a workload now",
+		"Wake a workload now. --wait follows it every 5 s until it is awake (FAILED ends it with the failure, exit 1;\n"+
+			"--timeout, exit 1; Ctrl-C, exit 130), as AWS's.",
+		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+			if wait {
+				r.Wait, r.Timeout = true, timeout
+			}
+			return run(ctx, d, r)
+		}, version, &f, false)
+	gcpWriteFlags(cmd, &f)
+	fl := cmd.Flags()
+	fl.BoolVar(&wait, "wait", false, "wait until the workload is awake")
+	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long")
+	prior := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := prior(c, args); err != nil {
+			return err
+		}
+		if wait && timeout <= 0 {
+			return finish(c, usagef("--timeout: %s is not a positive duration", timeout))
+		}
+		return nil
+	}
 	return cmd
 }
 
@@ -220,28 +297,30 @@ func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Comman
 		Long: "Show, set or clear the nap and awake windows of a workload, in its time zone, through the router's controller."}
 	show := newGcpWorkloadsOne("show", "Show a workload's schedule and its next events",
 		"Show the schedule of a workload, a recurrence in words, and its next events, each with its local time and zone.", runs.scheduleShow, version, false)
-	clear := newGcpWorkloadsOne("clear", "Clear a workload's schedule", "Clear the schedule of a workload: it naps and wakes by its idle window alone.", runs.scheduleClear, version, false)
+	clear := newGcpWorkloadsWrite("clear", "Clear a workload's schedule", "Clear the schedule of a workload: it naps and wakes by its idle window alone.", runs.scheduleClear, version, false)
 
 	var f gcpFlags
 	var file string
+	var schedule json.RawMessage
 	set := newGcpWorkloadsOneWith("set", "Set a workload's schedule from a JSON file",
-		"Set the schedule of a workload from a JSON file: {\"timeZone\", \"windows\": [{\"kind\": \"nap\"|\"awake\", \"days\", \"start\", \"end\", \"wake\"}],\n"+
-			"\"exceptions\", \"maxNapDays\"}. The controller checks it and says what is wrong, if anything. The file is the one\n"+
-			"'schedule show --json' prints under \"schedule\". From router 0.36.0, a window also takes \"repeat\" (in place of \"days\"),\n"+
-			"\"from\" and \"until\", and the schedule \"joinMinutes\"; the README has the JSON.",
+		"Set the schedule of a workload from a JSON file (- for standard input): {\"timeZone\", \"windows\": [{\"kind\": \"nap\"|\"awake\",\n"+
+			"\"days\", \"start\", \"end\", \"wake\"}], \"exceptions\", \"maxNapDays\"}. The controller checks it and says what is wrong, if\n"+
+			"anything. It also takes what 'schedule show --json' prints, as AWS's schedule set does. From router 0.36.0, a window\n"+
+			"also takes \"repeat\" (in place of \"days\"), \"from\" and \"until\", and the schedule \"joinMinutes\"; the README has the JSON.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.File = file
+			r.Schedule = schedule
 			return runs.scheduleSet(ctx, d, r)
 		}, version, &f, false)
-	set.Flags().StringVar(&file, "file", "", "the schedule as a JSON file (required)")
+	set.Flags().StringVar(&file, "file", "", "the schedule's JSON file, - for standard input (required)")
+	gcpWriteFlags(set, &f)
 	prior := set.PreRunE
 	set.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		if file == "" {
-			fmt.Fprintln(c.ErrOrStderr(), "--file: needed, the schedule as a JSON file")
-			return exitCode(2)
+		var err error
+		if schedule, err = readScheduleFile(c, file); err != nil {
+			return finish(c, err)
 		}
 		return nil
 	}
@@ -251,28 +330,32 @@ func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Comman
 
 func newGcpWorkloadsPause(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	var reason, until string
+	var reason, dur, until, end string
 	var keepAsleep bool
 	cmd := newGcpWorkloadsOneWith("pause", "Pause a workload's naps",
-		"Pause a workload: it is not napped, by its idle window, its schedule or 'nap', until it is resumed or --until.\n"+
+		"Pause a workload: it is not napped, by its idle window, its schedule or 'nap', until it is resumed or the pause ends.\n"+
 			"A workload asleep is woken. With --keep-asleep it is not: it stays as it is, a visitor still wakes the workload,\n"+
-			"and scheduled and maintenance wakes wait until the pause ends. --until takes a time in RFC 3339 (2026-12-01T08:00:00+01:00), at most 366 days away.",
+			"and scheduled and maintenance wakes wait until the pause ends. As AWS's: --for is a duration up to 366 days (90m,\n"+
+			"2h, 3d); --until is an RFC 3339 time (2026-12-01T08:00:00+01:00) or HH:MM today in the local time zone, within 366\n"+
+			"days; without either the pause lasts until 'resume'. --reason (1 to 256 characters) is shown in the manager.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, until
+			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, end
 			return run(ctx, d, r)
 		}, version, &f, false)
+	gcpWriteFlags(cmd, &f)
 	fl := cmd.Flags()
-	fl.StringVar(&reason, "reason", "", "why the workload is paused, at most 256 characters (required)")
+	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager (required)")
 	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake a workload asleep: a visitor still wakes it, scheduled and maintenance wakes wait")
-	fl.StringVar(&until, "until", "", "end the pause at this time, in RFC 3339 (default: when resumed)")
+	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d); default until resumed")
+	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		if strings.TrimSpace(reason) == "" {
-			fmt.Fprintln(c.ErrOrStderr(), "--reason: needed, why the workload is paused")
-			return exitCode(2)
+		var err error
+		if reason, end, err = gcpPauseEnd(reason, dur, until); err != nil {
+			return finish(c, err)
 		}
 		return nil
 	}
@@ -319,6 +402,7 @@ func newGcpWorkloadsAccessVerb(verb, short, long string, run gcpRun, version str
 	fl.BoolVar(&f.json, "json", false, "print the result as JSON")
 	if writes {
 		fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal, and with --json)")
+		fl.BoolVar(&f.dryRun, "dry-run", false, "print what it would change and stop")
 	}
 	return cmd
 }

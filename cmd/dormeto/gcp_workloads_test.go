@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Dormeto/cli/internal/gcponboard"
 )
@@ -155,12 +156,16 @@ func TestGcpWorkloadsOffboardHelpSaysForceDoesNotPassABusyWorkload(t *testing.T)
 }
 
 func TestGcpWorkloadsScheduleReadsTheRequest(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(file, []byte(`{"timeZone":"UTC"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, verb := range []string{"show", "set", "clear"} {
 		args := []string{"gcp", "workloads", "schedule", verb, "shop", "--project", "p", "--region", "europe-west1", "--json"}
 		want := gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop", JSON: true}
 		if verb == "set" {
-			args = append(args, "--file", "s.json")
-			want.File = "s.json"
+			args = append(args, "--file", file)
+			want.Schedule = json.RawMessage(`{"timeZone":"UTC"}`)
 		}
 		calls, errs, exit := gcpRan(t, 0, args...)
 		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads schedule "+verb || !reflect.DeepEqual(calls[0].r, want) {
@@ -180,6 +185,7 @@ func TestGcpWorkloadsScheduleReadsTheRequest(t *testing.T) {
 }
 
 func TestGcpWorkloadsPauseReadsTheRequest(t *testing.T) {
+	at(t, time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "pause", "shop", "--project", "p", "--region", "europe-west1", "--reason", "freeze",
 		"--keep-asleep", "--until", "2026-12-01T08:00:00Z")
 	want := gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop", Reason: "freeze", KeepAsleep: true, Until: "2026-12-01T08:00:00Z"}

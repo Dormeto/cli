@@ -493,7 +493,7 @@ func TestWorkloadsOnboardRerunAfterALostAnswerSendsTheBeforeTheFirstRunFound(t *
 		t.Fatalf("the file stays: %v", err)
 	}
 	// And the offboarding sets them back.
-	if code, out := g.call(t, WorkloadsOffboard, offboardShop); code != 0 {
+	if code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop)); code != 0 {
 		t.Fatalf("offboard: exit %d:\n%s", code, out)
 	}
 	if got := g.logConfig("global"); !jsonEqual(got, map[string]any{"enable": true, "sampleRate": 0.5}) {
@@ -511,7 +511,7 @@ func TestWorkloadsOffboardOfAnOnboardingWhoseAnswerWasLostForgetsWhatTheCacheKep
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g.s.AnswerOnboarding = nil
-	if code, out := g.call(t, WorkloadsOffboard, offboardShop); code != 0 {
+	if code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop)); code != 0 {
 		t.Fatalf("offboard: exit %d:\n%s", code, out)
 	}
 	if got := g.logConfig("global"); got["enable"] != false {
@@ -652,7 +652,7 @@ func TestWorkloadsOffboardAsksTheRequestLogsStepOfAWorkloadWhoseLogsDormetoTurne
 	}
 	withheld(g)
 	mark := len(g.s.Calls())
-	if code, out := g.call(t, WorkloadsOffboard, offboardShop); code != 0 || len(g.s.Workloads) != 0 {
+	if code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop)); code != 0 || len(g.s.Workloads) != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	for _, c := range g.s.Calls()[mark:] {
@@ -665,7 +665,7 @@ func TestWorkloadsOffboardAsksTheRequestLogsStepOfAWorkloadWhoseLogsDormetoTurne
 	g.onboardedWithLogs(t)
 	withheld(g)
 	mark = len(g.s.Calls())
-	code, out := g.call(t, WorkloadsOffboard, offboardShop)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop))
 	if code != 1 || !strings.Contains(out, "  ✗ offboard: missing "+strings.Join(step, ", ")+"\n") || !strings.Contains(out, "Nothing was changed.") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -678,7 +678,7 @@ func TestWorkloadsOffboardSetsTheRequestLogsBackAfterTheController(t *testing.T)
 	g := newLogsRig(t)
 	g.onboardedWithLogs(t)
 	mark := len(g.s.Calls())
-	code, out := g.call(t, WorkloadsOffboard, offboardShop)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -708,7 +708,7 @@ func TestWorkloadsOffboardLeavesRequestLogsChangedSinceAndSaysSo(t *testing.T) {
 	g.onboardedWithLogs(t)
 	g.logging("global", map[string]any{"enable": true, "sampleRate": 0.2})
 	mark := len(g.s.Calls())
-	code, out := g.call(t, WorkloadsOffboard, offboardShop)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -726,7 +726,7 @@ func TestWorkloadsOffboardJSONSaysTheRequestLogsRestored(t *testing.T) {
 	g.onboardedWithLogs(t)
 	r := offboardShop
 	r.JSON = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	var got struct{ Restored []string }
 	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !slices.Equal(got.Restored, []string{"the request logs of backend service shop (sample rate 0.5)"}) {
 		t.Fatalf("%d %v:\n%s", code, err, out)
@@ -739,7 +739,7 @@ func TestWorkloadsOffboardRerunSetsTheRequestLogsBackFromTheCache(t *testing.T) 
 	g.onboardedWithLogs(t)
 	g.s.Refuse(gcptest.Refusal{Method: "PATCH", Host: "compute.googleapis.com", Path: "/compute/v1/projects/dormeto-dev/global/backendServices/shop",
 		Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
-	code, out := g.call(t, WorkloadsOffboard, offboardShop)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -750,7 +750,7 @@ func TestWorkloadsOffboardRerunSetsTheRequestLogsBackFromTheCache(t *testing.T) 
 	if _, err := os.Stat(g.offboardFile()); err != nil {
 		t.Fatalf("the request logs are not kept for a rerun: %v", err)
 	}
-	code, out = g.call(t, WorkloadsOffboard, offboardShop)
+	code, out = g.call(t, WorkloadsOffboard, confirmed(offboardShop))
 	if code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
@@ -773,7 +773,7 @@ func TestWorkloadsOffboardRerunReadsAnOlderCLIsFile(t *testing.T) {
 	if err := os.WriteFile(g.offboardFile(), []byte(`[{"kind":"vm","location":"europe-west1-b","name":"web-1","id":"111"}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	code, out := g.call(t, WorkloadsOffboard, offboardShop)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(offboardShop))
 	if code != 0 || len(g.bindings()) != 0 {
 		t.Fatalf("exit %d, bindings %v:\n%s", code, g.bindings(), out)
 	}

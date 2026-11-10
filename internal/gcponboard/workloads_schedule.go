@@ -3,7 +3,8 @@ package gcponboard
 // `dormeto gcp workloads schedule show|set|clear`, `pause` and `resume`: the controller's GET, PUT and DELETE
 // /v1/workloads/<id>/schedule, and its POST .../pause and .../resume. The operator's gcloud account is the `by` of each
 // change. The router's checks (a schedule's problems, the 366 days of a pause) are the controller's, said as it says them;
-// what the CLI refuses before any call is a missing or unreadable file, a missing reason and an --until that is not a time.
+// what the CLI refuses before any call is a missing schedule or one that is not a JSON object, a missing reason and an --until
+// that is not a time. --dry-run says the request and sends nothing.
 // A controller below 0.35.0 has no route for these calls, which is said as that.
 
 import (
@@ -12,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -30,7 +30,7 @@ const reasonMax = 256
 // WorkloadsScheduleShow is `dormeto gcp workloads schedule show <id>`.
 func WorkloadsScheduleShow(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
-	return x.workloadsEnd(x.schedule(http.MethodGet, nil))
+	return x.workloadsEnd(x.schedule(http.MethodGet, nil, nil))
 }
 
 // WorkloadsScheduleSet is `dormeto gcp workloads schedule set <id> --file <schedule.json>`.
@@ -42,7 +42,7 @@ func WorkloadsScheduleSet(ctx context.Context, d Deps, r Request) int {
 // WorkloadsScheduleClear is `dormeto gcp workloads schedule clear <id>`.
 func WorkloadsScheduleClear(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
-	return x.workloadsEnd(x.schedule(http.MethodDelete, nil))
+	return x.workloadsEnd(x.schedule(http.MethodDelete, nil, nil))
 }
 
 // WorkloadsPause is `dormeto gcp workloads pause <id> --reason <text>`.
@@ -73,9 +73,9 @@ type nextEvent struct {
 	Window int    `json:"window"`
 }
 
-// scheduleSet reads the file first, before any call; the body of the PUT is its schedule, `by` the operator's account.
+// scheduleSet checks the schedule first, before any call; the body of the PUT is the schedule, `by` the operator's account.
 func (x *run) scheduleSet() error {
-	schedule, err := x.scheduleFile()
+	schedule, err := x.scheduleIn()
 	if err != nil {
 		return err
 	}
@@ -86,21 +86,18 @@ func (x *run) scheduleSet() error {
 		}
 		schedule["by"] = by
 		return schedule, nil
-	})
+	}, schedule)
 }
 
-// scheduleFile is the schedule of --file.
-func (x *run) scheduleFile() (map[string]any, error) {
-	if x.r.File == "" {
-		return nil, &stop{2, "--file: needed, the file of the schedule as JSON"}
-	}
-	raw, err := os.ReadFile(x.r.File)
-	if err != nil {
-		return nil, &stop{2, "--file: " + err.Error()}
+// scheduleIn is the schedule the command read from --file (AWS's reader: a path or -, and the shape of schedule show --json):
+// a JSON object.
+func (x *run) scheduleIn() (map[string]any, error) {
+	if len(x.r.Schedule) == 0 {
+		return nil, &stop{2, "--file: needed, the schedule as a JSON file (- for standard input)"}
 	}
 	var schedule map[string]any
-	if err := json.Unmarshal(raw, &schedule); err != nil || schedule == nil {
-		return nil, &stop{2, fmt.Sprintf("--file: %s is not a JSON object (a schedule)", x.r.File)}
+	if err := json.Unmarshal(x.r.Schedule, &schedule); err != nil || schedule == nil {
+		return nil, &stop{2, "--file: not a JSON object (a schedule)"}
 	}
 	return schedule, nil
 }
@@ -127,13 +124,19 @@ func (x *run) needsRecurrenceRouter(err error) error {
 		refusal(err), schedule.RecurrenceRouter, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+schedule.RecurrenceRouter+" or later>"))}
 }
 
-func (x *run) schedule(method string, body func() (any, error)) error {
+// schedule is the controller's GET, PUT or DELETE of the workload's schedule: body gives the PUT's, and shown is it as a dry run
+// says it (without `by`).
+func (x *run) schedule(method string, body func() (any, error), shown any) error {
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
 	path, err := x.workloadPath()
 	if err != nil {
 		return err
+	}
+	if x.r.DryRun && method != http.MethodGet {
+		verb := map[string]string{http.MethodPut: "set the schedule of", http.MethodDelete: "clear the schedule of"}[method]
+		return x.workloadDryRun(verb, method, path+"/schedule", shown)
 	}
 	var in any
 	if body != nil {
@@ -275,6 +278,9 @@ func (x *run) pauseWorkload() error {
 	if err != nil {
 		return err
 	}
+	if x.r.DryRun {
+		return x.workloadDryRun("pause", http.MethodPost, path+"/pause", in)
+	}
 	if in["by"], err = x.d.Google.Tokens.Account(x.ctx); err != nil {
 		return err
 	}
@@ -316,6 +322,9 @@ func (x *run) resumeWorkload() error {
 	path, err := x.workloadPath()
 	if err != nil {
 		return err
+	}
+	if x.r.DryRun {
+		return x.workloadDryRun("resume", http.MethodPost, path+"/resume", nil)
 	}
 	by, err := x.d.Google.Tokens.Account(x.ctx)
 	if err != nil {

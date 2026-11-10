@@ -1271,7 +1271,7 @@ func TestUninstallForceFinishesTheRbacOfAnOffboardingThatStopped(t *testing.T) {
 	g, _ := newGKERig(t)
 	g.onboardedOnGKE(t)
 	g.k.deny = denyCall("DELETE "+shopRole, 403, "Forbidden", "roles is forbidden")
-	if code, out := g.call(t, WorkloadsOffboard, shopOffboard); code != 1 {
+	if code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard)); code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g.k.deny = nil

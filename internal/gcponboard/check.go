@@ -82,9 +82,21 @@ type Request struct {
 	// The waiting-page commands: the document `set` writes, checked by the command before any call (ID is the workload's).
 	Page *fleet.PageDoc
 
-	// The schedule and pause commands: the schedule's file (set), the pause's reason, --keep-asleep and --until (RFC 3339).
-	File, Reason, Until string
-	KeepAsleep          bool
+	// The schedule and pause commands: the schedule set sends (read by the command from --file: a JSON object), the pause's
+	// reason, --keep-asleep and --until (RFC 3339: the command reads --for and HH:MM into it).
+	Schedule      json.RawMessage
+	Reason, Until string
+	KeepAsleep    bool
+
+	// The wake's --wait: the workload followed until it is awake, at most Timeout.
+	Wait    bool
+	Timeout time.Duration
+
+	// The list's filters, applied by the CLI to the controller's list (AWS's flags): the states (upper case; any of them),
+	// a text the workload's ID or name holds (any case), and the Dormeto tags it carries (all of them). None: every workload.
+	States  []string
+	Search  string
+	HasTags map[string]string
 
 	// The access and onboard commands: the cluster as <location>/<name> (--gke-cluster); access's: the workload's namespace,
 	// and ID is --workload.

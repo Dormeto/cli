@@ -1,6 +1,6 @@
 package gcponboard
 
-// The router's IP lists (`dormeto gcp routers install --ip-list name=<n>,url=<u>[,refresh=<hours>]`, `--no-ip-lists`): written
+// The router's IP lists (`dormeto gcp routers install --ip-list name=<n>,url=<u>[,refresh_hours=<hours>]`, `--no-ip-lists`): written
 // as DMT_IP_LISTS on both Cloud Run services and in the install record. Only the action ignore exists on Google Cloud
 // (design §5): in the shared classifier, defer means "only the waiting page's probe wakes", and here every wake already
 // is the probe's. A list's name becomes a Firestore document ID, hence its pattern.
@@ -45,17 +45,24 @@ type RecordIPList struct {
 	RefreshHours int    `json:"refreshHours"`
 }
 
-// ParseIPList reads the value of one --ip-list. An error is a bad flag (exit 2).
-func ParseIPList(s string) (IPList, error) {
-	l := IPList{RefreshHours: defaultRefreshHours}
+// ipListForm is how --ip-list is written.
+const ipListForm = "name=<n>,url=<u>[,refresh_hours=<hours>]"
+
+// ParseIPList reads the value of one --ip-list. An error is a bad flag (exit 2). The period is refresh_hours, AWS's name (the
+// router module's); oldRefresh says the list gave it as refresh, its name in 0.11.0, still read for one release.
+func ParseIPList(s string) (l IPList, oldRefresh bool, err error) {
+	l = IPList{RefreshHours: defaultRefreshHours}
 	seen := map[string]bool{}
 	for _, part := range strings.Split(s, ",") {
 		key, value, ok := strings.Cut(part, "=")
 		if !ok {
-			return IPList{}, fmt.Errorf("--ip-list: %q is not key=value: name=<n>,url=<u>[,refresh=<hours>] (a comma in a URL is written %%2C)", part)
+			return IPList{}, false, fmt.Errorf("--ip-list: %q is not key=value: %s (a comma in a URL is written %%2C)", part, ipListForm)
+		}
+		if key == "refresh" {
+			key, oldRefresh = "refresh_hours", true
 		}
 		if seen[key] {
-			return IPList{}, fmt.Errorf("--ip-list: %s is given twice", key)
+			return IPList{}, false, fmt.Errorf("--ip-list: %s is given twice", key)
 		}
 		seen[key] = true
 		switch key {
@@ -63,25 +70,25 @@ func ParseIPList(s string) (IPList, error) {
 			l.Name = value
 		case "url":
 			l.URL = value
-		case "refresh":
+		case "refresh_hours":
 			n, err := strconv.Atoi(value)
 			if err != nil || n <= 0 {
-				return IPList{}, fmt.Errorf("--ip-list: refresh %q is not a positive whole number of hours", value)
+				return IPList{}, false, fmt.Errorf("--ip-list: refresh_hours %q is not a positive whole number of hours", value)
 			}
 			l.RefreshHours = n
 		case "action":
-			return IPList{}, fmt.Errorf("--ip-list: action is not a choice on Google Cloud: only ignore exists, and it is the one written. Every wake there already is the waiting page's probe, so defer would mean nothing: a listed address's GET /_dormeto/wake never wakes, and an explicit POST /_dormeto/wake still does")
+			return IPList{}, false, fmt.Errorf("--ip-list: action is not a choice on Google Cloud: only ignore exists, and it is the one written. Every wake there already is the waiting page's probe, so defer would mean nothing: a listed address's GET /_dormeto/wake never wakes, and an explicit POST /_dormeto/wake still does")
 		default:
-			return IPList{}, fmt.Errorf("--ip-list: %s is not a key: name, url, refresh", key)
+			return IPList{}, false, fmt.Errorf("--ip-list: %s is not a key: name, url, refresh_hours", key)
 		}
 	}
 	if l.Name == "" {
-		return IPList{}, fmt.Errorf("--ip-list: name is needed: name=<n>,url=<u>[,refresh=<hours>]")
+		return IPList{}, false, fmt.Errorf("--ip-list: name is needed: %s", ipListForm)
 	}
 	if l.URL == "" {
-		return IPList{}, fmt.Errorf("--ip-list %s: url is needed: name=<n>,url=<u>[,refresh=<hours>]", l.Name)
+		return IPList{}, false, fmt.Errorf("--ip-list %s: url is needed: %s", l.Name, ipListForm)
 	}
-	return l, checkIPList(l)
+	return l, oldRefresh, checkIPList(l)
 }
 
 // checkIPList refuses a list the router cannot use, or that must not go into a Cloud Run environment and the record.
@@ -90,7 +97,7 @@ func checkIPList(l IPList) error {
 		return fmt.Errorf("--ip-list: name %q: lowercase letters, digits and - only, 1 to 40 characters (it becomes a document ID)", l.Name)
 	}
 	if l.RefreshHours <= 0 {
-		return fmt.Errorf("--ip-list %s: refresh %d is not a positive whole number of hours", l.Name, l.RefreshHours)
+		return fmt.Errorf("--ip-list %s: refresh_hours %d is not a positive whole number of hours", l.Name, l.RefreshHours)
 	}
 	u, err := url.Parse(l.URL)
 	switch {

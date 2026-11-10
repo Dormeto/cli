@@ -174,6 +174,23 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 	return cmd
 }
 
+// gcpNow is the clock of the gcp commands that read a time: a pause's --for and --until.
+var gcpNow = time.Now
+
+// gcpPauseEnd reads a pause's --reason (1 to 256 characters, trimmed) and its end, --for or --until (RFC 3339, or HH:MM today in
+// the local time zone; within 366 days), before any call, as AWS's: the end in RFC 3339 and UTC, "" for none.
+func gcpPauseEnd(reason, dur, until string) (string, string, error) {
+	reason, err := pauseReason(reason)
+	if err != nil {
+		return "", "", err
+	}
+	t, set, err := endOf(gcpNow(), dur, until, maxPause, false)
+	if err != nil || !set {
+		return reason, "", err
+	}
+	return reason, t.UTC().Format(time.RFC3339), nil
+}
+
 func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
 	var reason, dur, until string
@@ -203,14 +220,7 @@ func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
 			return err
 		}
 		var err error
-		if reason, err = pauseReason(reason); err == nil {
-			var t time.Time
-			var set bool
-			if t, set, err = endOf(time.Now(), dur, until, maxPause, false); set {
-				end = t.UTC().Format(time.RFC3339)
-			}
-		}
-		if err != nil {
+		if reason, end, err = gcpPauseEnd(reason, dur, until); err != nil {
 			return finish(c, err)
 		}
 		return nil
@@ -227,6 +237,13 @@ func newGcpRoutersResume(run gcpRun, version string) *cobra.Command {
 	gcpRouterFlags(cmd, &f)
 	gcpRouterDryRunFlags(cmd, &f)
 	return cmd
+}
+
+// gcpWriteFlags are AWS's --dry-run and --yes of a write that asks nothing: --dry-run says the request and sends nothing,
+// --yes is accepted, a no-op, so that a script passes it to every write.
+func gcpWriteFlags(cmd *cobra.Command, f *gcpFlags) {
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "accepted and ignored: this command asks no confirmation")
 }
 
 // gcpRouterDryRunFlags are AWS's --dry-run and --yes of a router's pause and resume: a single router asks nothing.

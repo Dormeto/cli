@@ -425,15 +425,22 @@ func (x *run) list() error {
 	if err := x.controller(http.MethodGet, "/v1/workloads", nil, &raw); err != nil {
 		return err
 	}
+	rows, all, err := x.filtered(raw)
+	if err != nil {
+		return err
+	}
 	if x.r.JSON {
+		if x.filtering() {
+			raw, _ = json.Marshal(rows)
+		}
 		fmt.Fprintf(x.d.Out, "%s\n", raw)
 		return nil
 	}
-	var all []workload
-	if err := json.Unmarshal(raw, &all); err != nil {
-		return fmt.Errorf("the controller's answer is not a list of workloads: %w", err)
-	}
-	if len(all) == 0 {
+	switch {
+	case len(all) == 0 && x.filtering():
+		x.say("no workload of router %s matches the filters", x.n.router)
+		return nil
+	case len(all) == 0:
 		x.say("no workload is onboarded in router %s", x.n.router)
 		return nil
 	}
@@ -523,7 +530,7 @@ func (x *run) details(w workload) {
 	}
 }
 
-// moves is nap or wake: the controller's POST /v1/workloads/<id>/<verb>.
+// moves is nap or wake: the controller's POST /v1/workloads/<id>/<verb>; a wake with --wait is followed until it is awake.
 func (x *run) moves(verb string) error {
 	if err := x.require("workloads"); err != nil {
 		return err
@@ -532,11 +539,14 @@ func (x *run) moves(verb string) error {
 	if err != nil {
 		return err
 	}
+	if x.r.DryRun {
+		return x.workloadDryRun(verb, http.MethodPost, path+"/"+verb, nil)
+	}
 	var raw json.RawMessage
 	if err := x.controller(http.MethodPost, path+"/"+verb, nil, &raw); err != nil {
 		return err
 	}
-	return x.print(raw, func(w workload) {
+	err = x.print(raw, func(w workload) {
 		// The controller acts only from another state, and answers at once: a workload there already was asked nothing.
 		if there := map[string]string{"nap": "ASLEEP", "wake": "AWAKE"}[verb]; w.State == there {
 			x.say("Workload %s is already %s: nothing was asked.", w.ID, strings.ToLower(there))
@@ -550,6 +560,10 @@ func (x *run) moves(verb string) error {
 		}
 		x.say("Follow it with: %s", x.showCommand(w.ID))
 	})
+	if err != nil || verb != "wake" || !x.r.Wait {
+		return err
+	}
+	return x.waitAwake(path)
 }
 
 // showCommand is the command that shows a workload.
@@ -1118,6 +1132,13 @@ func (x *run) offboard() error {
 		if err := x.require("offboard", features...); err != nil {
 			return err
 		}
+	}
+	if x.r.DryRun {
+		return x.offboardDryRun(id, p, there)
+	}
+	// As AWS's: always confirmed on a terminal, --yes without one.
+	if done, err := x.confirmWorkload("Offboard 1 workload?"); done || err != nil {
+		return err
 	}
 	var forced forcedOff
 	if there {

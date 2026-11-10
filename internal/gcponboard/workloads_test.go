@@ -569,7 +569,7 @@ func TestWorkloadsOffboardDeletesThenRemovesTheTagBindings(t *testing.T) {
 	mark := len(g.s.Calls())
 	r := workloadsEurope
 	r.ID = "shop"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -593,7 +593,7 @@ func TestWorkloadsOffboardOfAnUnknownWorkloadChangesNothing(t *testing.T) {
 	r := workloadsEurope
 	r.ID = "ghost"
 	mark := len(g.s.Calls())
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -611,7 +611,7 @@ func TestWorkloadsOffboardJSONSaysWhatItUntagged(t *testing.T) {
 	g.s.TagBindings = []gcptest.TagBinding{{Parent: vmParent, TagValue: value}}
 	r := workloadsEurope
 	r.ID, r.JSON = "shop", true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	var got struct {
 		ID         string
 		Offboarded bool
@@ -638,7 +638,7 @@ func (g *workloadsRig) stuckOffboarding(t *testing.T) {
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: zoneHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
 	r := workloadsEurope
 	r.ID = "shop"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -662,7 +662,7 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackTypeEvenWhenTheUntagFails(t *tes
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: zoneHost, Path: "/v3/tagBindings", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -674,7 +674,7 @@ func TestWorkloadsOffboardRerunFinishesTheUnbindsAfterAFailure(t *testing.T) {
 	g.stuckOffboarding(t)
 	r := workloadsEurope
 	r.ID = "shop"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -695,7 +695,7 @@ func TestWorkloadsOffboardKeepsTheTagUntilTheControllerDeleted(t *testing.T) {
 	g.s.WorkloadDocs["shop"] = map[string]any{"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"}}}
 	r := workloadsEurope
 	r.ID = "shop"
-	if code, out := g.call(t, WorkloadsOffboard, r); code != 1 {
+	if code, out := g.call(t, WorkloadsOffboard, confirmed(r)); code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if len(g.bindings()) != 1 || len(g.s.Workloads) != 1 {
@@ -772,7 +772,7 @@ func TestWorkloadsOffboardOfAWorkloadThatCannotWakeNamesForce(t *testing.T) {
 	mark := len(g.s.Calls())
 	r := workloadsEurope
 	r.ID = "shop"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -791,7 +791,7 @@ func TestWorkloadsOffboardForceLeavesTheBackendsDownAndRemovesTheTags(t *testing
 	mark := len(g.s.Calls())
 	r := workloadsEurope
 	r.ID, r.Force = "shop", true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -816,7 +816,7 @@ func TestWorkloadsOffboardForceTriesThePlainDeleteFirst(t *testing.T) {
 	mark := len(g.s.Calls())
 	r := workloadsEurope
 	r.ID, r.Force = "shop", true
-	if code, out := g.call(t, WorkloadsOffboard, r); code != 0 {
+	if code, out := g.call(t, WorkloadsOffboard, confirmed(r)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if got := g.controllerCalls(mark); slices.Contains(got, "DELETE /v1/workloads/shop?force=true") {
@@ -961,7 +961,7 @@ func TestWorkloadsOffboardGoesOnWhenTheBindingsOfAVMDeletedByHandAreDenied(t *te
 	r.ID, r.JSON = "shop", true
 	var errs bytes.Buffer
 	g.d.Err = &errs
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s\n%s", code, out, errs.String())
 	}
@@ -988,7 +988,7 @@ func TestWorkloadsOffboardStopsOnAnAPIOffRatherThanTakeTheVMAsGone(t *testing.T)
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: zoneHost, Path: "/v3/tagBindings", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "off", Reason: "SERVICE_DISABLED"})
 	r := workloadsEurope
 	r.ID = "shop"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1009,7 +1009,7 @@ func TestWorkloadsListOffboardAndOnboardSayTheControllersRefusalAlone(t *testing
 	}{
 		"list":          {WorkloadsList, workloadsEurope, refused("GET", "/v1/workloads")},
 		"offboard read": {WorkloadsOffboard, Request{Project: "dormeto-dev", Region: "europe-west1", ID: "shop"}, refused("GET", "/v1/workloads/shop")},
-		"offboard":      {WorkloadsOffboard, Request{Project: "dormeto-dev", Region: "europe-west1", ID: "shop"}, refused("DELETE", "/v1/workloads/shop")},
+		"offboard":      {WorkloadsOffboard, Request{Project: "dormeto-dev", Region: "europe-west1", ID: "shop", Yes: true}, refused("DELETE", "/v1/workloads/shop")},
 		"onboard":       {WorkloadsOnboard, shopOnboarding, refused("POST", "/v1/workloads")},
 	}
 	for name, c := range cases {
@@ -1035,7 +1035,7 @@ func TestWorkloadsOffboardOfAnUnknownWorkloadSaysTheControllersRefusalAlone(t *t
 	g := newWorkloadsRig(t)
 	r := workloadsEurope
 	r.ID = "ghost"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 || strings.Contains(out, "google: ") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1050,15 +1050,6 @@ var parisEvents = []any{
 	map[string]any{"at": "2026-11-03T05:00:00.000Z", "kind": "nap-end", "window": 0},
 }
 
-func (g *workloadsRig) scheduleFile(t *testing.T, content string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "schedule.json")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 func TestWorkloadsScheduleSetShowClearCallTheControllerAsTheOperator(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
@@ -1066,7 +1057,7 @@ func TestWorkloadsScheduleSetShowClearCallTheControllerAsTheOperator(t *testing.
 	r := workloadsEurope
 	r.ID = "shop"
 	mark := len(g.s.Calls())
-	r.File = g.scheduleFile(t, parisSchedule)
+	r.Schedule = json.RawMessage(parisSchedule)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1075,7 +1066,7 @@ func TestWorkloadsScheduleSetShowClearCallTheControllerAsTheOperator(t *testing.
 	if body["timeZone"] != "Europe/Paris" || body["maxNapDays"] != float64(14) || body["by"] != "me@example.com" {
 		t.Fatalf("%v", body)
 	}
-	r.File = ""
+	r.Schedule = nil
 	code, out = g.call(t, WorkloadsScheduleShow, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1111,7 +1102,7 @@ func TestWorkloadsScheduleSetSaysTheControllersRefusalAndExitsOne(t *testing.T) 
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.ScheduleProblem = "windows[0].start: not a time on a 5-minute step"
 	r := workloadsEurope
-	r.ID, r.File = "shop", g.scheduleFile(t, parisSchedule)
+	r.ID, r.Schedule = "shop", json.RawMessage(parisSchedule)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1134,7 +1125,7 @@ func TestWorkloadsScheduleSaysARecurrenceAndKeepsItThroughJSON(t *testing.T) {
 	g.s.Workloads["shop"] = "AWAKE"
 	r := workloadsEurope
 	r.ID = "shop"
-	r.File = g.scheduleFile(t, recurringSchedule)
+	r.Schedule = json.RawMessage(recurringSchedule)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1154,7 +1145,7 @@ func TestWorkloadsScheduleSaysARecurrenceAndKeepsItThroughJSON(t *testing.T) {
 		"  nap window: sat 22:00-23:00, wake header\n")
 
 	// What show --json prints under "schedule" is the file set takes again.
-	r.File, r.JSON = "", true
+	r.Schedule, r.JSON = nil, true
 	_, out = g.call(t, WorkloadsScheduleShow, r)
 	var shown struct {
 		Schedule json.RawMessage `json:"schedule"`
@@ -1166,7 +1157,7 @@ func TestWorkloadsScheduleSaysARecurrenceAndKeepsItThroughJSON(t *testing.T) {
 	if err := json.Unmarshal(shown.Schedule, &again); err != nil || !reflect.DeepEqual(again["windows"], want["windows"]) {
 		t.Fatalf("%v: shown %s", err, shown.Schedule)
 	}
-	r.JSON, r.File = false, g.scheduleFile(t, string(shown.Schedule))
+	r.JSON, r.Schedule = false, json.RawMessage(string(shown.Schedule))
 	if code, out := g.call(t, WorkloadsScheduleSet, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1196,7 +1187,7 @@ func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.ScheduleProblem = "windows[0].repeat: unknown field; windows[0].from: unknown field"
 	r := workloadsEurope
-	r.ID, r.File = "shop", g.scheduleFile(t, recurringSchedule)
+	r.ID, r.Schedule = "shop", json.RawMessage(recurringSchedule)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1219,7 +1210,7 @@ func TestWorkloadsScheduleSaysTheJoinAndKeepsIt(t *testing.T) {
 	g.s.ScheduleJoin = map[string]any{"joinMinutes": 0, "joinFrom": "workload", "joinInherited": map[string]any{"joinMinutes": 15, "joinFrom": "default"}}
 	r := workloadsEurope
 	r.ID = "shop"
-	r.File = g.scheduleFile(t, `{"timeZone":"Europe/Paris","windows":[{"kind":"nap","days":["mon"],"start":"22:00","end":"23:00"}],"joinMinutes":0}`)
+	r.Schedule = json.RawMessage(`{"timeZone":"Europe/Paris","windows":[{"kind":"nap","days":["mon"],"start":"22:00","end":"23:00"}],"joinMinutes":0}`)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1228,7 +1219,7 @@ func TestWorkloadsScheduleSaysTheJoinAndKeepsIt(t *testing.T) {
 		t.Fatalf("sent %v", body)
 	}
 	contains(t, out, "  windows never join (workload)\nNext events:\n")
-	r.File, r.JSON = "", true
+	r.Schedule, r.JSON = nil, true
 	_, out = g.call(t, WorkloadsScheduleShow, r)
 	var shown map[string]any
 	if err := json.Unmarshal([]byte(out), &shown); err != nil {
@@ -1253,7 +1244,7 @@ func TestWorkloadsScheduleSetAJoinOnARouterBefore036SaysItNeeds036(t *testing.T)
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.ScheduleProblem = "joinMinutes: unknown field"
 	r := workloadsEurope
-	r.ID, r.File = "shop", g.scheduleFile(t, `{"timeZone":"Europe/Paris","maxNapDays":7,"joinMinutes":30}`)
+	r.ID, r.Schedule = "shop", json.RawMessage(`{"timeZone":"Europe/Paris","maxNapDays":7,"joinMinutes":30}`)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -1261,14 +1252,15 @@ func TestWorkloadsScheduleSetAJoinOnARouterBefore036SaysItNeeds036(t *testing.T)
 	contains(t, out, "joinMinutes: unknown field\n", "Recurrences and joined windows need a router of version 0.36.0 or later.")
 }
 
-func TestWorkloadsScheduleSetRefusesAMissingOrUnreadableFileBeforeAnyCall(t *testing.T) {
+// The command reads --file (a path or -, AWS's reader): what reaches the run is checked again, before any call.
+func TestWorkloadsScheduleSetRefusesAMissingScheduleOrOneNotAnObjectBeforeAnyCall(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
 	mark := len(g.s.Calls())
-	for name, file := range map[string]string{"none": "", "absent": filepath.Join(t.TempDir(), "nope.json"), "not JSON": g.scheduleFile(t, "windows: []"),
-		"not an object": g.scheduleFile(t, "[1]")} {
+	for name, schedule := range map[string]json.RawMessage{"none": nil, "not JSON": json.RawMessage("windows: []"),
+		"not an object": json.RawMessage("[1]"), "null": json.RawMessage("null")} {
 		r := workloadsEurope
-		r.ID, r.File = "shop", file
+		r.ID, r.Schedule = "shop", schedule
 		if code, out := g.call(t, WorkloadsScheduleSet, r); code != 2 || out == "" {
 			t.Errorf("%s: exit %d:\n%s", name, code, out)
 		}
@@ -1401,7 +1393,7 @@ func TestWorkloadsScheduleAndPauseOnAnOlderRouterSayItNeeds035(t *testing.T) {
 	g.s.Workloads["shop"] = "AWAKE"
 	g.s.ControllerBelow035 = true
 	r := workloadsEurope
-	r.ID, r.Reason, r.File = "shop", "freeze", g.scheduleFile(t, parisSchedule)
+	r.ID, r.Reason, r.Schedule = "shop", "freeze", json.RawMessage(parisSchedule)
 	for name, f := range map[string]func(context.Context, Deps, Request) int{"show": WorkloadsScheduleShow, "set": WorkloadsScheduleSet,
 		"clear": WorkloadsScheduleClear, "pause": WorkloadsPause, "resume": WorkloadsResume} {
 		code, out := g.call(t, f, r)
@@ -1489,7 +1481,7 @@ func TestWorkloadsScheduleShowSaysWhoSetItAndWhen(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
 	r := workloadsEurope
-	r.ID, r.File = "shop", g.scheduleFile(t, parisSchedule)
+	r.ID, r.Schedule = "shop", json.RawMessage(parisSchedule)
 	if code, out := g.call(t, WorkloadsScheduleSet, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2327,7 +2319,7 @@ func TestWorkloadsOffboardRemovesTheTagOfADatabase(t *testing.T) {
 	g := newDatabaseRig(t)
 	g.onboardedDatabase(t)
 	mark := len(g.s.Calls())
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2345,7 +2337,7 @@ func TestWorkloadsOffboardGoesOnForADatabaseThatIsGone(t *testing.T) {
 	g := newDatabaseRig(t)
 	g.onboardedDatabase(t)
 	g.s.SQLInstances = map[string]string{}
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2367,7 +2359,7 @@ func TestWorkloadsOffboardAsksTheDatabasesPermissionsOfAWorkloadThatHasOne(t *te
 		for _, p := range access.NeedsWith("offboard", []string{"cloud-sql", "gke"}) {
 			g.s.Held[p] = p != missing
 		}
-		code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+		code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 		if !has {
 			if code != 0 {
 				t.Fatalf("no database: exit %d:\n%s", code, out)
@@ -2388,12 +2380,12 @@ func TestWorkloadsOffboardSaysADatabasesTagIsLeftThenARerunFinishes(t *testing.T
 	g := newDatabaseRig(t)
 	g.onboardedDatabase(t)
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: "sqladmin.googleapis.com", Path: "/v1/projects/", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "not allowed"})
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "workload shop is offboarded, but the tag of Cloud SQL instance shop-db is not removed", "cloudsql.instances.get", "run the same command again")
-	if code, out = g.call(t, WorkloadsOffboard, shopOffboard); code != 0 {
+	if code, out = g.call(t, WorkloadsOffboard, confirmed(shopOffboard)); code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
 	if len(g.bindings()) != 0 {
@@ -2417,7 +2409,7 @@ func TestWorkloadsOffboardRemovesTheRbacAfterTheController(t *testing.T) {
 	g.s.TagValues = map[string]*gcptest.Tag{}
 	g.s.Unlock()
 	mark := len(order.calls())
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2449,7 +2441,7 @@ func TestWorkloadsOffboardJSONSaysTheRbacItRemoved(t *testing.T) {
 	g.onboardedOnGKE(t)
 	r := shopOffboard
 	r.JSON = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	var got struct{ Removed []string }
 	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || !slices.Equal(got.Removed, []string{"RoleBinding dormeto-shop", "Role dormeto-shop"}) {
 		t.Fatalf("%d %v:\n%s", code, err, out)
@@ -2465,7 +2457,7 @@ func TestWorkloadsOffboardAsksTheGKEPermissionsOfAWorkloadOnGKE(t *testing.T) {
 	for _, p := range access.NeedsWith("offboard", []string{"gke"}) {
 		g.s.Held[p] = p != missing
 	}
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2483,7 +2475,7 @@ func TestWorkloadsOffboardLeavesWhatIsNotOursAndSaysSo(t *testing.T) {
 	delete(g.k.objects, shopRole)
 	g.k.mu.Unlock()
 	g.k.put(t, shopRole, "Role", map[string]string{"team": "shop"}, map[string]any{"rules": []any{}})
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2497,7 +2489,7 @@ func TestWorkloadsOffboardGoesOnForAClusterThatIsGone(t *testing.T) {
 	g, _ := newGKERig(t)
 	g.onboardedOnGKE(t)
 	g.gone = true
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2512,7 +2504,7 @@ func TestWorkloadsOffboardSaysTheRbacIsLeftThenARerunFinishes(t *testing.T) {
 	g.k.deny = denyCall("DELETE "+shopRole, 403, "Forbidden", "roles is forbidden")
 	r := shopOffboard
 	r.Configuration = "c"
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2522,7 +2514,7 @@ func TestWorkloadsOffboardSaysTheRbacIsLeftThenARerunFinishes(t *testing.T) {
 		t.Fatalf("workloads %v role %v record %v", g.s.Workloads, g.k.has(shopRole), g.rbacOf(t))
 	}
 	g.k.deny = nil
-	if code, out = g.call(t, WorkloadsOffboard, r); code != 0 {
+	if code, out = g.call(t, WorkloadsOffboard, confirmed(r)); code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
 	if g.k.has(shopRole) || len(g.rbacOf(t)) != 0 {
@@ -2535,7 +2527,7 @@ func TestWorkloadsOffboardRerunFinishesFromTheRecordAlone(t *testing.T) {
 	g, _ := newGKERig(t)
 	g.grantedBefore(t)
 	g.d.Cache = ""
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2557,7 +2549,7 @@ func TestWorkloadsOffboardForceNamesEverythingItCouldNotRemove(t *testing.T) {
 	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
 	r := shopOffboard
 	r.Force = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2579,7 +2571,7 @@ func TestWorkloadsOffboardForceJSONNamesWhatIsLeft(t *testing.T) {
 	g.d.Err = &errs
 	r := shopOffboard
 	r.Force, r.JSON = true, true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	var got struct {
 		Offboarded bool
 		NotRemoved []string
@@ -2595,7 +2587,7 @@ func TestWorkloadsOffboardForceOfAWorkloadThatCannotWakeNamesItsPods(t *testing.
 	g.s.WakeFails["shop"] = true
 	r := shopOffboard
 	r.Force = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2614,7 +2606,7 @@ func TestWorkloadsOffboardForceSaysWhatTheRouterCouldNotGiveBackAndExits1(t *tes
 	g.s.NotGivenBack = map[string][]string{"shop": {pausedLeft}}
 	r := shopOffboard
 	r.Force = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2637,7 +2629,7 @@ func TestWorkloadsOffboardForceJSONSaysWhatTheRouterCouldNotGiveBack(t *testing.
 	g.s.NotGivenBack = map[string][]string{"shop": {pausedLeft}}
 	r := shopOffboard
 	r.Force, r.JSON = true, true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2660,7 +2652,7 @@ func TestWorkloadsOffboardForceOfARouterWithoutTheFieldReadsAsNone(t *testing.T)
 	g.s.WakeFails["shop"] = true
 	r := shopOffboard
 	r.Force, r.JSON = true, true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 0 || strings.Contains(out, "notGivenBack") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2679,7 +2671,7 @@ func TestWorkloadsOffboardForceWithTheControllerGoneNamesWhatIsLeft(t *testing.T
 			before := len(g.s.Calls())
 			r := shopOffboard
 			r.Force = true
-			code, out := g.call(t, WorkloadsOffboard, r)
+			code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 			if code != 1 {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
@@ -2694,7 +2686,7 @@ func TestWorkloadsOffboardForceWithTheControllerGoneNamesWhatIsLeft(t *testing.T
 			// Without --force, the refusal alone.
 			r.Force = false
 			g.s.Refuse(refuse)
-			if code, out = g.call(t, WorkloadsOffboard, r); code != 1 || strings.Contains(out, "access revoke") {
+			if code, out = g.call(t, WorkloadsOffboard, confirmed(r)); code != 1 || strings.Contains(out, "access revoke") {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
 		})
@@ -2707,7 +2699,7 @@ func TestWorkloadsOffboardForceWithTheControllerGoneMidwayNamesTheBackends(t *te
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Code: 503, Status: "UNAVAILABLE", Message: "down"})
 	r := shopOffboard
 	r.Force = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2727,7 +2719,7 @@ func TestWorkloadsOffboardForceNamesADatabasesTagWhoseBindingsAreDenied(t *testi
 	g.d.Err = &errs
 	r := shopOffboard
 	r.Force, r.JSON = true, true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	var got struct {
 		Offboarded bool
 		NotRemoved []string
@@ -2748,7 +2740,7 @@ func TestWorkloadsOffboardStopsOnADatabasesTagWhoseBindingsAreDeniedThenARerunFi
 	g := newDatabaseRig(t)
 	g.onboardedDatabase(t)
 	g.s.Refuse(gcptest.Refusal{Method: "GET", Host: databaseHost, Path: "/v3/tagBindings", Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: forbidden})
-	code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2756,7 +2748,7 @@ func TestWorkloadsOffboardStopsOnADatabasesTagWhoseBindingsAreDeniedThenARerunFi
 	if strings.Contains(out, "it may be gone") {
 		t.Fatalf("it was just read:\n%s", out)
 	}
-	if code, out = g.call(t, WorkloadsOffboard, shopOffboard); code != 0 {
+	if code, out = g.call(t, WorkloadsOffboard, confirmed(shopOffboard)); code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
 	if len(g.bindings()) != 0 {
@@ -2807,7 +2799,7 @@ func TestWorkloadsOffboardWithAFileLeftAndA404NotTheControllersRemovesNothing(t 
 		g.onboardedBoth(t)
 		// A delete with no answer leaves the file, as it may have gone through.
 		g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Times: 1, Code: 500, Status: "INTERNAL", Message: "boom"})
-		if code, out := g.call(t, WorkloadsOffboard, shopOffboard); code != 1 {
+		if code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard)); code != 1 {
 			t.Fatalf("exit %d:\n%s", code, out)
 		}
 		if _, err := os.Stat(g.offboardFile()); err != nil {
@@ -2816,7 +2808,7 @@ func TestWorkloadsOffboardWithAFileLeftAndA404NotTheControllersRemovesNothing(t 
 		g.s.Refuse(cloudRun404("GET"))
 		r := shopOffboard
 		r.Force = force
-		code, out := g.call(t, WorkloadsOffboard, r)
+		code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 		if code != 1 {
 			t.Fatalf("force %v: exit %d:\n%s", force, code, out)
 		}
@@ -2835,7 +2827,7 @@ func TestWorkloadsOffboardWithADeleteAnswering404NotTheControllersRemovesNothing
 		g.s.Refuse(cloudRun404("DELETE"))
 		r := shopOffboard
 		r.Force = force
-		code, out := g.call(t, WorkloadsOffboard, r)
+		code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 		if code != 1 {
 			t.Fatalf("force %v: exit %d:\n%s", force, code, out)
 		}
@@ -2864,7 +2856,7 @@ func TestWorkloadsOffboardForceWithItsForcedDeleteAnswering404NotTheControllersR
 	})
 	r := shopOffboard
 	r.Force = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -2883,7 +2875,7 @@ func TestWorkloadsOffboardRefusedAtTheControllerKeepsNoFile(t *testing.T) {
 			g, _ := newGKERig(t)
 			g.onboardedBoth(t)
 			set(g)
-			code, out := g.call(t, WorkloadsOffboard, shopOffboard)
+			code, out := g.call(t, WorkloadsOffboard, confirmed(shopOffboard))
 			if code != 1 {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
@@ -3007,7 +2999,7 @@ func TestWorkloadsOffboardInterruptedAtTheRbacSaysWhatIsLeft(t *testing.T) {
 	ctx := g.cancelledAfter(t, "DELETE "+kubeHost+shopBinding)
 	r := shopOffboard
 	r.Configuration = "c"
-	out := g.interrupted(t, ctx, WorkloadsOffboard, r)
+	out := g.interrupted(t, ctx, WorkloadsOffboard, confirmed(r))
 	contains(t, out, "workload shop is offboarded, but its Kubernetes access is not removed: interrupted", "run the same command again", "access revoke")
 	if _, err := os.Stat(g.offboardFile()); err != nil {
 		t.Fatalf("a rerun finishes from the file: %v", err)
@@ -3020,7 +3012,7 @@ func TestWorkloadsOffboardForceInterruptedSaysWhatIsLeftAsInterrupted(t *testing
 	ctx := g.cancelledAfter(t, "DELETE "+kubeHost+shopBinding)
 	r := shopOffboard
 	r.Force = true
-	out := g.interrupted(t, ctx, WorkloadsOffboard, r)
+	out := g.interrupted(t, ctx, WorkloadsOffboard, confirmed(r))
 	contains(t, out, "Offboarded workload shop", "Role and RoleBinding dormeto-shop", "interrupted", "access revoke")
 	if strings.Contains(out, "context canceled") {
 		t.Fatalf("%s", out)
@@ -3034,7 +3026,7 @@ func TestWorkloadsOffboardInterruptedAtTheTagsSaysTheyAreLeft(t *testing.T) {
 		ctx := g.cancelledAfter(t, "DELETE "+controllerHost+"/v1/workloads/shop")
 		r := shopOffboard
 		r.Force = force
-		out := g.interrupted(t, ctx, WorkloadsOffboard, r)
+		out := g.interrupted(t, ctx, WorkloadsOffboard, confirmed(r))
 		want := "workload shop is offboarded, but its tags are not removed: interrupted"
 		if force {
 			want = "the tag of Cloud SQL instance shop-db is not removed: interrupted"
@@ -3063,7 +3055,7 @@ func TestWorkloadsOffboardInterruptedInTheDeleteSaysItMayBeDone(t *testing.T) {
 		cancel()
 		gcptest.Cut(w)
 	})
-	out := g.interrupted(t, ctx, WorkloadsOffboard, shopOffboard)
+	out := g.interrupted(t, ctx, WorkloadsOffboard, confirmed(shopOffboard))
 	contains(t, out, "Interrupted", "workload shop may be offboarded", "run the same command again")
 	if len(g.bindings()) != 2 {
 		t.Fatalf("bindings %v", g.bindings())
@@ -3193,7 +3185,7 @@ func TestWorkloadsOffboardForceKeepsTheFileForAnAccessTheRecordDoesNotList(t *te
 	g.k.deny = denyCall("DELETE "+shopBinding, 403, "Forbidden", "rolebindings is forbidden")
 	r := shopOffboard
 	r.Force = true
-	code, out := g.call(t, WorkloadsOffboard, r)
+	code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -3201,7 +3193,7 @@ func TestWorkloadsOffboardForceKeepsTheFileForAnAccessTheRecordDoesNotList(t *te
 		t.Fatalf("no file: %v", err)
 	}
 	g.k.deny = nil
-	if code, out = g.call(t, WorkloadsOffboard, r); code != 0 {
+	if code, out = g.call(t, WorkloadsOffboard, confirmed(r)); code != 0 {
 		t.Fatalf("rerun: exit %d:\n%s", code, out)
 	}
 	if g.k.has(shopRole) || g.k.has(shopBinding) {
@@ -3225,7 +3217,7 @@ func TestWorkloadsHintsOnARouterOfThePublicImageNameTheVersion(t *testing.T) {
 		g.s.Workloads["shop"] = "AWAKE"
 		g.s.ScheduleProblem = "windows[0].repeat: unknown field"
 		r := workloadsEurope
-		r.ID, r.File = "shop", g.scheduleFile(t, recurringSchedule)
+		r.ID, r.Schedule = "shop", json.RawMessage(recurringSchedule)
 		code, out := g.call(t, WorkloadsScheduleSet, r)
 		if code != 1 || strings.Contains(out, "--image") {
 			t.Fatalf("exit %d:\n%s", code, out)
@@ -3263,7 +3255,7 @@ func TestWorkloadsHintsOnARouterOfThePublicImageNameTheVersion(t *testing.T) {
 		g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: controllerHost, Path: "/v1/workloads/shop", Code: 503, Status: "UNAVAILABLE", Message: "down"})
 		r := shopOffboard
 		r.Force = true
-		code, out := g.call(t, WorkloadsOffboard, r)
+		code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 		if code != 1 || strings.Contains(out, "--image") {
 			t.Fatalf("exit %d:\n%s", code, out)
 		}
@@ -3381,7 +3373,7 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 		g.s.OnFallback = map[string]map[string]map[string]string{"shop": onFallback}
 		r := workloadsEurope
 		r.ID, r.Force = "shop", force
-		code, out := g.call(t, WorkloadsOffboard, r)
+		code, out := g.call(t, WorkloadsOffboard, confirmed(r))
 		if code != 0 {
 			t.Fatalf("force %v: exit %d:\n%s", force, code, out)
 		}
@@ -3395,7 +3387,7 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 		g.s.OnFallback = map[string]map[string]map[string]string{"shop": onFallback}
 		g.s.Workloads["shop"] = "AWAKE"
 		r.Force, r.JSON = false, true
-		code, out = g.call(t, WorkloadsOffboard, r)
+		code, out = g.call(t, WorkloadsOffboard, confirmed(r))
 		// The rig's stdout and stderr share a buffer: the lines come first (on stderr), the answer last.
 		answer := map[string]any{}
 		lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -3409,7 +3401,7 @@ func TestWorkloadsOffboardNamesTheVMsOnAFallbackType(t *testing.T) {
 	r := workloadsEurope
 	r.ID = "shop"
 	g.s.Workloads["shop"] = "AWAKE"
-	if _, out := g.call(t, WorkloadsOffboard, r); strings.Contains(out, "fallback") || strings.Contains(out, "by hand") {
+	if _, out := g.call(t, WorkloadsOffboard, confirmed(r)); strings.Contains(out, "fallback") || strings.Contains(out, "by hand") {
 		t.Errorf("a line with no VM on a fallback type:\n%s", out)
 	}
 }

@@ -75,9 +75,11 @@ func newGcpPageShow(run gcpRun, version string, workload bool, noun string) *cob
 
 func newGcpPageClear(run gcpRun, version string, workload bool, noun string) *cobra.Command {
 	var f gcpFlags
-	return gcpPageTarget("clear", "Remove the "+noun+"'s waiting page",
+	cmd := gcpPageTarget("clear", "Remove the "+noun+"'s waiting page",
 		"Remove the document this level holds: the "+noun+" inherits the level above, or the default page. --json prints the controller's answer.\n"+
 			"A router without the waiting page says so, with the version to install.", run, version, workload, &f)
+	gcpWriteFlags(cmd, &f)
+	return cmd
 }
 
 func newGcpPageSet(run gcpRun, version string, workload bool, noun string) *cobra.Command {
@@ -107,6 +109,7 @@ func newGcpPageSet(run gcpRun, version string, workload bool, noun string) *cobr
 		doc = &p
 		return nil
 	}
+	gcpWriteFlags(cmd, &f)
 	fl := cmd.Flags()
 	fl.StringVar(&icon, "icon", "", "auto, none or an image file (PNG, JPEG, WebP, SVG or ICO, at most 64 KiB)")
 	fl.StringVar(&title, "title", "", "the page's title, at most 80 characters")

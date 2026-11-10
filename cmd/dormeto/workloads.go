@@ -681,9 +681,11 @@ func readScheduleFile(c *cobra.Command, path string) (json.RawMessage, error) {
 	if probe == nil { // null
 		return nil, none
 	}
+	// AWS's next events, or a Google Cloud controller's.
 	_, hasNext := probe["next"]
 	_, hasDue := probe["maintenanceDue"]
-	if _, ok := probe["schedule"]; !ok && (hasNext || hasDue) { // `schedule show --json` of a router that reports none
+	_, hasEvents := probe["nextEvents"]
+	if _, ok := probe["schedule"]; !ok && (hasNext || hasDue || hasEvents) { // `schedule show --json` of a router that reports none
 		return nil, none
 	}
 	if member, ok := probe["schedule"]; ok { // the shape of `schedule show --json` and of a PUT's answer

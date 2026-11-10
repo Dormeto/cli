@@ -71,6 +71,17 @@ func (x *run) waitingPage(workload bool, method string) error {
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
+	if x.r.DryRun && method != http.MethodGet {
+		verb := map[string]string{http.MethodPut: "set the waiting page of", http.MethodDelete: "clear the waiting page of"}[method]
+		var shown any
+		if method == http.MethodPut {
+			shown = map[string]any{"page": x.r.Page}
+		}
+		if workload {
+			return x.workloadDryRun(verb, method, path, shown)
+		}
+		return x.dryRun(verb+" router", x.n.router, method, path, shown)
+	}
 	var in any
 	if method != http.MethodGet {
 		by, err := x.d.Google.Tokens.Account(x.ctx)

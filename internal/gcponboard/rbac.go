@@ -683,7 +683,7 @@ func (x *run) rbacRequest(writes bool) (Rbac, error) {
 		return Rbac{}, &stop{2, fmt.Sprintf("--namespace: %q is not a Kubernetes namespace", x.r.Namespace)}
 	case !workloadIDPattern.MatchString(x.r.ID):
 		return Rbac{}, &stop{2, fmt.Sprintf("--workload: %q is not a valid workload ID: %s", x.r.ID, workloadIDRule)}
-	case writes && x.r.JSON && !x.r.Yes:
+	case writes && x.r.JSON && !x.r.Yes && !x.r.DryRun:
 		return Rbac{}, &stop{2, "--yes: needed with --json"}
 	}
 	return Rbac{Cluster: x.r.GKECluster, Namespace: x.r.Namespace, Workload: x.r.ID, ServiceAccount: x.n.email}, nil
@@ -805,6 +805,13 @@ func (x *run) accessShow() error {
 	return nil
 }
 
+// accessDryRun ends a grant or a revoke under --dry-run, its plan printed: what it would do, and nothing sent. Under --json,
+// stdout is {"dryRun":true,"targets":[<namespace>/<the objects' name>]}, as AWS's.
+func (x *run) accessDryRun(rb Rbac, what string) error {
+	fmt.Fprintf(x.textOut(), "dry run: would %s, nothing sent\n", what)
+	return x.printStop("dryRun", true, []string{rb.Namespace + "/" + rb.name()})
+}
+
 // confirm goes on with --yes or a yes on a terminal.
 func (x *run) confirm(question string) error {
 	if x.r.Yes {
@@ -851,7 +858,7 @@ func (x *run) accessGrant() error {
 		return err
 	}
 	g, err := x.grantRbac(rb)
-	if err != nil {
+	if err != nil || x.r.DryRun {
 		return err
 	}
 	if x.r.JSON {
@@ -898,6 +905,9 @@ func (x *run) grantRbac(rb Rbac) (rbacGrant, error) {
 	}
 	if err := g.plan.Refused(); err != nil {
 		return g, err
+	}
+	if x.r.DryRun {
+		return g, x.accessDryRun(rb, fmt.Sprintf("apply these to namespace %s of cluster %s", rb.Namespace, rb.Cluster))
 	}
 	if !g.plan.Changes() {
 		// A record that lost it is whole again.
@@ -984,6 +994,9 @@ func (x *run) accessRevoke() error {
 	switch {
 	case errors.As(err, &gone):
 		x.tell("Cluster %s is not found in project %s: no access is left in it.", gone.cluster, gone.project)
+		if x.r.DryRun {
+			return x.accessDryRun(rb, "take the access out of the install record")
+		}
 		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: []string{}})
 	case err != nil:
 		return err
@@ -1007,7 +1020,13 @@ func (x *run) accessRevoke() error {
 	}
 	if len(removal.deleted) == 0 && removal.stripped == nil {
 		x.tell("  nothing to remove")
+		if x.r.DryRun {
+			return x.accessDryRun(rb, "take the access out of the install record")
+		}
 		return x.endRevoke(rb, RbacRemoval{Removed: []string{}, Left: removal.left(), Subjects: removal.others})
+	}
+	if x.r.DryRun {
+		return x.accessDryRun(rb, fmt.Sprintf("remove these from namespace %s of cluster %s", rb.Namespace, rb.Cluster))
 	}
 	if err := x.confirm(fmt.Sprintf("Remove these from namespace %s of cluster %s?", rb.Namespace, rb.Cluster)); err != nil {
 		return err

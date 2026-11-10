@@ -115,6 +115,9 @@ type Server struct {
 	// WorkloadDocs the other fields of a workload as GET /v1/workloads/<id> answers it (urlMap, backends…).
 	Workloads    map[string]string
 	WorkloadDocs map[string]map[string]any
+	// Waking are the states a workload goes through after a wake, by ID: each GET /v1/workloads/<id> answers the next, the last
+	// one staying. None: the wake leaves it AWAKE at once.
+	Waking map[string][]string
 	// Schedules are the workloads' schedules, by ID; NextEvents the events GET .../schedule answers while one is set;
 	// ScheduleProblem, when set, makes PUT .../schedule refuse with a 400 saying it; ScheduleJoin, members its answers add
 	// (a router 0.36.0: joinMinutes, joinFrom, joinInherited).

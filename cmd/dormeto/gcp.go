@@ -83,13 +83,18 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 		Use: use, Short: short, Long: long, Args: noArgs, SilenceErrors: true,
 		RunE: func(c *cobra.Command, _ []string) error {
 			var lists []gcponboard.IPList
+			moved := false
 			for _, s := range f.ipLists {
-				l, err := gcponboard.ParseIPList(s)
+				l, old, err := gcponboard.ParseIPList(s)
 				if err != nil {
 					fmt.Fprintln(c.ErrOrStderr(), err)
 					return exitCode(2)
 				}
-				lists = append(lists, l)
+				lists, moved = append(lists, l), moved || old
+			}
+			// The old name of refresh_hours, 0.11.0's: the line of a moved flag, once.
+			if moved {
+				fmt.Fprintln(c.ErrOrStderr(), "--ip-list: refresh= is now refresh_hours=")
 			}
 			if err := gcponboard.CheckIPLists(lists, f.noIPLists); err != nil {
 				fmt.Fprintln(c.ErrOrStderr(), err)
@@ -188,14 +193,14 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 			"roles (dormetoRouterDatabasesRead and dormetoRouterDatabases; dormetoRouterKubernetes) and the router's grants,\n"+
 			"kept in the install record. Without it, neither API is turned on (Google then adds service agents of its own). A\n"+
 			"later run with more features adds them; a run without --with keeps the record's; only uninstall removes them.\n\n"+
-			"With --ip-list name=<n>,url=<u>[,refresh=<hours>] (repeatable) the router ignores the addresses of those lists: it\n"+
-			"downloads each over http(s), every 24 hours unless refresh says otherwise, and an address on one never wakes a\n"+
-			"workload by a visit (only the action ignore exists on Google Cloud; an API client's explicit POST /_dormeto/wake\n"+
-			"still wakes). The lists go in DMT_IP_LISTS on both Cloud Run services and in the install record, so the URL is\n"+
-			"printed in the plan, and one with credentials is refused. The set is replaced by each run with --ip-list, cleared by\n"+
-			"--no-ip-lists, and kept by a run with neither (a later --version or --image included). Either flag changes the two\n"+
-			"services, so it needs the router: it is refused with --access-only, and on a router below 0.35.0, which does not\n"+
-			"read the lists. The waker runs at 512 MiB with a list, else 256 MiB.\n\n"+
+			"With --ip-list name=<n>,url=<u>[,refresh_hours=<hours>] (repeatable) the router ignores the addresses of those\n"+
+			"lists: it downloads each over http(s), every 24 hours unless refresh_hours (AWS's name; refresh in 0.11.0) says\n"+
+			"otherwise, and an address on one never wakes a workload by a visit (only the action ignore exists on Google Cloud;\n"+
+			"an API client's explicit POST /_dormeto/wake still wakes). The lists go in DMT_IP_LISTS on both Cloud Run services\n"+
+			"and in the install record, so the URL is printed in the plan, and one with credentials is refused. The set is\n"+
+			"replaced by each run with --ip-list, cleared by --no-ip-lists, and kept by a run with neither (a later --version or\n"+
+			"--image included). Either flag changes the two services, so it needs the router: it is refused with --access-only,\n"+
+			"and on a router below 0.35.0, which does not read the lists. The waker runs at 512 MiB with a list, else 256 MiB.\n\n"+
 			"With --custom-pages the router serves custom waiting pages, your HTML on the application's address (waiting-page\n"+
 			"set --html): anyone who can invoke the controller sets a page, so they are off unless an administrator's install\n"+
 			"turns them on. It sets DMT_CUSTOM_PAGES=1 on both Cloud Run services and customPages in the install record, which\n"+
@@ -210,7 +215,7 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&f.accessOnly, "access-only", false, "install the access without the router (later runs keep it until one with --version or --image)")
 	fl.BoolVar(&f.yes, "yes", false, "apply without asking (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
-	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh=<hours, default 24>], repeatable; replaces the set; needs the router")
+	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh_hours=<hours, default 24>], repeatable; replaces the set; needs the router")
 	fl.BoolVar(&f.noIPLists, "no-ip-lists", false, "clear the router's IP lists")
 	fl.BoolVar(&f.customPages, "custom-pages", false, "serve custom waiting pages, your HTML on the application's address (--custom-pages=false turns them off; a run without it keeps the record's); needs the router")
 	withFlag(cmd, &f, "also install the optional access of these features (a later run adds more and a run without --with keeps the record's; only uninstall removes them)")

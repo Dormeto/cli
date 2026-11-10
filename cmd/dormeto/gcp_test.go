@@ -25,6 +25,12 @@ type gcpCall struct {
 
 func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr string, exit int) {
 	t.Helper()
+	return gcpRanWith(t, "", code, args...)
+}
+
+// gcpRanWith is gcpRan with stdin as the standard input.
+func gcpRanWith(t *testing.T, stdin string, code int, args ...string) (calls []gcpCall, stderr string, exit int) {
+	t.Helper()
 	ran := func(name string) gcpRun {
 		return func(_ context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			calls = append(calls, gcpCall{name, r, d})
@@ -47,7 +53,7 @@ func gcpRan(t *testing.T, code int, args ...string) (calls []gcpCall, stderr str
 	var out, errs bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errs)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
 	exit = execute(root, args...)
 	return calls, errs.String(), exit
@@ -284,7 +290,7 @@ func TestGcpWithIsCommaSeparatedAndRepeatable(t *testing.T) {
 
 func TestGcpInstallIPListFlagsReadIntoTheRequest(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, "gcp", "routers", "install", "--project", "p", "--region", "europe-west1",
-		"--ip-list", "name=scanners,url=https://example.com/s.txt", "--ip-list", "name=bots,url=http://example.com/b.txt?a=1,refresh=6")
+		"--ip-list", "name=scanners,url=https://example.com/s.txt", "--ip-list", "name=bots,url=http://example.com/b.txt?a=1,refresh_hours=6")
 	want := []gcponboard.IPList{{Name: "scanners", URL: "https://example.com/s.txt", RefreshHours: 24}, {Name: "bots", URL: "http://example.com/b.txt?a=1", RefreshHours: 6}}
 	if exit != 0 || errs != "" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.IPLists, want) || calls[0].r.NoIPLists {
 		t.Fatalf("%d %q %+v", exit, errs, calls)

@@ -169,6 +169,12 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case verb == "" && r.Method == http.MethodGet:
+			if next := s.Waking[id]; len(next) > 0 {
+				s.Workloads[id] = next[0]
+				if len(next) > 1 {
+					s.Waking[id] = next[1:]
+				}
+			}
 			Reply(w, s.workloadBody(id))
 		case verb == "" && r.Method == http.MethodDelete:
 			force := r.URL.Query().Get("force") == "true"

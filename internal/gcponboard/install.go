@@ -46,16 +46,17 @@ var operationEvery = 2 * time.Second
 
 var regionPattern = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
 
-// names are the router's names in its project and region.
+// names are the router's names in its project and region; managed is its name in the manager, dmtr-<project>-<region>, which
+// must be unique across projects (the AWS and Google Cloud review's §4.4).
 type names struct {
-	project, region, router, email, member, database, queue string
-	controller, waker, neg, job, logView                    string
+	project, region, router, managed, email, member, database, queue string
+	controller, waker, neg, job, logView                             string
 }
 
 func newNames(project, region string) names {
 	router := "dmtr-" + region
 	email := router + "@" + project + ".iam.gserviceaccount.com"
-	return names{project: project, region: region, router: router, email: email, member: "serviceAccount:" + email,
+	return names{project: project, region: region, router: router, managed: "dmtr-" + project + "-" + region, email: email, member: "serviceAccount:" + email,
 		database: router, queue: router, controller: router + "-controller", waker: router + "-waker", neg: router + "-waker", job: router + "-check",
 		logView: router + "-lb"}
 }
