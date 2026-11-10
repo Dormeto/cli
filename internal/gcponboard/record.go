@@ -340,6 +340,8 @@ func (x *run) sinceRecord() {
 	for _, g := range added {
 		switch {
 		case x.ours(g), x.oursDeleted(g), x.otherRouter(g.Member):
+		case managerConnection(g):
+			x.sinceLast = append(x.sinceLast, "+ "+x.describe(g, "project")+" (the manager's connection: dormeto gcp connect)")
 		case x.serviceAgent(g.Member):
 			if x.rec.addGoogle(GoogleGrant{Role: g.Role, Member: g.Member, Step: step}) {
 				x.recChanged = true
@@ -378,6 +380,23 @@ func (x *run) serviceAgent(member string) bool {
 	}
 	return email == x.number+"-compute@developer.gserviceaccount.com" || email == x.number+"@cloudservices.gserviceaccount.com" ||
 		(strings.HasPrefix(email, "service-"+x.number+"@") && strings.HasSuffix(email, ".gserviceaccount.com"))
+}
+
+// managerConnection tells that a grant is one dormeto gcp connect made: the manager's discovery or command account
+// (dmt-<env>-discovery, dmt-<env>-command, of its host project) holding the role dormetoDiscovery or dormetoCommand.
+func managerConnection(g Grant) bool {
+	email, ok := strings.CutPrefix(g.Member, "serviceAccount:")
+	if !ok || !strings.HasPrefix(email, "dmt-") || !strings.HasSuffix(email, ".iam.gserviceaccount.com") {
+		return false
+	}
+	account, _, _ := strings.Cut(strings.TrimPrefix(email, "dmt-"), "@")
+	switch {
+	case strings.HasSuffix(account, "-discovery"):
+		return strings.HasSuffix(g.Role, "/roles/dormetoDiscovery")
+	case strings.HasSuffix(account, "-command"):
+		return strings.HasSuffix(g.Role, "/roles/dormetoCommand")
+	}
+	return false
 }
 
 // otherRouter tells that a member is another Dormeto router's service account in the project.

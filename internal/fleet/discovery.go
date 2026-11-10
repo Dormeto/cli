@@ -193,6 +193,27 @@ type AccessRow struct {
 	Reason    string      `json:"reason"`
 }
 
+// cloud is the row's cloud, else the account's form: an AWS account is digits, a Google Cloud project's ID starts with a letter.
+func (a AccessRow) cloud() string {
+	if a.Cloud == "" && a.Account != "" && !isNumeric(a.Account) {
+		return "gcp"
+	}
+	return CloudName(a.Cloud)
+}
+
+// listsBothClouds tells whether the accounts read hold an AWS account and a Google Cloud project.
+func (r AccessReport) listsBothClouds() bool {
+	var aws, gcp bool
+	for _, a := range r.Accounts {
+		if a.cloud() == "gcp" {
+			gcp = true
+		} else {
+			aws = true
+		}
+	}
+	return aws && gcp
+}
+
 // AccessState is whether a role of an account works, and why not.
 type AccessState struct {
 	OK            bool   `json:"ok"`
@@ -324,7 +345,12 @@ func ReadAccess(ctx context.Context, c *Client, limit int) (AccessReport, error)
 // Text is the counts, the delegation and forwarders, then a table of the accounts not ready, times in loc.
 func (r AccessReport) Text(loc *time.Location) string {
 	n := r.Counts
-	counts := fmt.Sprintf("%d ready, %d without the discovery role, %d without the command role, %d not checked", n.Ready, n.DiscoveryMissing, n.CommandMissing, n.Unchecked)
+	// A project has no role of its own: with both clouds listed, the counts name a role or an account.
+	discovery, command := "role", "role"
+	if r.listsBothClouds() {
+		discovery, command = "role or account", "role or account"
+	}
+	counts := fmt.Sprintf("%d ready, %d without the discovery %s, %d without the command %s, %d not checked", n.Ready, n.DiscoveryMissing, discovery, n.CommandMissing, command, n.Unchecked)
 	if n.DiscoveryOnly > 0 {
 		counts += fmt.Sprintf(", %d for discovery only", n.DiscoveryOnly)
 	}
@@ -348,9 +374,9 @@ func (r AccessReport) Text(loc *time.Location) string {
 		return text + "\nevery account checked is ready\n"
 	}
 	// The routers list's order: NAME, then CLOUD and ACCOUNT OR PROJECT.
-	table := [][]string{{"NAME", "CLOUD", "ACCOUNT OR PROJECT", "DISCOVERY ROLE", "COMMAND ROLE", "FORWARDER"}}
+	table := [][]string{{"NAME", "CLOUD", "ACCOUNT OR PROJECT", "DISCOVERY", "COMMAND", "FORWARDER"}}
 	for _, a := range r.Accounts {
-		table = append(table, []string{orNone(a.Name), CloudName(a.Cloud), a.Account, a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
+		table = append(table, []string{orNone(a.Name), a.cloud(), a.Account, a.Discovery.text(), a.Command.text(), orNone(a.Forwarder)})
 	}
 	return text + "\n" + Table(table)
 }

@@ -110,7 +110,8 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"ambiguous name exits 2, its ids listed, nothing sent), and follow it; then print the workload as\n" +
 			"<router>/<workload id>. It sends what the dashboard's dialog sends: --name (the workload's display name, up to\n" +
 			"64 characters; empty, the target group's or backend service's name), --idle-minutes (5 to 1440, 15 by default),\n" +
-			"--wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes), --database (an RDS instance\n" +
+			"--wake-mode (any, or browser: only the waiter page, the header or a wake rule wakes; by default any on AWS, and on\n" +
+			"Google Cloud none is sent: the levels decide, as the dashboard's Inherit), --database (an RDS instance\n" +
 			"identifier or cluster:<identifier>, or for a Google Cloud candidate a Cloud SQL instance name: stopped after the\n" +
 			"application, started before it), --fallback-type (an EC2 instance type such as t3a.medium, or for a Google Cloud\n" +
 			"candidate a Compute Engine machine type such as e2-medium; at most 5; for the instances of a workload), --router\n" +
@@ -133,7 +134,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				err = usagef("--name: at most 64 characters, no control characters")
 			case idle < 5 || idle > 1440:
 				err = usagef("--idle-minutes: %d is not from 5 to 1440", idle)
-			case wakeMode != "any" && wakeMode != "browser":
+			case c.Flags().Changed("wake-mode") && wakeMode != "any" && wakeMode != "browser":
 				err = usagef("--wake-mode: %q is not any or browser", wakeMode)
 			case len(fallbacks) > maxFallbackTypes:
 				err = usagef("--fallback-type: at most %d (%d given)", maxFallbackTypes, len(fallbacks))
@@ -166,7 +167,11 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := checkCandidateFlags(cand, router, databases, fallbacks); err != nil {
 					return err
 				}
-				settings := map[string]any{"idleMinutes": idle, "wakeMode": wakeMode}
+				settings := map[string]any{"idleMinutes": idle}
+				// AWS's default is any; a Google Cloud candidate's levels decide unless the flag is given (the dashboard's Inherit).
+				if c.Flags().Changed("wake-mode") || !cand.IsGoogle() {
+					settings["wakeMode"] = wakeMode
+				}
 				if len(fallbacks) > 0 {
 					settings["fallbackInstanceTypes"] = fallbacks
 				}
@@ -205,7 +210,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&name, "name", "", "the workload's display name, up to 64 characters (default, or empty: the target group's or backend service's name)")
 	fl.IntVar(&idle, "idle-minutes", 15, "the idle window, 5 to 1440 minutes")
-	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser")
+	fl.StringVar(&wakeMode, "wake-mode", "any", "what wakes the workload: any request that passes the filters, or browser (default: any on AWS; on Google Cloud the levels decide)")
 	fl.StringArrayVar(&databases, "database", nil, "a companion RDS instance identifier, or cluster:<identifier>; a Google Cloud candidate's: a Cloud SQL instance name (repeatable)")
 	fl.StringArrayVar(&fallbacks, "fallback-type", nil, "a fallback EC2 instance type such as t3a.medium, or Compute Engine machine type such as e2-medium (repeatable, at most 5)")
 	fl.StringVar(&router, "router", "", "a Google Cloud candidate: the router to onboard a global candidate on when its project has several (a regional one goes on its region's router)")

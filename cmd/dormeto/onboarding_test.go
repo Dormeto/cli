@@ -511,8 +511,22 @@ func gcpCandidate() string {
 func TestOnboardGoogleCloudCandidateBody(t *testing.T) {
 	a := &obAPI{pending: []string{gcpCandidate()}}
 	r := runOB(t, a, nil, "workloads", "onboard", "web", "--router", "gcp-dev", "--database", "orders-db", "--fallback-type", "e2-medium", "--fallback-type", "n2-standard-2", "--no-wait")
-	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[{"id":"orders-db","kind":"cloudsql-instance"}],"router":"gcp-dev","settings":{"fallbackInstanceTypes":["e2-medium","n2-standard-2"],"idleMinutes":15,"wakeMode":"any"},"type":"onboard"}`
+	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[{"id":"orders-db","kind":"cloudsql-instance"}],"router":"gcp-dev","settings":{"fallbackInstanceTypes":["e2-medium","n2-standard-2"],"idleMinutes":15},"type":"onboard"}`
 	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestOnboardGoogleCloudCandidateSendsNoWakeModeUnlessGiven(t *testing.T) {
+	a := &obAPI{pending: []string{gcpCandidate()}}
+	r := runOB(t, a, nil, "workloads", "onboard", "web", "--no-wait")
+	want := `POST /iam/operations {"candidateId":"` + gcpBS + `","databases":[],"settings":{"idleMinutes":15},"type":"onboard"}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &obAPI{pending: []string{gcpCandidate()}}
+	r = runOB(t, a, nil, "workloads", "onboard", "web", "--wake-mode", "any", "--no-wait")
+	if r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"settings":{"idleMinutes":15,"wakeMode":"any"}`) {
 		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
 }

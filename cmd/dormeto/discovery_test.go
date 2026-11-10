@@ -500,6 +500,28 @@ func TestDiscoveryConfigSetTakesTheShowAnswerOrABareConfiguration(t *testing.T) 
 	}
 }
 
+func TestDiscoveryAccessReadsTheCloudFromTheAccountsFormAndWordsBothClouds(t *testing.T) {
+	// The rows of a manager before Google Cloud's carry no cloud: a project's ID starts with a letter, an AWS account's is digits.
+	a := &disAPI{access: []string{
+		`{"account":"111111111111","name":"prod","discovery":{"ok":false,"reason":"no role"},"command":{"ok":true}}`,
+		`{"account":"dormeto-dev","name":"Dormeto dev","discovery":{"ok":true},"command":{"ok":false,"reason":"no binding"}}`,
+	}}
+	r := runDiscovery(t, a, nil, "", "access")
+	if r.exit != 0 || !strings.Contains(r.stdout, "DISCOVERY         COMMAND ") || strings.Contains(r.stdout, "DISCOVERY ROLE") ||
+		!strings.Contains(r.stdout, "without the discovery role or account, 0 without the command role or account") {
+		t.Fatalf("exit %d, stdout %q", r.exit, r.stdout)
+	}
+	var gcpRow string
+	for _, l := range strings.Split(r.stdout, "\n") {
+		if strings.HasPrefix(l, "Dormeto dev") {
+			gcpRow = l
+		}
+	}
+	if !strings.Contains(gcpRow, " gcp ") {
+		t.Errorf("row %q: the project prints gcp", gcpRow)
+	}
+}
+
 func TestDiscoveryAccessPrintsACloudColumnForBothClouds(t *testing.T) {
 	a := &disAPI{access: []string{
 		`{"account":"111111111111","cloud":"aws","name":"prod","discovery":{"ok":false,"reason":"no role"},"command":{"ok":true}}`,
@@ -517,7 +539,7 @@ func TestDiscoveryAccessPrintsACloudColumnForBothClouds(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 	// The routers list's order: NAME, then CLOUD, then ACCOUNT OR PROJECT.
-	for i, want := range []string{"NAME         CLOUD  ACCOUNT OR PROJECT  DISCOVERY ROLE", "prod ", "Dormeto dev "} {
+	for i, want := range []string{"NAME         CLOUD  ACCOUNT OR PROJECT  DISCOVERY", "prod ", "Dormeto dev "} {
 		if !strings.HasPrefix(table[i], want) {
 			t.Errorf("line %d: %q, want it to start with %q", i, table[i], want)
 		}

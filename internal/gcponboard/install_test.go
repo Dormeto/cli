@@ -1467,6 +1467,29 @@ func TestInstallAfterAStoppedRunRecordsGooglesChangesSeenLater(t *testing.T) {
 	}
 }
 
+func TestInstallNamesTheManagersConnectionGrantsAsTheConnections(t *testing.T) {
+	g := newInstallRig(t)
+	if code, out := g.run(t, europe); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// dormeto gcp connect, from the manager's host project, grants its two accounts their roles on this project.
+	command := "serviceAccount:dmt-dev-command@host-proj.iam.gserviceaccount.com"
+	discovery := "serviceAccount:dmt-dev-discovery@host-proj.iam.gserviceaccount.com"
+	grantInFake(t, g.s, "projects/dormeto-dev/roles/dormetoCommand", command)
+	grantInFake(t, g.s, "projects/dormeto-dev/roles/dormetoDiscovery", discovery)
+	grantInFake(t, g.s, "roles/viewer", "user:someone@example.com")
+	code, out := g.run(t, europe)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  + roles/viewer to user:someone@example.com on the project (not a Google service agent: not recorded)\n")
+	contains(t, out, "  + projects/dormeto-dev/roles/dormetoCommand to "+command+" on the project (the manager's connection: dormeto gcp connect)\n")
+	contains(t, out, "  + projects/dormeto-dev/roles/dormetoDiscovery to "+discovery+" on the project (the manager's connection: dormeto gcp connect)\n")
+	if strings.Contains(out, "dormetoCommand to "+command+" on the project (not a Google") {
+		t.Fatalf("%s", out)
+	}
+}
+
 func TestInstallResumesTheUnfinishedRecordOfTheDatabase(t *testing.T) {
 	g := newInstallRig(t)
 	// The run is killed (no failure path) after the database step wrote the record: Google's grant comes later.

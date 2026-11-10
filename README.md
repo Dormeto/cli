@@ -1220,8 +1220,9 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
   or ambiguous name exits 2 (its ARNs listed) and sends nothing. It sends what the dashboard's Onboard dialog sends:
   - `--name`: the workload's display name, up to 64 characters (the target group's name by default, or when empty);
   - `--idle-minutes`: the idle window, 5 to 1440 minutes (15 by default);
-  - `--wake-mode`: `any` request that passes the filters (the default), or `browser` (only the waiting page's script
-    or the `x-dormeto-wake: 1` header wakes it);
+  - `--wake-mode`: `any` request that passes the filters (the default for an AWS candidate), or `browser` (only the
+    waiting page's script or the `x-dormeto-wake: 1` header wakes it); for a Google Cloud candidate none is sent unless
+    the flag is given: the levels decide, as the dashboard's Inherit (behind a global load balancer that is `browser`);
   - `--database`: a companion RDS instance identifier, or `cluster:<identifier>`, stopped after the application and
     started before it (repeatable);
   - `--fallback-type`: an EC2 instance type, such as `t3a.medium`, tried in order at a wake when AWS has no capacity
@@ -1316,7 +1317,9 @@ dormeto aws exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 ### discovery access
 
 `access` shows the organization access of the last run: how many accounts are ready, the delegation policy, the event
-forwarders, and a table of the accounts that are not ready with what is missing (the discovery or the command role).
+forwarders, and a table of the accounts that are not ready with what is missing (the `DISCOVERY` and `COMMAND` columns:
+the discovery or the command role of an AWS account, the access of the manager's Google Cloud account to a project). With
+both clouds listed, the counts say `without the discovery role or account` and `without the command role or account`.
 Every page is read unless `--limit` stops at that many accounts (0, the default, reads all). `--json` prints the
 manager's answer, every page in it.
 
