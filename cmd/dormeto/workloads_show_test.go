@@ -271,6 +271,16 @@ func TestWorkloadsIdleWindowUnpricedShowsHours(t *testing.T) {
 	}
 }
 
+func TestWorkloadsIdleWindowSaysWhenGoogleRequestCountsAreEstimates(t *testing.T) {
+	line := "Google's request counts are estimates."
+	body := strings.Replace(idleWindowAnswer, `"priced":true`, `"priced":true,"estimated":true`, 1)
+	r := runShow(t, &showAPI{status: 200, body: body}, "idle-window", "prod-eu/w-1")
+	mustContain(t, r.stdout, line)
+	if without := runShow(t, &showAPI{}, "idle-window", "prod-eu/w-1"); strings.Contains(without.stdout, "estimates") {
+		t.Errorf("AWS's advice carries the line:\n%s", without.stdout)
+	}
+}
+
 func TestWorkloadsIdleWindowJSONIsTheAnswer(t *testing.T) {
 	r := runShow(t, &showAPI{}, "idle-window", "prod-eu/w-1", "--json")
 	var got map[string]any

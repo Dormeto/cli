@@ -496,6 +496,8 @@ type IdleWindowAdvice struct {
 		Noisy         bool `json:"noisy"`
 	} `json:"actual"`
 	WakerTargetGroup bool `json:"wakerTargetGroup"`
+	// Estimated is set for a Google Cloud workload: its request counts are estimates.
+	Estimated bool `json:"estimated"`
 }
 
 // perDay is a number a day: whole from 10, one decimal below.
@@ -600,6 +602,9 @@ func (a IdleWindowAdvice) Text(loc *time.Location) string {
 	}
 	if !a.WakerTargetGroup {
 		notes = append(notes, "the waker target group was not found: only the requests while awake are replayed")
+	}
+	if a.Estimated {
+		notes = append(notes, "Google's request counts are estimates.")
 	}
 	if !a.Priced {
 		notes = append(notes, "nothing priced yet (no nap described, or an item without a price): hours asleep instead of dollars")

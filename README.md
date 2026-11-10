@@ -833,13 +833,15 @@ dormeto aws workloads idle-window <router>/<workload> [--json]
 - `show`: one workload as the manager's workload view shows it: its state and since when, name, URL, account and region,
   router version and tags, its settings, its pauses (who, why, until when), its schedule with the next events (in the
   schedule's time zone), the share of the last 7 days in each state, its idle hours, and what its naps saved, with the
-  energy not used.
+  energy not used. A Google Cloud workload's savings are priced at Google's list prices when the manager has them.
 - `history`: from the manager's store, never the router: the time in each state over `--days` (1 to 31, 7 by default),
   the wakes (how many, the median and the longest, the failed ones) and the savings estimate, then the latest 50
   changes, newest first, with what started each and how long a wake took. `--json` has every change.
 - `idle-window`: the manager's advice on the idle window: the last 14 days of requests replayed against windows from 5
   to 120 minutes, each with its savings a month (hours asleep a day when nothing is priced), its wakes and wait a day,
-  the current and the recommended window marked. The manager computes it once a day: the first read may take a while.
+  the current and the recommended window marked. It serves both clouds: for a Google Cloud workload the savings are
+  Google's list prices and the line `Google's request counts are estimates.` is printed (`estimated` in `--json`; AWS's
+  advice has none). The manager computes it once a day: the first read may take a while.
 
 ### Waking, napping, pausing, renaming and tagging workloads
 
