@@ -13,6 +13,19 @@ import (
 	"github.com/Dormeto/cli/internal/fleet"
 )
 
+// notConfirmed is AWS's line of a question declined: nothing is sent, exit 0.
+const notConfirmed = "not confirmed: nothing sent"
+
+// needsYes is AWS's refusal of a question without a terminal (exit 2): --yes acts without asking.
+func needsYes(noun string) *stop {
+	return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on 1 %s without a terminal", noun)}
+}
+
+// needsYesWithJSON is needsYes of a command whose question --json does not ask: its stdout is JSON alone.
+func needsYesWithJSON(noun string) *stop {
+	return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on 1 %s with --json", noun)}
+}
+
 // sharedKinds are the shared names of the controller's backend kinds.
 var sharedKinds = map[string]string{"vm": "instance", "mig": "asg", kindPods: "k8s", kindDatabase: "cloudsql-instance"}
 

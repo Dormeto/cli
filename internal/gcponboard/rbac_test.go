@@ -397,7 +397,7 @@ func TestRbacGrantPrintsTheObjectsBeforeAsking(t *testing.T) {
 			t.Errorf("%q not printed before asking:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "Nothing was changed.") {
+	if !strings.HasSuffix(out, "not confirmed: nothing sent\n") {
 		t.Errorf("declined:\n%s", out)
 	}
 	if w := g.k.writes(0); len(w) != 0 {

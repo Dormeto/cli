@@ -2178,7 +2178,7 @@ func TestWorkloadsOnboardGKEDeclinedChangesNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "Nothing was changed.")
+	contains(t, out, "not confirmed: nothing sent\n")
 	if w := g.k.writes(0); len(w) != 0 || len(g.s.Workloads) != 0 {
 		t.Fatalf("writes %v workloads %v", w, g.s.Workloads)
 	}

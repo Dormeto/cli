@@ -112,7 +112,7 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the router's)")
 	cmd.Flags().StringVar(&kind, "type", "", "a type's name, or inherit (its backends')")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "list the workloads and stop")
-	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation of several workloads (needed without a terminal)")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation of several targets (needed without a terminal)")
 	return cmd
 }
 
@@ -170,7 +170,7 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit")
 	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "say what would be set and stop")
-	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (a single router asks nothing)")
+	fl.BoolVar(&f.yes, "yes", false, asksNothingYes)
 	return cmd
 }
 
@@ -239,15 +239,18 @@ func newGcpRoutersResume(run gcpRun, version string) *cobra.Command {
 	return cmd
 }
 
+// asksNothingYes is AWS's --yes of a command that asks nothing: a script passes it to every writing command.
+const asksNothingYes = "accepted and ignored: this command asks no confirmation"
+
 // gcpWriteFlags are AWS's --dry-run and --yes of a write that asks nothing: --dry-run says the request and sends nothing,
 // --yes is accepted, a no-op, so that a script passes it to every write.
 func gcpWriteFlags(cmd *cobra.Command, f *gcpFlags) {
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
-	cmd.Flags().BoolVar(&f.yes, "yes", false, "accepted and ignored: this command asks no confirmation")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, asksNothingYes)
 }
 
 // gcpRouterDryRunFlags are AWS's --dry-run and --yes of a router's pause and resume: a single router asks nothing.
 func gcpRouterDryRunFlags(cmd *cobra.Command, f *gcpFlags) {
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
-	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation (a single router asks nothing)")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, asksNothingYes)
 }

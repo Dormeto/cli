@@ -401,7 +401,7 @@ func TestUninstallWithoutTerminalNeedsYes(t *testing.T) {
 	g := routerInstalled(t)
 	mark := len(g.s.Calls())
 	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1"})
-	if code != 2 || !strings.Contains(out, "--yes: needed") {
+	if code != 2 || !strings.HasSuffix(out, "confirmation needed: pass --yes to act on 1 router without a terminal\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if m := g.changes(mark); len(m) != 0 {

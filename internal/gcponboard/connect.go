@@ -754,7 +754,8 @@ func (x *link) planLines() []string {
 	return out
 }
 
-// confirm prints the dry run's JSON and ends it, or asks (unless --yes): done when the run ends here.
+// confirm prints the dry run's JSON and ends it, or asks (unless --yes): done when the run ends here. AWS's lines: --yes without
+// a terminal, "not confirmed: nothing sent" when declined.
 func (x *link) confirm(question string) (bool, error) {
 	if x.r.DryRun {
 		return true, x.printJSON(map[string]any{"dryRun": true, "plan": x.planLines()})
@@ -763,7 +764,7 @@ func (x *link) confirm(question string) (bool, error) {
 		return false, nil
 	}
 	if !x.d.Terminal {
-		return true, &stop{2, "--yes: needed"}
+		return true, needsYes("connection")
 	}
 	ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
 	if err != nil {
@@ -773,7 +774,7 @@ func (x *link) confirm(question string) (bool, error) {
 		if err := x.printJSON(map[string]any{"confirmed": false, "plan": x.planLines()}); err != nil {
 			return true, err
 		}
-		return true, &stop{0, "Nothing was changed."}
+		return true, &stop{0, notConfirmed}
 	}
 	return false, nil
 }

@@ -56,9 +56,10 @@ func (x *run) uninstall() error {
 	if x.r.DryRun {
 		return nil
 	}
+	// AWS's lines: --yes without a terminal, "not confirmed: nothing sent" when declined.
 	if !x.r.Yes {
 		if !x.d.Terminal {
-			return &stop{2, "--yes: needed"}
+			return needsYes("router")
 		}
 		question := "Remove router " + x.n.router + " from project " + x.n.project + "?"
 		ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
@@ -66,7 +67,7 @@ func (x *run) uninstall() error {
 			return err
 		}
 		if !ok {
-			return &stop{0, "Nothing was changed."}
+			return &stop{0, notConfirmed}
 		}
 	}
 	return x.applyUninstall()

@@ -988,7 +988,7 @@ func TestInstallMissingPermissionChangesNothing(t *testing.T) {
 func TestInstallWithoutTerminalNeedsYes(t *testing.T) {
 	g := newInstallRig(t)
 	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
-	if code != 2 || !strings.Contains(out, freshPlan) || !strings.HasSuffix(out, "--yes: needed\n") {
+	if code != 2 || !strings.Contains(out, freshPlan) || !strings.HasSuffix(out, "confirmation needed: pass --yes to act on 1 router without a terminal\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if m := g.s.Mutations(); len(m) != 0 {
@@ -1001,7 +1001,7 @@ func TestInstallAsksForConfirmation(t *testing.T) {
 	g.d.Terminal = true
 	g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
 	code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
-	if code != 0 || !strings.Contains(out, "Apply these changes to project dormeto-dev? [y/N]: ") || !strings.HasSuffix(out, "Nothing was changed.\n") {
+	if code != 0 || !strings.Contains(out, "Apply these changes to project dormeto-dev? [y/N]: ") || !strings.HasSuffix(out, "not confirmed: nothing sent\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if m := g.s.Mutations(); len(m) != 0 {
@@ -2120,7 +2120,7 @@ func TestInstallUpgradesAnOlderRouterToTheDefaultVersion(t *testing.T) {
 	code, out := g.run(t, r)
 	upgrade := "  ~ service " + controllerName + ": image " + deployedOf(def) + ", environment DMT_VERSION\n" +
 		"  ~ service " + wakerName + ": image " + deployedOf(def) + ", environment DMT_VERSION\n"
-	if code != 2 || !strings.Contains(out, upgrade) || !strings.HasSuffix(out, "--yes: needed\n") || len(g.changes(mark)) != 0 {
+	if code != 2 || !strings.Contains(out, upgrade) || !strings.HasSuffix(out, "confirmation needed: pass --yes to act on 1 router without a terminal\n") || len(g.changes(mark)) != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	code, out = g.run(t, plain)

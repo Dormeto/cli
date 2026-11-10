@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/Dormeto/cli/internal/gcponboard"
 )
 
@@ -233,5 +235,41 @@ func TestGcpIPListTakesRefreshHoursAndRefreshWithItsNotice(t *testing.T) {
 	calls, errs, exit = gcpRan(t, 0, append(slices.Clone(install), "--ip-list", "name=x,url=https://example.com/x.txt,refresh=6,refresh_hours=6")...)
 	if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "given twice") {
 		t.Fatalf("%d %q %+v", exit, errs, calls)
+	}
+}
+
+// One --yes help text, AWS's (the AWS and Google Cloud review's §4.4): a command that asks says "do not ask for confirmation
+// (needed without a terminal)", one that asks for several targets only AWS's words for that, one that never asks AWS's no-op.
+func TestGcpYesHelpIsAWSs(t *testing.T) {
+	asks := "do not ask for confirmation (needed without a terminal)"
+	several := "do not ask for confirmation of several targets (needed without a terminal)"
+	never := "accepted and ignored: this command asks no confirmation"
+	want := map[string]string{
+		"dormeto gcp routers install": asks, "dormeto gcp routers uninstall": asks, "dormeto gcp connect": asks, "dormeto gcp disconnect": asks,
+		"dormeto gcp workloads offboard": asks, "dormeto gcp workloads onboard": asks, "dormeto gcp workloads access grant": asks,
+		"dormeto gcp workloads access revoke": asks, "dormeto gcp workloads settings": several,
+	}
+	var walk func(c *cobra.Command, path string)
+	walk = func(c *cobra.Command, path string) {
+		for _, sub := range c.Commands() {
+			walk(sub, path+" "+sub.Name())
+		}
+		f := c.Flags().Lookup("yes")
+		if f == nil || c.Hidden {
+			return
+		}
+		expected, ok := want[path]
+		if !ok {
+			expected = never
+		}
+		if f.Usage != expected {
+			t.Errorf("%s --yes: %q, want %q", path, f.Usage, expected)
+		}
+	}
+	root := newRoot(build{})
+	for _, c := range root.Commands() {
+		if c.Name() == "gcp" {
+			walk(c, "dormeto gcp")
+		}
 	}
 }

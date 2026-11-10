@@ -380,3 +380,94 @@ func byTarget(t *testing.T, stdout, target string) json.RawMessage {
 	}
 	return m[target]
 }
+
+// The confirmations say AWS's lines: without a terminal "confirmation needed: pass --yes to act on 1 <noun> without a terminal"
+// (exit 2), declined "not confirmed: nothing sent" (exit 0), nothing changed either way.
+func TestConfirmationsSayAWSLines(t *testing.T) {
+	noTerminal := func(noun string) string {
+		return "confirmation needed: pass --yes to act on 1 " + noun + " without a terminal\n"
+	}
+	declining := func(d *Deps, out *strings.Builder) {
+		d.Terminal = true
+		d.Prompter = install.NewPrompter(strings.NewReader("n\n"), out, true)
+	}
+	t.Run("routers install", func(t *testing.T) {
+		g := newInstallRig(t)
+		code, out := g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
+		if code != 2 || !strings.HasSuffix(out, noTerminal("router")) || len(g.s.Mutations()) != 0 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		g.d.Terminal = true
+		g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+		code, out = g.run(t, Request{Project: "dormeto-dev", Region: "europe-west1", AccessOnly: true})
+		if code != 0 || !strings.HasSuffix(out, "Apply these changes to project dormeto-dev? [y/N]: not confirmed: nothing sent\n") || len(g.s.Mutations()) != 0 {
+			t.Fatalf("declined: exit %d:\n%s", code, out)
+		}
+	})
+	t.Run("routers uninstall", func(t *testing.T) {
+		g := routerInstalled(t)
+		mark := len(g.s.Calls())
+		code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1"})
+		if code != 2 || !strings.HasSuffix(out, noTerminal("router")) || len(g.changes(mark)) != 0 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		g.d.Terminal = true
+		g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+		code, out = g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1"})
+		if code != 0 || !strings.HasSuffix(out, "not confirmed: nothing sent\n") || len(g.changes(mark)) != 0 {
+			t.Fatalf("declined: exit %d:\n%s", code, out)
+		}
+	})
+	t.Run("workloads access", func(t *testing.T) {
+		g := newRbacRig(t)
+		r := shopAccess
+		r.Yes = false
+		for _, run := range []func(context.Context, Deps, Request) int{WorkloadsAccessGrant} {
+			code, out := g.call(t, run, r)
+			if code != 2 || !strings.HasSuffix(out, noTerminal("workload")) || len(g.k.writes(0)) != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			g.d.Terminal = true
+			g.d.Prompter = install.NewPrompter(strings.NewReader("n\n"), g.out, true)
+			code, out = g.call(t, run, r)
+			if code != 0 || !strings.HasSuffix(out, "not confirmed: nothing sent\n") || len(g.k.writes(0)) != 0 {
+				t.Fatalf("declined: exit %d:\n%s", code, out)
+			}
+			g.d.Terminal = false
+		}
+		// Under --json, the question needs --yes as before, said as AWS's.
+		r.JSON = true
+		if code, out := g.call(t, WorkloadsAccessGrant, r); code != 2 || !strings.Contains(out, "confirmation needed: pass --yes to act on 1 workload with --json\n") {
+			t.Fatalf("--json: exit %d:\n%s", code, out)
+		}
+	})
+	t.Run("connect and disconnect", func(t *testing.T) {
+		s := connectServer(t)
+		m := newFakeManager()
+		r := connectRequest(m)
+		r.Yes = false
+		d, out, _ := connectDeps(s)
+		if code := Connect(context.Background(), d, r); code != 2 || !strings.HasSuffix(out.String(), noTerminal("connection")) || len(s.Mutations()) != 0 {
+			t.Fatalf("connect: exit %d:\n%s", code, out)
+		}
+		d, out, _ = connectDeps(s)
+		var said strings.Builder
+		declining(&d, &said)
+		if code := Connect(context.Background(), d, r); code != 0 || !strings.HasSuffix(out.String(), "not confirmed: nothing sent\n") || len(s.Mutations()) != 0 {
+			t.Fatalf("connect declined: exit %d:\n%s", code, out)
+		}
+		if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+			t.Fatalf("connect: exit %d:\n%s", code, out)
+		}
+		mark := len(s.Mutations())
+		d, out, _ = connectDeps(s)
+		if code := Disconnect(context.Background(), d, r); code != 2 || !strings.HasSuffix(out.String(), noTerminal("connection")) || len(s.Mutations()) != mark {
+			t.Fatalf("disconnect: exit %d:\n%s", code, out)
+		}
+		d, out, _ = connectDeps(s)
+		declining(&d, &said)
+		if code := Disconnect(context.Background(), d, r); code != 0 || !strings.HasSuffix(out.String(), "not confirmed: nothing sent\n") || len(s.Mutations()) != mark {
+			t.Fatalf("disconnect declined: exit %d:\n%s", code, out)
+		}
+	})
+}

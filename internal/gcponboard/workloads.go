@@ -648,7 +648,7 @@ func (x *run) onboardingInput() (onboardingIn, error) {
 			return in, err
 		}
 		if r.JSON && !r.Yes && !r.DryRun {
-			return in, &stop{2, "--yes: needed with --json"}
+			return in, needsYesWithJSON("workload")
 		}
 		in.GKE = &onboardingGKE{Cluster: gkeCluster{location, name}}
 	}

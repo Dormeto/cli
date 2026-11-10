@@ -684,7 +684,7 @@ func (x *run) rbacRequest(writes bool) (Rbac, error) {
 	case !workloadIDPattern.MatchString(x.r.ID):
 		return Rbac{}, &stop{2, fmt.Sprintf("--workload: %q is not a valid workload ID: %s", x.r.ID, workloadIDRule)}
 	case writes && x.r.JSON && !x.r.Yes && !x.r.DryRun:
-		return Rbac{}, &stop{2, "--yes: needed with --json"}
+		return Rbac{}, needsYesWithJSON("workload")
 	}
 	return Rbac{Cluster: x.r.GKECluster, Namespace: x.r.Namespace, Workload: x.r.ID, ServiceAccount: x.n.email}, nil
 }
@@ -848,20 +848,22 @@ func (x *run) revokeWrites(rb Rbac, plan RbacPlan, removal rbacRemovalPlan) []dr
 	return out
 }
 
-// confirm goes on with --yes or a yes on a terminal.
+// confirm goes on with --yes or a yes on a terminal, AWS's lines said otherwise: --yes without a terminal, "not confirmed:
+// nothing sent" when declined.
 func (x *run) confirm(question string) error {
 	if x.r.Yes {
 		return nil
 	}
 	if !x.d.Terminal {
-		return &stop{2, "--yes: needed"}
+		return needsYes("workload")
 	}
 	ok, err := install.Prompted(x.ctx, x.d.Out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return &stop{0, nothingChanged}
+		fmt.Fprintln(x.textOut(), notConfirmed)
+		return &stop{0, ""}
 	}
 	return nil
 }
