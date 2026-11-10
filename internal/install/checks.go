@@ -35,6 +35,11 @@ const (
 	Skip         // not applicable
 )
 
+// String is the verdict's word: ok, warn, fail or skip.
+func (v Verdict) String() string {
+	return map[Verdict]string{OK: "ok", Warn: "warn", Fail: "fail", Skip: "skip"}[v]
+}
+
 // Check is one prerequisite and what was found.
 type Check struct {
 	Name    string

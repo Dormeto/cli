@@ -11,6 +11,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
@@ -62,17 +63,15 @@ func (x *run) status() error {
 	if line := tagsLine(saved.Tags); line != "" {
 		x.say("%s", line)
 	}
-	builds, lastFailed, err := x.lastBuilds()
+	builds, err := x.lastBuilds()
 	if err != nil {
 		return err
 	}
-	x.say("%s", builds)
-	failed = failed || lastFailed
+	x.say("%s", builds.line())
+	failed = failed || builds.lastFailed()
 	if out != nil && !verified {
 		cs := Verify(x.ctx, x.c, x.d.HTTP, *out, saved.AdminEmails, VerifyOptions{Wait: -1, Every: x.d.Every, Now: x.d.Now})
-		for _, c := range cs {
-			x.say("%s", c.Line())
-		}
+		x.sayChecks(cs...)
 		failed = failed || Failed(cs)
 	}
 	accessFailed, err := x.accessStatus(x.merged(saved), saved, applied)
@@ -82,10 +81,35 @@ func (x *run) status() error {
 	if err := x.ctx.Err(); err != nil {
 		return err
 	}
+	if x.d.JSON != nil {
+		v := map[string]any{"env": x.env, "account": x.w.Account, "region": x.region, "version": nil, "latest": nil, "upgradeAvailable": false,
+			"tags": saved.Tags, "builds": builds.json(), "checks": checksJSON(x.reported), "ok": !failed && !accessFailed}
+		if applied != nil {
+			v["version"] = applied.Version
+		}
+		if latestErr == nil {
+			v["latest"] = latest
+			v["upgradeAvailable"] = applied != nil && CompareVersions(latest, applied.Version) > 0
+		}
+		if saved.Tags == nil {
+			v["tags"] = map[string]string{}
+		}
+		if err := x.printJSON(v); err != nil {
+			return err
+		}
+	}
 	if failed || accessFailed {
 		return &stop{code: 1}
 	}
 	return nil
+}
+
+// sayChecks says each check on its line, and keeps it for status's --json.
+func (x *run) sayChecks(cs ...Check) {
+	for _, c := range cs {
+		x.say("%s", c.Line())
+	}
+	x.reported = append(x.reported, cs...)
 }
 
 // followRunning follows the manager's build in progress, if any, and after an apply checks the dashboard and the
@@ -126,9 +150,7 @@ func (x *run) followRunning(s Settings) (failed, verified bool, err error) {
 	if err != nil || out == nil {
 		return false, false, err
 	}
-	for _, c := range Verify(x.ctx, x.c, x.d.HTTP, *out, s.AdminEmails, VerifyOptions{Every: x.d.Every, Now: x.d.Now}) {
-		x.say("%s", c.Line())
-	}
+	x.sayChecks(Verify(x.ctx, x.c, x.d.HTTP, *out, s.AdminEmails, VerifyOptions{Every: x.d.Every, Now: x.d.Now})...)
 	return false, true, x.ctx.Err()
 }
 
@@ -184,19 +206,21 @@ func tagsLine(tags map[string]string) string {
 	return "  tags: " + strings.Join(l, ", ")
 }
 
-// lastBuilds is the line of the project's last plan, last apply and last dashboard update, each's status and start time
-// (local), and whether the latest of them failed. They are the newest of each kind (by their ACTION) among its latest
-// builds: applied.json knows only the applies that succeeded.
-func (x *run) lastBuilds() (string, bool, error) {
+// lastBuildsOf are the project's last plan, last apply and last dashboard update: the newest of each kind (by their ACTION)
+// among its latest builds (applied.json knows only the applies that succeeded); nil, none.
+type lastBuildsOf struct{ plan, apply, request *cbtypes.Build }
+
+// lastBuilds reads the project's last builds.
+func (x *run) lastBuilds() (lastBuildsOf, error) {
 	list, err := x.c.CodeBuild.ListBuildsForProject(x.ctx, &codebuild.ListBuildsForProjectInput{ProjectName: &x.p.Name, SortOrder: cbtypes.SortOrderTypeDescending})
 	if err != nil {
-		return "", false, fmt.Errorf("list builds of %s: %w", x.p.Name, err)
+		return lastBuildsOf{}, fmt.Errorf("list builds of %s: %w", x.p.Name, err)
 	}
 	var plan, apply, request *cbtypes.Build
 	if ids := list.Ids[:min(len(list.Ids), maxLastBuilds)]; len(ids) > 0 {
 		got, err := x.c.CodeBuild.BatchGetBuilds(x.ctx, &codebuild.BatchGetBuildsInput{Ids: ids})
 		if err != nil {
-			return "", false, fmt.Errorf("get builds of %s: %w", x.p.Name, err)
+			return lastBuildsOf{}, fmt.Errorf("get builds of %s: %w", x.p.Name, err)
 		}
 		found := map[string]cbtypes.Build{}
 		for _, b := range got.Builds {
@@ -223,25 +247,49 @@ func (x *run) lastBuilds() (string, bool, error) {
 			}
 		}
 	}
+	return lastBuildsOf{plan, apply, request}, nil
+}
+
+// buildStatus is a build's status in words: succeeded, in progress, failed.
+func buildStatus(b *cbtypes.Build) string {
+	return strings.ReplaceAll(strings.ToLower(string(b.BuildStatus)), "_", " ")
+}
+
+// line is the last builds' line, each's status and start time (local).
+func (l lastBuildsOf) line() string {
 	describe := func(kind string, b *cbtypes.Build) string {
 		if b == nil {
 			return "last " + kind + ": none"
 		}
-		status := strings.ReplaceAll(strings.ToLower(string(b.BuildStatus)), "_", " ")
-		return fmt.Sprintf("last %s %s: %s %s", kind, aws.ToString(b.Id), status, aws.ToTime(b.StartTime).Local().Format("2006-01-02 15:04"))
+		return fmt.Sprintf("last %s %s: %s %s", kind, aws.ToString(b.Id), buildStatus(b), aws.ToTime(b.StartTime).Local().Format("2006-01-02 15:04"))
 	}
+	line := "  " + describe("plan", l.plan) + "; " + describe("apply", l.apply)
+	if l.request != nil { // only when the dashboard made one
+		line += "; " + describe("dashboard update", l.request)
+	}
+	return line
+}
+
+// lastFailed tells whether the latest of the last builds failed.
+func (l lastBuildsOf) lastFailed() bool {
 	var last *cbtypes.Build
-	for _, b := range []*cbtypes.Build{plan, apply, request} {
+	for _, b := range []*cbtypes.Build{l.plan, l.apply, l.request} {
 		if b != nil && (last == nil || aws.ToTime(b.StartTime).After(aws.ToTime(last.StartTime))) {
 			last = b
 		}
 	}
-	lastFailed := last != nil && last.BuildStatus != cbtypes.StatusTypeSucceeded && last.BuildStatus != cbtypes.StatusTypeInProgress
-	line := "  " + describe("plan", plan) + "; " + describe("apply", apply)
-	if request != nil { // only when the dashboard made one
-		line += "; " + describe("dashboard update", request)
+	return last != nil && last.BuildStatus != cbtypes.StatusTypeSucceeded && last.BuildStatus != cbtypes.StatusTypeInProgress
+}
+
+// json is the last builds as --json prints them: each {id, status, startedAt} (RFC 3339), null when none.
+func (l lastBuildsOf) json() map[string]any {
+	of := func(b *cbtypes.Build) any {
+		if b == nil {
+			return nil
+		}
+		return map[string]string{"id": aws.ToString(b.Id), "status": buildStatus(b), "startedAt": aws.ToTime(b.StartTime).UTC().Format(time.RFC3339)}
 	}
-	return line, lastFailed, nil
+	return map[string]any{"plan": of(l.plan), "apply": of(l.apply), "dashboardUpdate": of(l.request)}
 }
 
 // accessStatus says where organization access stands: not used in an account deployment; with a management profile, a
@@ -249,13 +297,13 @@ func (x *run) lastBuilds() (string, bool, error) {
 // followed organization build failed.
 func (x *run) accessStatus(s Settings, saved *Settings, applied *Applied) (bool, error) {
 	if s.Mode != "organization" {
-		x.say("%s", Check{"organization access", "not used (account deployment)", Skip}.Line())
+		x.sayChecks(Check{"organization access", "not used (account deployment)", Skip})
 		return false, nil
 	}
 	profile, ok := x.management(s)
 	if !ok {
-		x.say("%s", Check{"organization access", "checked by the manager at each discovery run (dashboard: Discovery, Organization access); " +
-			"dormeto aws install check --management-profile <profile> " + x.args() + " checks it here", Skip}.Line())
+		x.sayChecks(Check{"organization access", "checked by the manager at each discovery run (dashboard: Discovery, Organization access); " +
+			"dormeto aws install check --management-profile <profile> " + x.args() + " checks it here", Skip})
 		return false, nil
 	}
 	mgmt, err := x.managementClients(profile)

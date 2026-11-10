@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,9 @@ type Deps struct {
 	Now      func() time.Time
 	Every    func(time.Duration) <-chan time.Time
 	Version  string // the CLI's own version, recorded in <env>/cli.json
+	// JSON is where check and status print, under --json, what their text says as one object: the standard output, Out then
+	// being the standard error. nil: no --json.
+	JSON io.Writer
 }
 
 // Request is a command line: its profile, region and release, the flags' settings and which flags were given.
@@ -72,6 +76,7 @@ type run struct {
 	p           Project
 	surveyed    *surveyed // organization access's survey of the prerequisite checks, for after the manager's apply
 	adoption    *Adoption // --adopt-state's; nil: not adopting
+	reported    []Check   // the checks status said, for its --json
 }
 
 func newRun(ctx context.Context, d Deps, r Request) *run {
@@ -821,10 +826,45 @@ func (x *run) check() error {
 		}
 	}
 	x.showChecks(s, cs, "")
+	if x.d.JSON != nil {
+		if o := x.w.Organization; o != nil && s.Mode == "organization" {
+			if _, ok := x.management(s); !ok {
+				cs = append(cs, Check{"organization access", "not deployed (no management profile)", Warn})
+			}
+		}
+		if err := x.printJSON(map[string]any{"env": x.env, "account": x.w.Account, "region": x.region, "ok": !Failed(cs), "checks": checksJSON(cs)}); err != nil {
+			return err
+		}
+	}
 	if Failed(cs) {
 		return &stop{code: 1}
 	}
 	return nil
+}
+
+// printJSON prints v, under --json, on Deps.JSON.
+func (x *run) printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(x.d.JSON, "%s\n", b)
+	return err
+}
+
+// checkJSON is a check as --json prints it: its name, what was found, and its verdict (ok, warn, fail or skip).
+type checkJSON struct {
+	Name    string `json:"name"`
+	Detail  string `json:"detail"`
+	Verdict string `json:"verdict"`
+}
+
+func checksJSON(cs []Check) []checkJSON {
+	out := []checkJSON{}
+	for _, c := range cs {
+		out = append(out, checkJSON{c.Name, c.Detail, c.Verdict.String()})
+	}
+	return out
 }
 
 // Apply is `dormeto aws install apply`: the explicit confirmation of the last plan (a plan made without a terminal, or

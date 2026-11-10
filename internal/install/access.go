@@ -165,9 +165,7 @@ func (x *run) surveyChecks(s Settings, rel Release, relErr error) ([]Check, erro
 // showSurvey prints the survey's checks.
 func (x *run) showSurvey(cs []Check) {
 	x.say("\nOrganization access")
-	for _, c := range cs {
-		x.say("%s", c.Line())
-	}
+	x.sayChecks(cs...)
 }
 
 // thenAccess runs organization access once the manager is installed, when there is a management profile (confirmed:

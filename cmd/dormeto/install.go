@@ -48,7 +48,7 @@ type installFlags struct {
 	adoptState, adoptModule                    string
 	adminEmails, vars, tags                    []string
 	accounts, excludeAccounts, discoveryOnly   []string
-	yes, verbose, access                       bool
+	yes, verbose, access, json                 bool
 }
 
 // installFlagNames are the flags, as Request.Set names them; the domain's three are one, "domain".
@@ -96,17 +96,25 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 			"roles, shown, confirmed, then deployed by a CodeBuild project of the management account removed once it ends.\n\n"+
 			"--adopt-state takes over a manager installed with the Terraform module directly: its state (terraform state pull)\n"+
 			"becomes this first install's, the resources kept, and the plan shows what the flags change.", runs.install)
-	cmd.AddCommand(
-		command("check", "Check the prerequisites of the install (read-only)",
-			"Check the prerequisites of the install, read-only: nothing is created, nothing is asked but the region.", runs.check),
+	check := command("check", "Check the prerequisites of the install (read-only)",
+		"Check the prerequisites of the install, read-only: nothing is created, nothing is asked but the region. --json prints\n"+
+			"{env, account, region, ok, checks: [{name, detail, verdict}]}, the verdict ok, warn, fail or skip; the words go to\n"+
+			"stderr.", runs.check)
+	status := command("status", "Show where the install stands; follow a running build",
+		"Show where the install stands: a running build followed, the manager's version and the latest release, the last\n"+
+			"plan and apply, the dashboard and the invitations, organization access. With --management-profile, what a detached\n"+
+			"organization access run left in the management account (its build role and project) is removed once it ends.\n"+
+			"--json prints {env, account, region, version, latest, upgradeAvailable, tags, builds: {plan, apply, dashboardUpdate},\n"+
+			"checks, ok}, each build {id, status, startedAt} or null; the words go to stderr.", runs.status)
+	for _, c := range []*cobra.Command{check, status} {
+		c.Flags().BoolVar(&f.json, "json", false, "print what the command says as one JSON object (the words go to stderr)")
+	}
+	cmd.AddCommand(check,
 		command("apply", "Apply the last saved plan of the install",
 			"Apply the last saved plan of the install (made without a terminal, or not confirmed): it is shown, then applied and\n"+
 				"followed. With --management-profile, organization access is deployed after it, or alone when there is no plan to\n"+
 				"apply. Running this command is the confirmation.", runs.apply),
-		command("status", "Show where the install stands; follow a running build",
-			"Show where the install stands: a running build followed, the manager's version and the latest release, the last\n"+
-				"plan and apply, the dashboard and the invitations, organization access. With --management-profile, what a detached\n"+
-				"organization access run left in the management account (its build role and project) is removed once it ends.", runs.status),
+		status,
 	)
 
 	f.profileFlags(cmd, "take the suggested answers without asking; never confirms a plan")
@@ -175,7 +183,14 @@ func (f *installFlags) run(c *cobra.Command, run installRun) error {
 	}
 	ctx, signalled, stop := interruptible(c.Context())
 	defer stop()
-	code := run(ctx, installDeps(c, f.verbose, f.env, version), r)
+	d := installDeps(c, f.verbose, f.env, version)
+	if f.json {
+		// The object alone on stdout: the words, the questions and the status line on stderr.
+		d.JSON = c.OutOrStdout()
+		d.Out, d.Status = c.ErrOrStderr(), nil
+		d.Prompter = install.NewPrompter(c.InOrStdin(), c.ErrOrStderr(), d.Terminal)
+	}
+	code := run(ctx, d, r)
 	if s := signalled(); s != nil {
 		code = signalCode(s)
 	}

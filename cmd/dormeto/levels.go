@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -242,31 +243,47 @@ func newTypesList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 }
 
 func newTypesShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "show <name>", Short: "Show a workload type", Args: cobra.ExactArgs(1), SilenceErrors: true,
+		Long: "Show a workload type: its selector (its tags, or built-in), its defaults and its description. --json prints the\n" +
+			"type as the manager holds it ({name, tags, settings, description}) and builtIn.",
 		RunE: func(c *cobra.Command, args []string) error {
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				a, err := readTypes(ctx, api)
 				if err != nil {
 					return err
 				}
+				entry := map[string]any(nil)
 				for _, t := range a.Types {
 					if t["name"] == args[0] {
-						fmt.Fprintln(c.OutOrStdout(), typeText(args[0], t))
-						if d, ok := t["description"].(string); ok && d != "" {
-							fmt.Fprintln(c.OutOrStdout(), d)
-						}
-						return nil
+						entry = t
 					}
 				}
-				if slices.Contains(a.BuiltIn, args[0]) {
-					fmt.Fprintln(c.OutOrStdout(), typeText(args[0], map[string]any{}))
-					return nil
+				builtIn := slices.Contains(a.BuiltIn, args[0])
+				switch {
+				case entry == nil && !builtIn:
+					return usagef("no type %s", args[0])
+				case entry == nil:
+					entry = map[string]any{"name": args[0], "settings": map[string]any{}}
 				}
-				return usagef("no type %s", args[0])
+				if asJSON {
+					shown := maps.Clone(entry)
+					shown["builtIn"] = builtIn
+					if shown["settings"] == nil {
+						shown["settings"] = map[string]any{}
+					}
+					return printJSON(c.OutOrStdout(), shown)
+				}
+				fmt.Fprintln(c.OutOrStdout(), typeText(args[0], entry))
+				if d, ok := entry["description"].(string); ok && d != "" {
+					fmt.Fprintln(c.OutOrStdout(), d)
+				}
+				return nil
 			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the type as the manager holds it, and builtIn")
 	return cmd
 }
 
@@ -355,11 +372,17 @@ func newTypesSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&description, "description", "", "what the type is for (empty removes it)")
 	cmd.Flags().StringArrayVar(&tags, "tag", nil, "a tag that selects the type, key=value (repeat it)")
+	bindTypesJSON(cmd)
 	return cmd
 }
 
+// bindTypesJSON binds --json of types set and delete: the manager's answer, {types, builtIn, note}, the line on stderr.
+func bindTypesJSON(cmd *cobra.Command) {
+	cmd.Flags().Bool("json", false, "print the manager's answer, {types, builtIn, note} (the line goes to stderr)")
+}
+
 func newTypesDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use: "delete <name>", Short: "Remove a custom workload type", Args: cobra.ExactArgs(1), SilenceErrors: true,
 		Long: "Remove a custom type: its workloads take the next type their tags select, else their built-in one. A built-in\n" +
 			"type stays: set its defaults to inherit instead. Needs an administrator.",
@@ -381,16 +404,24 @@ func newTypesDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
+	bindTypesJSON(cmd)
+	return cmd
 }
 
+// putTypes sends the list and says done with the manager's note; under --json, the manager's answer, the line on stderr.
 func putTypes(ctx context.Context, c *cobra.Command, api *fleet.Client, list []map[string]any, done string) error {
 	if list == nil {
 		list = []map[string]any{}
 	}
-	var a typesAnswer
-	if err := api.Put(ctx, "/settings/types", map[string]any{"types": list}, &a); err != nil {
+	var raw json.RawMessage
+	if err := api.Put(ctx, "/settings/types", map[string]any{"types": list}, &raw); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.OutOrStdout(), "%s: %s\n", done, a.Note)
+	var a typesAnswer
+	_ = json.Unmarshal(raw, &a)
+	fmt.Fprintf(textOut(c), "%s: %s\n", done, a.Note)
+	if jsonFlag(c) {
+		return printJSON(c.OutOrStdout(), orRaw(raw))
+	}
 	return nil
 }

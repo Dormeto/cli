@@ -145,6 +145,7 @@ func (a *rwAcct) build(id string) *rwBuild {
 type rwWorld struct {
 	rwAcct        // the manager's account
 	t             *testing.T
+	json          *bytes.Buffer // where --json prints, when set
 	org           *Organization
 	region        string  // the profile's region; "": none
 	plan          string  // the plan.json a plan build writes
@@ -371,6 +372,9 @@ func (w *rwWorld) run(cmd func(context.Context, Deps, Request) int, r Request, t
 	}
 	if w.status != nil {
 		d.Status = w.status
+	}
+	if w.json != nil {
+		d.JSON = w.json
 	}
 	code = cmd(ctx, d, r)
 	if len(p.answers) > 0 {

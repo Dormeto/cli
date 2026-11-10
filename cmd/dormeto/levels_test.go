@@ -4,6 +4,7 @@ package main
 // organization's types, and the source of each workload setting, against the fake manager API.
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -152,6 +153,43 @@ func TestTypesListsSetsAndDeletes(t *testing.T) {
 			t.Errorf("%q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
 		}
 	}
+}
+
+// --json on types show, set and delete (the README's "every command has --json"): show prints the type as the manager holds it
+// and whether it is built in; set and delete the manager's answer, their line on stderr.
+func TestTypesShowSetAndDeleteTakeJSON(t *testing.T) {
+	const stored = `[{"name":"api","description":"Public APIs","tags":{"kind":"api"},"settings":{"idleMinutes":30}}]`
+	r := runTypes(t, &typesAPI{types: stored}, "show", "api", "--json")
+	var shown map[string]any
+	if err := json.Unmarshal([]byte(r.stdout), &shown); r.exit != 0 || err != nil || shown["name"] != "api" || shown["description"] != "Public APIs" ||
+		shown["builtIn"] != false || !jsonSame(shown["settings"], map[string]any{"idleMinutes": 30.0}) || !jsonSame(shown["tags"], map[string]any{"kind": "api"}) {
+		t.Fatalf("show: exit %d, %v, stdout %q, stderr %q", r.exit, err, r.stdout, r.stderr)
+	}
+	r = runTypes(t, &typesAPI{types: stored}, "show", "ecs", "--json")
+	shown = nil
+	if err := json.Unmarshal([]byte(r.stdout), &shown); r.exit != 0 || err != nil || shown["name"] != "ecs" || shown["builtIn"] != true || !jsonSame(shown["settings"], map[string]any{}) {
+		t.Fatalf("show a built-in: exit %d, %v, stdout %q", r.exit, err, r.stdout)
+	}
+	for _, args := range [][]string{{"set", "api", "--idle-minutes", "20", "--json"}, {"delete", "api", "--json"}} {
+		a := &typesAPI{types: stored}
+		r := runTypes(t, a, args...)
+		var answer struct {
+			Types   []any
+			BuiltIn []string
+			Note    string
+		}
+		if err := json.Unmarshal([]byte(r.stdout), &answer); r.exit != 0 || err != nil || answer.Note == "" || len(answer.BuiltIn) != 5 || len(a.writes) != 1 ||
+			!strings.Contains(r.stderr, "type api ") {
+			t.Errorf("%q: exit %d, %v, stdout %q, stderr %q", args, r.exit, err, r.stdout, r.stderr)
+		}
+	}
+}
+
+// jsonSame tells whether two values encode alike.
+func jsonSame(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
 }
 
 func TestWorkloadsShowSaysWhereEachSettingComesFrom(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"reflect"
@@ -386,4 +387,49 @@ func TestReadmeInstallFlagsAreTheCommandsFlags(t *testing.T) {
 	if !slices.Equal(want, got) {
 		t.Errorf("README flags %v, install's flags %v", got, want)
 	}
+}
+
+// `install check --json` and `install status --json` print their object on stdout, their words then going to stderr; the
+// install itself, which plans and applies, takes none.
+func TestInstallCheckAndStatusTakeJSON(t *testing.T) {
+	for _, command := range []string{"check", "status"} {
+		calls, _, errs, exit := installed(t, 0, "install", command, "--json")
+		if exit != 0 || errs != "" {
+			t.Fatalf("%s: exit %d, errors %q", command, exit, errs)
+		}
+		d := only(t, calls).d
+		if d.JSON == nil || d.Out == nil || d.Out == d.JSON {
+			t.Fatalf("%s: the object's stream %v, the words' %v", command, d.JSON, d.Out)
+		}
+		out, errs := installedWith(t, func(d install.Deps) { fmt.Fprint(d.JSON, "{}"); fmt.Fprint(d.Out, "words") }, "install", command, "--json")
+		if out != "{}" || errs != "words" {
+			t.Errorf("%s: stdout %q, stderr %q", command, out, errs)
+		}
+		if calls, _, _, _ := installed(t, 0, "install", command); only(t, calls).d.JSON != nil {
+			t.Errorf("%s without --json: an object's stream", command)
+		}
+	}
+	if calls, _, errs, exit := installed(t, 0, "install", "--json"); exit != 2 || len(calls) != 0 || !strings.Contains(errs, "unknown flag: --json") {
+		t.Errorf("install --json: exit %d, errors %q", exit, errs)
+	}
+}
+
+// installedWith runs `dormeto <args>` with runs that do do with their dependencies, and gives what they printed.
+func installedWith(t *testing.T, do func(install.Deps), args ...string) (stdout, stderr string) {
+	t.Helper()
+	run := func(_ context.Context, d install.Deps, r install.Request) int {
+		do(d)
+		return 0
+	}
+	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
+	aws := &cobra.Command{Use: "aws"}
+	root.AddCommand(aws)
+	runs := installRuns{install: run, check: run, apply: run, status: run, uninstall: run, uninstallApply: run}
+	aws.AddCommand(newInstall(runs, "0.2.0"), newUninstall(runs, "0.2.0"))
+	var out, errs bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errs)
+	root.SetIn(strings.NewReader(""))
+	execute(root, append([]string{"aws"}, args...)...)
+	return out.String(), errs.String()
 }
