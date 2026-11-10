@@ -344,6 +344,7 @@ func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []stri
 		}
 		var done []fleet.Candidate
 		var failure error
+		dry := false
 		for start := 0; start < len(chosen) && failure == nil; start += dismissBatch {
 			batch := chosen[start:min(start+dismissBatch, len(chosen))]
 			ids := make([]string, len(batch))
@@ -360,6 +361,12 @@ func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []stri
 			if failure = api.Post(ctx, "/discovery/"+action, body, &answer); failure == nil {
 				done = append(done, answer.Candidates...)
 			}
+			if errors.Is(failure, fleet.ErrDryRun) { // said: the next batch too
+				dry, failure = true, nil
+			}
+		}
+		if dry {
+			return fleet.ErrDryRun
 		}
 		if asJSON {
 			if err := printJSON(c.OutOrStdout(), orEmpty(done)); err != nil && failure == nil {

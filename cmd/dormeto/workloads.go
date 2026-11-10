@@ -292,6 +292,9 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err == nil && wait && timeout <= 0 {
 				err = usagef("--timeout: %s is not a positive duration", timeout)
 			}
+			if err == nil { // a pause's, as every pause's: 1 to 256 characters
+				why, err = pauseReason(why)
+			}
 			if err != nil {
 				return finish(c, err)
 			}
@@ -323,7 +326,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 168h (90m, 2h, 2d)")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
-	fl.StringVar(&why, "reason", defaultKeepAwakeReason, "the pause's reason, shown in the manager")
+	fl.StringVar(&why, "reason", defaultKeepAwakeReason, "the pause's reason, 1 to 256 characters, shown in the manager")
 	fl.BoolVar(&wait, "wait", false, "wait until the workloads are awake")
 	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long (the pause stays)")
 	bindJSON(cmd, &asJSON)

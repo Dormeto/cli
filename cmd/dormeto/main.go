@@ -83,6 +83,7 @@ func managerCommands(deps fleetDeps) []*cobra.Command {
 	cmds := []*cobra.Command{newRouters(deps), newWorkloads(deps), newDiscovery(deps), newExclusions(deps), newUsers(deps), newGroups(deps), newOperations(deps), newOverview(deps), newAlerts(deps), newIPLists(deps), newSavings(deps), newAudit(deps), newManager(deps), newSettings(deps), newWhoami(deps), newAPI(deps)}
 	for _, c := range cmds {
 		acceptYes(c)
+		acceptDryRun(c)
 		sayBothClouds(c)
 		aliasProject(c, "routers install")
 	}
@@ -113,6 +114,47 @@ func acceptYes(top *cobra.Command) {
 		}
 	}
 	walk(top, top.Name())
+}
+
+// dryRunAnnotation marks a command whose --dry-run is its client's: every write said, none sent (fleetFlags.run).
+const dryRunAnnotation = "dormeto-client-dry-run"
+
+// withClientDryRun are the writing commands of the manager without a --dry-run of their own: those of asksNothing but
+// workloads idle-window, a read, and discovery config set, which asks.
+var withClientDryRun = func() map[string]bool {
+	out := map[string]bool{"discovery config set": true}
+	for path := range asksNothing {
+		out[path] = path != "workloads idle-window"
+	}
+	return out
+}()
+
+// acceptDryRun adds --dry-run to the commands of withClientDryRun under top (the AWS and Google Cloud review's §4.2: --yes and
+// --dry-run on every write): their client then says each write it would send and sends none.
+func acceptDryRun(top *cobra.Command) {
+	var walk func(c *cobra.Command, path string)
+	walk = func(c *cobra.Command, path string) {
+		if withClientDryRun[path] && c.Flags().Lookup("dry-run") == nil {
+			c.Flags().Bool("dry-run", false, "say what would be sent and stop")
+			if c.Annotations == nil {
+				c.Annotations = map[string]string{}
+			}
+			c.Annotations[dryRunAnnotation] = "true"
+		}
+		for _, sub := range c.Commands() {
+			walk(sub, path+" "+sub.Name())
+		}
+	}
+	walk(top, top.Name())
+}
+
+// clientDryRun tells whether the command runs its client's --dry-run.
+func clientDryRun(c *cobra.Command) bool {
+	if c.Annotations[dryRunAnnotation] == "" {
+		return false
+	}
+	dry, _ := c.Flags().GetBool("dry-run")
+	return dry
 }
 
 func orDefault(s, d string) string {

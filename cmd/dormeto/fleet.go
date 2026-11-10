@@ -175,11 +175,23 @@ func (f *fleetFlags) run(c *cobra.Command, deps fleetDeps, do func(ctx context.C
 	ctx, signalled, stop := interruptible(c.Context())
 	defer stop()
 	api, err := f.connect(ctx, deps)
+	var dry *fleet.DryRun
+	if err == nil && clientDryRun(c) {
+		dry = &fleet.DryRun{Out: textOut(c)}
+		api.SetDryRun(dry)
+	}
 	if err == nil {
 		err = do(ctx, api)
 	}
 	if s := signalled(); s != nil {
 		return exitCode(signalCode(s))
+	}
+	// A dry run stopped at a write it said: nothing was sent, exit 0; --json prints what it would have sent.
+	if dry != nil && errors.Is(err, fleet.ErrDryRun) {
+		err = nil
+		if jsonFlag(c) {
+			err = printJSON(c.OutOrStdout(), dry.JSON())
+		}
 	}
 	return finish(c, err)
 }

@@ -121,7 +121,8 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"nap, from routers 0.32.0; on Google Cloud, suspend its VMs, not stop them; without it the workload inherits the\n" +
 			"router's or the manager's). --no-wait only\n" +
 			"starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
-			"`dormeto aws operations watch <id>`. Needs an operator.",
+			"`dormeto aws operations watch <id>`. --dry-run says the candidate, its eligibility as discovery listed it and the\n" +
+			"body it would send, and sends nothing (the router's own preview runs as the onboarding's first step). Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
 			var tags map[string]string
@@ -198,6 +199,12 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if len(tags) > 0 {
 					body["tags"] = tags
 				}
+				// The manager has no preview of an onboarding (the router's runs as the operation's step): a dry run says the
+				// candidate and its eligibility as discovery listed it, then the body (the client's dry run).
+				if dry := api.DryRun(); dry != nil {
+					fmt.Fprint(textOut(c), candidateText(cand))
+					dry.Context = map[string]any{"candidate": cand}
+				}
 				label := orDefault(name, cand.Name())
 				ops, err := runOperations(ctx, c, deps, opItems(api, []string{label}, func(ctx context.Context, _ int) (fleet.Operation, error) {
 					return fleet.StartOperation(ctx, api, body)
@@ -219,6 +226,31 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd
+}
+
+// candidateText is a candidate as onboard's dry run says it: what and where it is, then its eligibility as discovery listed it
+// (its status, its reason, the last 7 days' figures).
+func candidateText(cand fleet.Candidate) string {
+	label := "account"
+	if cand.IsGoogle() {
+		label = "project"
+	}
+	text := fmt.Sprintf("candidate %s: %s, %s %s, %s (%s)\n", cand.Name(), fleet.CloudName(cand.Cloud), label, cand.Account, cand.Region, cand.ID)
+	eligibility := cand.Status
+	if cand.StatusReason != "" {
+		eligibility += ": " + cand.StatusReason
+	}
+	var figures []string
+	if cand.IdleHours7d != nil {
+		figures = append(figures, "idle 7d "+figure(cand.IdleHours7d, "h"))
+	}
+	if cand.Requests7d != nil {
+		figures = append(figures, "requests 7d "+figure(cand.Requests7d, ""))
+	}
+	if len(figures) > 0 {
+		eligibility += "; " + strings.Join(figures, ", ")
+	}
+	return text + "eligibility, as discovery listed it: " + eligibility + "\n"
 }
 
 // sayOnboarded prints "onboarded <router>/<workload id>" for each onboarding that succeeded (on textOut). The operation

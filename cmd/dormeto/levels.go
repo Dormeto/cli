@@ -155,6 +155,7 @@ func newTypes(deps fleetDeps) *cobra.Command {
 	f.bind(cmd)
 	cmd.AddCommand(newTypesList(f, deps), newTypesShow(f, deps), newTypesSet(f, deps), newTypesDelete(f, deps))
 	acceptYes(cmd)
+	acceptDryRun(cmd)
 	return cmd
 }
 

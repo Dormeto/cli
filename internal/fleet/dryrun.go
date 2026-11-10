@@ -17,12 +17,23 @@ import (
 // ErrDryRun is the answer of a write under --dry-run: it was said, not sent.
 var ErrDryRun = errors.New("dry run: nothing sent")
 
-// DryRun is a client's --dry-run: each write is said on Out and kept in Requests, not sent.
+// DryRun is a client's --dry-run: each write is said on Out and kept in Requests, not sent. Context are the members the
+// command adds to its --json beside them (onboard's candidate).
 type DryRun struct {
-	Out io.Writer
+	Out     io.Writer
+	Context map[string]any
 
 	mu       sync.Mutex
 	requests []DryRequest
+}
+
+// JSON is what a dry run prints under --json: {"dryRun": true, "requests": [...]} and its context.
+func (d *DryRun) JSON() map[string]any {
+	out := map[string]any{"dryRun": true, "requests": d.Requests()}
+	for k, v := range d.Context {
+		out[k] = v
+	}
+	return out
 }
 
 // DryRequest is a write a dry run kept: its method, its path under /iam and its body (none: absent).

@@ -59,6 +59,7 @@ type opResult struct {
 	started    bool
 	failed     bool
 	unfinished string
+	dryRun     bool // its start was a dry run's: said, not sent
 }
 
 // runOperations starts the items' operations, at most concurrency at once, each followed until it ends unless --no-wait.
@@ -93,8 +94,8 @@ func runOperations(ctx context.Context, c *cobra.Command, deps fleetDeps, items 
 	}
 	wg.Wait()
 	var (
-		ops                []fleet.Operation
-		failed, unfinished bool
+		ops                        []fleet.Operation
+		failed, unfinished, dryRun bool
 	)
 	for _, r := range results {
 		if r.started {
@@ -102,6 +103,10 @@ func runOperations(ctx context.Context, c *cobra.Command, deps fleetDeps, items 
 		}
 		failed = failed || r.failed
 		unfinished = unfinished || r.unfinished != ""
+		dryRun = dryRun || r.dryRun
+	}
+	if dryRun && !failed && !unfinished {
+		return ops, fleet.ErrDryRun
 	}
 	if unfinished {
 		cause := fmt.Sprintf("timeout of %s reached", w.timeout)
@@ -149,6 +154,8 @@ func runOperation(ctx context.Context, deps fleetDeps, it opItem, w waitFlags, o
 	case err == nil && op.ID == "": // answered 2xx without naming the operation: it cannot be followed
 		return fail("%s", mayHaveStarted(errors.New("the answer names no operation")))
 	case err == nil:
+	case errors.Is(err, fleet.ErrDryRun): // said, not sent
+		return opResult{dryRun: true}
 	case errors.Is(err, fleet.ErrNotSent) && ctx.Err() != nil: // nothing was sent, and the run is cut short
 		return opResult{unfinished: "not started"}
 	case errors.Is(err, fleet.ErrNotSent):
@@ -318,7 +325,8 @@ func confirmNames(ctx context.Context, c *cobra.Command, deps fleetDeps, names [
 // and under --json a declined question prints {"confirmed":false,"targets":[…]} on stdout.
 func ask(ctx context.Context, c *cobra.Command, deps fleetDeps, names []string, noun, question string, always, yes, listed bool) (done bool, err error) {
 	n := len(names)
-	if (n < 2 && !always) || yes {
+	// A client's dry run asks nothing: it sends nothing, and says what it would send.
+	if (n < 2 && !always) || yes || clientDryRun(c) {
 		return false, nil
 	}
 	if !deps.terminal(c.InOrStdin()) {
@@ -467,9 +475,10 @@ func printStartedOne(c *cobra.Command, asJSON bool, ops []fleet.Operation, err e
 	return printResult(c, asJSON, v, err)
 }
 
-// printResult prints v under --json, whatever err is, then returns err (or the printing's error when err is nil).
+// printResult prints v under --json, whatever err is, then returns err (or the printing's error when err is nil). A dry run
+// that stopped at its write prints its own JSON (fleetFlags.run).
 func printResult(c *cobra.Command, asJSON bool, v any, err error) error {
-	if !asJSON {
+	if !asJSON || errors.Is(err, fleet.ErrDryRun) {
 		return err
 	}
 	if perr := printJSON(c.OutOrStdout(), v); perr != nil && err == nil {

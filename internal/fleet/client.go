@@ -106,7 +106,15 @@ type Client struct {
 	signer  *v4.Signer
 	sleep   func(context.Context, time.Duration) error
 	backoff time.Duration
+	// dry, when set, is a --dry-run: each write is said and kept there, not sent (ErrDryRun); reads go.
+	dry *DryRun
 }
+
+// SetDryRun makes every write of the client a dry run's (d says and keeps it, nothing is sent), reads still sent.
+func (c *Client) SetDryRun(d *DryRun) { c.dry = d }
+
+// DryRun is the client's dry run, nil when it sends its writes.
+func (c *Client) DryRun() *DryRun { return c.dry }
 
 // New is a Client of the API at baseURL (no trailing path), signing for region with creds; the timeout is httpClient's.
 func New(httpClient *http.Client, baseURL, region string, creds aws.CredentialsProvider, now func() time.Time) *Client {
@@ -198,6 +206,10 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte, ou
 // getAttempts in all, after the Retry-After of a 429 or 503 when it is readable (zero or past: at once), else after a
 // backoff that grows with each try; any other request is sent once.
 func (c *Client) exchange(ctx context.Context, method, path string, payload []byte) (int, []byte, error) {
+	if c.dry != nil && method != http.MethodGet && method != http.MethodHead {
+		c.dry.keep(method, path, payload)
+		return 0, nil, ErrDryRun
+	}
 	for i := 1; ; i++ {
 		status, h, data, err := c.send(ctx, method, path, payload)
 		if err != nil || method != http.MethodGet || i == getAttempts || (status != http.StatusTooManyRequests && status < 500) {
