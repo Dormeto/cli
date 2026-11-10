@@ -306,16 +306,11 @@ func (x *run) pauseWorkload() error {
 	if err != nil {
 		return err
 	}
-	// AWS's line: "<target>: paused until resumed[; woken <workload>]". The answer's state is the one as the pause was asked: one
-	// asleep or failed is woken in the background, one napping once its nap ends, unless kept asleep.
+	// AWS's line: "<target>: paused until resumed[; woken <workloads>]", the workloads woken as the answer names them (none from
+	// a router that names none: never guessed from the state).
 	line := fmt.Sprintf("%s: paused %s", x.target(x.r.ID), ends)
-	if !x.r.KeepAsleep {
-		switch w.State {
-		case "ASLEEP", "FAILED":
-			line += "; woken " + x.r.ID
-		case "NAPPING":
-			line += "; woken " + x.r.ID + " once its nap ends"
-		}
+	if len(w.Woken) > 0 {
+		line += "; woken " + strings.Join(w.Woken, ", ")
 	}
 	return x.answeredWorkload(x.r.ID, raw, line)
 }
@@ -339,14 +334,9 @@ func (x *run) resumeWorkload() error {
 	if err := x.controllerSince035(http.MethodPost, path+"/resume", map[string]any{"by": by}, &raw); err != nil {
 		return x.refusedWrite(err)
 	}
-	w, err := decodeWorkload(raw)
-	if err != nil {
+	if _, err := decodeWorkload(raw); err != nil {
 		return err
 	}
-	// AWS's line, "<target>: resumed"; a pause of the router, which stays, is said after it.
-	line := x.target(x.r.ID) + ": resumed"
-	if w.Paused != nil {
-		line += "; still " + w.Paused.String()
-	}
-	return x.answeredWorkload(x.r.ID, raw, line)
+	// AWS's line, "<target>: resumed", as AWS's says it under a router pause too (the workload's show names that one).
+	return x.answeredWorkload(x.r.ID, raw, x.target(x.r.ID)+": resumed")
 }

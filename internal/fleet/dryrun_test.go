@@ -2,29 +2,33 @@ package fleet
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
-// A dry run names what each write addresses, as its command does: the target of its path, or the one its body names.
-func TestRequestTargetNamesWhatAWriteAddresses(t *testing.T) {
+// A dry run names what each write addresses, as its command does: the target of its path, or the ones its body names; the
+// organization for its own writes.
+func TestRequestTargetsNameWhatAWriteAddresses(t *testing.T) {
 	for _, c := range []struct {
-		path, body, want string
+		path, body string
+		want       []string
 	}{
-		{"/workloads/r1/w-1/description", `{"text":"x"}`, "r1/w-1"},
-		{"/workloads/r1/w%2F1/waiting-page", ``, "r1/w/1"},
-		{"/routers/r1/waiting-page", ``, "r1"},
-		{"/users/ann@x.io/mfa/reset", ``, "ann@x.io"},
-		{"/users", `{"email":"ann@x.io","role":"viewer"}`, "ann@x.io"},
-		{"/groups/payments", `{"description":"x"}`, "payments"},
-		{"/groups", `{"name":"payments"}`, "payments"},
-		{"/exclusions/ex-1", ``, "ex-1"},
-		{"/operations", `{"type":"install-router","account":"123456789012","region":"eu-west-1"}`, "123456789012"},
-		{"/operations", `{"type":"uninstall-router","router":"r1"}`, "r1"},
-		{"/operations", `{"type":"onboard","candidateId":"arn:x"}`, "arn:x"},
-		{"/settings/workloads", `{"hibernate":true}`, ""},
-		{"/discovery/run", ``, ""},
+		{"/workloads/r1/w-1/description", `{"text":"x"}`, []string{"r1/w-1"}},
+		{"/workloads/r1/w%2F1/waiting-page", ``, []string{"r1/w/1"}},
+		{"/routers/r1/waiting-page", ``, []string{"r1"}},
+		{"/users/ann@x.io/mfa/reset", ``, []string{"ann@x.io"}},
+		{"/users", `{"email":"ann@x.io","role":"viewer"}`, []string{"ann@x.io"}},
+		{"/groups/payments", `{"description":"x"}`, []string{"payments"}},
+		{"/groups", `{"name":"payments"}`, []string{"payments"}},
+		{"/exclusions/ex-1", ``, []string{"ex-1"}},
+		{"/operations", `{"type":"install-router","account":"123456789012","region":"eu-west-1"}`, []string{"123456789012"}},
+		{"/operations", `{"type":"uninstall-router","router":"r1"}`, []string{"r1"}},
+		{"/operations", `{"type":"onboard","candidateId":"arn:x"}`, []string{"arn:x"}},
+		{"/discovery/dismiss", `{"ids":["arn:a","arn:b"]}`, []string{"arn:a", "arn:b"}},
+		{"/settings/workloads", `{"hibernate":true}`, []string{"organization"}},
+		{"/discovery/run", ``, []string{"organization"}},
 	} {
-		if got := RequestTarget(c.path, json.RawMessage(c.body)); got != c.want {
+		if got := RequestTargets(c.path, json.RawMessage(c.body)); !slices.Equal(got, c.want) {
 			t.Errorf("%s %s: %q, want %q", c.path, c.body, got, c.want)
 		}
 	}
@@ -40,12 +44,15 @@ func TestDryRunTextSaysTheTargetTheRequestAndTheBody(t *testing.T) {
 	}
 }
 
-// A client under a dry run keeps each write with its target, and sends none.
-func TestDryRunKeepsEachWriteWithItsTarget(t *testing.T) {
+// A client under a dry run keeps each write's targets, and sends none: --json prints the released {"dryRun":true,"targets":[…]},
+// each target once, the requests said in the text alone.
+func TestDryRunKeepsEachWritesTargets(t *testing.T) {
 	d := &DryRun{}
 	d.keep("DELETE", "/exclusions/ex-1", nil)
+	d.keep("DELETE", "/exclusions/ex-2", nil)
+	d.keep("DELETE", "/exclusions/ex-1", nil)
 	got, _ := json.Marshal(d.JSON())
-	if string(got) != `{"dryRun":true,"requests":[{"target":"ex-1","method":"DELETE","path":"/exclusions/ex-1"}]}` {
+	if string(got) != `{"dryRun":true,"targets":["ex-1","ex-2"]}` {
 		t.Errorf("%s", got)
 	}
 }

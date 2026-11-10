@@ -107,6 +107,20 @@ func runDisconnect(t *testing.T, s *gcptest.Server, r ConnectRequest) (int, stri
 	return code, out.String()
 }
 
+// connectRefusal and disconnectRefusal are runConnect and runDisconnect giving the standard error, where a refusal of a bad flag
+// (exit 2) is said, as AWS's.
+func connectRefusal(t *testing.T, s *gcptest.Server, r ConnectRequest) (int, string) {
+	t.Helper()
+	d, _, errs := connectDeps(s)
+	return Connect(context.Background(), d, r), errs.String()
+}
+
+func disconnectRefusal(t *testing.T, s *gcptest.Server, r ConnectRequest) (int, string) {
+	t.Helper()
+	d, _, errs := connectDeps(s)
+	return Disconnect(context.Background(), d, r), errs.String()
+}
+
 func principal(role string) string {
 	return "principalSet://iam.googleapis.com/projects/1034397096264/locations/global/workloadIdentityPools/dmt-dev/attribute.aws_role/" + role
 }
@@ -302,8 +316,8 @@ func TestConnectWithAPermissionMissingChangesNothing(t *testing.T) {
 	}
 }
 
-// --dry-run prints the plan and writes nothing; under --json, stdout holds {"dryRun": true, "plan": [...]} and the words go
-// to stderr.
+// --dry-run prints the plan and writes nothing; under --json, stdout holds the released {"dryRun": true, "targets": [the host]}
+// with its plan beside, and the words go to stderr.
 func TestConnectDryRunWritesNothing(t *testing.T) {
 	s := connectServer(t)
 	m := newFakeManager()
@@ -317,10 +331,11 @@ func TestConnectDryRunWritesNothing(t *testing.T) {
 		t.Fatalf("mutations %+v puts %d", mut, len(m.puts))
 	}
 	var got struct {
-		DryRun bool     `json:"dryRun"`
-		Plan   []string `json:"plan"`
+		DryRun  bool     `json:"dryRun"`
+		Targets []string `json:"targets"`
+		Plan    []string `json:"plan"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil || !got.DryRun || !slices.Contains(got.Plan, "+ workload identity pool dmt-dev") {
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || !got.DryRun || !slices.Equal(got.Targets, []string{"dormeto-dev"}) || !slices.Contains(got.Plan, "+ workload identity pool dmt-dev") {
 		t.Fatalf("%v %s", err, out)
 	}
 	if !strings.Contains(errs.String(), "  + workload identity pool dmt-dev\n") {
@@ -374,7 +389,7 @@ func TestConnectRefusesABadProjectOrScope(t *testing.T) {
 	s := connectServer(t)
 	for _, r := range []ConnectRequest{{Project: "Dormeto"}, {Project: "dormeto-dev", Scopes: []string{"folder/12"}}, {Project: "dormeto-dev", Scopes: []string{"projects/X"}}} {
 		r.Manager = newFakeManager()
-		if code, out := runConnect(t, s, r); code != 2 || !strings.Contains(out, "--") {
+		if code, out := connectRefusal(t, s, r); code != 2 || !strings.Contains(out, "--") {
 			t.Errorf("%+v: exit %d:\n%s", r, code, out)
 		}
 	}
@@ -1008,7 +1023,7 @@ func TestARecordOfAnotherEnvironmentIsRefused(t *testing.T) {
 	m.info.Env = ""
 	r := connectRequest(m)
 	r.Env = "prod"
-	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){runDisconnect, runConnect} {
+	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){disconnectRefusal, connectRefusal} {
 		code, out := run(t, s, r)
 		if code != 2 || !strings.Contains(out, "--env: the manager's connection names pool dmt-dev and the accounts "+discoveryEmail+" and "+commandEmail+
 			", not those of environment prod (dmt-prod, dmt-prod-discovery@dormeto-dev.iam.gserviceaccount.com and dmt-prod-command@dormeto-dev.iam.gserviceaccount.com)\nNothing was changed.\n") {
@@ -1241,7 +1256,7 @@ func TestARecordOfAnOlderProviderNameIsRefusedNamingTheProvider(t *testing.T) {
 	}
 	m.rec.Provider = "aws"
 	before := len(s.Mutations())
-	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){runDisconnect, runConnect} {
+	for _, run := range []func(*testing.T, *gcptest.Server, ConnectRequest) (int, string){disconnectRefusal, connectRefusal} {
 		code, out := run(t, s, connectRequest(m))
 		if code != 2 || !strings.Contains(out, "--env: the manager's connection names provider aws, not those of environment dev (aws-121014831971)\nNothing was changed.\n") ||
 			strings.Contains(out, "pool") || strings.Contains(out, "accounts") {

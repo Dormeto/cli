@@ -3,12 +3,17 @@ package gcponboard
 // What the writes print, as AWS's (the AWS and Google Cloud review's §4.4): each its line "<router>/<workload>: <what happened>",
 // the router by its name in the manager; under --json the line on the standard error and, on the standard output, AWS's map
 // {"<router>/<workload>": answer} ({} when the write is refused), and the list AWS's object. A workload the controller answers
-// is printed with the shared names (§5.2): workloadId, pauses each with its scope, and the backends' shared kinds, from a router
-// of any version (before 0.40.0 it answers id and paused alone; the REST values stay on the wire).
+// is printed with the shared names (§5.2), as the manager's rows name theirs: router (its name in the manager), account (the
+// project), region, cloud, workloadId, pauses each with its scope, and the backends' shared kinds, from a router of any version
+// (before 0.40.0 it answers id and paused alone; the REST values stay on the wire). A dry run prints, under --json, the released
+// shape of both subtrees, {"dryRun": true, "targets": [...]}.
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/Dormeto/cli/internal/fleet"
 )
@@ -37,12 +42,16 @@ func sharedKind(kind string) string {
 	return kind
 }
 
-// sharedWorkload is a workload of the controller with the shared names: workloadId (else id), pauses (else [paused]), each pause
-// with its scope (the workload's when it names none), and the backends' shared kinds; id and paused are left out.
-func sharedWorkload(raw json.RawMessage) (json.RawMessage, error) {
+// sharedWorkload is a workload of the controller as the manager's rows are (fleet.Workload): its router by its name in the
+// manager, its account (the project), its region and its cloud; workloadId (else id), pauses (else [paused]), each pause with
+// its scope (the workload's when it names none), and the backends' shared kinds; id and paused are left out.
+func (x *run) sharedWorkload(raw json.RawMessage) (json.RawMessage, error) {
 	var w map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &w); err != nil || w == nil {
 		return nil, fmt.Errorf("the controller's answer is not a workload: %s", raw)
+	}
+	for k, v := range map[string]string{"router": x.n.managed, "account": x.n.project, "region": x.n.region, "cloud": "gcp"} {
+		w[k], _ = json.Marshal(v)
 	}
 	if _, ok := w["workloadId"]; !ok && w["id"] != nil {
 		w["workloadId"] = w["id"]
@@ -122,7 +131,7 @@ func (x *run) answeredWorkload(id string, raw json.RawMessage, lines ...string) 
 	if !x.r.JSON {
 		return x.answered(id, nil, lines...)
 	}
-	shared, err := sharedWorkload(raw)
+	shared, err := x.sharedWorkload(raw)
 	if err != nil {
 		return err
 	}
@@ -149,6 +158,34 @@ func (x *run) refusedWrite(err error) error {
 	return err
 }
 
+// answeringRefusal runs a write that, under --json, prints AWS's map of no answer, {}, when it is refused (exit 1) before it
+// printed anything on the standard output, as refusedWrite does: not for a bad flag, a decline or an interrupt.
+func (x *run) answeringRefusal(write func() error) error {
+	if !x.r.JSON {
+		return write()
+	}
+	out := &writtenTo{w: x.d.Out}
+	x.d.Out = out
+	err := write()
+	x.d.Out = out.w
+	var s *stop
+	if err == nil || out.any || x.ctx.Err() != nil || (errors.As(err, &s) && s.code != 1) {
+		return err
+	}
+	return x.refusedWrite(err)
+}
+
+// writtenTo is a writer that tells whether anything was written to it.
+type writtenTo struct {
+	w   io.Writer
+	any bool
+}
+
+func (o *writtenTo) Write(p []byte) (int, error) {
+	o.any = o.any || len(p) > 0
+	return o.w.Write(p)
+}
+
 // workloadList is AWS's list object: the rows, their total, the router's counts by state, no cursor (one page) and no error.
 type workloadList struct {
 	Workloads []json.RawMessage `json:"workloads"`
@@ -165,7 +202,7 @@ func (x *run) printList(rows []json.RawMessage, all []workload) error {
 		list.ByState[w.State]++
 	}
 	for _, row := range rows {
-		shared, err := sharedWorkload(row)
+		shared, err := x.sharedWorkload(row)
 		if err != nil {
 			return err
 		}
@@ -185,7 +222,7 @@ type dryRequest = fleet.DryRequest
 
 // dryRequestOf is the request a dry run says of a call: in its body (nil for none) as it would go, without `by`.
 func dryRequestOf(target, method, path string, in any) dryRequest {
-	r := dryRequest{Target: target, Method: method, Path: path}
+	r := dryRequest{Targets: []string{target}, Method: method, Path: path}
 	if in != nil {
 		if b, err := json.Marshal(in); err == nil && string(b) != "null" {
 			r.Body = b
@@ -194,26 +231,18 @@ func dryRequestOf(target, method, path string, in any) dryRequest {
 	return r
 }
 
-// sayDry says the requests of a dry run, each "dry run: <target>: would <method> <path>, nothing sent" and its body on the next
-// line (fleet.DryRunText), then the lines after them, on the words' stream; under --json, {"dryRun":true,"requests":[…]} on the
-// standard output.
-func (x *run) sayDry(requests []dryRequest, after ...string) error {
+// sayDry says the requests of a dry run on targets, each "dry run: <target>: would <method> <path>, nothing sent" and its body on
+// the next line (fleet.DryRunText), then the lines after them, on the words' stream; under --json, the released
+// {"dryRun":true,"targets":[…]} on the standard output, what each request sends in the words alone.
+func (x *run) sayDry(targets []string, requests []dryRequest, after ...string) error {
 	out := x.textOut()
 	for _, r := range requests {
-		fmt.Fprint(out, fleet.DryRunText(r.Target, r.Method, r.Path, r.Body))
+		fmt.Fprint(out, fleet.DryRunText(strings.Join(r.Targets, ", "), r.Method, r.Path, r.Body))
 	}
 	for _, l := range after {
 		fmt.Fprintln(out, l)
 	}
-	if !x.r.JSON {
-		return nil
-	}
-	b, err := json.Marshal(map[string]any{"dryRun": true, "requests": emptyIfNone(requests)})
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(x.d.Out, "%s\n", b)
-	return err
+	return x.printStop("dryRun", true, emptyIfNone(targets))
 }
 
 // emptyIfNone is s, or an empty list when nil: JSON's [] rather than null.

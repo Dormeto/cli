@@ -125,7 +125,9 @@ type workload struct {
 	} `json:"napAborted"`
 	Paused *pausedOf  `json:"paused"`
 	Pauses []pausedOf `json:"pauses"`
-	LB     *lbRef     `json:"lb"`
+	// Woken are the workloads a pause's answer says it woke, when the router answers them.
+	Woken []string `json:"woken"`
+	LB    *lbRef   `json:"lb"`
 	// The Cloud SQL instances named at its onboarding that no longer exist, as the router last read them.
 	CompanionsGone []string `json:"companionsGone"`
 	// What its onboarding found of the backend service's request logs, when it turned them on; and what the idle check read at
@@ -278,13 +280,13 @@ func WorkloadsWake(ctx context.Context, d Deps, r Request) int {
 // WorkloadsOnboard is `dormeto gcp workloads onboard`.
 func WorkloadsOnboard(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
-	return x.workloadsEnd(x.onboard())
+	return x.workloadsEnd(x.answeringRefusal(x.onboard))
 }
 
 // WorkloadsOffboard is `dormeto gcp workloads offboard <id>`.
 func WorkloadsOffboard(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
-	return x.workloadsEnd(x.offboard())
+	return x.workloadsEnd(x.answeringRefusal(x.offboard))
 }
 
 // workloadsEnd is the exit code of a workloads run: its stop's, 130 when interrupted, else 1 with the error, a refusal
@@ -407,7 +409,7 @@ func (x *run) workloadPath() (string, error) {
 // print prints a workload the controller answered, of a read: text(w), or under --json the workload by the shared names.
 func (x *run) print(raw json.RawMessage, text func(w workload)) error {
 	if x.r.JSON {
-		shared, err := sharedWorkload(raw)
+		shared, err := x.sharedWorkload(raw)
 		if err != nil {
 			return err
 		}
@@ -551,17 +553,16 @@ func (x *run) moves(verb string) error {
 	if err != nil {
 		return err
 	}
-	// AWS's lines: "<target>: nap requested", "<target>: wake requested (<state>)". The controller answers at once with the state
-	// as it is, and acts only from another state: a workload there already was asked nothing.
+	// AWS's lines: "<target>: nap requested", "<target>: wake requested (<state>)" whatever the state (awake already, or napping:
+	// the controller keeps the wake until the nap ends). The controller answers at once with the state as it is, and asks
+	// nothing of a workload asleep already: AWS's words for a nap of a workload not awake, here not a refusal (exit 0).
 	target := x.target(x.r.ID)
 	line := target + ": nap requested"
-	switch there := map[string]string{"nap": "ASLEEP", "wake": "AWAKE"}[verb]; {
-	case w.State == there:
-		line = fmt.Sprintf("%s: already %s: nothing requested", target, strings.ToLower(there))
-	case verb == "wake" && w.State == "NAPPING":
-		line = fmt.Sprintf("%s: wake requested (%s): it runs once the nap ends", target, w.State)
+	switch {
 	case verb == "wake":
 		line = fmt.Sprintf("%s: wake requested (%s)", target, w.State)
+	case w.State == "ASLEEP":
+		line = fmt.Sprintf("%s: not awake (%s)", target, w.State)
 	}
 	if err := x.answeredWorkload(x.r.ID, raw, line); err != nil || verb != "wake" || !x.r.Wait {
 		return err
@@ -797,7 +798,12 @@ func (x *run) onboard() error {
 	turnOn := x.r.RequestLogs && !now.everyRequest()
 	if x.r.DryRun {
 		if x.r.JSON {
-			fmt.Fprintf(x.d.Out, "%s\n", raw)
+			// The released dry run's shape, the controller's eligibility beside it.
+			b, err := json.Marshal(map[string]any{"dryRun": true, "targets": []string{x.target(in.ID)}, "eligibility": raw})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(x.d.Out, "%s\n", b)
 			x.warnCount(logs.BackendService, now, unread, older)
 			return nil
 		}

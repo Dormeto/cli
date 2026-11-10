@@ -749,7 +749,7 @@ func TestWorkloadsWakeDuringANapIsKeptPending(t *testing.T) {
 	if code != 0 || g.s.Workloads["shop"] != "NAPPING" {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if out != shopTarget+": wake requested (NAPPING): it runs once the nap ends\n" {
+	if out != shopTarget+": wake requested (NAPPING)\n" {
 		t.Fatalf("%q", out)
 	}
 	r.JSON = true
@@ -838,7 +838,7 @@ func TestWorkloadsNapAndWakeSayAlreadyWhenNothingWasAsked(t *testing.T) {
 		state string
 		run   func(context.Context, Deps, Request) int
 		want  string
-	}{{"ASLEEP", WorkloadsNap, shopTarget + ": already asleep: nothing requested\n"}, {"AWAKE", WorkloadsWake, shopTarget + ": already awake: nothing requested\n"}} {
+	}{{"ASLEEP", WorkloadsNap, shopTarget + ": not awake (ASLEEP)\n"}, {"AWAKE", WorkloadsWake, shopTarget + ": wake requested (AWAKE)\n"}} {
 		g.s.Workloads["shop"] = c.state
 		code, out := g.call(t, c.run, r)
 		if code != 0 {
@@ -1296,7 +1296,7 @@ func TestWorkloadsPauseAndResumePostToTheController(t *testing.T) {
 	if _, ok := body["until"]; ok {
 		t.Fatalf("%v", body)
 	}
-	if out != shopTarget+": paused until resumed; woken shop\n" {
+	if out != shopTarget+": paused until resumed\n" {
 		t.Fatalf("%q", out)
 	}
 	code, out = g.call(t, WorkloadsResume, r)
@@ -1426,13 +1426,12 @@ func TestWorkloadsScheduleOfAnUnknownWorkloadSaysSo(t *testing.T) {
 	}
 }
 
-// The answer's state is the one as the pause was asked: one asleep or failed is woken, one napping once its nap ends, as AWS's
-// line says it ("; woken <workload>").
-func TestWorkloadsPauseSaysWhatBecomesOfTheWorkloadByItsState(t *testing.T) {
+// The answer's state is the one as the pause was asked: AWS's line whatever it is, "; woken" said only from the answer's own list.
+func TestWorkloadsPauseSaysAWSLineWhateverTheState(t *testing.T) {
 	for state, want := range map[string]string{
-		"ASLEEP":  shopTarget + ": paused until resumed; woken shop\n",
-		"FAILED":  shopTarget + ": paused until resumed; woken shop\n",
-		"NAPPING": shopTarget + ": paused until resumed; woken shop once its nap ends\n",
+		"ASLEEP":  shopTarget + ": paused until resumed\n",
+		"FAILED":  shopTarget + ": paused until resumed\n",
+		"NAPPING": shopTarget + ": paused until resumed\n",
 		"WAKING":  shopTarget + ": paused until resumed\n",
 		"AWAKE":   shopTarget + ": paused until resumed\n",
 	} {

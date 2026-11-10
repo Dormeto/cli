@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -270,6 +271,34 @@ func TestGcpYesHelpIsAWSs(t *testing.T) {
 	for _, c := range root.Commands() {
 		if c.Name() == "gcp" {
 			walk(c, "dormeto gcp")
+		}
+	}
+}
+
+// Under --json a question goes to stderr, as AWS's: stdout holds the JSON alone.
+func TestGcpQuestionsGoToStderrUnderJSON(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		c := &cobra.Command{}
+		c.Flags().Bool("json", asJSON, "")
+		var o, e strings.Builder
+		c.SetOut(&o)
+		c.SetErr(&e)
+		want := io.Writer(&o)
+		if asJSON {
+			want = &e
+		}
+		if got := gcpPromptOut(c); got != want {
+			t.Errorf("--json %v: the questions go to %v", asJSON, got)
+		}
+	}
+}
+
+// routers install and uninstall take --json (their dry run and their question print the released shape with the plan).
+func TestGcpRoutersInstallAndUninstallTakeJSON(t *testing.T) {
+	for _, verb := range []string{"install", "uninstall"} {
+		calls, errs, exit := gcpRan(t, 0, "gcp", "routers", verb, "--project", "p", "--region", "europe-west1", "--dry-run", "--json")
+		if exit != 0 || errs != "" || len(calls) != 1 || !calls[0].r.JSON || !calls[0].r.DryRun {
+			t.Errorf("%s: exit %d, stderr %q, calls %+v", verb, exit, errs, calls)
 		}
 	}
 }

@@ -25,12 +25,13 @@ func (x *run) target(id string) string { return x.n.managed + "/" + id }
 
 // workloadDryRun says the request a write of the run's workload would send, and stops: no call (sayDry).
 func (x *run) workloadDryRun(method, path string, in any) error {
-	return x.sayDry([]dryRequest{dryRequestOf(x.target(x.r.ID), method, path, in)})
+	target := x.target(x.r.ID)
+	return x.sayDry([]string{target}, []dryRequest{dryRequestOf(target, method, path, in)})
 }
 
 // routerDryRunOf is workloadDryRun of a write of the router, which it addresses by its name in the manager.
 func (x *run) routerDryRunOf(method, path string, in any) error {
-	return x.sayDry([]dryRequest{dryRequestOf(x.n.managed, method, path, in)})
+	return x.sayDry([]string{x.n.managed}, []dryRequest{dryRequestOf(x.n.managed, method, path, in)})
 }
 
 // confirmWorkload asks question on a terminal, the workload listed first, as AWS's commands ask before a destructive write:
@@ -192,5 +193,5 @@ func (x *run) offboardDryRun(id string, p pendingOffboarding, there bool) error 
 	if p.RequestLogs != nil {
 		after = append(after, "  then set its backend service's request logs back")
 	}
-	return x.sayDry(requests, after...)
+	return x.sayDry([]string{target}, requests, after...)
 }

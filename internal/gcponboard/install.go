@@ -123,6 +123,7 @@ type run struct {
 
 	steps        []step
 	kept         []string          // the uninstall's plan lines of what it keeps
+	object       io.Writer         // install's and uninstall's --json: where it prints its object (the words then on stderr)
 	stranded     []string          // what the uninstall could not remove, with Google's reason
 	notGivenBack []string          // what the routers of its forced offboardings could not give back
 	others       map[string]Record // the uninstall's other routers' records of the project, by region
@@ -171,7 +172,38 @@ func (x *run) now() string { return x.d.Now().UTC().Format(time.RFC3339) }
 // without a terminal, 130 when interrupted.
 func Install(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
+	x.wordsAside()
 	return x.end(x.install())
+}
+
+// wordsAside keeps, under --json, the standard output for the run's object: its words go to the standard error.
+func (x *run) wordsAside() {
+	if x.r.JSON {
+		x.object, x.d.Out = x.d.Out, x.d.Err
+	}
+}
+
+// planObject prints, under --json, what the install or the uninstall acts on, as a dry run's released shape: {"targets":
+// [the router], "plan": [its lines]}, with key's value beside (dryRun true, confirmed false; none when it ran).
+func (x *run) planObject(key string, value bool) error {
+	if x.object == nil {
+		return nil
+	}
+	plan := []string{}
+	for _, s := range x.steps {
+		plan = append(plan, s.lines...)
+	}
+	plan = append(plan, x.kept...)
+	v := map[string]any{"targets": []string{x.n.managed}, "plan": plan}
+	if key != "" {
+		v[key] = value
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(x.object, "%s\n", b)
+	return err
 }
 
 func (x *run) install() error {
@@ -185,11 +217,14 @@ func (x *run) install() error {
 		return err
 	}
 	if len(x.steps) == 0 {
-		return x.upToDate()
+		if err := x.upToDate(); err != nil {
+			return err
+		}
+		return x.planObject("", false)
 	}
 	x.printPlan()
 	if x.r.DryRun {
-		return nil
+		return x.planObject("dryRun", true)
 	}
 	// AWS's lines: --yes without a terminal, "not confirmed: nothing sent" when declined.
 	if !x.r.Yes {
@@ -202,10 +237,16 @@ func (x *run) install() error {
 			return err
 		}
 		if !ok {
+			if err := x.planObject("confirmed", false); err != nil {
+				return err
+			}
 			return &stop{0, notConfirmed}
 		}
 	}
-	return x.apply()
+	if err := x.apply(); err != nil {
+		return err
+	}
+	return x.planObject("", false)
 }
 
 // upToDate says that nothing differs, after asking the router: a health no step can change is not "up to date".
@@ -229,16 +270,18 @@ func (x *run) end(err error) int {
 	case err == nil:
 		return 0
 	case errors.As(err, &s):
-		if s.msg != "" {
-			x.say("%s", s.msg)
+		// As AWS's: a bad flag or no --yes (exit 2) on stderr; the rest on the words' stream, stderr under --json.
+		if s.msg != "" && s.code == 2 {
+			fmt.Fprintln(x.d.Err, s.msg)
+		} else if s.msg != "" {
+			fmt.Fprintln(x.textOut(), s.msg)
 		}
 		return s.code
 	case x.ctx.Err() != nil:
-		x.say("Interrupted: nothing was changed.")
+		fmt.Fprintln(x.textOut(), "Interrupted: nothing was changed.")
 		return exitInterrupted
 	}
-	x.say("%s", err)
-	x.say("Nothing was changed.")
+	fmt.Fprintf(x.textOut(), "%s\nNothing was changed.\n", err)
 	return 1
 }
 

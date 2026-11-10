@@ -78,8 +78,9 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 	cmd := gcpCommand("list", "List the workloads of a router",
 		"List the router's workloads and their states. --state, --search and --tag keep the workloads AWS's list would keep,\n"+
 			"applied to the controller's list (--tag needs router 0.40.0 or later, which answers the tags); --json prints AWS's\n"+
-			"list object, {workloads, total, byState, cursor, errors}: the rows they keep, with the shared names (workloadId,\n"+
-			"pauses, the backends' kinds instance, asg, k8s, cloudsql-instance), and the router's counts by state.",
+			"list object, {workloads, total, byState, cursor, errors}: the rows they keep as the manager's rows name theirs (router,\n"+
+			"account, region, cloud, workloadId, pauses, the backends' kinds instance, asg, k8s, cloudsql-instance), and the\n"+
+			"router's counts by state.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.States, r.Search, r.HasTags = upper(states), search, has
 			return run(ctx, d, r)

@@ -50,9 +50,9 @@ func TestWorkloadWritesPrintAWSLineByTarget(t *testing.T) {
 			want string
 		}{
 			{WorkloadsNap, nil, shopTarget + ": nap requested\n"},
-			{WorkloadsNap, nil, shopTarget + ": already asleep: nothing requested\n"},
+			{WorkloadsNap, nil, shopTarget + ": not awake (ASLEEP)\n"},
 			{WorkloadsWake, nil, shopTarget + ": wake requested (ASLEEP)\n"},
-			{WorkloadsWake, nil, shopTarget + ": already awake: nothing requested\n"},
+			{WorkloadsWake, nil, shopTarget + ": wake requested (AWAKE)\n"},
 			{WorkloadsPause, func(r Request) Request { r.Reason = "freeze"; return r }, shopTarget + ": paused until resumed\n"},
 			{WorkloadsResume, nil, shopTarget + ": resumed\n"},
 			{WorkloadsScheduleClear, nil, shopTarget + ": schedule cleared\n"},
@@ -68,19 +68,32 @@ func TestWorkloadWritesPrintAWSLineByTarget(t *testing.T) {
 	})
 }
 
-func TestWorkloadsPauseSaysItsEndInLocalTimeAndTheWake(t *testing.T) {
+// The end in the local time, as AWS's; "; woken" names what the answer's own list names, never what a state suggests.
+func TestWorkloadsPauseSaysItsEndInLocalTimeAndWhatTheAnswerWoke(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "ASLEEP"
 	r := workloadsEurope
 	r.ID, r.Reason, r.Until = "shop", "freeze", "2026-12-01T07:00:00Z"
 	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).In(g.d.Now().Location()).Format("2006-01-02 15:04 MST")
-	if code, out := g.call(t, WorkloadsPause, r); code != 0 || out != shopTarget+": paused until "+local+"; woken shop\n" {
+	if code, out := g.call(t, WorkloadsPause, r); code != 0 || out != shopTarget+": paused until "+local+"\n" {
 		t.Fatalf("exit %d, out %q", code, out)
 	}
-	// Kept asleep, nothing is woken.
-	r.KeepAsleep = true
-	if code, out := g.call(t, WorkloadsPause, r); code != 0 || out != shopTarget+": paused until "+local+"\n" {
-		t.Fatalf("keep asleep: exit %d, out %q", code, out)
+	g.s.WorkloadDocs["shop"]["woken"] = []any{"shop"}
+	if code, out := g.call(t, WorkloadsPause, r); code != 0 || out != shopTarget+": paused until "+local+"; woken shop\n" {
+		t.Fatalf("an answer naming what it woke: exit %d, out %q", code, out)
+	}
+}
+
+// AWS's line for a resume, whatever pause stays (a router's).
+func TestWorkloadsResumeSaysAWSLineUnderARouterPause(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	// The router's pause, which the workload's resume leaves.
+	g.s.WorkloadDocs["shop"] = map[string]any{"pauses": []any{map[string]any{"scope": "router", "by": "ops@example.com", "at": "2026-11-01T10:00:00.000Z", "reason": "freeze", "until": nil, "keepAsleep": false}}}
+	r := workloadsEurope
+	r.ID = "shop"
+	if code, out := g.call(t, WorkloadsResume, r); code != 0 || out != shopTarget+": resumed\n" {
+		t.Fatalf("exit %d, out %q", code, out)
 	}
 }
 
@@ -334,7 +347,7 @@ func TestRouterWritesNameTheRouterAsTheManager(t *testing.T) {
 }
 
 // One dry run shape on both subtrees: each request said "dry run: <target>: would <method> <path>, nothing sent", its body on the
-// next line, and under --json {"dryRun":true,"requests":[{target, method, path, body}]}.
+// next line, and under --json the released {"dryRun":true,"targets":[…]}.
 func TestDryRunsSayEachRequestByTarget(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
@@ -347,23 +360,18 @@ func TestDryRunsSayEachRequestByTarget(t *testing.T) {
 	}
 	r.JSON = true
 	code, stdout, stderr := g.split(t, WorkloadsPause, r)
-	if code != 0 || strings.TrimSpace(stdout) != `{"dryRun":true,"requests":[{"target":"`+shopTarget+`","method":"POST","path":"/v1/workloads/shop/pause","body":{"reason":"freeze"}}]}` ||
+	if code != 0 || strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` ||
 		!strings.HasPrefix(stderr, "dry run: ") {
 		t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 	// A router's, and several workloads' settings: one request each.
 	r = workloadsEurope
 	r.DryRun, r.JSON, r.Reason = true, true, "freeze"
-	if _, stdout, _ = g.split(t, RouterPause, r); strings.TrimSpace(stdout) != `{"dryRun":true,"requests":[{"target":"`+shopRouter+`","method":"POST","path":"/v1/pause","body":{"reason":"freeze"}}]}` {
+	if _, stdout, _ = g.split(t, RouterPause, r); strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopRouter+`"]}` {
 		t.Fatalf("router: %q", stdout)
 	}
 	r.IDs, r.Levels = []string{"shop", "api"}, map[string]any{"idleMinutes": 30}
-	var got struct {
-		DryRun   bool
-		Requests []struct{ Target, Method, Path string }
-	}
-	if _, stdout, _ = g.split(t, WorkloadsSettings, r); json.Unmarshal([]byte(stdout), &got) != nil || !got.DryRun || len(got.Requests) != 2 ||
-		got.Requests[1].Target != shopRouter+"/api" || got.Requests[1].Method != "PUT" || got.Requests[1].Path != "/v1/workloads/api/settings" {
+	if _, stdout, _ = g.split(t, WorkloadsSettings, r); strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`","`+shopRouter+`/api"]}` {
 		t.Fatalf("settings: %q", stdout)
 	}
 	if m := g.changes(mark); len(m) != 0 {
@@ -446,9 +454,9 @@ func TestConfirmationsSayAWSLines(t *testing.T) {
 		m := newFakeManager()
 		r := connectRequest(m)
 		r.Yes = false
-		d, out, _ := connectDeps(s)
-		if code := Connect(context.Background(), d, r); code != 2 || !strings.HasSuffix(out.String(), noTerminal("connection")) || len(s.Mutations()) != 0 {
-			t.Fatalf("connect: exit %d:\n%s", code, out)
+		d, out, errs := connectDeps(s)
+		if code := Connect(context.Background(), d, r); code != 2 || !strings.HasSuffix(errs.String(), noTerminal("connection")) || len(s.Mutations()) != 0 {
+			t.Fatalf("connect: exit %d:\n%s%s", code, out, errs)
 		}
 		d, out, _ = connectDeps(s)
 		var said strings.Builder
@@ -460,9 +468,9 @@ func TestConfirmationsSayAWSLines(t *testing.T) {
 			t.Fatalf("connect: exit %d:\n%s", code, out)
 		}
 		mark := len(s.Mutations())
-		d, out, _ = connectDeps(s)
-		if code := Disconnect(context.Background(), d, r); code != 2 || !strings.HasSuffix(out.String(), noTerminal("connection")) || len(s.Mutations()) != mark {
-			t.Fatalf("disconnect: exit %d:\n%s", code, out)
+		d, out, errs = connectDeps(s)
+		if code := Disconnect(context.Background(), d, r); code != 2 || !strings.HasSuffix(errs.String(), noTerminal("connection")) || len(s.Mutations()) != mark {
+			t.Fatalf("disconnect: exit %d:\n%s%s", code, out, errs)
 		}
 		d, out, _ = connectDeps(s)
 		declining(&d, &said)
@@ -470,4 +478,161 @@ func TestConfirmationsSayAWSLines(t *testing.T) {
 			t.Fatalf("disconnect declined: exit %d:\n%s", code, out)
 		}
 	})
+}
+
+// A row names its target and its cloud as the manager's rows do (aws workloads list --json): router (the manager's name),
+// account (the project), region and cloud gcp; its router and workloadId are the key its write's map uses.
+func TestWorkloadRowsNameTheirTargetAndCloudAsTheManagersRows(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.JSON = true
+	_, stdout, _ := g.split(t, WorkloadsList, r)
+	var list struct{ Workloads []fleet.Workload }
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil || len(list.Workloads) != 1 {
+		t.Fatalf("%v: %s", err, stdout)
+	}
+	row := list.Workloads[0]
+	if row.Router != shopRouter || row.Account != "dormeto-dev" || row.Region != "europe-west1" || row.Cloud != "gcp" || row.WorkloadID != "shop" {
+		t.Fatalf("row %+v", row)
+	}
+	r.ID = "shop"
+	_, stdout, _ = g.split(t, WorkloadsNap, r)
+	var answered fleet.Workload
+	if err := json.Unmarshal(byTarget(t, stdout, row.Router+"/"+row.WorkloadID), &answered); err != nil || answered.Router != shopRouter || answered.Cloud != "gcp" {
+		t.Fatalf("%v: %s", err, stdout)
+	}
+	_, stdout, _ = g.split(t, WorkloadsShow, r)
+	var shown fleet.Workload
+	if err := json.Unmarshal([]byte(stdout), &shown); err != nil || shown.Router != shopRouter || shown.Account != "dormeto-dev" || shown.Region != "europe-west1" || shown.Cloud != "gcp" {
+		t.Fatalf("show: %v: %s", err, stdout)
+	}
+}
+
+// A refused onboarding or offboarding prints AWS's map of no answer under --json, as the other writes do.
+func TestRefusedOnboardAndOffboardPrintNoAnswerUnderJSON(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.OnboardingRefused = "the backend service changed"
+	r := shopOnboarding
+	r.JSON = true
+	if code, stdout, stderr := g.split(t, WorkloadsOnboard, r); code != 1 || strings.TrimSpace(stdout) != "{}" || !strings.Contains(stderr, "the backend service changed") {
+		t.Fatalf("onboard: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	r = workloadsEurope
+	r.ID, r.JSON = "ghost", true
+	if code, stdout, stderr := g.split(t, WorkloadsOffboard, confirmed(r)); code != 1 || strings.TrimSpace(stdout) != "{}" || !strings.Contains(stderr, "no workload ghost") {
+		t.Fatalf("offboard: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// Under --json stdout is JSON alone, as AWS's: a refusal without a terminal says AWS's line on stderr and prints nothing; a
+// declined question prints {"confirmed":false,…} and says AWS's line on stderr.
+func TestConfirmationsUnderJSONKeepStdoutJSON(t *testing.T) {
+	noTerminal := func(noun string) string {
+		return "confirmation needed: pass --yes to act on 1 " + noun + " without a terminal\n"
+	}
+	t.Run("routers install and uninstall", func(t *testing.T) {
+		for name, run := range map[string]func(context.Context, Deps, Request) int{"install": Install, "uninstall": Uninstall} {
+			r := Request{Project: "dormeto-dev", Region: "europe-west1", JSON: true}
+			var g *installRig
+			if name == "install" {
+				g, r.AccessOnly = newInstallRig(t), true
+			} else {
+				g = routerInstalled(t)
+			}
+			var o, e strings.Builder
+			d := g.d
+			d.Out, d.Err = &o, &e
+			if code := run(context.Background(), d, r); code != 2 || o.Len() != 0 || !strings.HasSuffix(e.String(), noTerminal("router")) {
+				t.Fatalf("%s: exit %d, stdout %q, stderr %q", name, code, o.String(), e.String())
+			}
+			o.Reset()
+			e.Reset()
+			d.Terminal, d.Prompter = true, install.NewPrompter(strings.NewReader("n\n"), &e, true)
+			var got struct {
+				Confirmed *bool
+				Targets   []string
+				Plan      []string
+			}
+			if code := run(context.Background(), d, r); code != 0 || json.Unmarshal([]byte(o.String()), &got) != nil || got.Confirmed == nil || *got.Confirmed ||
+				!slices.Equal(got.Targets, []string{shopRouter}) || len(got.Plan) == 0 || !strings.HasSuffix(e.String(), "not confirmed: nothing sent\n") {
+				t.Fatalf("%s declined: exit %d, stdout %q, stderr %q", name, code, o.String(), e.String())
+			}
+			// The dry run: the released shape, its plan beside it.
+			o.Reset()
+			e.Reset()
+			r.DryRun = true
+			var dry struct {
+				DryRun  bool
+				Targets []string
+				Plan    []string
+			}
+			if code := run(context.Background(), d, r); code != 0 || json.Unmarshal([]byte(o.String()), &dry) != nil || !dry.DryRun ||
+				!slices.Equal(dry.Targets, []string{shopRouter}) || len(dry.Plan) == 0 || !strings.Contains(e.String(), "Plan for project dormeto-dev") {
+				t.Fatalf("%s dry run: exit %d, stdout %q, stderr %q", name, code, o.String(), e.String())
+			}
+		}
+	})
+	t.Run("connect", func(t *testing.T) {
+		s := connectServer(t)
+		r := connectRequest(newFakeManager())
+		r.Yes, r.JSON = false, true
+		d, out, errs := connectDeps(s)
+		if code := Connect(context.Background(), d, r); code != 2 || out.Len() != 0 || !strings.HasSuffix(errs.String(), noTerminal("connection")) {
+			t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errs)
+		}
+		d, out, errs = connectDeps(s)
+		d.Terminal, d.Prompter = true, install.NewPrompter(strings.NewReader("n\n"), errs, true)
+		var got struct {
+			Confirmed *bool
+			Targets   []string
+			Plan      []string
+		}
+		if code := Connect(context.Background(), d, r); code != 0 || json.Unmarshal(out.Bytes(), &got) != nil || got.Confirmed == nil || *got.Confirmed ||
+			!slices.Equal(got.Targets, []string{"dormeto-dev"}) || len(got.Plan) == 0 || !strings.HasSuffix(errs.String(), "not confirmed: nothing sent\n") {
+			t.Fatalf("declined: exit %d, stdout %q, stderr %q", code, out, errs)
+		}
+	})
+	t.Run("workloads settings and offboard", func(t *testing.T) {
+		g := newWorkloadsRig(t)
+		g.s.Workloads["shop"], g.s.Workloads["api"] = "AWAKE", "AWAKE"
+		r := workloadsEurope
+		r.IDs, r.JSON, r.Levels = []string{"shop", "api"}, true, map[string]any{"idleMinutes": 30}
+		if code, stdout, stderr := g.split(t, WorkloadsSettings, r); code != 2 || stdout != "" || !strings.Contains(stderr, "confirmation needed: pass --yes to act on 2 workloads without a terminal\n") {
+			t.Fatalf("settings: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+		r = workloadsEurope
+		r.ID, r.JSON = "shop", true
+		if code, stdout, stderr := g.split(t, WorkloadsOffboard, r); code != 2 || stdout != "" || !strings.HasSuffix(stderr, noTerminal("workload")) {
+			t.Fatalf("offboard: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+	})
+	t.Run("onboard on GKE", func(t *testing.T) {
+		g, _ := newGKERig(t)
+		r := shopOnGKE
+		r.Yes, r.JSON = false, true
+		if code, stdout, stderr := g.split(t, WorkloadsOnboard, r); code != 2 || stdout != "" || !strings.Contains(stderr, "confirmation needed: pass --yes to act on 1 workload with --json\n") {
+			t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+		}
+	})
+}
+
+// The onboarding's dry run is the released shape too, the controller's eligibility beside it.
+func TestWorkloadsOnboardDryRunJSONIsTheReleasedShape(t *testing.T) {
+	g := newWorkloadsRig(t)
+	r := shopOnboarding
+	r.DryRun, r.JSON = true, true
+	code, stdout, _ := g.split(t, WorkloadsOnboard, r)
+	var got struct {
+		DryRun      bool
+		Targets     []string
+		Eligibility struct {
+			Eligible bool
+			VMs      []any
+		}
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); code != 0 || err != nil || !got.DryRun || !slices.Equal(got.Targets, []string{shopTarget}) ||
+		!got.Eligibility.Eligible || len(got.Eligibility.VMs) != 1 {
+		t.Fatalf("exit %d, %v: %s", code, err, stdout)
+	}
 }

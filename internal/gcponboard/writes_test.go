@@ -66,10 +66,10 @@ func TestWorkloadWritesDryRunSendNothingAndSayTheRequest(t *testing.T) {
 			if m := g.changes(mark); len(m) != 0 {
 				t.Fatalf("changes: %v", m)
 			}
-			// --json: {"dryRun":true,"requests":[{target, method, path, body}]} on stdout, the words on stderr.
+			// --json: the released {"dryRun":true,"targets":[…]} on stdout, the words on stderr.
 			r.JSON = true
 			code, stdout, stderr := g.split(t, c.run, r)
-			if code != 0 || !strings.HasPrefix(strings.TrimSpace(stdout), `{"dryRun":true,"requests":[{"target":"`+shopTarget+`",`+c.request) {
+			if code != 0 || strings.TrimSpace(stdout) != `{"dryRun":true,"targets":["`+shopTarget+`"]}` {
 				t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 			}
 			if !strings.Contains(stderr, "dry run: ") || len(g.changes(mark)) != 0 {
@@ -323,22 +323,16 @@ func TestRbacGrantAndRevokeDryRunPrintTheirPlanAndChangeNothing(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "+ Role dormeto-shop", "+ RoleBinding dormeto-shop",
-		"dry run: "+shopTarget+": would POST /apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles, nothing sent\n",
-		"dry run: "+shopTarget+": would POST /apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings, nothing sent\n")
+		"dry run: shop/dormeto-shop: would POST /apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles, nothing sent\n",
+		"dry run: shop/dormeto-shop: would POST /apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings, nothing sent\n")
 	if w := g.k.writes(mark); len(w) != 0 || len(g.rbacOf(t)) != 0 || len(g.changes(changes)) != 0 || strings.Contains(out, "up to date") {
 		t.Fatalf("written: %v, record %v, changes %v:\n%s", w, g.rbacOf(t), g.changes(changes), out)
 	}
-	// --json takes --dry-run without --yes: {"dryRun":true,"requests":[…]} alone on stdout, each Kubernetes write by the workload.
+	// --json takes --dry-run without --yes: the released {"dryRun":true,"targets":[<namespace>/<the objects' name>]} alone on stdout.
 	var stdout, stderr strings.Builder
 	g.d.Out, g.d.Err = &stdout, &stderr
 	r.JSON = true
-	var got struct {
-		DryRun   bool
-		Requests []struct{ Target, Method, Path string }
-	}
-	code = WorkloadsAccessGrant(context.Background(), g.d, r)
-	if err := json.Unmarshal([]byte(stdout.String()), &got); code != 0 || err != nil || !got.DryRun || len(got.Requests) != 2 || got.Requests[0].Target != shopTarget ||
-		got.Requests[1].Method != "POST" || got.Requests[1].Path != "/apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings" {
+	if code := WorkloadsAccessGrant(context.Background(), g.d, r); code != 0 || strings.TrimSpace(stdout.String()) != `{"dryRun":true,"targets":["shop/dormeto-shop"]}` {
 		t.Fatalf("--json: exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
 	}
 	g.d.Out, g.d.Err = g.out, g.out
@@ -352,8 +346,8 @@ func TestRbacGrantAndRevokeDryRunPrintTheirPlanAndChangeNothing(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	contains(t, out, "- RoleBinding dormeto-shop", "- Role dormeto-shop",
-		"dry run: "+shopTarget+": would DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings/dormeto-shop, nothing sent\n",
-		"dry run: "+shopTarget+": would DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles/dormeto-shop, nothing sent\n")
+		"dry run: shop/dormeto-shop: would DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/shop/rolebindings/dormeto-shop, nothing sent\n",
+		"dry run: shop/dormeto-shop: would DELETE /apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles/dormeto-shop, nothing sent\n")
 	if w := g.k.writes(mark); len(w) != 0 || len(g.rbacOf(t)) != 1 || len(g.changes(changes)) != 0 {
 		t.Fatalf("written: %v, record %v, changes %v", w, g.rbacOf(t), g.changes(changes))
 	}

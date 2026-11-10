@@ -101,7 +101,7 @@ func (x *run) workloadsSettings() error {
 		for i, id := range x.r.IDs {
 			requests = append(requests, dryRequestOf(targets[i], http.MethodPut, "/v1/workloads/"+esc(id)+"/settings", x.r.Levels))
 		}
-		return x.sayDry(requests)
+		return x.sayDry(targets, requests)
 	}
 	// As AWS's: several workloads are confirmed on a terminal, and need --yes without one.
 	if n := len(x.r.IDs); n > 1 && !x.r.Yes {

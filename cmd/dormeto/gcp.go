@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -215,6 +216,7 @@ func newGcpInstall(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&f.accessOnly, "access-only", false, "install the access without the router (later runs keep it until one with --version or --image)")
 	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
+	planJSON(cmd, &f)
 	fl.StringArrayVar(&f.ipLists, "ip-list", nil, "an IP list the router ignores: name=<n>,url=<http(s) URL>[,refresh_hours=<hours, default 24>], repeatable; replaces the set; needs the router")
 	fl.BoolVar(&f.noIPLists, "no-ip-lists", false, "clear the router's IP lists")
 	fl.BoolVar(&f.customPages, "custom-pages", false, "serve custom waiting pages, your HTML on the application's address (--custom-pages=false turns them off; a run without it keeps the record's); needs the router")
@@ -251,9 +253,23 @@ func newGcpUninstall(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
 	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
+	planJSON(cmd, &f)
 	fl.BoolVar(&f.force, "force", false, "offboard the onboarded workloads first")
 	withFlag(cmd, &f, "only validated and, with --force, tests these features' offboard permissions too: the uninstall always removes every feature the install record lists and tests theirs")
 	return cmd
+}
+
+// planJSON is --json of routers install and uninstall: the released dry run's shape with the plan beside it.
+func planJSON(cmd *cobra.Command, f *gcpFlags) {
+	cmd.Flags().BoolVar(&f.json, "json", false, "print {targets, plan}: what it acts on and its plan, with dryRun true under --dry-run and confirmed false when declined (the words go to stderr)")
+}
+
+// gcpPromptOut is where the questions are asked: stdout, or stderr under --json, whose stdout holds the JSON alone (AWS's).
+func gcpPromptOut(c *cobra.Command) io.Writer {
+	if jsonFlag(c) {
+		return c.ErrOrStderr()
+	}
+	return c.OutOrStdout()
 }
 
 // gcpDeps are the real dependencies.
@@ -262,7 +278,7 @@ func gcpDeps(c *cobra.Command, configuration, version string) gcponboard.Deps {
 	terminal := isTerminal(in)
 	return gcponboard.Deps{
 		Google:   &gcp.Client{HTTP: &http.Client{Timeout: 30 * time.Second}, Tokens: gcp.NewGcloud(configuration, nil)},
-		Prompter: install.NewPrompter(in, out, terminal),
+		Prompter: install.NewPrompter(in, gcpPromptOut(c), terminal),
 		Terminal: terminal,
 		Out:      out, Err: c.ErrOrStderr(),
 		Now: time.Now,

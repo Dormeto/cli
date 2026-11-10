@@ -219,8 +219,7 @@ func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t 
 	r.Levels = map[string]any{"idleMinutes": 30}
 	r.DryRun = true
 	code, out := g.call(t, WorkloadsSettings, r)
-	if want := `{"dryRun":true,"requests":[{"target":"` + shopTarget + `","method":"PUT","path":"/v1/workloads/shop/settings","body":{"idleMinutes":30}},` +
-		`{"target":"` + shopRouter + `/web","method":"PUT","path":"/v1/workloads/web/settings","body":{"idleMinutes":30}}]}` + "\n"; code != 0 || out != want {
+	if want := `{"dryRun":true,"targets":["` + shopTarget + `","` + shopRouter + `/web"]}` + "\n"; code != 0 || out != want {
 		t.Fatalf("dry run: exit %d, stdout %q, want %q", code, out, want)
 	}
 	contains(t, errs.String(), "dry run: "+shopTarget+": would PUT /v1/workloads/shop/settings, nothing sent\n")
@@ -238,7 +237,7 @@ func TestWorkloadsSettingsJSONOfADryRunOrADeclinedQuestionPrintsJSONAndNoText(t 
 	r.Levels = map[string]any{"hibernate": ptr(true)}
 	errs.Reset()
 	code, out = g.call(t, RouterSettings, r)
-	if want := `{"dryRun":true,"requests":[{"target":"` + shopRouter + `","method":"PUT","path":"/v1/settings","body":{"hibernate":true}}]}` + "\n"; code != 0 || out != want {
+	if want := `{"dryRun":true,"targets":["` + shopRouter + `"]}` + "\n"; code != 0 || out != want {
 		t.Fatalf("router dry run: exit %d, stdout %q, want %q", code, out, want)
 	}
 	contains(t, errs.String(), "dry run: "+shopRouter+": would PUT /v1/settings, nothing sent\n")

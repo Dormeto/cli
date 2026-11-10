@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -147,31 +148,33 @@ func (a *writesAPI) handler(w http.ResponseWriter, r *http.Request) {
 var dryRunWrites = []struct {
 	args []string
 	says string
+	// targets are the --json's: as the command addresses them, the organization's own writes "organization".
+	targets []string
 }{
-	{[]string{"discovery", "config", "set", "--file", "-"}, "PUT /iam/discovery/config"},
-	{[]string{"discovery", "dismiss", dismissedARN}, "POST /iam/discovery/dismiss"},
-	{[]string{"discovery", "restore", dismissedARN}, "POST /iam/discovery/restore"},
-	{[]string{"discovery", "run"}, "POST /iam/discovery/run"},
-	{[]string{"exclusions", "lift", "ex-1", "ex-2"}, "DELETE /iam/exclusions/ex-2"},
-	{[]string{"groups", "create", "payments"}, "POST /iam/groups"},
-	{[]string{"groups", "update", "payments", "--description", "the payments team"}, "PUT /iam/groups/payments"},
-	{[]string{"manager", "check", "--enable", "--no-alert"}, "PUT /iam/update/check"},
-	{[]string{"routers", "description", "r1", "--set", "the shop's router"}, "PUT /iam/routers/r1/description"},
-	{[]string{"routers", "install", "--account", "123456789012", "--router-region", "eu-west-1"}, "POST /iam/operations"},
-	{[]string{"routers", "waiting-page", "set", "r1", "--title", "Back soon"}, "PUT /iam/routers/r1/waiting-page"},
-	{[]string{"routers", "waiting-page", "clear", "r1"}, "DELETE /iam/routers/r1/waiting-page"},
-	{[]string{"savings", "discounts", "--compute", "20", "--databases", "10"}, "PUT /iam/savings/settings"},
-	{[]string{"settings", "set", "--hibernate", "true"}, "PUT /iam/settings/workloads"},
-	{[]string{"settings", "waiting-page", "set", "--title", "Back soon"}, "PUT /iam/settings/waiting-page"},
-	{[]string{"settings", "waiting-page", "clear"}, "DELETE /iam/settings/waiting-page"},
-	{[]string{"users", "enable", "ann@x.io"}, "POST /iam/users/ann@x.io/enable"},
-	{[]string{"users", "groups", "ann@x.io", "payments"}, "PUT /iam/users/ann@x.io/groups"},
-	{[]string{"users", "invite", "ann@x.io", "--role", "viewer"}, "POST /iam/users"},
-	{[]string{"users", "resend", "ann@x.io"}, "POST /iam/users/ann@x.io/resend"},
-	{[]string{"users", "reset-mfa", "ann@x.io"}, "POST /iam/users/ann@x.io/mfa/reset"},
-	{[]string{"workloads", "description", "r1/w-1", "--set", "the shop"}, "PUT /iam/workloads/r1/w-1/description"},
-	{[]string{"workloads", "waiting-page", "set", "r1/w-1", "--title", "Back soon"}, "PUT /iam/workloads/r1/w-1/waiting-page"},
-	{[]string{"workloads", "waiting-page", "clear", "r1/w-1"}, "DELETE /iam/workloads/r1/w-1/waiting-page"},
+	{[]string{"discovery", "config", "set", "--file", "-"}, "PUT /iam/discovery/config", []string{"organization"}},
+	{[]string{"discovery", "dismiss", dismissedARN}, "POST /iam/discovery/dismiss", []string{dismissedARN}},
+	{[]string{"discovery", "restore", dismissedARN}, "POST /iam/discovery/restore", []string{dismissedARN}},
+	{[]string{"discovery", "run"}, "POST /iam/discovery/run", []string{"organization"}},
+	{[]string{"exclusions", "lift", "ex-1", "ex-2"}, "DELETE /iam/exclusions/ex-2", []string{"ex-2", "ex-1"}},
+	{[]string{"groups", "create", "payments"}, "POST /iam/groups", []string{"payments"}},
+	{[]string{"groups", "update", "payments", "--description", "the payments team"}, "PUT /iam/groups/payments", []string{"payments"}},
+	{[]string{"manager", "check", "--enable", "--no-alert"}, "PUT /iam/update/check", []string{"organization"}},
+	{[]string{"routers", "description", "r1", "--set", "the shop's router"}, "PUT /iam/routers/r1/description", []string{"r1"}},
+	{[]string{"routers", "install", "--account", "123456789012", "--router-region", "eu-west-1"}, "POST /iam/operations", []string{"123456789012"}},
+	{[]string{"routers", "waiting-page", "set", "r1", "--title", "Back soon"}, "PUT /iam/routers/r1/waiting-page", []string{"r1"}},
+	{[]string{"routers", "waiting-page", "clear", "r1"}, "DELETE /iam/routers/r1/waiting-page", []string{"r1"}},
+	{[]string{"savings", "discounts", "--compute", "20", "--databases", "10"}, "PUT /iam/savings/settings", []string{"organization"}},
+	{[]string{"settings", "set", "--hibernate", "true"}, "PUT /iam/settings/workloads", []string{"organization"}},
+	{[]string{"settings", "waiting-page", "set", "--title", "Back soon"}, "PUT /iam/settings/waiting-page", []string{"organization"}},
+	{[]string{"settings", "waiting-page", "clear"}, "DELETE /iam/settings/waiting-page", []string{"organization"}},
+	{[]string{"users", "enable", "ann@x.io"}, "POST /iam/users/ann@x.io/enable", []string{"ann@x.io"}},
+	{[]string{"users", "groups", "ann@x.io", "payments"}, "PUT /iam/users/ann@x.io/groups", []string{"ann@x.io"}},
+	{[]string{"users", "invite", "ann@x.io", "--role", "viewer"}, "POST /iam/users", []string{"ann@x.io"}},
+	{[]string{"users", "resend", "ann@x.io"}, "POST /iam/users/ann@x.io/resend", []string{"ann@x.io"}},
+	{[]string{"users", "reset-mfa", "ann@x.io"}, "POST /iam/users/ann@x.io/mfa/reset", []string{"ann@x.io"}},
+	{[]string{"workloads", "description", "r1/w-1", "--set", "the shop"}, "PUT /iam/workloads/r1/w-1/description", []string{"r1/w-1"}},
+	{[]string{"workloads", "waiting-page", "set", "r1/w-1", "--title", "Back soon"}, "PUT /iam/workloads/r1/w-1/waiting-page", []string{"r1/w-1"}},
+	{[]string{"workloads", "waiting-page", "clear", "r1/w-1"}, "DELETE /iam/workloads/r1/w-1/waiting-page", []string{"r1/w-1"}},
 }
 
 func TestEveryWriteWithoutItsOwnDryRunTakesOneThatSendsNothing(t *testing.T) {
@@ -190,19 +193,14 @@ func TestEveryWriteWithoutItsOwnDryRunTakesOneThatSendsNothing(t *testing.T) {
 		if !jsonCommand(t, c.args) {
 			continue
 		}
-		// --json: {"dryRun":true,"requests":[{target, method, path, body}]} alone on stdout, the words on stderr.
+		// --json: the released {"dryRun":true,"targets":[…]} alone on stdout, the words (each request) on stderr.
 		r = runFleetWith(t, &fakeAPI{custom: a.handler, stdin: `{"rules":[]}`}, "eu-west-1", nil, append(c.args, "--dry-run", "--json")...)
 		var got struct {
-			DryRun   bool `json:"dryRun"`
-			Requests []struct{ Method, Path string }
+			DryRun  bool     `json:"dryRun"`
+			Targets []string `json:"targets"`
 		}
-		method, path, _ := strings.Cut(c.says, " ")
 		err := json.Unmarshal([]byte(r.stdout), &got)
-		said := false
-		for _, req := range got.Requests {
-			said = said || (req.Method == method && "/iam"+req.Path == path)
-		}
-		if r.exit != 0 || err != nil || !got.DryRun || !said || len(a.writes) != 0 || !strings.Contains(r.stderr, "would "+c.says+", nothing sent") {
+		if r.exit != 0 || err != nil || !got.DryRun || !slices.Equal(got.Targets, c.targets) || len(a.writes) != 0 || !strings.Contains(r.stderr, "would "+c.says+", nothing sent") {
 			t.Errorf("%q --json: exit %d, %v, stdout %q, stderr %q", c.args, r.exit, err, r.stdout, r.stderr)
 		}
 	}
@@ -210,7 +208,7 @@ func TestEveryWriteWithoutItsOwnDryRunTakesOneThatSendsNothing(t *testing.T) {
 	for _, args := range [][]string{{"set", "api", "--idle-minutes", "20", "--dry-run"}, {"delete", "api", "--dry-run", "--yes"}} {
 		types := func(d fleetDeps) []*cobra.Command { return []*cobra.Command{newTypes(d)} }
 		r := runCommands(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, types, append([]string{"types"}, args...)...)
-		if r.exit != 0 || len(a.writes) != 0 || !strings.Contains(r.stdout, "dry run: would PUT /iam/settings/types, nothing sent\n") {
+		if r.exit != 0 || len(a.writes) != 0 || !strings.Contains(r.stdout, "dry run: organization: would PUT /iam/settings/types, nothing sent\n") {
 			t.Errorf("types %q: exit %d, writes %q, stdout %q, stderr %q", args, r.exit, a.writes, r.stdout, r.stderr)
 		}
 	}
@@ -227,7 +225,7 @@ func jsonCommand(t *testing.T, args []string) bool {
 func TestADryRunSaysTheBodyItWouldSend(t *testing.T) {
 	a := &writesAPI{}
 	r := runFleetWith(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, "settings", "set", "--hibernate", "true", "--idle-minutes", "20", "--dry-run")
-	if r.exit != 0 || !strings.Contains(r.stdout, "dry run: would PUT /iam/settings/workloads, nothing sent\n  "+`{"defaults":{"idleMinutes":20},"hibernate":true}`+"\n") {
+	if r.exit != 0 || !strings.Contains(r.stdout, "dry run: organization: would PUT /iam/settings/workloads, nothing sent\n  "+`{"defaults":{"idleMinutes":20},"hibernate":true}`+"\n") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 	r = runFleetWith(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, "exclusions", "lift", "ex-1", "ex-2", "--dry-run")
@@ -299,13 +297,10 @@ func TestOnboardDryRunSaysTheCandidateItsEligibilityAndTheBody(t *testing.T) {
 		Candidate struct {
 			ID, Status string
 		}
-		Requests []struct {
-			Method, Path string
-			Body         map[string]any
-		}
+		Targets []string
 	}
 	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || !got.DryRun || got.Candidate.ID != tgARN("111111111111", tgAPI) ||
-		got.Candidate.Status != "pending-onboarding" || len(got.Requests) != 1 || got.Requests[0].Path != "/operations" || got.Requests[0].Body["type"] != "onboard" || len(a.writes) != 0 {
+		got.Candidate.Status != "pending-onboarding" || !slices.Equal(got.Targets, []string{tgARN("111111111111", tgAPI)}) || len(a.writes) != 0 {
 		t.Fatalf("%v: exit %d, stdout %s, stderr %q", err, r.exit, r.stdout, r.stderr)
 	}
 }

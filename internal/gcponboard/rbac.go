@@ -805,18 +805,23 @@ func (x *run) accessShow() error {
 	return nil
 }
 
-// accessDryRun ends a grant or a revoke under --dry-run, its plan printed: each write it would send to Kubernetes, by the workload
-// as AWS's commands name one (sayDry), or what it would do when it writes nothing there; nothing is sent.
+// accessDryRun ends a grant or a revoke under --dry-run, its plan printed: each write it would send to Kubernetes, or what it
+// would do when it writes nothing there; nothing is sent. Its target is what the command addresses, <namespace>/<the objects'
+// name>: under --json, {"dryRun":true,"targets":[<namespace>/<name>]}, as before.
 func (x *run) accessDryRun(rb Rbac, writes []dryRequest, what string) error {
+	target := accessTarget(rb)
 	if len(writes) == 0 {
-		return x.sayDry(nil, fmt.Sprintf("dry run: %s: would %s, nothing sent", x.target(rb.Workload), what))
+		return x.sayDry([]string{target}, nil, fmt.Sprintf("dry run: %s: would %s, nothing sent", target, what))
 	}
-	return x.sayDry(writes)
+	return x.sayDry([]string{target}, writes)
 }
+
+// accessTarget is a workload's Kubernetes access as its commands address it: <namespace>/<the objects' name>.
+func accessTarget(rb Rbac) string { return rb.Namespace + "/" + rb.name() }
 
 // kubeRequest is a Kubernetes write as a dry run says it: its path on the cluster's endpoint.
 func (x *run) kubeRequest(rb Rbac, endpoint, method, url string, body any) dryRequest {
-	return dryRequestOf(x.target(rb.Workload), method, strings.TrimPrefix(url, "https://"+endpoint), body)
+	return dryRequestOf(accessTarget(rb), method, strings.TrimPrefix(url, "https://"+endpoint), body)
 }
 
 // grantWrites are the writes ApplyRbac would send for the plan.

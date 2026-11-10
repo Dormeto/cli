@@ -2,6 +2,8 @@ package fleet
 
 // --dry-run (the AWS and Google Cloud review's §4.2): what a write would send, said and kept, never sent. A client under a
 // dry run sends its reads and stops at its first write with ErrDryRun, which the command reads as success: nothing was sent.
+// Under --json it prints the released shape of both subtrees, {"dryRun": true, "targets": [...]}: what each request would send
+// is in the text alone.
 
 import (
 	"bytes"
@@ -29,22 +31,35 @@ type DryRun struct {
 	requests []DryRequest
 }
 
-// JSON is what a dry run prints under --json: {"dryRun": true, "requests": [...]} and its context.
+// JSON is what a dry run prints under --json: {"dryRun": true, "targets": [...]}, each target once, and its context.
 func (d *DryRun) JSON() map[string]any {
-	out := map[string]any{"dryRun": true, "requests": d.Requests()}
+	out := map[string]any{"dryRun": true, "targets": DryTargets(d.Requests())}
 	for k, v := range d.Context {
 		out[k] = v
 	}
 	return out
 }
 
-// DryRequest is a write a dry run kept, as both subtrees' dry runs say theirs: what it addresses (RequestTarget), its method,
-// its path under /iam and its body (none: absent).
+// DryRequest is a write a dry run kept, as both subtrees' dry runs say theirs: what it addresses (RequestTargets), its method,
+// its path and its body (none: absent).
 type DryRequest struct {
-	Target string          `json:"target"`
-	Method string          `json:"method"`
-	Path   string          `json:"path"`
-	Body   json.RawMessage `json:"body,omitempty"`
+	Targets []string
+	Method  string
+	Path    string
+	Body    json.RawMessage
+}
+
+// DryTargets are the targets of the requests, each once, in their order: the released dry run's "targets".
+func DryTargets(requests []DryRequest) []string {
+	out := []string{}
+	for _, r := range requests {
+		for _, t := range r.Targets {
+			if !slices.Contains(out, t) {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
 }
 
 // Requests are the writes kept, in their order.
@@ -63,10 +78,10 @@ func (d *DryRun) keep(method, path string, payload []byte) {
 	if len(bytes.TrimSpace(payload)) > 0 {
 		r.Body = append(json.RawMessage(nil), payload...)
 	}
-	r.Target = RequestTarget(path, r.Body)
+	r.Targets = RequestTargets(path, r.Body)
 	d.requests = append(d.requests, r)
 	if d.Out != nil {
-		fmt.Fprint(d.Out, DryRunText(r.Target, method, "/iam"+path, r.Body))
+		fmt.Fprint(d.Out, DryRunText(strings.Join(r.Targets, ", "), method, "/iam"+path, r.Body))
 	}
 }
 
@@ -85,10 +100,25 @@ func DryRunText(target, method, path string, body json.RawMessage) string {
 	return b.String()
 }
 
-// RequestTarget is what a write to the manager addresses, as its command names it: the <router>/<workload>, router, user,
+// organization is the target of the organization's own writes: its settings, discovery, the manager.
+const organization = "organization"
+
+// RequestTargets are what a write to the manager addresses, as its command names it: the <router>/<workload>, router, user,
 // group or exclusion of its path; for a new user or group, the one its body names; for an operation, the router, the account
-// or the candidate its body names; "" for the organization's (its settings, discovery, the manager).
-func RequestTarget(path string, body json.RawMessage) string {
+// or the candidate its body names; the candidates a dismissal or a restore names; else the organization.
+func RequestTargets(path string, body json.RawMessage) []string {
+	if t := requestTarget(path, body); t != "" {
+		return []string{t}
+	}
+	var named struct{ IDs []string }
+	if strings.HasPrefix(path, "/discovery/") && json.Unmarshal(body, &named) == nil && len(named.IDs) > 0 {
+		return named.IDs
+	}
+	return []string{organization}
+}
+
+// requestTarget is the one target of RequestTargets a path or a body names; "" for none.
+func requestTarget(path string, body json.RawMessage) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	for i, p := range parts {
 		if u, err := url.PathUnescape(p); err == nil {

@@ -33,6 +33,7 @@ import (
 // without a terminal, 130 when interrupted.
 func Uninstall(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
+	x.wordsAside()
 	return x.end(x.uninstall())
 }
 
@@ -54,7 +55,7 @@ func (x *run) uninstall() error {
 	}
 	x.printUninstallPlan()
 	if x.r.DryRun {
-		return nil
+		return x.planObject("dryRun", true)
 	}
 	// AWS's lines: --yes without a terminal, "not confirmed: nothing sent" when declined.
 	if !x.r.Yes {
@@ -67,10 +68,16 @@ func (x *run) uninstall() error {
 			return err
 		}
 		if !ok {
+			if err := x.planObject("confirmed", false); err != nil {
+				return err
+			}
 			return &stop{0, notConfirmed}
 		}
 	}
-	return x.applyUninstall()
+	if err := x.applyUninstall(); err != nil {
+		return err
+	}
+	return x.planObject("", false)
 }
 
 // uninstallChecks asks the permissions of uninstall, and of offboard with Force; the missing ones are named and nothing
