@@ -760,6 +760,9 @@ func TestBothOnboardsListTheSharedFlagsInTheSameOrderAndWords(t *testing.T) {
 	if got := all[1]["--idle-minutes"]; !strings.Contains(got, "the levels', 15 built in") || strings.Contains(got, "router's") {
 		t.Errorf("--idle-minutes: %q", got)
 	}
+	if got := all[1]["--name"]; !strings.Contains(got, "the target group's name on AWS, the workload's ID on Google Cloud") {
+		t.Errorf("--name: %q", got)
+	}
 	if got := all[1]["--wake-timeout-seconds"]; !strings.Contains(got, "60 to 3600") || !strings.Contains(got, "60 to 1700 on Google Cloud") {
 		t.Errorf("--wake-timeout-seconds: %q", got)
 	}

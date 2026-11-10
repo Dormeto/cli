@@ -219,7 +219,7 @@ func TestTheLevelCommandsHelpNamesGoogleCloudsLimits(t *testing.T) {
 			t.Errorf("%v --wake-timeout-seconds: %q", command, line)
 		}
 		for _, flag := range []string{"--wait-seconds", "--max-holders", "--drain-seconds"} {
-			if line := helpLine(out, flag); !strings.Contains(line, "0 on Google Cloud") {
+			if line := helpLine(out, flag); !strings.Contains(line, "fixed at 0 on Google Cloud") {
 				t.Errorf("%v %s: %q", command, flag, line)
 			}
 		}

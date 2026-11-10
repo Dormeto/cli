@@ -491,7 +491,7 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 // sharedOnboardHelp is what each flag both onboards take says, one description for both, a cloud's own limit said in
 // the same sentence (the flags are listed in one order, aws workloads onboard's and gcp workloads onboard's alike).
 var sharedOnboardHelp = map[string]string{
-	"name":                 "the workload's display name, up to 64 characters (default: the target group's or backend service's name)",
+	"name":                 "the workload's display name, up to 64 characters (default: the target group's name on AWS, the workload's ID on Google Cloud)",
 	"set-tag":              "a Dormeto tag of the workload, key=value (repeatable, at most 50; the dormeto: prefix is reserved; AWS: administrators)",
 	"idle-minutes":         "the idle window, 5 to 1440 minutes (default: the levels', 15 built in)",
 	"wake-mode":            "what wakes the workload: any request that passes the filters, or browser (default: the levels', any built in; behind Google Cloud's global load balancer the waiting page wakes by browser alone)",

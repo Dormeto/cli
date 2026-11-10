@@ -66,7 +66,7 @@ func TestReadmeCommandsExistInTheTree(t *testing.T) {
 		}
 	}
 	// the commands without --dry-run, which the README names, and the commands that have it
-	for path, want := range map[string]bool{"aws install": false, "aws uninstall": false, "aws routers pause": true, "gcp workloads nap": true, "gcp workloads offboard": true} {
+	for path, want := range map[string]bool{"aws install": false, "aws uninstall": false, "aws install apply": false, "aws uninstall apply": false, "aws routers pause": true, "gcp workloads nap": true, "gcp workloads offboard": true} {
 		c, _, err := root.Find(strings.Fields(path))
 		if err != nil {
 			t.Fatal(err)
