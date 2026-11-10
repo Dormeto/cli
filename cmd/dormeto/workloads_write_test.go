@@ -481,8 +481,36 @@ func TestWorkloadQuestionsListTheTargets(t *testing.T) {
 		t.Errorf("nap --json: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 	r = runWR(t, a, nil, "nap", "--tag", "env=dev", "--dry-run", "--json")
-	if r.exit != 0 || len(a.writes) != 0 || r.stderr != "dry run: nap 2 workloads, nothing sent\n  prod-eu/w-1\n  prod-eu/w-2\n" ||
+	if r.exit != 0 || len(a.writes) != 0 || r.stderr != "dry run: prod-eu/w-1: would POST /iam/workloads/prod-eu/w-1/nap, nothing sent\n"+
+		"dry run: prod-eu/w-2: would POST /iam/workloads/prod-eu/w-2/nap, nothing sent\n" ||
 		r.stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"prod-eu/w-1\",\n    \"prod-eu/w-2\"\n  ]\n}\n" {
 		t.Errorf("dry run --json: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+// A dry run reads what its requests need and says each one: the tags it would PUT, read from each workload, and a workload
+// whose tags would not change said unchanged; the released {"dryRun": true, "targets": […]} names every target.
+func TestTagsDryRunReadsTheTagsAndSaysThePutItWouldSend(t *testing.T) {
+	a := &wrAPI{tags: map[string]string{"prod-eu/w-1": `{"b":"2"}`, "prod-eu/w-2": `{"a":"1"}`}}
+	r := runWR(t, a, nil, "tags", "prod-eu/w-1", "prod-eu/w-2", "--set", "a=1", "--dry-run")
+	want := "dry run: prod-eu/w-1: would PUT /iam/workloads/prod-eu/w-1/tags, nothing sent\n" + `  {"tags":{"a":"1","b":"2"}}` + "\n" +
+		"prod-eu/w-2: unchanged\n"
+	if r.exit != 0 || len(a.writes) != 0 || r.stdout != want {
+		t.Fatalf("exit %d, writes %q, stdout %q, stderr %q", r.exit, a.writes, r.stdout, r.stderr)
+	}
+	r = runWR(t, a, nil, "tags", "prod-eu/w-2", "--set", "a=1", "--dry-run", "--json")
+	if r.exit != 0 || len(a.writes) != 0 || compactJSON(t, r.stdout) != `{"dryRun":true,"targets":["prod-eu/w-2"]}` || r.stderr != "prod-eu/w-2: unchanged\n" {
+		t.Fatalf("unchanged --json: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}
+
+// An offboarding's dry run names each workload's operation, in the order of the targets, one at a time.
+func TestOffboardDryRunSaysEachOperationInTheTargetsOrder(t *testing.T) {
+	a := &wrAPI{}
+	r := runWR(t, a, nil, "offboard", "prod-eu/w-2", "prod-eu/w-1", "--dry-run", "--json")
+	want := "dry run: prod-eu/w-2: would POST /iam/operations, nothing sent\n" + `  {"router":"prod-eu","type":"offboard","workloadId":"w-2"}` + "\n" +
+		"dry run: prod-eu/w-1: would POST /iam/operations, nothing sent\n" + `  {"router":"prod-eu","type":"offboard","workloadId":"w-1"}` + "\n"
+	if r.exit != 0 || len(a.writes) != 0 || r.stderr != want || compactJSON(t, r.stdout) != `{"dryRun":true,"targets":["prod-eu/w-2","prod-eu/w-1"]}` {
+		t.Fatalf("exit %d, writes %q, stdout %q, stderr %q", r.exit, a.writes, r.stdout, r.stderr)
 	}
 }

@@ -200,7 +200,7 @@ func TestRoutersUninstallNeedsYesWithoutATerminal(t *testing.T) {
 func TestRoutersUninstallDryRunSendsNothing(t *testing.T) {
 	a := &routersAPI{}
 	r := runRouters(t, a, nil, "uninstall", "prod-eu", "--dry-run")
-	if r.exit != 0 || len(a.posted) != 0 || !strings.Contains(r.stdout, "dry run: 1 router") {
+	if want := "dry run: prod-eu: would POST /iam/operations, nothing sent\n" + `  {"router":"prod-eu","type":"uninstall-router"}` + "\n"; r.exit != 0 || len(a.posted) != 0 || r.stdout != want {
 		t.Errorf("exit %d, posted %v, stdout %q", r.exit, a.posted, r.stdout)
 	}
 }
@@ -331,7 +331,8 @@ func TestRoutersPauseAndResumeJSON(t *testing.T) {
 	}
 	a := &routersAPI{}
 	r = runRouters(t, a, nil, "pause", "r1", "r2", "--reason", "x", "--dry-run", "--json")
-	if r.exit != 0 || len(a.posted) != 0 || r.stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"r1\",\n    \"r2\"\n  ]\n}\n" || r.stderr != "dry run: 2 routers, nothing sent\n  r1\n  r2\n" {
+	if r.exit != 0 || len(a.posted) != 0 || r.stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"r1\",\n    \"r2\"\n  ]\n}\n" || r.stderr != "dry run: r1: would POST /iam/routers/r1/pause, nothing sent\n  {\"keepAsleep\":false,\"reason\":\"x\"}\n"+
+		"dry run: r2: would POST /iam/routers/r2/pause, nothing sent\n  {\"keepAsleep\":false,\"reason\":\"x\"}\n" {
 		t.Errorf("dry run: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 	r = runRouters(t, a, askingTerminal(false), "uninstall", "prod-eu", "--json")

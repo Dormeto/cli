@@ -22,18 +22,25 @@ import (
 var ErrDryRun = errors.New("dry run: nothing sent")
 
 // DryRun is a client's --dry-run: each write is said on Out and kept in Requests, not sent. Context are the members the
-// command adds to its --json beside them (onboard's candidate).
+// command adds to its --json beside them (onboard's candidate). Targets, when set, are the targets its --json names: those a
+// command confirms and names itself (a workload, an exclusion's target in words), whatever its requests address.
 type DryRun struct {
 	Out     io.Writer
 	Context map[string]any
+	Targets []string
 
 	mu       sync.Mutex
 	requests []DryRequest
 }
 
-// JSON is what a dry run prints under --json: {"dryRun": true, "targets": [...]}, each target once, and its context.
+// JSON is what a dry run prints under --json: {"dryRun": true, "targets": [...]}, each target once (Targets when set), and
+// its context.
 func (d *DryRun) JSON() map[string]any {
-	out := map[string]any{"dryRun": true, "targets": DryTargets(d.Requests())}
+	targets := d.Targets
+	if targets == nil {
+		targets = DryTargets(d.Requests())
+	}
+	out := map[string]any{"dryRun": true, "targets": targets}
 	for k, v := range d.Context {
 		out[k] = v
 	}
@@ -104,8 +111,9 @@ func DryRunText(target, method, path string, body json.RawMessage) string {
 const organization = "organization"
 
 // RequestTargets are what a write to the manager addresses, as its command names it: the <router>/<workload>, router, user,
-// group or exclusion of its path; for a new user or group, the one its body names; for an operation, the router, the account
-// or the candidate its body names; the candidates a dismissal or a restore names; else the organization.
+// group or exclusion of its path; for a new user or group, the one its body names; for an operation, the <router>/<workload>,
+// router, account or candidate its body names; for a new exclusion, its workload's <router>/<workload>, else its target's
+// ARN, path or account; the candidates a dismissal or a restore names; else the organization.
 func RequestTargets(path string, body json.RawMessage) []string {
 	if t := requestTarget(path, body); t != "" {
 		return []string{t}
@@ -127,7 +135,7 @@ func requestTarget(path string, body json.RawMessage) string {
 	}
 	var fields map[string]any
 	_ = json.Unmarshal(body, &fields)
-	named := func(keys ...string) string {
+	named := func(fields map[string]any, keys ...string) string {
 		for _, k := range keys {
 			if v, ok := fields[k].(string); ok && v != "" {
 				return v
@@ -135,15 +143,26 @@ func requestTarget(path string, body json.RawMessage) string {
 		}
 		return ""
 	}
+	member := func(key string) map[string]any {
+		m, _ := fields[key].(map[string]any)
+		return m
+	}
 	switch {
 	case parts[0] == "workloads" && len(parts) >= 3:
 		return parts[1] + "/" + parts[2]
 	case slices.Contains([]string{"routers", "users", "groups", "exclusions"}, parts[0]) && len(parts) >= 2:
 		return parts[1]
 	case parts[0] == "users" || parts[0] == "groups":
-		return named("email", "name")
+		return named(fields, "email", "name")
+	case parts[0] == "operations" && named(fields, "router") != "" && named(fields, "workloadId") != "": // an offboarding
+		return named(fields, "router") + "/" + named(fields, "workloadId")
 	case parts[0] == "operations":
-		return named("router", "account", "candidateId")
+		return named(fields, "router", "account", "candidateId")
+	case parts[0] == "exclusions":
+		if w := member("workload"); named(w, "router") != "" && named(w, "id") != "" { // a workload's exclusion
+			return named(w, "router") + "/" + named(w, "id")
+		}
+		return named(member("target"), "arn", "path", "account")
 	}
 	return ""
 }

@@ -2,7 +2,7 @@ package main
 
 // `dormeto aws workloads keep-awake`, `resume` and `schedule show|set|clear`: pauses and schedules of workloads through the
 // manager's /iam routes. Targets are <router>/<workload> arguments or --tag (every workload that carries them); more
-// than one target is confirmed on a terminal (--yes without one; --dry-run lists them). Exit codes as the fleet commands:
+// than one target is confirmed on a terminal (--yes without one; --dry-run says each request). Exit codes as the fleet commands:
 // 0; 1 when the manager refused or a workload failed or did not wake in time; 2 for a bad flag or argument, or no --yes
 // without a terminal; 128 and the signal's number on a signal.
 
@@ -135,24 +135,26 @@ func (t *targetFlags) resolve(ctx context.Context, c *cobra.Command, api *fleet.
 	return out, incomplete, nil
 }
 
-// confirmWorkloads lists the targets on --dry-run (done: true), else asks on a terminal when there are several, or
-// always (the destructive commands), and --yes is absent (done: true when declined), the targets listed first; it
-// refuses without a terminal. It is confirmNames with what in the dry run's line, and question taking the count in
-// words ("Offboard %s?": "Offboard 1 workload?").
-func confirmWorkloads(ctx context.Context, c *cobra.Command, deps fleetDeps, targets []fleet.Target, what, question string, always, dryRun, yes bool) (done bool, err error) {
+// confirmWorkloads, on --dry-run, asks nothing: the writes that follow are said, not sent (sayRequests). Else it asks on a
+// terminal when there are several targets, or always (the destructive commands), and --yes is absent (done: true when
+// declined), the targets listed first; it refuses without a terminal. It is confirmNames with question taking the count
+// in words ("Offboard %s?": "Offboard 1 workload?").
+func confirmWorkloads(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client, targets []fleet.Target, question string, always, dryRun, yes bool) (done bool, err error) {
 	names := make([]string, len(targets))
 	for i, t := range targets {
 		names[i] = t.String()
 	}
-	count := fmt.Sprintf("%d %s", len(names), fleet.Plural(len(names), "workload"))
 	if dryRun {
-		return true, stopDryRun(c, what+" "+count, names)
+		sayRequests(c, api, names)
+		return false, nil
 	}
+	count := fmt.Sprintf("%d %s", len(names), fleet.Plural(len(names), "workload"))
 	return ask(ctx, c, deps, names, "workload", fmt.Sprintf(question, count), always, yes, true)
 }
 
 // applyAll runs do for each target in turn: its line goes to stdout, its failure to stderr as "target: message"; the
-// others go on. A failure makes the exit 1. It returns the targets that succeeded.
+// others go on. A failure makes the exit 1. It returns the targets that succeeded. Under a dry run, a write do said
+// (fleet.ErrDryRun) is neither a line nor a failure, and a run without a failure ends as the dry run it is (ErrDryRun).
 func applyAll(ctx context.Context, c *cobra.Command, targets []fleet.Target, do func(fleet.Target) (string, error)) ([]fleet.Target, error) {
 	var ok []fleet.Target
 	failed := 0
@@ -161,6 +163,9 @@ func applyAll(ctx context.Context, c *cobra.Command, targets []fleet.Target, do 
 			return ok, err
 		}
 		line, err := do(t)
+		if errors.Is(err, fleet.ErrDryRun) { // said, not sent
+			continue
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ok, ctx.Err()
@@ -172,15 +177,19 @@ func applyAll(ctx context.Context, c *cobra.Command, targets []fleet.Target, do 
 		ok = append(ok, t)
 		fmt.Fprint(c.OutOrStdout(), line)
 	}
-	if failed > 0 {
+	switch {
+	case failed > 0:
 		return ok, exitCode(1)
+	case dryRunning(c):
+		return ok, fleet.ErrDryRun
 	}
 	return ok, nil
 }
 
 // applyAnswers is applyAll for commands with --json: do also gives the API's answer for the target. Without asJSON the
 // lines go to stdout as applyAll prints them; with it they go to stderr, and the answers of the targets that succeeded
-// are printed on stdout, by target ({} for none), even when the exit is 1.
+// are printed on stdout, by target ({} for none), even when the exit is 1; a dry run's --json is the dry run's
+// (fleetFlags.run).
 func applyAnswers(ctx context.Context, c *cobra.Command, targets []fleet.Target, asJSON bool, do func(fleet.Target) (line string, answer json.RawMessage, err error)) ([]fleet.Target, error) {
 	answers := map[string]json.RawMessage{}
 	ok, err := applyAll(ctx, c, targets, func(t fleet.Target) (string, error) {
@@ -195,7 +204,7 @@ func applyAnswers(ctx context.Context, c *cobra.Command, targets []fleet.Target,
 		}
 		return line, nil
 	})
-	return ok, printResult(c, asJSON, answers, err)
+	return ok, printResult(c, asJSON && !dryRunning(c), answers, err)
 }
 
 // waitAwakeJSON is waitAwake, its lines on stderr under --json (stdout holds the answers alone).
@@ -216,8 +225,8 @@ type writeCommand struct {
 	dryRun  bool
 	yes     bool
 	always  bool // ask even for one target (offboard, exclude)
-	// wording, when set, words what is asked and said after the targets are known (the clouds of their routers).
-	wording func(ctx context.Context, api *fleet.Client, targets []fleet.Target, what, question string) (string, string)
+	// wording, when set, words what is asked after the targets are known (the clouds of their routers).
+	wording func(ctx context.Context, api *fleet.Client, targets []fleet.Target, question string) string
 }
 
 func (w *writeCommand) bindShared(cmd *cobra.Command) {
@@ -227,7 +236,7 @@ func (w *writeCommand) bindShared(cmd *cobra.Command) {
 
 // bindConfirmation binds --dry-run and --yes alone (rename takes no --tag).
 func (w *writeCommand) bindConfirmation(cmd *cobra.Command) {
-	cmd.Flags().BoolVar(&w.dryRun, "dry-run", false, "list the targets and stop")
+	cmd.Flags().BoolVar(&w.dryRun, "dry-run", false, dryRunUsage)
 	yes := "do not ask for confirmation of several targets (needed without a terminal)"
 	if w.always {
 		yes = "do not ask for confirmation (needed without a terminal)"
@@ -235,17 +244,21 @@ func (w *writeCommand) bindConfirmation(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&w.yes, "yes", false, yes)
 }
 
-// run resolves, confirms and calls act with the targets.
-func (w *writeCommand) run(c *cobra.Command, args []string, what, question string, act func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error) error {
+// run resolves, confirms and calls act with the targets; under --dry-run act's writes are said, not sent.
+func (w *writeCommand) run(c *cobra.Command, args []string, question string, act func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error) error {
 	return w.f.run(c, w.deps, func(ctx context.Context, api *fleet.Client) error {
 		targets, incomplete, err := w.targets.resolve(ctx, c, api, args)
 		if err != nil {
 			return err
 		}
-		// What could not be resolved is said after the action on the others, and makes the exit 1.
+		// What could not be resolved is said after the action on the others, and makes the exit 1 (a dry run's too, its
+		// --json printed first).
 		report := func(err error) error {
 			if incomplete == "" || ctx.Err() != nil {
 				return err
+			}
+			if dry := api.DryRun(); dry != nil && errors.Is(err, fleet.ErrDryRun) {
+				err = endDryRun(c, dry)
 			}
 			fmt.Fprintln(c.ErrOrStderr(), incomplete)
 			if err == nil {
@@ -256,10 +269,10 @@ func (w *writeCommand) run(c *cobra.Command, args []string, what, question strin
 		if len(targets) == 0 { // none resolved, a router did not answer: act on none, so that --json prints its empty shape
 			return report(act(ctx, api, nil))
 		}
-		if w.wording != nil && (w.dryRun || !w.yes) { // the routers are read only to word a question or a dry run
-			what, question = w.wording(ctx, api, targets, what, question)
+		if w.wording != nil && !w.dryRun && !w.yes { // the routers are read only to word a question
+			question = w.wording(ctx, api, targets, question)
 		}
-		if done, err := confirmWorkloads(ctx, c, w.deps, targets, what, question, w.always, w.dryRun, w.yes); done || err != nil {
+		if done, err := confirmWorkloads(ctx, c, w.deps, api, targets, question, w.always, w.dryRun, w.yes); done || err != nil {
 			return report(err)
 		}
 		return report(act(ctx, api, targets))
@@ -303,7 +316,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				Until      string `json:"until"`
 				KeepAsleep bool   `json:"keepAsleep"`
 			}{why, end.UTC().Format("2006-01-02T15:04:05Z"), false}
-			return w.run(c, args, "keep awake until "+end.Format("2006-01-02 15:04 MST")+": would act on", "Keep %s awake?",
+			return w.run(c, args, "Keep %s awake?",
 				func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 					ok, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 						var raw json.RawMessage
@@ -472,7 +485,7 @@ func newWorkloadsResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err := w.targets.check(args, false); err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "resume", "Resume %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "Resume %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Post(ctx, t.Path("/resume"), nil, &raw); err != nil {
@@ -614,7 +627,7 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "set the schedule of", "Set the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "Set the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var res struct {
 						Schedule       json.RawMessage   `json:"schedule"`
@@ -712,7 +725,7 @@ func newScheduleClear(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err := w.targets.check(args, false); err != nil {
 				return finish(c, err)
 			}
-			return w.run(c, args, "clear the schedule of", "Clear the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
+			return w.run(c, args, "Clear the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage
 					if err := api.Delete(ctx, t.Path("/schedule"), &raw); err != nil {

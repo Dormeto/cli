@@ -24,6 +24,10 @@ func TestRequestTargetsNameWhatAWriteAddresses(t *testing.T) {
 		{"/operations", `{"type":"install-router","account":"123456789012","region":"eu-west-1"}`, []string{"123456789012"}},
 		{"/operations", `{"type":"uninstall-router","router":"r1"}`, []string{"r1"}},
 		{"/operations", `{"type":"onboard","candidateId":"arn:x"}`, []string{"arn:x"}},
+		{"/operations", `{"type":"offboard","router":"r1","workloadId":"w-1"}`, []string{"r1/w-1"}},
+		{"/exclusions", `{"target":{"kind":"target-group","arn":"arn:t"},"reason":"x","workload":{"router":"r1","id":"w-1"}}`, []string{"r1/w-1"}},
+		{"/exclusions", `{"target":{"kind":"target-group","path":"projects/p/global/backendServices/web"},"reason":"x"}`, []string{"projects/p/global/backendServices/web"}},
+		{"/exclusions", `{"target":{"kind":"account","account":"123456789012"},"reason":"x"}`, []string{"123456789012"}},
 		{"/discovery/dismiss", `{"ids":["arn:a","arn:b"]}`, []string{"arn:a", "arn:b"}},
 		{"/settings/workloads", `{"hibernate":true}`, []string{"organization"}},
 		{"/discovery/run", ``, []string{"organization"}},
@@ -53,6 +57,12 @@ func TestDryRunKeepsEachWritesTargets(t *testing.T) {
 	d.keep("DELETE", "/exclusions/ex-1", nil)
 	got, _ := json.Marshal(d.JSON())
 	if string(got) != `{"dryRun":true,"targets":["ex-1","ex-2"]}` {
+		t.Errorf("%s", got)
+	}
+	// A command that names its targets itself (the ones it confirmed) has them in its --json, whatever its requests address.
+	d = &DryRun{Targets: []string{"target group web"}}
+	d.keep("POST", "/exclusions", []byte(`{"target":{"kind":"target-group","arn":"arn:t"}}`))
+	if got, _ := json.Marshal(d.JSON()); string(got) != `{"dryRun":true,"targets":["target group web"]}` {
 		t.Errorf("%s", got)
 	}
 }

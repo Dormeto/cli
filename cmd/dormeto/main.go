@@ -129,13 +129,16 @@ var withClientDryRun = func() map[string]bool {
 	return out
 }()
 
+// dryRunUsage is the help of every --dry-run that says each request it would send.
+const dryRunUsage = "say what would be sent and stop"
+
 // acceptDryRun adds --dry-run to the commands of withClientDryRun under top (the AWS and Google Cloud review's §4.2: --yes and
 // --dry-run on every write): their client then says each write it would send and sends none.
 func acceptDryRun(top *cobra.Command) {
 	var walk func(c *cobra.Command, path string)
 	walk = func(c *cobra.Command, path string) {
 		if withClientDryRun[path] && c.Flags().Lookup("dry-run") == nil {
-			c.Flags().Bool("dry-run", false, "say what would be sent and stop")
+			c.Flags().Bool("dry-run", false, dryRunUsage)
 			if c.Annotations == nil {
 				c.Annotations = map[string]string{}
 			}

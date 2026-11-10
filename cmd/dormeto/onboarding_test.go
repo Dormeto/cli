@@ -588,9 +588,15 @@ func TestExcludeGoogleCloudWorkloadBuildsItsBackendServicePath(t *testing.T) {
 
 func TestExcludeConfirmationNamesBothCloudsResources(t *testing.T) {
 	a := &obAPI{}
-	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--dry-run")
-	if !strings.Contains(r.stdout, "dry run: exclude the backend service of 1 workload") {
-		t.Errorf("a dry run names only the AWS resource: %q %q", r.stdout, r.stderr)
+	r := runOB(t, a, askingTerminal(false), "workloads", "exclude", "gcp-dev/g-1", "--reason", "r")
+	if !strings.Contains(r.stdout, "Exclude the backend service of 1 workload from discovery?") || len(a.writes) != 0 {
+		t.Errorf("the question names only the AWS resource: %q %q", r.stdout, r.stderr)
+	}
+	// A dry run says the request, the backend service's path in its body.
+	r = runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--dry-run")
+	if want := "dry run: gcp-dev/g-1: would POST /iam/exclusions, nothing sent\n" +
+		`  {"reason":"r","target":{"kind":"target-group","path":"projects/dormeto-dev/global/backendServices/web"},"workload":{"id":"g-1","router":"gcp-dev"}}` + "\n"; r.exit != 0 || r.stdout != want || len(a.writes) != 0 {
+		t.Errorf("dry run: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }
 
@@ -649,23 +655,25 @@ func TestOnboardWithoutRouterSendsNoRouterKeyAndNamesTheGoogleWorkload(t *testin
 	}
 }
 
-func TestExcludeWordingReadsRoutersOnlyWhenAskedOrDryRun(t *testing.T) {
-	a := &obAPI{}
-	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", "--yes", "--no-wait")
-	for _, q := range r.api.requests {
-		if q.URL.Path == "/iam/routers" {
-			t.Errorf("GET /routers with --yes: exit %d, stderr %q", r.exit, r.stderr)
+func TestExcludeWordingReadsRoutersOnlyWhenAsked(t *testing.T) {
+	for _, flag := range []string{"--yes", "--dry-run"} {
+		a := &obAPI{}
+		r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "--reason", "r", flag, "--no-wait")
+		for _, q := range r.api.requests {
+			if q.URL.Path == "/iam/routers" {
+				t.Errorf("GET /routers with %s: exit %d, stderr %q", flag, r.exit, r.stderr)
+			}
 		}
 	}
 }
 
 func TestExcludeWordingNamesEitherResourceWhenRoutersAreMixedOrUnknown(t *testing.T) {
 	a := &obAPI{}
-	r := runOB(t, a, nil, "workloads", "exclude", "gcp-dev/g-1", "prod-eu/w-1", "--reason", "r", "--dry-run")
-	if !strings.Contains(r.stdout, "exclude the target group or backend service of 2 workloads") {
+	r := runOB(t, a, askingTerminal(false), "workloads", "exclude", "gcp-dev/g-1", "prod-eu/w-1", "--reason", "r")
+	if !strings.Contains(r.stdout, "Exclude the target group or backend service of 2 workloads from discovery?") {
 		t.Errorf("mixed: %q %q", r.stdout, r.stderr)
 	}
-	r = runOB(t, a, nil, "workloads", "exclude", "nowhere/w-1", "--reason", "r", "--dry-run")
+	r = runOB(t, a, askingTerminal(false), "workloads", "exclude", "nowhere/w-1", "--reason", "r")
 	if !strings.Contains(r.stdout, "target group or backend service") {
 		t.Errorf("unknown: %q %q", r.stdout, r.stderr)
 	}
@@ -673,13 +681,19 @@ func TestExcludeWordingNamesEitherResourceWhenRoutersAreMixedOrUnknown(t *testin
 
 func TestExclusionsAddLabelsAProjectAsOne(t *testing.T) {
 	a := &obAPI{}
-	r := runOB(t, a, nil, "exclusions", "add", "--account", "dormeto-dev", "--reason", "r", "--dry-run")
-	if !strings.Contains(r.stdout, "project dormeto-dev") || strings.Contains(r.stdout, "account dormeto-dev") {
+	r := runOB(t, a, askingTerminal(false), "exclusions", "add", "--account", "dormeto-dev", "--reason", "r")
+	if !strings.Contains(r.stdout, "Exclude project dormeto-dev from discovery?") || strings.Contains(r.stdout, "account dormeto-dev") {
 		t.Errorf("stdout %q stderr %q", r.stdout, r.stderr)
 	}
-	r = runOB(t, a, nil, "exclusions", "add", "--account", "111111111111", "--reason", "r", "--dry-run")
-	if !strings.Contains(r.stdout, "account 111111111111") {
+	r = runOB(t, a, askingTerminal(false), "exclusions", "add", "--account", "111111111111", "--reason", "r")
+	if !strings.Contains(r.stdout, "Exclude account 111111111111 from discovery?") {
 		t.Errorf("stdout %q", r.stdout)
+	}
+	// A dry run's --json names the target as the question does, its request the account.
+	r = runOB(t, a, nil, "exclusions", "add", "--account", "dormeto-dev", "--reason", "r", "--dry-run", "--json")
+	if r.exit != 0 || compactJSON(t, r.stdout) != `{"dryRun":true,"targets":["project dormeto-dev"]}` ||
+		!strings.HasPrefix(r.stderr, "dry run: dormeto-dev: would POST /iam/exclusions, nothing sent\n") || len(a.writes) != 0 {
+		t.Errorf("dry run: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 }
 

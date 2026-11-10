@@ -58,7 +58,7 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 			"--wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files) and its --type (a name, or inherit),\n"+
 			"inherit giving each back to its router, then its type's. --wait-seconds, --max-holders and --drain-seconds are 0 on\n"+
 			"Google Cloud, so any value is refused; inherit is accepted. --wake-mode any is passed on: the router decides by the\n"+
-			"workload's load balancer. Several workloads are confirmed on a terminal (--yes without one; --dry-run lists them). A refusal is printed for that workload, the others go on (exit 1). A router without the settings levels says so, with the version to install.",
+			"workload's load balancer. Several workloads are confirmed on a terminal (--yes without one; --dry-run says each request). A refusal is printed for that workload, the others go on (exit 1). A router without the settings levels says so, with the version to install.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.IDs, r.Levels = ids, body
 			return run(ctx, d, r)
@@ -111,7 +111,7 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 	gcpRouterFlags(cmd, &f)
 	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the router's)")
 	cmd.Flags().StringVar(&kind, "type", "", "a type's name, or inherit (its backends')")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "list the workloads and stop")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, dryRunUsage)
 	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation of several targets (needed without a terminal)")
 	return cmd
 }
@@ -170,7 +170,7 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit")
 	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit")
-	fl.BoolVar(&f.dryRun, "dry-run", false, "say what would be set and stop")
+	fl.BoolVar(&f.dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&f.yes, "yes", false, asksNothingYes)
 	return cmd
 }

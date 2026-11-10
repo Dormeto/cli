@@ -186,14 +186,22 @@ func (f *fleetFlags) run(c *cobra.Command, deps fleetDeps, do func(ctx context.C
 	if s := signalled(); s != nil {
 		return exitCode(signalCode(s))
 	}
-	// A dry run stopped at a write it said: nothing was sent, exit 0; --json prints what it would have sent.
+	if api != nil { // the client's dry run, or the one a command's own --dry-run made its client's (sayRequests)
+		dry = api.DryRun()
+	}
 	if dry != nil && errors.Is(err, fleet.ErrDryRun) {
-		err = nil
-		if jsonFlag(c) {
-			err = printJSON(c.OutOrStdout(), dry.JSON())
-		}
+		err = endDryRun(c, dry)
 	}
 	return finish(c, err)
+}
+
+// endDryRun ends a dry run stopped at the writes it said: nothing was sent, so no error (exit 0); --json prints what it
+// would have sent.
+func endDryRun(c *cobra.Command, dry *fleet.DryRun) error {
+	if jsonFlag(c) {
+		return printJSON(c.OutOrStdout(), dry.JSON())
+	}
+	return nil
 }
 
 // routerFilters are the flags that narrow routers: --account, --router-region, --name and --tag.

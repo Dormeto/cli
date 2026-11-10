@@ -67,8 +67,12 @@ type opResult struct {
 // stderr: the steps as they change, each failure (a refused start with the manager's message: the others go on), and,
 // when --timeout (no limit when not positive) or a signal stops the following, each operation still running in the
 // manager with how to follow it. It gives the records of the operations started, in the items' order, as last read; the
-// error is exit 1 when one failed or was not followed to its end (the run's signal exit wins).
+// error is exit 1 when one failed or was not followed to its end (the run's signal exit wins). A dry run starts them one
+// at a time, so that it says its requests in the items' order.
 func runOperations(ctx context.Context, c *cobra.Command, deps fleetDeps, items []opItem, concurrency int, w waitFlags) ([]fleet.Operation, error) {
+	if dryRunning(c) {
+		concurrency = 1
+	}
 	o := opOutput{info: textOut(c), errs: c.ErrOrStderr(), mu: &sync.Mutex{}, named: len(items) > 1}
 	followed, cancel := ctx, context.CancelFunc(func() {})
 	if w.timeout > 0 { // none is no limit: the context alone ends the following
@@ -309,15 +313,34 @@ func jsonFlag(c *cobra.Command) bool {
 	return asJSON
 }
 
-// confirmNames is asked before acting on names (each a noun: "router", "workload"): on --dry-run it lists them instead
-// (done: true); else it asks question (see ask). question is asked as it is written: it names the targets and what
-// happens.
-func confirmNames(ctx context.Context, c *cobra.Command, deps fleetDeps, names []string, noun, question string, always, dryRun, yes bool) (done bool, err error) {
-	n := len(names)
+// confirmNames is asked before acting on names (each a noun: "router", "workload"): on --dry-run it asks nothing and the
+// writes that follow are said, not sent (sayRequests); else it asks question (see ask). question is asked as it is
+// written: it names the targets and what happens.
+func confirmNames(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Client, names []string, noun, question string, always, dryRun, yes bool) (done bool, err error) {
 	if dryRun {
-		return true, stopDryRun(c, fmt.Sprintf("%d %s", n, fleet.Plural(n, noun)), names)
+		sayRequests(c, api, names)
+		return false, nil
 	}
 	return ask(ctx, c, deps, names, noun, question, always, yes, false)
+}
+
+// sayRequests makes the rest of a command's --dry-run its client's, as the client-level dry runs and gcp's are: each write
+// it goes on to make is said, "dry run: <target>: would <method> <path>, nothing sent" and its body on the next line
+// (fleet.DryRunText), on textOut, and kept, none sent; its reads are sent. fleetFlags.run then ends it, exit 0, --json
+// printing the released {"dryRun": true, "targets": names}.
+func sayRequests(c *cobra.Command, api *fleet.Client, names []string) {
+	dry := api.DryRun()
+	if dry == nil {
+		dry = &fleet.DryRun{Out: textOut(c)}
+		api.SetDryRun(dry)
+	}
+	dry.Targets = emptyIfNil(names)
+}
+
+// dryRunning tells whether the command runs with --dry-run (false for a command without it).
+func dryRunning(c *cobra.Command) bool {
+	dry, _ := c.Flags().GetBool("dry-run")
+	return dry
 }
 
 // ask asks question on a terminal when there are several names, or always (done: true when it is declined: nothing is
@@ -344,25 +367,12 @@ func ask(ctx context.Context, c *cobra.Command, deps fleetDeps, names []string, 
 	return true, printStop(c, "confirmed", false, names)
 }
 
-// stopDryRun says what a dry run would act on (listDryRun, on textOut) and, under --json, prints
-// {"dryRun":true,"targets":[…]} on stdout.
-func stopDryRun(c *cobra.Command, what string, names []string) error {
-	listDryRun(textOut(c), what, names)
-	return printStop(c, "dryRun", true, names)
-}
-
 // printStop prints, under --json, why nothing was sent and to what: {<key>: <value>, "targets": [names]}.
 func printStop(c *cobra.Command, key string, value bool, names []string) error {
 	if !jsonFlag(c) {
 		return nil
 	}
 	return printJSON(c.OutOrStdout(), map[string]any{key: value, "targets": emptyIfNil(names)})
-}
-
-// listDryRun prints what a dry run would act on: "dry run: <what>, nothing sent", then each name.
-func listDryRun(out io.Writer, what string, names []string) {
-	fmt.Fprintf(out, "dry run: %s, nothing sent\n", what)
-	listNames(out, names)
 }
 
 // listNames prints each name on its line, indented.

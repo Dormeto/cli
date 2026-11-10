@@ -5,6 +5,8 @@ package main
 // --dry-run on every write, which sends nothing.
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,8 +15,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/gcp/gcptest"
+	"github.com/Dormeto/cli/internal/gcponboard"
 )
 
 // routerLevelAPI is a fake manager whose routers answer their level, and that records the writes.
@@ -155,7 +162,7 @@ var dryRunWrites = []struct {
 	{[]string{"discovery", "dismiss", dismissedARN}, "POST /iam/discovery/dismiss", []string{dismissedARN}},
 	{[]string{"discovery", "restore", dismissedARN}, "POST /iam/discovery/restore", []string{dismissedARN}},
 	{[]string{"discovery", "run"}, "POST /iam/discovery/run", []string{"organization"}},
-	{[]string{"exclusions", "lift", "ex-1", "ex-2"}, "DELETE /iam/exclusions/ex-2", []string{"ex-2", "ex-1"}},
+	{[]string{"exclusions", "lift", "ex-1", "ex-2"}, "DELETE /iam/exclusions/ex-2", []string{"ex-1", "ex-2"}},
 	{[]string{"groups", "create", "payments"}, "POST /iam/groups", []string{"payments"}},
 	{[]string{"groups", "update", "payments", "--description", "the payments team"}, "PUT /iam/groups/payments", []string{"payments"}},
 	{[]string{"manager", "check", "--enable", "--no-alert"}, "PUT /iam/update/check", []string{"organization"}},
@@ -318,4 +325,95 @@ func TestKeepAwakeReasonIsAPausesOneTo256Characters(t *testing.T) {
 	if r := runWL(t, a, nil, "keep-awake", "prod-eu/w-1", "--for", "2h", "--reason", " release ci "); r.exit != 0 || len(a.writes) != 1 || !strings.Contains(a.writes[0], `"reason":"release ci"`) {
 		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
+}
+
+// gcpTwinRig is a fake Google with the router of dormeto-dev installed in europe-west1, and the gcp commands that run
+// internal/gcponboard's against it: the twins of the AWS commands, run for what they print.
+func gcpTwinRig(t *testing.T) gcpRuns {
+	t.Helper()
+	s := gcptest.New(t)
+	s.Policy = map[string]any{"version": 1, "etag": "BwAAAA==", "bindings": []any{
+		map[string]any{"role": "roles/owner", "members": []any{"user:owner@example.com"}}}}
+	const image = "europe-west1-docker.pkg.dev/dormeto-dev/dormeto/router:0.34.0"
+	s.Images[image] = true
+	fake := func(d gcponboard.Deps) gcponboard.Deps {
+		d.Google = &gcp.Client{HTTP: s.HTTP, Tokens: gcptest.Tokens{AccountName: "me@example.com"}, Sleep: func(context.Context, time.Duration) error { return nil }}
+		d.Terminal, d.Cache = false, t.TempDir()
+		d.Sleep = func(context.Context, time.Duration) error { return nil }
+		return d
+	}
+	var out bytes.Buffer
+	install := gcponboard.Request{Project: "dormeto-dev", Region: "europe-west1", Image: image, Yes: true}
+	if code := gcponboard.Install(context.Background(), fake(gcponboard.Deps{Out: &out, Err: &out, Now: time.Now}), install); code != 0 {
+		t.Fatalf("install: exit %d:\n%s", code, out.String())
+	}
+	run := func(f gcpRun) gcpRun {
+		return func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int { return f(ctx, fake(d), r) }
+	}
+	return gcpRuns{routerPause: run(gcponboard.RouterPause),
+		workloads: gcpWorkloadRuns{nap: run(gcponboard.WorkloadsNap), settings: run(gcponboard.WorkloadsSettings)}}
+}
+
+// gcpRanOn runs a gcp command line on runs, for its standard output, its standard error and its exit code.
+func gcpRanOn(runs gcpRuns, args ...string) (stdout, stderr string, exit int) {
+	root := &cobra.Command{Use: "dormeto", SilenceUsage: true}
+	root.AddCommand(newGcp(runs, fleetDeps{}, "1.2.3"))
+	var o, e bytes.Buffer
+	root.SetOut(&o)
+	root.SetErr(&e)
+	root.SetIn(strings.NewReader(""))
+	exit = execute(root, args...)
+	return o.String(), e.String(), exit
+}
+
+// One dry-run text on both subtrees: each request a twin would send said as the other says its own, "dry run: <target>: would
+// <method> <path>, nothing sent", its body on the next line, and the released {"dryRun": true, "targets": […]} under --json.
+func TestTheTwinsDryRunsSayTheirRequestsAlike(t *testing.T) {
+	runs := gcpTwinRig(t)
+	where := []string{"--project", "dormeto-dev", "--region", "europe-west1"}
+	const router = "dmtr-dormeto-dev-europe-west1"
+	for _, c := range []struct {
+		aws, gcp             []string
+		awsSays, gcpSays     string
+		awsTarget, gcpTarget string
+	}{
+		{[]string{"workloads", "nap", "r1/w-1"}, []string{"workloads", "nap", "shop"},
+			"dry run: r1/w-1: would POST /iam/workloads/r1/w-1/nap, nothing sent\n",
+			"dry run: " + router + "/shop: would POST /v1/workloads/shop/nap, nothing sent\n", "r1/w-1", router + "/shop"},
+		{[]string{"workloads", "settings", "r1/w-1", "--idle-minutes", "30"}, []string{"workloads", "settings", "shop", "--idle-minutes", "30"},
+			"dry run: r1/w-1: would PUT /iam/workloads/r1/w-1/settings, nothing sent\n  {\"idleMinutes\":30}\n",
+			"dry run: " + router + "/shop: would PUT /v1/workloads/shop/settings, nothing sent\n  {\"idleMinutes\":30}\n", "r1/w-1", router + "/shop"},
+		{[]string{"routers", "pause", "r1", "--reason", "freeze"}, []string{"routers", "pause", "--reason", "freeze"},
+			"dry run: r1: would POST /iam/routers/r1/pause, nothing sent\n  {\"keepAsleep\":false,\"reason\":\"freeze\"}\n",
+			"dry run: " + router + ": would POST /v1/pause, nothing sent\n  {\"reason\":\"freeze\"}\n", "r1", router},
+	} {
+		a := &writesAPI{}
+		r := runFleetWith(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, append(slices.Clone(c.aws), "--dry-run")...)
+		if r.exit != 0 || len(a.writes) != 0 || r.stdout != c.awsSays {
+			t.Errorf("aws %q: exit %d, writes %q, stdout %q, want %q, stderr %q", c.aws, r.exit, a.writes, r.stdout, c.awsSays, r.stderr)
+		}
+		stdout, stderr, exit := gcpRanOn(runs, slices.Concat([]string{"gcp"}, c.gcp, where, []string{"--dry-run"})...)
+		if exit != 0 || stdout != c.gcpSays {
+			t.Errorf("gcp %q: exit %d, stdout %q, want %q, stderr %q", c.gcp, exit, stdout, c.gcpSays, stderr)
+		}
+		// --json: the released shape alone on stdout, the request on stderr, on both.
+		r = runFleetWith(t, &fakeAPI{custom: a.handler}, "eu-west-1", nil, append(slices.Clone(c.aws), "--dry-run", "--json")...)
+		if want := `{"dryRun":true,"targets":["` + c.awsTarget + `"]}`; r.exit != 0 || compactJSON(t, r.stdout) != want || r.stderr != c.awsSays {
+			t.Errorf("aws %q --json: exit %d, stdout %q, want %s, stderr %q", c.aws, r.exit, r.stdout, want, r.stderr)
+		}
+		stdout, stderr, exit = gcpRanOn(runs, slices.Concat([]string{"gcp"}, c.gcp, where, []string{"--dry-run", "--json"})...)
+		if want := `{"dryRun":true,"targets":["` + c.gcpTarget + `"]}`; exit != 0 || compactJSON(t, stdout) != want || stderr != c.gcpSays {
+			t.Errorf("gcp %q --json: exit %d, stdout %q, want %s, stderr %q", c.gcp, exit, stdout, want, stderr)
+		}
+	}
+}
+
+// compactJSON is s as compact JSON, its keys in their order ("" when s is not JSON).
+func compactJSON(t *testing.T, s string) string {
+	t.Helper()
+	var b bytes.Buffer
+	if err := json.Compact(&b, []byte(s)); err != nil {
+		return ""
+	}
+	return b.String()
 }

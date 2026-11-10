@@ -538,8 +538,9 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   role`, `groups delete`, `discovery config set` and `manager update`. The question names the targets and what happens;
   a workload write lists its targets first (`Offboard 1 workload?`). Without a terminal, `--yes` is required (exit 2). A
   declined confirmation sends nothing and exits 0. Every writing command of both subtrees takes `--yes`, a no-op where
-  nothing is asked, and `--dry-run`, which lists its targets, says each request it would send (`dry run: <target>: would
-  <method> <path>, nothing sent`, its body on the next line), sends nothing and exits 0. Four commands have no
+  nothing is asked, and `--dry-run`, which asks nothing, says each request it would send, one per target (`dry run:
+  <target>: would <method> <path>, nothing sent`, its body on the next line), reads what a request needs (a workload's
+  tags for `workloads tags`, its backend for `workloads exclude`), sends nothing and exits 0. Four commands have no
   `--dry-run`: `aws install`, `aws uninstall` and their `apply`, whose plan, the step before `apply`, needs the
   bootstrap (a bucket, a role, a CodeBuild project) created first: the plan is the look before acting.
 - **Operations.** Onboarding, offboarding, the install, upgrade and uninstall of routers, exclusions and their lifting,
@@ -562,7 +563,7 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   `show`, the audit and operations, local times with their zone (`2026-10-21 14:05 CEST`). The manager's refusals are
   printed as it words them, on stderr.
 - **JSON.** Every command has `--json`: the manager's answer, after the CLI's own filters, on stdout alone; lines,
-  progress, questions and dry-run lists then go to stderr, so that stdout always parses:
+  progress, questions and a dry run's requests then go to stderr, so that stdout always parses:
   - a list prints the API's object, its rows under the API's key after the filters, every page in it and no page's
     cursor (`{users: […]}`, `{operations: […]}`, `{candidates: […]}`);
   - a command that starts operations prints them as an array when it takes several targets (`routers uninstall`,
@@ -897,7 +898,7 @@ dormeto aws workloads tags prod-eu/w-1 --set team=payments --unset owner
   characters, a value of up to 256, letters, digits, spaces and `_ . : / = + - @`, no key starting with `dormeto:`.
   Routers 0.30.0 and later.
 - More than one target is confirmed on a terminal, its targets listed before the question; `--yes` skips it and is
-  needed without one; `--dry-run` lists the targets and sends nothing. The other workloads go on when one is refused,
+  needed without one; `--dry-run` says each request and sends nothing. The other workloads go on when one is refused,
   and the exit is 1. `--json` prints the manager's answers of those that succeeded, by `<router>/<workload>` (`{}`
   when none did); the lines and failures go to stderr. For a workload `tags` leaves unchanged, the answer is its tags
   as they are, in the manager's shape: `{workloadId, tags}`.
@@ -907,7 +908,7 @@ dormeto aws workloads tags prod-eu/w-1 --set team=payments --unset owner
 From CLI 0.5.0, `workloads` also keeps workloads awake for a while and sets their weekly schedules (awake and nap
 windows, a maximum nap that wakes for maintenance). Targets are `<router>/<workload id>` arguments, or
 `--tag key=value`, as for the other workload writes: more than one target is confirmed on a terminal, `--yes` skips it
-and is needed without one, `--dry-run` lists the targets and sends nothing, and the other workloads go on when one is
+and is needed without one, `--dry-run` says each request and sends nothing, and the other workloads go on when one is
 refused (exit 1). From CLI 0.6.0, each of these commands has `--json`, as the other workload writes do.
 
 ```sh
@@ -1123,7 +1124,7 @@ workload itself (a hibernated instance cannot change type).
 - `workloads settings` sets a workload's own value, `inherit` to follow its router's (operators and administrators;
   routers 0.32.0 and later). A workload written by Terraform is refused (`set hibernate in its workload module`).
 - Several routers or workloads are confirmed on a terminal; `--yes` skips it and is needed without one; `--dry-run`
-  lists the targets and sends nothing. A refusal is printed for its target, the others go on (exit 1). `--json` prints
+  says each request and sends nothing. A refusal is printed for its target, the others go on (exit 1). `--json` prints
   the manager's answers (by router, or by `<router>/<workload>`).
 - `routers show` prints a `hibernate` line in its configuration: its own value, or `inherit (manager: on, read 2m ago)`
   (`; last read failed: <error>` inside the parentheses when the last read failed), or `inherit (built-in default: on)`
@@ -1378,7 +1379,7 @@ manager's answer, every page in it.
   operation, followed), keeping its pause apart from an operator's on both clouds: lifting the exclusion leaves the
   operator's pause. `--reason` is 1 to 246 characters; `--for` is up to 366
   days, `--until` within 366 days; without either, the exclusion lasts until it is lifted. It is always confirmed on a
-  terminal; `--dry-run` names the target and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json` (its
+  terminal; `--dry-run` says the request and sends nothing. It takes `--no-wait`, `--timeout`, `--yes` and `--json` (its
   operation, an object).
 - `exclusions lift <id>...` lifts each exclusion (its id is in `exclusions list`) and follows the operations: the
   workloads it paused are resumed, then the exclusion is deleted. One that stays listed (a workload could not be

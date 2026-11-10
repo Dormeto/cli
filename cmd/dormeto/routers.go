@@ -3,12 +3,13 @@ package main
 // `dormeto aws routers show`, `install`, `uninstall`, `pause`, `resume` and `settings`: one router's details, and the operations on
 // routers through the manager's /iam routes. Install and uninstall are operations, followed as `routers upgrade`'s are;
 // pause and resume are a call per router, one refused does not stop the others (exit 1 at the end). Several routers, and
-// always an uninstall, are confirmed on a terminal (--yes without one; --dry-run lists them). Exit codes as the fleet
+// always an uninstall, are confirmed on a terminal (--yes without one; --dry-run says each request). Exit codes as the fleet
 // commands.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -147,7 +148,7 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "uninstall <router>...", Short: "Uninstall routers installed by the manager", SilenceErrors: true,
 		Long: "Start the manager's uninstall of each router and follow them (3 at once at most). It is always confirmed on\n" +
-			"a terminal (--yes without one; --dry-run lists the routers and sends nothing). The operation's \"check\n" +
+			"a terminal (--yes without one; --dry-run says each request and sends nothing). The operation's \"check\n" +
 			"empty\" step refuses a router that still has workloads. --no-wait only starts them; Ctrl-C and --timeout\n" +
 			"stop following, the operations go on in the manager: `dormeto aws operations watch <id>`. Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
@@ -164,7 +165,7 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return printStarted(c, asJSON, nil, nil)
 				}
 				question := fmt.Sprintf("Uninstall %s?", strings.Join(names, ", "))
-				if done, err := confirmNames(ctx, c, deps, names, "router", question, true, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, names, "router", question, true, dryRun, yes); done || err != nil {
 					return err
 				}
 				items := make([]opItem, len(names))
@@ -182,7 +183,7 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
+	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the operations, as the manager last said them")
 	wait.bind(cmd)
@@ -221,12 +222,13 @@ func routerCalls(ctx context.Context, c *cobra.Command, api *fleet.Client, names
 
 // routerSends sends body (POST, or PUT with put) to each router's route in turn: its line (what say makes of the answer) goes to textOut, its
 // failure to stderr as "router: message"; the others go on, and a failure makes the exit 1. Under --json the answers of
-// those that succeeded are printed on stdout, by router ({} for none), even when the run is cut short.
+// those that succeeded are printed on stdout, by router ({} for none), even when the run is cut short. Under a dry run each
+// request is said, not sent, and the run ends as the dry run it is (fleet.ErrDryRun: fleetFlags.run prints its --json).
 func routerSends(ctx context.Context, c *cobra.Command, api *fleet.Client, names []string, suffix string, put bool, body any, asJSON bool,
 	say func(answer json.RawMessage) string) error {
 	answers := map[string]json.RawMessage{}
 	call := func() error {
-		failed := false
+		failed, said := false, false
 		for _, name := range names {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -237,6 +239,10 @@ func routerSends(ctx context.Context, c *cobra.Command, api *fleet.Client, names
 				send = api.Put
 			}
 			if err := send(ctx, routerPath(name, suffix), body, &raw); err != nil {
+				if errors.Is(err, fleet.ErrDryRun) {
+					said = true
+					continue
+				}
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -250,8 +256,11 @@ func routerSends(ctx context.Context, c *cobra.Command, api *fleet.Client, names
 			answers[name] = orRaw(raw)
 			fmt.Fprintf(textOut(c), "%s: %s\n", name, say(raw))
 		}
-		if failed {
+		switch {
+		case failed:
 			return exitCode(1)
+		case said:
+			return fleet.ErrDryRun
 		}
 		return nil
 	}
@@ -272,8 +281,8 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"--keep-asleep (the woken ones are printed). --reason (1 to 256 characters) is shown in the manager. --for is a\n" +
 			"duration up to 366 days (90m, 2h, 3d); --until is an RFC 3339 time or HH:MM today in the local time zone, within\n" +
 			"366 days; without either the pause lasts until `dormeto aws routers resume`. Several routers are confirmed on a\n" +
-			"terminal (--yes without one; --dry-run lists them). One refused does not stop the others (exit 1). Needs an\n" +
-			"operator.",
+			"terminal (--yes without one; --dry-run says each request and sends nothing). One refused does not stop the\n" +
+			"others (exit 1). Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
 			if err == nil {
@@ -296,7 +305,7 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				body.Until = end.UTC().Format("2006-01-02T15:04:05Z")
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				if done, err := confirmNames(ctx, c, deps, names, "router", fmt.Sprintf("Pause %s?", strings.Join(names, ", ")), false, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, names, "router", fmt.Sprintf("Pause %s?", strings.Join(names, ", ")), false, dryRun, yes); done || err != nil {
 					return err
 				}
 				return routerCalls(ctx, c, api, names, "/pause", body, asJSON, func(raw json.RawMessage) string {
@@ -322,7 +331,7 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d)")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
 	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake the workloads that are asleep")
-	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
+	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	return cmd
@@ -344,7 +353,7 @@ func newRoutersResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				if done, err := confirmNames(ctx, c, deps, names, "router", fmt.Sprintf("Resume %s?", strings.Join(names, ", ")), false, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, names, "router", fmt.Sprintf("Resume %s?", strings.Join(names, ", ")), false, dryRun, yes); done || err != nil {
 					return err
 				}
 				return routerCalls(ctx, c, api, names, "/resume", nil, asJSON, func(raw json.RawMessage) string {
@@ -359,7 +368,7 @@ func newRoutersResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
+	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	return cmd
@@ -385,8 +394,8 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"--max-holders, --failed-retry-seconds, --wake-mode and the rules files) are the router's defaults for its workloads\n" +
 			"whose own value and type's set none; inherit removes one (the organization's, then the built-in value). Routers\n" +
 			"0.37.0 and later. What is not given stays as it was. With no flag, each router's level is shown (--json: by router).\n" +
-			"Several routers are confirmed on a terminal (--yes without one; --dry-run lists them). One refused does not stop\n" +
-			"the others (exit 1). Needs an administrator.",
+			"Several routers are confirmed on a terminal (--yes without one; --dry-run says each request and sends nothing).\n" +
+			"One refused does not stop the others (exit 1). Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
 			settings := levelSettings{body: map[string]any{}}
@@ -412,7 +421,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				question := fmt.Sprintf("Set %s for %s?", strings.Join(settings.words, " and "), strings.Join(names, ", "))
-				if done, err := confirmNames(ctx, c, deps, names, "router", question, false, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, names, "router", question, false, dryRun, yes); done || err != nil {
 					return err
 				}
 				var notApplied bool
@@ -453,7 +462,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the manager's default)")
 	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit (the manager's default)")
-	fl.BoolVar(&dryRun, "dry-run", false, "list the routers and stop")
+	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	levels = bindLevelFlags(cmd, "inherit")

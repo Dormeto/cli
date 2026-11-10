@@ -695,8 +695,16 @@ func TestTagSelectionIncompleteActsOnTheResolvedThenExits1(t *testing.T) {
 			t.Errorf("%s: exit %d writes %q stderr %q", name, r.exit, a.writes, r.stderr)
 		}
 	}
+	// A dry run says the requests of the workloads resolved, prints its JSON, and exits 1 all the same.
 	a := &wlAPI{}
-	r := runWL(t, a, nil, "resume", "--tag", "team=allsilent")
+	r := runWL(t, a, nil, "resume", "--tag", "team=partial", "--dry-run", "--json")
+	if r.exit != 1 || len(a.writes) != 0 || compactJSON(t, r.stdout) != `{"dryRun":true,"targets":["prod-eu/w-1"]}` ||
+		!strings.Contains(r.stderr, "dry run: prod-eu/w-1: would POST /iam/workloads/prod-eu/w-1/resume, nothing sent\n") ||
+		!strings.Contains(r.stderr, "not all the workloads with these tags were resolved: router lost did not answer") {
+		t.Errorf("dry run: exit %d writes %q stdout %q stderr %q", r.exit, a.writes, r.stdout, r.stderr)
+	}
+	a = &wlAPI{}
+	r = runWL(t, a, nil, "resume", "--tag", "team=allsilent")
 	if r.exit != 1 || len(a.writes) != 0 || !strings.Contains(r.stderr, "router lost did not answer") {
 		t.Errorf("all silent: exit %d writes %q stderr %q", r.exit, a.writes, r.stderr)
 	}

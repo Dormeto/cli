@@ -538,7 +538,7 @@ func newDiscoveryConfigSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				if done, err := confirmNames(ctx, c, deps, []string{"discovery configuration"}, "configuration",
+				if done, err := confirmNames(ctx, c, deps, api, []string{"discovery configuration"}, "configuration",
 					"Replace the discovery configuration?", true, false, yes); done || err != nil {
 					return err
 				}

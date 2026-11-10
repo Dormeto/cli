@@ -158,7 +158,7 @@ func TestUsersRoleDisableAndGroupsDeleteAreAlwaysConfirmed(t *testing.T) {
 		}
 		a := &accessAPI{}
 		r := runAccess(t, a, nil, append(c.args, "--dry-run")...)
-		if r.exit != 0 || len(a.requests) != 0 || !strings.Contains(r.stdout, "dry run: 1 ") {
+		if r.exit != 0 || len(a.requests) != 0 || !strings.HasPrefix(r.stdout, "dry run: ") || !strings.Contains(r.stdout, ": would "+c.route+", nothing sent\n") {
 			t.Errorf("%v --dry-run: exit %d, stdout %q, requests %q", c.args, r.exit, r.stdout, a.requests)
 		}
 	}

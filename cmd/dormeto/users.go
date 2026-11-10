@@ -119,8 +119,8 @@ func newUsersRole(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "role <email> <member|viewer|operator|admin>", Short: "Set a user's role",
 		Args: argCount(2, 2, "<email> <role>"), SilenceErrors: true,
-		Long: "Set the user's built-in role. It is always confirmed on a terminal (--yes without one; --dry-run names the user\n" +
-			"and sends nothing). The manager refuses to change your own role and to demote the last administrator.\n" +
+		Long: "Set the user's built-in role. It is always confirmed on a terminal (--yes without one; --dry-run says the\n" +
+			"request and sends nothing). The manager refuses to change your own role and to demote the last administrator.\n" +
 			"Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			email, err := oneEmail(args)
@@ -134,7 +134,7 @@ func newUsersRole(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			}
 			role := args[1]
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				if done, err := confirmNames(ctx, c, deps, []string{email}, "user", fmt.Sprintf("Make %s %s?", email, role), true, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, []string{email}, "user", fmt.Sprintf("Make %s %s?", email, role), true, dryRun, yes); done || err != nil {
 					return err
 				}
 				raw, err := callAPI(ctx, api, "PUT", userPath(email, "/role"), map[string]any{"role": role})
@@ -145,7 +145,7 @@ func newUsersRole(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "name the user and stop")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
@@ -193,7 +193,7 @@ func newUsersDisable(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "disable <email>", Short: "Disable a user: they can no longer sign in",
 		Args: argCount(1, 1, "<email>"), SilenceErrors: true,
 		Long: "Disable the user: they can no longer sign in. It is always confirmed on a terminal (--yes without one;\n" +
-			"--dry-run names the user and sends nothing). The manager refuses to disable you and the last administrator.\n" +
+			"--dry-run says the request and sends nothing). The manager refuses to disable you and the last administrator.\n" +
 			"Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			email, err := oneEmail(args)
@@ -201,7 +201,7 @@ func newUsersDisable(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				if done, err := confirmNames(ctx, c, deps, []string{email}, "user", fmt.Sprintf("Disable %s? They can no longer sign in.", email), true, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, []string{email}, "user", fmt.Sprintf("Disable %s? They can no longer sign in.", email), true, dryRun, yes); done || err != nil {
 					return err
 				}
 				raw, err := callAPI(ctx, api, "POST", userPath(email, "/disable"), nil)
@@ -212,7 +212,7 @@ func newUsersDisable(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "name the user and stop")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd

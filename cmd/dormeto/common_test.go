@@ -280,8 +280,14 @@ func TestRunOperationsBadTimeoutExits2(t *testing.T) {
 	}
 }
 
-// confirmRun calls confirmNames on a bare command; the terminal answers answer when it is one.
+// confirmRun calls confirmNames on a bare command and a client; the terminal answers answer when it is one.
 func confirmRun(t *testing.T, terminal, answer bool, names []string, always, dryRun, yes bool) (done bool, err error, out string, asked []string) {
+	done, err, out, asked, _ = confirmRunOn(t, &fleet.Client{}, terminal, answer, names, always, dryRun, yes)
+	return done, err, out, asked
+}
+
+// confirmRunOn is confirmRun on api.
+func confirmRunOn(t *testing.T, api *fleet.Client, terminal, answer bool, names []string, always, dryRun, yes bool) (done bool, err error, out string, asked []string, c *cobra.Command) {
 	t.Helper()
 	deps := fleetDeps{
 		terminal: func(io.Reader) bool { return terminal },
@@ -290,12 +296,12 @@ func confirmRun(t *testing.T, terminal, answer bool, names []string, always, dry
 			return answer, nil
 		},
 	}
-	c := &cobra.Command{}
+	c = &cobra.Command{}
 	var b bytes.Buffer
 	c.SetOut(&b)
 	c.SetIn(strings.NewReader(""))
-	done, err = confirmNames(t.Context(), c, deps, names, "router", "Uninstall these routers?", always, dryRun, yes)
-	return done, err, b.String(), asked
+	done, err = confirmNames(t.Context(), c, deps, api, names, "router", "Uninstall these routers?", always, dryRun, yes)
+	return done, err, b.String(), asked, c
 }
 
 func TestConfirmNames(t *testing.T) {
@@ -316,8 +322,11 @@ func TestConfirmNames(t *testing.T) {
 	if done, err, _, asked := confirmRun(t, false, true, two, true, false, true); done || err != nil || len(asked) != 0 {
 		t.Errorf("--yes: done %v, err %v, asked %q", done, err, asked)
 	}
-	if done, err, out, asked := confirmRun(t, true, true, two, true, true, false); !done || err != nil || len(asked) != 0 || out != "dry run: 2 routers, nothing sent\n  r1\n  r2\n" {
-		t.Errorf("dry run: done %v, err %v, out %q, asked %q", done, err, out, asked)
+	// A dry run asks nothing and goes on, its client's writes said, not sent: its --json names the names.
+	api := &fleet.Client{}
+	done, err, out, asked, c := confirmRunOn(t, api, true, true, two, true, true, false)
+	if done || err != nil || len(asked) != 0 || out != "" || api.DryRun() == nil || !slices.Equal(api.DryRun().Targets, two) || api.DryRun().Out != c.OutOrStdout() {
+		t.Errorf("dry run: done %v, err %v, out %q, asked %q, dry run %+v", done, err, out, asked, api.DryRun())
 	}
 }
 
@@ -332,9 +341,10 @@ func askingTerminal(answer bool) func(*fleetDeps) {
 	}
 }
 
-// Under --json, stdout holds JSON alone: the question, the dry run's list and "not confirmed" go to stderr, and a dry run
-// or a declined question prints what it stopped at.
+// Under --json, stdout holds JSON alone: the question, a dry run's requests and "not confirmed" go to stderr, and a
+// declined question prints what it stopped at (a dry run's JSON is fleetFlags.run's).
 func TestConfirmNamesUnderJSON(t *testing.T) {
+	api := &fleet.Client{}
 	run := func(answer, dryRun bool) (done bool, err error, stdout, stderr string) {
 		var deps fleetDeps
 		askingTerminal(answer)(&deps)
@@ -344,13 +354,17 @@ func TestConfirmNamesUnderJSON(t *testing.T) {
 		c.SetOut(&o)
 		c.SetErr(&e)
 		c.SetIn(strings.NewReader(""))
-		done, err = confirmNames(t.Context(), c, deps, []string{"r1", "r2"}, "router", "Uninstall r1, r2?", true, dryRun, false)
+		done, err = confirmNames(t.Context(), c, deps, api, []string{"r1", "r2"}, "router", "Uninstall r1, r2?", true, dryRun, false)
+		if dryRun && (api.DryRun() == nil || api.DryRun().Out != c.ErrOrStderr()) {
+			t.Errorf("dry run: its requests not said on stderr: %+v", api.DryRun())
+		}
 		return done, err, o.String(), e.String()
 	}
 	done, err, stdout, stderr := run(true, true)
-	if !done || err != nil || stdout != "{\n  \"dryRun\": true,\n  \"targets\": [\n    \"r1\",\n    \"r2\"\n  ]\n}\n" || stderr != "dry run: 2 routers, nothing sent\n  r1\n  r2\n" {
+	if done || err != nil || stdout != "" || stderr != "" {
 		t.Errorf("dry run: done %v, err %v, stdout %q, stderr %q", done, err, stdout, stderr)
 	}
+	api = &fleet.Client{}
 	done, err, stdout, stderr = run(false, false)
 	var declined struct {
 		Confirmed *bool

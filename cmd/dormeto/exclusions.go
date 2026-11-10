@@ -68,7 +68,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"from discovery: the manager pauses its managed workloads (an operation, followed). --reason is 1 to 246\n" +
 			"characters; --for is a duration up to 366 days (90m, 2h, 3d) and --until an RFC 3339 time or HH:MM today in the\n" +
 			"local time zone, within 366 days; without either the exclusion lasts until `dormeto aws exclusions lift`. It is\n" +
-			"always confirmed on a terminal (--yes without one; --dry-run names the target and sends nothing). --no-wait\n" +
+			"always confirmed on a terminal (--yes without one; --dry-run says the request and sends nothing). --no-wait\n" +
 			"only starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
 			"`dormeto aws operations watch <id>`. Needs an operator.",
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -124,7 +124,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				if done, err := confirmNames(ctx, c, deps, []string{text}, "exclusion", fmt.Sprintf("Exclude %s from discovery?", text), true, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, []string{text}, "exclusion", fmt.Sprintf("Exclude %s from discovery?", text), true, dryRun, yes); done || err != nil {
 					return err
 				}
 				ops, err := runOperations(ctx, c, deps, opItems(api, []string{text}, func(ctx context.Context, _ int) (fleet.Operation, error) {
@@ -141,7 +141,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&reason, "reason", "", "why, 1 to 246 characters, shown in the manager (required)")
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 366 days (90m, 2h, 3d); default until lifted")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
-	fl.BoolVar(&dryRun, "dry-run", false, "name the target and stop")
+	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)

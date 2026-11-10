@@ -343,7 +343,7 @@ func newWorkloadsSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			return finish(c, err)
 		}
 		said := strings.Join(words, ", ")
-		return w.run(c, args, said+": would act on", "Set "+said+" for %s?",
+		return w.run(c, args, "Set "+said+" for %s?",
 			func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var raw json.RawMessage

@@ -193,7 +193,7 @@ func newGroupsDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "delete <name>", Short: "Delete a custom group and its grants", Args: argCount(1, 1, "<name>"), SilenceErrors: true,
 		Long: "Delete a custom group and its grants: its members lose what it granted at their next sign-in. It is always\n" +
-			"confirmed on a terminal (--yes without one; --dry-run names the group and sends nothing). Needs an administrator.",
+			"confirmed on a terminal (--yes without one; --dry-run says the request and sends nothing). Needs an administrator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name := args[0]
 			if strings.TrimSpace(name) == "" {
@@ -201,7 +201,7 @@ func newGroupsDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				q := fmt.Sprintf("Delete group %s? Its grants are removed and its members lose them.", name)
-				if done, err := confirmNames(ctx, c, deps, []string{name}, "group", q, true, dryRun, yes); done || err != nil {
+				if done, err := confirmNames(ctx, c, deps, api, []string{name}, "group", q, true, dryRun, yes); done || err != nil {
 					return err
 				}
 				raw, err := callAPI(ctx, api, "DELETE", groupPath(name), nil)
@@ -212,7 +212,7 @@ func newGroupsDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "name the group and stop")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
