@@ -651,3 +651,31 @@ func TestDiscoveryAccessCloudKeepsOneCloudsAccounts(t *testing.T) {
 		t.Errorf("azure exits %d", r.exit)
 	}
 }
+
+// --cloud filters before --limit: the limit counts the rows kept, across pages.
+func TestDiscoveryCandidatesCloudFiltersBeforeTheLimit(t *testing.T) {
+	gcp := func(n string) string {
+		return `{"id":"projects/p/global/backendServices/` + n + `","cloud":"gcp","account":"p","region":"global","targetGroup":"` + n + `","status":"pending-onboarding"}`
+	}
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {
+		row("111111111111", "a1", "pending-onboarding"), row("111111111111", "a2", "pending-onboarding"), gcp("g1"), row("111111111111", "a3", "pending-onboarding"), gcp("g2"), gcp("g3"),
+	}}}
+	r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "discovery", "candidates", "--cloud", "gcp", "--limit", "2", "--json")
+	var got struct {
+		Candidates []struct{ TargetGroup string }
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.exit != 0 || len(got.Candidates) != 2 || got.Candidates[0].TargetGroup != "g1" || got.Candidates[1].TargetGroup != "g2" {
+		t.Errorf("exit %d %v: %q", r.exit, err, r.stdout)
+	}
+}
+
+func TestAProjectGivenNamesItsOwnFlagInAnError(t *testing.T) {
+	r := runFleetWith(t, &fakeAPI{custom: (&disAPI{}).handler()}, "eu-west-1", nil, "discovery", "candidates", "--project", "123")
+	if r.exit != 2 || !strings.Contains(r.stderr, "--project: ") || strings.Contains(r.stderr, "--account") {
+		t.Errorf("exit %d: %q", r.exit, r.stderr)
+	}
+	r = runFleetWith(t, &fakeAPI{custom: (&disAPI{}).handler()}, "eu-west-1", nil, "discovery", "candidates", "--account", "123")
+	if r.exit != 2 || !strings.Contains(r.stderr, "--account: ") {
+		t.Errorf("exit %d: %q", r.exit, r.stderr)
+	}
+}

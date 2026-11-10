@@ -100,6 +100,12 @@ func TargetGroupName(arn string) string {
 // ListCandidates reads the candidates of a status (and of an account, and a region of it, when given) page by page,
 // 200 at a time, and stops at limit when it is above zero.
 func ListCandidates(ctx context.Context, c *Client, status, account, region string, limit int) ([]Candidate, error) {
+	return ListCandidatesWhere(ctx, c, status, account, region, limit, nil)
+}
+
+// ListCandidatesWhere is ListCandidates keeping only the candidates keep accepts (nil: all), before the limit counts
+// them: with a limit, it reads on until that many are kept or the pages end.
+func ListCandidatesWhere(ctx context.Context, c *Client, status, account, region string, limit int, keep func(Candidate) bool) ([]Candidate, error) {
 	var out []Candidate
 	cursor := ""
 	for {
@@ -124,7 +130,11 @@ func ListCandidates(ctx context.Context, c *Client, status, account, region stri
 		if err := c.Get(ctx, "/discovery/candidates", q, &page); err != nil {
 			return out, err
 		}
-		out = append(out, page.Candidates...)
+		for _, cand := range page.Candidates {
+			if keep == nil || keep(cand) {
+				out = append(out, cand)
+			}
+		}
 		if limit > 0 && len(out) >= limit {
 			return out[:limit], nil
 		}

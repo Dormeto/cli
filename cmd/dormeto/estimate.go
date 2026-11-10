@@ -83,7 +83,9 @@ func runMoved(root *cobra.Command, args []string) []string {
 		}
 		if to := next.Annotations[movedAnnotation]; to != "" {
 			fmt.Fprintf(root.ErrOrStderr(), "dormeto: %q is now %q; the old name goes in a later release.\n", "dormeto "+strings.TrimPrefix(next.CommandPath(), root.Name()+" "), "dormeto "+to)
-			return slices.Concat(args[:start], strings.Fields(to), args[at+1:])
+			// The flags given between the old path's words stay on the line, after the new path.
+			flags := slices.DeleteFunc(slices.Clone(args[start:at]), func(a string) bool { return !strings.HasPrefix(a, "-") })
+			return slices.Concat(args[:start], strings.Fields(to), flags, args[at+1:])
 		}
 		cur = next
 	}

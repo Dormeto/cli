@@ -207,9 +207,9 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			case !slices.Contains(fleet.CandidateStatuses, status):
 				err = usagef("--status: %q is not one of %s", status, strings.Join(fleet.CandidateStatuses, ", "))
 			case account != "" && !discover.IsAccountID(account) && !projectID.MatchString(account):
-				err = usagef("--account: %q is neither 12 digits nor a project ID", account)
+				err = usagef("%s: %q is neither 12 digits nor a project ID", accountFlag(c), account)
 			case region != "" && account == "":
-				err = usagef("--candidate-region needs --account")
+				err = usagef("--candidate-region needs %s", accountFlag(c))
 			case region != "" && discover.IsAccountID(account) && !regionName.MatchString(region):
 				err = usagef("--candidate-region: %q is not an AWS region such as eu-west-1", region)
 			case region != "" && !discover.IsAccountID(account) && !gcpRegionName.MatchString(region):
@@ -224,11 +224,10 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				cs, err := fleet.ListCandidates(ctx, api, status, account, region, limit)
+				cs, err := fleet.ListCandidatesWhere(ctx, api, status, account, region, limit, func(cand fleet.Candidate) bool { return cloud.keeps(cand.Cloud) })
 				if err != nil {
 					return err
 				}
-				cs = onlyCloud(cloud, cs, func(c fleet.Candidate) string { return c.Cloud })
 				if asJSON { // every page merged: no cursor
 					return printJSON(c.OutOrStdout(), map[string]any{"candidates": orEmpty(cs)})
 				}

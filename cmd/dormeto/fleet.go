@@ -365,7 +365,8 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "list", Short: "List the workloads of both clouds, their state and tags", Args: noArgs, SilenceErrors: true,
 		Long: "List the manager's workloads: router, id, name, state, Dormeto tags (k=v) and the time since the last change.\n" +
 			"A router that does not answer is reported on stderr, the others are listed. The workloads of both clouds are\n" +
-			"listed, Google Cloud's and AWS's: --cloud aws or gcp keeps one cloud's rows.",
+			"listed, Google Cloud's and AWS's: --cloud aws or gcp keeps one cloud's rows, of the page read when the manager lists\n" +
+			"only a page (its total then counts both clouds).",
 		RunE: func(c *cobra.Command, _ []string) error {
 			if _, err := fleet.ParseTags(tags); err != nil {
 				return finish(c, usageError{err})
@@ -401,9 +402,13 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				}
 				if cloud != "" {
 					w.Rows = onlyCloud(cloud, w.Rows, func(r fleet.Workload) string { return r.Cloud })
-					w.Total = len(w.Rows)
+					if w.More() { // the manager's total counts both clouds and more pages: --cloud filters the page read only
+						fmt.Fprintln(c.ErrOrStderr(), "the manager listed only part of the workloads: --cloud keeps the rows of the page read")
+					} else {
+						w.Total = len(w.Rows)
+					}
 					var err error
-					if raw, err = filterWorkloadsJSON(raw, cloud); err != nil {
+					if raw, err = filterWorkloadsJSON(raw, cloud, !w.More()); err != nil {
 						return fmt.Errorf("decode the manager's answer: %w", err)
 					}
 				}

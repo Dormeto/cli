@@ -44,8 +44,8 @@ func onlyCloud[T any](c cloudFilter, rows []T, cloud func(T) string) []T {
 }
 
 // filterWorkloadsJSON is the manager's workloads answer with the rows of one cloud, its total and counts per state
-// those of the rows kept; every other field is passed as it was.
-func filterWorkloadsJSON(raw json.RawMessage, c cloudFilter) (json.RawMessage, error) {
+// those of the rows kept when the listing is complete; every other field is passed as it was.
+func filterWorkloadsJSON(raw json.RawMessage, c cloudFilter, complete bool) (json.RawMessage, error) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, err
@@ -67,9 +67,11 @@ func filterWorkloadsJSON(raw json.RawMessage, c cloudFilter) (json.RawMessage, e
 		}
 	}
 	m["workloads"], _ = json.Marshal(kept)
-	m["total"], _ = json.Marshal(len(kept))
-	if _, ok := m["byState"]; ok {
-		m["byState"], _ = json.Marshal(states)
+	if complete { // a partial page keeps the manager's total and counts, which are of both clouds and all the pages
+		m["total"], _ = json.Marshal(len(kept))
+		if _, ok := m["byState"]; ok {
+			m["byState"], _ = json.Marshal(states)
+		}
 	}
 	return json.Marshal(m)
 }
@@ -126,4 +128,12 @@ func sayBothClouds(top *cobra.Command) {
 		}
 	}
 	walk(top, top.Name())
+}
+
+// accountFlag is the flag the user gave for an account in an error: --project when they gave it, else --account.
+func accountFlag(c *cobra.Command) string {
+	if f := c.Flags().Lookup("project"); f != nil && f.Changed {
+		return "--project"
+	}
+	return "--account"
 }

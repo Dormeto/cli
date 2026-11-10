@@ -543,3 +543,28 @@ func TestWorkloadsListCloudKeepsOneCloudsRowsInTheTableAndTheJSON(t *testing.T) 
 		t.Errorf("azure exits %d", r.exit)
 	}
 }
+
+// The manager's total is kept for a page that has more: --cloud filters the page read, and says so.
+func TestWorkloadsListCloudOfAPartialPageKeepsTheTotalAndSaysItFiltersThePage(t *testing.T) {
+	api := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"workloads":[
+ {"workloadId":"w-1","name":"api","cloud":"aws","router":"prod-eu","account":"111111111111","region":"eu-west-1","state":"ASLEEP","stateAt":"2026-10-19T09:00:00Z"},
+ {"workloadId":"w-2","name":"web","cloud":"gcp","router":"dmtr-dormeto-dev-europe-west2","account":"dormeto-dev","region":"europe-west2","state":"AWAKE","stateAt":"2026-10-19T09:00:00Z"}
+],"total":500,"cursor":"abc"}`)
+	}}
+	r := runFleet(t, api, "eu-west-1", "workloads", "list", "--cloud", "gcp")
+	if r.exit != 0 || !strings.Contains(r.stdout, "500 workloads (1 shown)") || !strings.Contains(r.stderr, "--cloud keeps the rows of the page read") {
+		t.Errorf("exit %d:\n%s\n%s", r.exit, r.stdout, r.stderr)
+	}
+	r = runFleet(t, api, "eu-west-1", "workloads", "list", "--cloud", "gcp", "--json")
+	var got struct {
+		Workloads []struct{ WorkloadID string }
+		Total     int
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Workloads) != 1 || got.Total != 500 {
+		t.Errorf("%v: %q", err, r.stdout)
+	}
+	if h := child(child(child(newRoot(build{}), "aws"), "workloads"), "list").Long; !strings.Contains(h, "page") {
+		t.Errorf("help: %s", h)
+	}
+}

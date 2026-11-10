@@ -293,3 +293,19 @@ func TestProjectIsAnAliasOfAccountOnTheManagersCommands(t *testing.T) {
 		t.Errorf("routers install takes an AWS account only, yet has --project")
 	}
 }
+
+// A flag between the old path's words stays on the line, after the new path.
+func TestAMovedCommandKeepsTheFlagsBetweenItsWords(t *testing.T) {
+	root := newRoot(build{})
+	root.SetErr(&bytes.Buffer{})
+	for _, tc := range []struct{ in, want []string }{
+		{[]string{"gcp", "--x", "install", "--project", "p"}, []string{"gcp", "routers", "install", "--x", "--project", "p"}},
+		{[]string{"help", "--x", "gcp", "status"}, []string{"help", "gcp", "routers", "show", "--x"}},
+		{[]string{"--some-flag", "routers", "list"}, []string{"--some-flag", "aws", "routers", "list"}},
+		{[]string{"routers", "--x", "list"}, []string{"aws", "routers", "--x", "list"}},
+	} {
+		if got := runMoved(root, tc.in); !slices.Equal(got, tc.want) {
+			t.Errorf("%q: %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
