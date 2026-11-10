@@ -276,10 +276,11 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		"`--image`, `--version` and `--access-only` exclude each other",
 		// the request logs (§5) and the log view, in the words the CLI prints
 		"`! the idle check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past its free tier)`",
-		"`--request-logs needs router 0.38.0 or later: dormeto gcp routers install --version <default>`",
+		"`--request-logs needs router 0.40.0 or later: dormeto gcp routers install --version <default>`",
 		"`! the router's log view isn't created: the project's _Default log bucket isn't in global; the idle check counts every request`",
 		"log_config { enable = true sample_rate = 1.0 }",
-		"router 0.38.0 and CLI 0.12.0, which are not released yet",
+		"router 0.40.0 and CLI 0.14.0, which are not released yet",
+		"website's [Workloads page](https://dormeto.com/workloads.html#terraform-gcp)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)

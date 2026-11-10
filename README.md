@@ -1677,7 +1677,7 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
   check` says whether you hold it). `gcp routers install` does not give it to you: it grants the role to the router's
   service account only, so ask for `roles/run.invoker` on the controller if you lack it. If Terraform writes the load
   balancer, the VMs, the databases or the Deployments, it must ignore what the router changes: the fields are on the
-  website's [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
+  website's [Workloads page](https://dormeto.com/workloads.html#terraform-gcp).
 
 ### Connecting the manager
 
@@ -1816,8 +1816,8 @@ other header never does, so the request counts.
   as it is. Without the flag, an onboarding of a backend service that does not log every request ends with `! the idle
   check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past
   its free tier)`.
-- **The router's version:** the request logs need router 0.38.0 or later, which the onboarding reads from the controller
-  before any change. On an older router, `--request-logs` stops with `--request-logs needs router 0.38.0 or later: dormeto
+- **The router's version:** the request logs need router 0.40.0 or later, which the onboarding reads from the controller
+  before any change. On an older router, `--request-logs` stops with `--request-logs needs router 0.40.0 or later: dormeto
   gcp routers install --version <default>`, and an onboarding without it says nothing of the request logs.
 - **The offboarding** sets the `logConfig` back when it is still what Dormeto set, and says so. If you changed it since,
   it is left, with a notice naming the backend service.
@@ -2290,8 +2290,8 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 - *Accepted in `dormeto-dev` on 2026-11-10, not released*: `gcp routers pause` and `resume`, run against router
   0.40.0-dev.6 (the router's pause and resume, `--json` keyed by the manager's name).
 
-The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
-CLI 0.12.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for
+The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.40.0 and
+CLI 0.14.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for
 `--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). The settings levels, the waiting page, the fallback machine types and the internal load balancers
 are newer still, and not released. Measured on Google in `dormeto-dev` on 2026-11-08 and 2026-11-09: what the global load
 balancer's error fetch carries, and that the page's language, its policy, a 256 KiB page and a 59 KB icon reach the browser;
