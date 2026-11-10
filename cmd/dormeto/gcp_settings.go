@@ -135,7 +135,8 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 			"its workloads' defaults (--idle-minutes, --wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files;\n"+
 			"inherit removes one). --wait-seconds, --max-holders and --drain-seconds are 0 on Google Cloud: any value is refused.\n"+
 			"What is not given stays as it was. With no flag, the router's level is shown. --dry-run says what would be set and sends\n"+
-			"nothing; --yes is accepted as AWS's, a single router asking nothing. A router without the settings levels says so, with the version to install.",
+			"nothing; --yes is accepted as AWS's, a single router asking nothing. --json prints, as AWS's, by router: the controller's\n"+
+			"answer, or with no flag the router's level. A router without the settings levels says so, with the version to install.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.Levels = body
 			return run(ctx, d, r)

@@ -67,7 +67,7 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 // gcpRouterFlags adds the region and --json of a workloads command.
 func gcpRouterFlags(cmd *cobra.Command, f *gcpFlags) {
 	cmd.Flags().StringVar(&f.region, "region", "", "the router's region, such as europe-west1 (required)")
-	cmd.Flags().BoolVar(&f.json, "json", false, "print the controller's answer as JSON")
+	cmd.Flags().BoolVar(&f.json, "json", false, "print the answer as JSON, AWS's: a write's by its target, <router>/<workload> or <router> (its line goes to stderr)")
 }
 
 func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
@@ -77,8 +77,9 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 	var has map[string]string
 	cmd := gcpCommand("list", "List the workloads of a router",
 		"List the router's workloads and their states. --state, --search and --tag keep the workloads AWS's list would keep,\n"+
-			"applied to the controller's list (--tag needs router 0.40.0 or later, which answers the tags); --json prints the\n"+
-			"controller's rows they keep.",
+			"applied to the controller's list (--tag needs router 0.40.0 or later, which answers the tags); --json prints AWS's\n"+
+			"list object, {workloads, total, byState, cursor, errors}: the rows they keep, with the shared names (workloadId,\n"+
+			"pauses, the backends' kinds instance, asg, k8s, cloudsql-instance), and the router's counts by state.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.States, r.Search, r.HasTags = upper(states), search, has
 			return run(ctx, d, r)

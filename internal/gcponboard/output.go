@@ -49,7 +49,7 @@ func sharedWorkload(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	delete(w, "id")
 	var pauses []map[string]any
-	if err := json.Unmarshal(w["pauses"], &pauses); err != nil || w["pauses"] == nil {
+	if err := json.Unmarshal(w["pauses"], &pauses); err != nil || pauses == nil {
 		pauses = []map[string]any{}
 		var paused map[string]any
 		if json.Unmarshal(w["paused"], &paused) == nil && paused != nil {
@@ -179,14 +179,9 @@ func (x *run) printList(rows []json.RawMessage, all []workload) error {
 	return err
 }
 
-// dryRequest is a request a dry run says, AWS's: what it addresses (the <router>/<workload>, or the router), its method, its path
-// and its body (none: absent).
-type dryRequest struct {
-	Target string          `json:"target"`
-	Method string          `json:"method"`
-	Path   string          `json:"path"`
-	Body   json.RawMessage `json:"body,omitempty"`
-}
+// dryRequest is a request a dry run says, the shape of both subtrees' (fleet.DryRequest): what it addresses (the
+// <router>/<workload>, or the router), its method, its path and its body (none: absent).
+type dryRequest = fleet.DryRequest
 
 // dryRequestOf is the request a dry run says of a call: in its body (nil for none) as it would go, without `by`.
 func dryRequestOf(target, method, path string, in any) dryRequest {
@@ -221,6 +216,7 @@ func (x *run) sayDry(requests []dryRequest, after ...string) error {
 	return err
 }
 
+// emptyIfNone is s, or an empty list when nil: JSON's [] rather than null.
 func emptyIfNone[T any](s []T) []T {
 	if s == nil {
 		return []T{}
