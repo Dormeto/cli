@@ -522,14 +522,26 @@ it first to check the profile and the permission. `--json` prints `{me, version,
   waits for the resolved ones). A discovery candidate is its id (the target group's ARN) or the name of its target
   group when it is unique among the candidates of the status the command works on; an ambiguous name exits 2 and lists
   the matching ARNs. A user is an email, a group a name, an operation and an exclusion their id.
-- **Regions.** `--region` is always the manager's region. A router's region is `--router-region` (`routers list`,
-  `upgrade`, `install`), a candidate's `--candidate-region` (`discovery candidates`).
+- **Regions.** On the manager's commands, `--region` is the manager's region, where its API is. A router's region is
+  `--router-region` (`routers list`, `upgrade`, `install`), a candidate's `--candidate-region` (`discovery candidates`).
+  On a router's commands, `dormeto gcp routers` and `dormeto gcp workloads`, `--region` is the router's, a Google Cloud
+  region such as `europe-west1`.
+- **Clouds.** The manager's commands serve AWS and Google Cloud. `routers list`, `workloads list`, `discovery
+  candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before
+  any call), and every command that takes `--account` takes `--project` too, the same flag under the name of a Google
+  Cloud project (`routers install`, which installs in an AWS account only, takes `--account` alone). A Google Cloud
+  router is named `dmtr-<project>-<region>`, a Google Cloud workload `<router>/<workload id>` as an AWS one, and its
+  backends are `instance`, `asg`, `k8s` and `cloudsql-instance` in the text and in `--json` (the router's own values,
+  `vm`, `mig`, `k8s` and `cloudsql`, stay on its wire).
 - **Confirmation.** On a terminal, a write on several workloads or routers is confirmed, and these always are, even for
   one target: `routers uninstall`, `workloads offboard`, `workloads exclude`, `exclusions add`, `users disable`,
   `users role`, `groups delete`, `discovery config set` and `manager update`. The question names the targets and what
   happens; a workload write lists its targets first (`Offboard 1 workload?`). Without a terminal, `--yes` is required
-  (exit 2). A declined confirmation sends nothing and exits 0. `--dry-run`, where a command has it, lists the targets
-  and sends nothing.
+  (exit 2). A declined confirmation sends nothing and exits 0. Every writing command of both subtrees takes `--yes`, a
+  no-op where nothing is asked, and `--dry-run`, which lists its targets, says each request it would send (`dry run:
+  <target>: would <method> <path>, nothing sent`, its body on the next line), sends nothing and exits 0. Two commands
+  have no `--dry-run`: `aws install` and `aws uninstall`, whose plan, the step before `apply`, needs the bootstrap
+  (a bucket, a role, a CodeBuild project) created first: the plan is the look before acting.
 - **Operations.** Onboarding, offboarding, the install, upgrade and uninstall of routers, exclusions and their lifting,
   and the manager's update are operations of the manager. The CLI starts them and follows them, reading each every 5
   seconds: `started <type> <id> for <target>`, each step on stderr as it changes (`  … install router`,
@@ -558,8 +570,16 @@ it first to check the profile and the permission. `--json` prints `{me, version,
     object when it takes one (`routers install`, `workloads onboard`, `exclusions add`), `{}` when it did not start;
   - the other writes on several targets print the manager's answers by target (`<router>/<workload>`, or the router),
     `{}` when none succeeded;
-  - a dry run prints `{"dryRun": true, "targets": […]}` and a declined confirmation `{"confirmed": false, "targets":
-    […]}` (exit 0); `routers upgrade` and `manager update` print their own result instead.
+  - a dry run prints `{"dryRun": true, "targets": […]}`, on both subtrees, each target as the command addresses it
+    (`<router>/<workload>`, a router, an account, `organization` for the organization's own settings), and a declined
+    confirmation `{"confirmed": false, "targets": […]}` (exit 0); `routers upgrade` and `manager update` print their own
+    result instead. A dry run that has a context adds its own key beside them: `candidate` on `aws workloads onboard`
+    (the candidate's row as discovery listed it), `eligibility` on `gcp workloads onboard` (the router's dry-run
+    answer), `plan` on the commands whose dry run is a plan (`gcp routers install` and `uninstall`, `gcp connect` and
+    `disconnect`);
+  - `aws install check --json` and `aws install status --json` print their object once they have read what it holds
+    (`check`: `{env, account, region, ok, checks}`), and nothing on stdout when they fail early (no install found, an
+    AWS error): the words are on stderr, the exit 1.
 
 ### Exit codes
 
@@ -691,7 +711,7 @@ version available, `upgrading` while an upgrade runs), health and workloads (the
 last line with the version available and how many routers are outdated. A router that does not answer is listed, its
 error on stderr. The manager serves both clouds: a Google Cloud router is `dmtr-<project>-<region>`, its account column
 holds the project and its source is `cli` (a Google Cloud router's installs, upgrades and uninstalls stay with
-`dormeto gcp install` and `uninstall`). `workloads list` and `show`, `routers show` and `discovery access` print the
+`dormeto gcp routers install` and `uninstall`). `workloads list` and `show`, `routers show` and `discovery access` print the
 same `CLOUD` column (`show` prints a `cloud` line, and `project` for a Google Cloud row's account), and every `--json`
 carries the manager's `cloud` field.
 
@@ -729,7 +749,7 @@ It prints the plan: each router to upgrade, from → to, then the routers skippe
 - of unknown version (its error is given);
 - busy with an operation (the operation's type and id are given);
 - a Google Cloud router below the version available, which the line says to upgrade with
-  `dormeto gcp install --project <p> --region <r> --version <available>`, as the manager and its dashboard say it.
+  `dormeto gcp routers install --project <p> --region <r> --version <available>`, as the manager and its dashboard say it.
 
 The plan is confirmed on a terminal. Without one, `--yes` is required (exit 2 after the plan). A declined confirmation
 starts nothing and exits 0. `--dry-run` prints the plan and stops. Then one `upgrade-router` operation per router is
@@ -779,8 +799,8 @@ dormeto aws routers uninstall staging-eu --yes --no-wait
   follows it. The account needs the command role the manager assumes: without it, the manager refuses (`no_access`) and
   the CLI prints why.
 - `install` of a Google Cloud project (`--account dormeto-dev`) is refused before any call, exit 2, with the command
-  `dormeto gcp install --project dormeto-dev --region <region>`.
-- `uninstall` skips each Google Cloud router with one line on stderr naming `dormeto gcp uninstall --project <p> --region
+  `dormeto gcp routers install --project dormeto-dev --region <region>`.
+- `uninstall` skips each Google Cloud router with one line on stderr naming `dormeto gcp routers uninstall --project <p> --region
   <r>`, and goes on with the others. It starts an `uninstall-router` operation for each other router, 3 at once at most, and follows them. It is always
   confirmed on a terminal. The operation's "check empty" step refuses a router that still has workloads: offboard them
   first.
@@ -1010,13 +1030,16 @@ dormeto aws workloads settings prod-eu/w-1 --idle-minutes 10 --type inherit
 dormeto aws workloads show prod-eu/w-1        # each value says where it comes from
 ```
 
-From router 0.37.0, a workload's idle window, hold, drain, wake timeout, held requests, retry after a failed wake and wake
-mode each come from the first level that sets them: the workload, its type, its router, the organization, then the built-in
-value. Its no-wake and wake rules add up across the levels, the organization's first. A type is built in (`instance`, `asg`,
-`ecs`, `k8s`, or `databases` for a workload with RDS or Aurora) or one of the organization's, picked by `--type` on the
-workload, else by its tags. `default` removes a value at the organization or in a type, `inherit` at a router or a workload.
-The CLI refuses a value out of its range before any call; a rules file is a JSON list, `-` for the standard input. A workload
-written by Terraform is refused: set it in its workload module. A router before 0.37.0 answers that it must be upgraded.
+From router 0.37.0, a workload's idle window, hold, drain, wake timeout, held requests, retry after a failed wake and
+wake mode each come from the first level that sets them: the workload, its type, its router, the organization, then the
+built-in value. Its no-wake and wake rules add up across the levels, the organization's first. A type is built in
+(`instance`, `asg`, `ecs`, `k8s`, or `databases` for a workload with RDS or Aurora) or one of the organization's, picked
+by `--type` on the workload, else by its tags. `inherit` removes a value on every level, the organization's and a type's
+too, and `default` is its old name there, read the same (the settings of a router or a workload never took it). The
+settings that Google Cloud fixes or limits say so in their flags' help: a wake timeout of 60 to 1700, and a hold, held
+requests and a drain of 0. The CLI refuses a value out of its range before any call; a rules file is a JSON list, `-`
+for the standard input. A workload written by Terraform is refused: set it in its workload module. A router before
+0.37.0 answers that it must be upgraded.
 
 ### Joined windows
 
@@ -1093,7 +1116,10 @@ workload itself (a hibernated instance cannot change type).
   10:00 CEST)`. `settings set` changes it (administrators) and prints what the manager says: the routers apply it at
   their next check, within 5 minutes.
 - `routers settings` sets one router's value for the workloads that set none, `inherit` to follow the manager's default
-  (administrators; routers 0.32.0 and later, an older one is refused with the version to upgrade it to).
+  (administrators; routers 0.32.0 and later, an older one is refused with the version to upgrade it to). Without a
+  setting flag it shows each router's level (`Settings of router <name> (changed by <who> at <time>):`, in the words of
+  `dormeto gcp routers settings`; `--json` prints the settings by router), and sends nothing, so `--dry-run` and
+  `--yes` do nothing there.
 - `workloads settings` sets a workload's own value, `inherit` to follow its router's (operators and administrators;
   routers 0.32.0 and later). A workload written by Terraform is refused (`set hibernate in its workload module`).
 - Several routers or workloads are confirmed on a terminal; `--yes` skips it and is needed without one; `--dry-run`
@@ -1201,14 +1227,16 @@ exit 1) and a manager of 0.20.0 or later.
 
 ```sh
 dormeto aws workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
+                          [--wake-timeout-seconds <60..3600>]
                           [--database <id>|cluster:<id>|<Cloud SQL name>]... [--fallback-type <type>]... [--set-tag k=v]...
                           [--router <router>] [--hibernate true|false]
 dormeto aws workloads offboard <target>... | --tag k=v... [--concurrency <n>] [--dry-run] [--yes]
 dormeto aws workloads exclude  <target>... | --tag k=v... --reason <text> [--for <duration> | --until <time>] [--dry-run] [--yes]
 ```
 
-All three take `--no-wait`, `--timeout <d>` and `--json`: the operations, as the manager last said them, `onboard`'s
-as an object, `offboard`'s and `exclude`'s as an array.
+All three take `--no-wait`, `--timeout <d>`, `--yes`, `--dry-run` and `--json`: the operations, as the manager last said
+them, `onboard`'s as an object, `offboard`'s and `exclude`'s as an array. `onboard --dry-run` says the candidate, its
+eligibility as discovery listed it, and the request it would send.
 
 ```sh
 dormeto aws discovery candidates
@@ -1221,10 +1249,13 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
   name of its target group, follows it, then prints the new workload as `onboarded <router>/<workload id>`. An unknown
   or ambiguous name exits 2 (its ARNs listed) and sends nothing. It sends what the dashboard's Onboard dialog sends:
   - `--name`: the workload's display name, up to 64 characters (the target group's name by default, or when empty);
-  - `--idle-minutes`: the idle window, 5 to 1440 minutes (15 by default);
-  - `--wake-mode`: `any` request that passes the filters (the default for an AWS candidate), or `browser` (only the
-    waiting page's script or the `x-dormeto-wake: 1` header wakes it); for a Google Cloud candidate none is sent unless
-    the flag is given: the levels decide, as the dashboard's Inherit (behind a global load balancer that is `browser`);
+  - `--idle-minutes`: the idle window, 5 to 1440 minutes. Not given, none is sent and the levels decide (the type's, the
+    router's, the organization's, then 15 built in), as the dashboard's Inherit;
+  - `--wake-mode`: `any` request that passes the filters, or `browser` (only the waiting page's script or the
+    `x-dormeto-wake: 1` header wakes it). Not given, none is sent either: the levels decide (`any` built in; behind a
+    global load balancer `browser`);
+  - `--wake-timeout-seconds`: how long a wake may take, 60 to 3600 (60 to 1700 for a Google Cloud candidate); not
+    given, the levels decide;
   - `--database`: a companion RDS instance identifier, or `cluster:<identifier>`, stopped after the application and
     started before it (repeatable);
   - `--fallback-type`: an EC2 instance type, such as `t3a.medium`, tried in order at a wake when AWS has no capacity
@@ -1560,17 +1591,31 @@ visitor's first request wakes them: Compute Engine VMs and managed instance grou
 standalone network endpoint groups, and Cloud SQL instances as their companions. Everything but VMs and groups behind a
 global load balancer comes with router 0.37.0 and CLI 0.11.0, released on 2026-11-05, which carry what the measures of
 2026-11-04 changed and were accepted the same day ([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
-Every command takes `--project` (required) and, but `check`, `status`, `connect` and `disconnect`, `--region` (required:
-the router is `dmtr-<region>`). Exit codes: 0; 1 when a command lacks a permission, a check fails or Google refuses; 2 for
-a bad flag or a missing answer (an `--yes` without a terminal); 128 and the signal's number when stopped.
+Every command takes `--project` (required) and, but `check`, `connect`, `disconnect` and `routers show`, `--region`
+(required: the router is `dmtr-<region>`, and `dmtr-<project>-<region>` in the manager). Exit codes: 0; 1 when a command
+lacks a permission, a check fails or Google refuses; 2 for a bad flag or a missing answer (an `--yes` without a
+terminal); 128 and the signal's number when stopped.
+
+The tree is `gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`,
+`gcp connect` and `gcp disconnect`; the manager's own commands (`routers list`, `workloads list`, `savings`, `users`…)
+serve both clouds and stay under `dormeto aws`, where `--cloud gcp` and `--project` choose the rows. The router's
+commands were `gcp install`, `gcp uninstall` and `gcp status` until CLI 0.11.0: those names still work, hidden, with the
+same output and exit code, and each prints one line on stderr, `dormeto: "dormeto gcp install" is now "dormeto gcp
+routers install"; the old name goes in a later release.` (`gcp status` is now `gcp routers show`). The same holds for
+the flags renamed to AWS's: `--cloud-sql` is now `--database`, the `refresh=` of `--ip-list` now `refresh_hours=` and
+`--wake-timeout` now `--wake-timeout-seconds`, each saying so on stderr. Every writing command takes `--yes` (accepted
+and ignored where it asks nothing) and `--dry-run` (says each request it would send, and sends nothing), as the
+manager's commands do, and prints AWS's lines, `<router>/<workload>: <what happened>`, the router named as the manager
+names it. A refused nap, wake, pause or resume prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit
+1.
 
 ```sh
 dormeto gcp check --project my-project --region europe-west1
-dormeto gcp install --project my-project --region europe-west1
+dormeto gcp routers install --project my-project --region europe-west1
 dormeto gcp workloads onboard --project my-project --region europe-west1 \
   --url-map shop-map --backend-service shop --idle-minutes 30 --name "The shop" --set-tag team=web
 dormeto gcp workloads list --project my-project --region europe-west1
-dormeto gcp uninstall --project my-project --region europe-west1
+dormeto gcp routers uninstall --project my-project --region europe-west1
 ```
 
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
@@ -1581,7 +1626,7 @@ dormeto gcp uninstall --project my-project --region europe-west1
   those features; with `--region`, those of the install record are tested too. `connect` and `disconnect` are tested for
   what they do in a project; the bindings they change on folders and organizations are tested there by the commands
   themselves. `--json` prints the report.
-- **`gcp install`** checks your permissions first (a ✗ stops it with nothing changed), prints the plan (the APIs to turn
+- **`gcp routers install`** checks your permissions first (a ✗ stops it with nothing changed), prints the plan (the APIs to turn
   on, every IAM binding to add with its role, member, resource and condition, every resource to create), asks for
   confirmation (`--yes` without a terminal, `--dry-run` prints the plan only), applies it, prints the IAM policy
   difference after each step and verifies. It adds, in this order: the APIs; the Firestore database, so that the install
@@ -1597,12 +1642,12 @@ dormeto gcp uninstall --project my-project --region europe-west1
   explain, recording those of Google's service agents. It never changes or removes a binding it did not add. `--with`
   adds the [optional access](#optional-access-cloud-sql-and-gke), `--ip-list` the router's [IP lists](#ip-lists-on-google-cloud), and
   `--custom-pages` turns on [custom waiting pages](#the-waiting-page-on-google-cloud). A router installed before the fallback machine types
-  needs a run of `gcp install` again: it adds `compute.instances.setMachineType` to the role `dormetoRouterBackends`.
-- **`gcp status`** (read-only, `--json`) shows the router's record and live state: version, services, controller
+  needs a run of `gcp routers install` again: it adds `compute.instances.setMachineType` to the role `dormetoRouterBackends`.
+- **`gcp routers show`** (read-only, `--json`) shows the router's record and live state: version, services, controller
   health, queue, job, database and grants, and the record's features, IP lists, custom pages switch (`custom pages: on` or
   `off`) and Kubernetes access. Without `--region` it shows every router of the project. Exit 1 when something differs from
   the record, such as `DMT_IP_LISTS` or `DMT_CUSTOM_PAGES` on a service after an interrupted run.
-- **`gcp uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while workloads are
+- **`gcp routers uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while workloads are
   onboarded (`--force` offboards each first, tag bindings included, and names each VM it leaves on a fallback machine type), keeps the roles and the tag while another router of
   the project lists them, turns no API off, and lists the APIs and Google's bindings as left in place. It removes every
   feature the record lists (their roles and grants; their APIs are left too), and lists the Kubernetes access no
@@ -1613,9 +1658,9 @@ dormeto gcp uninstall --project my-project --region europe-west1
   uninstall waits for it to end before it deletes the resource.
   A tag Google refuses to delete, still bound, is left and the record kept: run the same command again to finish. To
   reinstall in the same region, wait: Google may keep a deleted queue's name blocked for up to 3 days (a create can appear
-  to succeed in that window, and `gcp install` then says so), and a deleted database's ID for about 5 minutes.
+  to succeed in that window, and `gcp routers install` then says so), and a deleted database's ID for about 5 minutes.
 - **`gcp workloads`** call the router's controller with your identity token, so you need `run.routes.invoke` on it
-  (`gcp check` says whether you hold it). `gcp install` does not give it to you: it grants the role to the router's
+  (`gcp check` says whether you hold it). `gcp routers install` does not give it to you: it grants the role to the router's
   service account only, so ask for `roles/run.invoker` on the controller if you lack it.
   If Terraform writes the load balancer, the VMs, the databases or the Deployments, it must ignore what the router
   changes: the fields are on the website's [Google Cloud page](https://dormeto.com/google-cloud.html#terraform).
@@ -1660,7 +1705,7 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   and disconnect say so once per project (`Cloud Run did not list the services of project <p> in <regions>: a router there, if
   any, isn't seen by this run`, on stderr, and in `--json`'s `warnings`) and go on with the regions it listed. A router the
   record holds in such a region is neither dropped nor granted again: its grants and its entry stay.
-- **As `gcp install`:** your permissions are tested at the host and at each scope, each for the steps that act on it: a
+- **As `gcp routers install`:** your permissions are tested at the host and at each scope, each for the steps that act on it: a
   folder for its bindings, an organization for its role and bindings, a router project for its grants (a ✗ stops the run
   with nothing changed). A router project's tag value is read only then: Google answers one you may not read as one that
   does not exist. Then the plan is printed and confirmed (`--yes` without a terminal, `--dry-run` prints it only). It is
@@ -1699,32 +1744,32 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   APIs and the bindings Google added as left in place. A project that has left the connection's scopes is not read:
   after a disconnect it keeps the role `dormetoCommand` a connect left there, granted to no one, which you delete with
   `gcloud iam roles delete dormetoCommand --project <id>`.
-- **Exit codes** as `gcp install`: 0; 1 when the manager or a check refuses, a permission is missing or Google refuses;
+- **Exit codes** as `gcp routers install`: 0; 1 when the manager or a check refuses, a permission is missing or Google refuses;
   2 for a bad flag (`--project` not a project ID, a `--scope` of another form) or `--yes` missing without a terminal;
   128 and the signal's number when stopped.
 
 ### The router's image
 
-`gcp install` installs Dormeto's public image by default,
+`gcp routers install` installs Dormeto's public image by default,
 `<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>`. The multi-region follows `--region`:
 `europe-*` uses `europe`; `us-*`, `northamerica-*` and `southamerica-*` use `us`; every other region uses `asia`. The CLI
 reads the image without a token and deploys it by its digest (`<name>@sha256:…`), which the plan shows.
 
 - **The default version** is the router version this CLI's access describes. A first install takes it, and a later run
   upgrades an older router of Dormeto's to it. Unlike `dormeto aws install`, whose default is the latest manager release
-  because that release carries its own access, `dormeto gcp install` writes the router's IAM from the manifest this CLI
+  because that release carries its own access, `dormeto gcp routers install` writes the router's IAM from the manifest this CLI
   embeds, so its default is the router version of that manifest.
 - **`--version <v>`** installs another version, up to the default. A newer one is refused before any change: `router <v>
   needs a newer CLI: brew upgrade dormeto`.
 - **A router of Dormeto's newer than the CLI**, installed by a newer CLI, stops every run before any change, with `router
   <v> is newer than this CLI knows (<default>): brew upgrade dormeto`. Upgrade the CLI first.
 - **`--access-only`** installs the access without the router. The record says so (`accessOnly`), and later runs keep it
-  until one with `--version` or `--image`. It says `the router isn't installed: dormeto gcp install --version <default>`.
+  until one with `--version` or `--image`. It says `the router isn't installed: dormeto gcp routers install --version <default>`.
 - **`--image <image>`** installs a router image of your own instead, such as a copy inside a VPC Service Controls
   perimeter. Its tag is its version. Only an image of your own needs Artifact Registry's API in the project and your
   permissions on the image: `gcp check --image <image>` tests them before a first install. An image in another project
   needs Artifact Registry Reader for this project's Cloud Run service agent, which you give yourself. A later run
-  keeps your image and says which public version is available: `router <v> is available: dormeto gcp install --version <v>`.
+  keeps your image and says which public version is available: `router <v> is available: dormeto gcp routers install --version <v>`.
 - `--image`, `--version` and `--access-only` exclude each other.
 
 ### Request logs
@@ -1757,7 +1802,7 @@ other header never does, so the request counts.
   its free tier)`.
 - **The router's version:** the request logs need router 0.38.0 or later, which the onboarding reads from the controller
   before any change. On an older router, `--request-logs` stops with `--request-logs needs router 0.38.0 or later: dormeto
-  gcp install --version <default>`, and an onboarding without it says nothing of the request logs.
+  gcp routers install --version <default>`, and an onboarding without it says nothing of the request logs.
 - **The offboarding** sets the `logConfig` back when it is still what Dormeto set, and says so. If you changed it since,
   it is left, with a notice naming the backend service.
 - **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`. It also says why the last nap was given up, `nap given up: backends-changed, 2026-11-08T04:55:57Z`, until a nap succeeds (`--json` carries it as `napAborted`).
@@ -1774,7 +1819,7 @@ other header never does, so the request counts.
 - **The limit:** the view is created in the `global` location. In a project whose `_Default` bucket is elsewhere (an
   organization's default storage location), the install says `! the router's log view isn't created: the project's
   _Default log bucket isn't in global; the idle check counts every request` and goes on without the view and its grant.
-  The record says so, `gcp status` shows the same line, the uninstall has neither to remove, and a later run tries the
+  The record says so, `gcp routers show` shows the same line, the uninstall has neither to remove, and a later run tries the
   view again. The request count decides there.
 
 ### Optional access: Cloud SQL and GKE
@@ -1783,7 +1828,7 @@ Turning on the Cloud SQL Admin API or the Kubernetes Engine API makes Google add
 that uses neither should not get them. So you ask for each feature by name:
 
 ```sh
-dormeto gcp install --project my-project --region europe-west1 --with cloud-sql,gke
+dormeto gcp routers install --project my-project --region europe-west1 --with cloud-sql,gke
 ```
 
 - `cloud-sql` turns on `sqladmin.googleapis.com` and adds two custom roles, granted to the router on the project:
@@ -1795,7 +1840,7 @@ dormeto gcp install --project my-project --region europe-west1 --with cloud-sql,
   [Kubernetes access](#kubernetes-access-of-gke-workloads).
 - The install record keeps the features. A later run with more adds them, a run without `--with` keeps the record's, and
   only `uninstall` removes them. A feature joins the record once its API is on. An unknown feature exits 2.
-- `workloads onboard --cloud-sql` needs the feature `cloud-sql` of the router's install, and `--gke-cluster` its feature
+- `workloads onboard --database` needs the feature `cloud-sql` of the router's install, and `--gke-cluster` its feature
   `gke`.
 
 What Google adds, as seen on a real project on 2026-11-04. The CLI prints each binding Google adds as Google's, after the
@@ -1811,13 +1856,14 @@ next run. `uninstall` leaves them, and the APIs, in place.
 ### IP lists on Google Cloud
 
 ```sh
-dormeto gcp install --project my-project --region europe-west1 \
-  --ip-list name=scanners,url=https://lists.example.com/scanners.txt,refresh=12
-dormeto gcp install --project my-project --region europe-west1 --no-ip-lists
+dormeto gcp routers install --project my-project --region europe-west1 \
+  --ip-list name=scanners,url=https://lists.example.com/scanners.txt,refresh_hours=12
+dormeto gcp routers install --project my-project --region europe-west1 --no-ip-lists
 ```
 
-With `--ip-list name=<n>,url=<u>[,refresh=<hours>]`, repeatable, the router downloads each list over HTTP(S), every 24
-hours unless `refresh` says otherwise, and a visit from an address on one never wakes a workload. Only the action `ignore`
+With `--ip-list name=<n>,url=<u>[,refresh_hours=<hours>]`, repeatable, the router downloads each list over HTTP(S), every 24
+hours unless `refresh_hours` says otherwise (`refresh=`, its name before CLI 0.14.0, is read the same and says `--ip-list:
+refresh= is now refresh_hours=` on stderr; both in one list exit 2), and a visit from an address on one never wakes a workload. Only the action `ignore`
 exists on Google Cloud, and `action=` is refused: a listed address's `GET /_dormeto/wake` (the waiting page's probe)
 never wakes, but a listed address's `POST /_dormeto/wake` still wakes, as an API client's explicit wake. A list stops
 browsers and scanners on those addresses, not a client that means to wake.
@@ -1836,18 +1882,23 @@ browsers and scanners on those addresses, not a client that means to wake.
 
 | Command | What it does |
 |---|---|
-| `workloads list` | the router's workloads and their states |
+| `workloads list` | the router's workloads and their states; `--state`, `--search` and `--tag` filter them as AWS's (`--tag` needs router 0.40.0, which answers the tags), `--json` prints AWS's list object `{workloads, total, byState, cursor, errors}` |
 | `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, what the idle check reads, why the last nap was given up (`nap given up: <reason>, <time>`, until a nap succeeds), and a Cloud SQL instance that no longer exists |
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
-| `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed) |
-| `workloads nap <id>`, `workloads wake <id>` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends) |
+| `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed). It is confirmed on a terminal, as AWS's (`Offboard 1 workload?`; without one, `--yes` is needed: exit 2, nothing changed; declined: `not confirmed: nothing sent`, exit 0); a rerun that only finishes the untag and the access cleanup, the controller no longer holding the workload, is confirmed too |
+| `workloads nap <id>`, `workloads wake <id> [--wait] [--timeout <d>]` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; `wake --wait` follows it until the workload is awake (`<router>/<id>: awake`; 15 minutes by default, `failed to wake` and `timeout` exit 1), or follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends). A nap of a workload asleep already says `not awake (ASLEEP)` and exits 0: the router does not refuse it |
 | `workloads schedule show`, `set` or `clear <id>` | its nap and awake windows ([schedules and pauses](#google-cloud-schedules-and-pauses)) |
-| `workloads pause <id> --reason <text>`, `workloads resume <id>` | hold its naps, then let them run again |
+| `workloads pause <id> --reason <text> [--for <duration> \| --until <time>]`, `workloads resume <id>` | hold its naps, then let them run again |
 | `workloads access show`, `grant` or `revoke` | a GKE workload's [Kubernetes access](#kubernetes-access-of-gke-workloads), alone |
 | `workloads settings <id>...`, `routers settings` | the [settings](#google-cloud-settings-and-their-levels) of a workload, and of the router's level |
 | `workloads waiting-page show`, `set` or `clear <id>`, `routers waiting-page show`, `set` or `clear` | the [waiting page](#the-waiting-page-on-google-cloud) of a workload and of the router |
 
-`--json` prints the controller's answer as it is. `onboard` first asks the controller for a dry run: a workload that is
+`--json` prints AWS's shapes, on stdout alone: a write's answer by target, `{"<router>/<workload>": answer}` (`{}` when it
+is refused, an onboarding or an offboarding too; the router's writes `{"<router>": answer}`), the list's object, and a
+workload as a manager row has it, whatever the router's version: `router`, `account` (the project), `region`,
+`cloud: "gcp"`, `workloadId` (`id` before CLI 0.14.0) and `pauses`, each with its `scope` (`paused` before), and its
+backends as `instance`, `asg`, `k8s` and `cloudsql-instance`. A router before 0.40.0 is read with its older names and
+sent the requests it takes. `onboard` first asks the controller for a dry run: a workload that is
 not eligible is refused with the reasons and nothing is changed (`--dry-run` stops there). Then it binds the tag
 `dormeto=managed` to each VM, managed group and Cloud SQL instance as you (the router itself holds no permission to tag,
 or it could tag any VM and stop it), then onboards. `--id` is the workload's ID (lowercase letters, digits and dashes,
@@ -1875,8 +1926,10 @@ The onboarding's other flags:
 - `--fallback-type <machine type>`, repeatable, at most 5 (such as `e2-medium`): the machine types a VM of an unmanaged instance group or of a zonal network endpoint group may run on when its own is out of capacity, as AWS's `--fallback-type`. The router checks them against each VM's zone ([capacity and fallback machine types](#capacity-and-fallback-machine-types)). At the offboarding a VM that still runs on a fallback type is named, one line each (`VM web-1 is on e2-medium, its own is e2-small: it keeps e2-medium until you change it by hand`), as soon as the router answers the offboarding, before the tag bindings go (on stderr under `--json`), and `--json` carries the router's `fallbacks`.
 - `--request-logs`: turns the backend service's request logs on, for the idle check to read ([request logs](#request-logs)).
   Its warning, the offboarding's set-back and the cost are there.
-- `--cloud-sql <instance>`, repeatable: a Cloud SQL instance of the project that naps with the workload, stopped after the
-  application and started before it. The tag is bound to it as you, and unbound at the offboarding.
+- `--database <instance>`, repeatable, as on AWS: a Cloud SQL instance of the project that naps with the workload,
+  stopped after the application and started before it. The tag is bound to it as you, and unbound at the offboarding.
+  `--cloud-sql` is its old name, which still works, hidden, and says `--cloud-sql is now --database`; both together send
+  `--database`'s, then the old flag's.
 - `--gke-cluster <location>/<name>`: the workload's pods are in this GKE cluster, behind standalone network endpoint groups
   (the Service's `cloud.google.com/neg` annotation) on a load balancer you own. No tag is bound for pods. The CLI reads the
   Service's owner in the cluster as you, then prints, asks and applies its Kubernetes access before the onboarding; a
@@ -1909,7 +1962,7 @@ across the levels, the most general first. The organization level and the custom
 connected with [`dormeto gcp connect`](#connecting-the-manager) pushes its settings to the router when they change and at
 its polls, and the router reads them as an AWS router reads the manager's. Without a connected manager the organization
 level reads as unset, and only the built-in types exist. `routers settings` with no flag shows the router's level. A router without the levels answers 404, which the CLI says as `router <version> doesn't have the settings
-levels: dormeto gcp install --version <this CLI's>`.
+levels: dormeto gcp routers install --version <this CLI's>`.
 
 | Setting | Flag | Range | Built-in |
 |---|---|---|---|
@@ -2000,9 +2053,9 @@ median of the workload's last 10 wakes. A router without the page says so, with 
 
 - **Custom pages are off.** Custom HTML runs on the application's address, and on Google Cloud anyone who can invoke the
   controller sets a page. So a router serves custom pages only when an administrator's install turns them on:
-  `dormeto gcp install --custom-pages`, which sets `DMT_CUSTOM_PAGES=1` on both Cloud Run services and `customPages` in the
+  `dormeto gcp routers install --custom-pages`, which sets `DMT_CUSTOM_PAGES=1` on both Cloud Run services and `customPages` in the
   install record, and a run without the flag keeps the record's. `--custom-pages=false` turns them off. Setting one while they are off is
-  refused with the router's words, `custom pages are off on this router: an administrator turns them on with dormeto gcp install
+  refused with the router's words, `custom pages are off on this router: an administrator turns them on with dormeto gcp routers install
   --custom-pages`. A custom page stored while they are off is shown as `off`, with the router's warning, and never served: the template
   levels or the built-in page show instead. It stays stored until you `clear` it or the switch comes back, so turning
   the switch off stops customer HTML at once.
@@ -2027,9 +2080,9 @@ resumes, as Google changes no type while a VM is suspended. The next stop gives 
 - **The onboarding checks each type** against each VM: at most 5, none of them the VM's own, each in the VM's zone, with no GPU
   and no local SSD, and of the VM's series or between first and second generation series (N1, F1, G1, N2, N2D, E2, C2, C2D, M1, M2, T2D): any
   other is refused with Google's rule. The list is set at the onboarding and can't be changed later.
-- **The permission.** The router changes a type with `compute.instances.setMachineType`, which `dormeto gcp install` adds to the
+- **The permission.** The router changes a type with `compute.instances.setMachineType`, which `dormeto gcp routers install` adds to the
   role `dormetoRouterBackends`, under its `dormeto=managed` condition: run it again on a router installed before. Without it a wake
-  that needs a fallback fails with `the router's role lacks compute.instances.setMachineType: run dormeto gcp install again`.
+  that needs a fallback fails with `the router's role lacks compute.instances.setMachineType: run dormeto gcp routers install again`.
 - **What you see.** `workloads show` lists the fallback types and the VMs running on one (`running on a fallback type: web-1 e2-medium
   (was e2-small)`); the log says `InstanceTypeFallback`, and `InstanceTypeNotReverted` when a VM could not be given its own type back
   (the next stop tries again). An offboarding names each VM that keeps a fallback type.
@@ -2043,7 +2096,7 @@ napped by the swap, like a regional one: Google documents no custom error respon
 Service Mesh) is still refused.
 
 - **The idle check** reads `loadbalancing.googleapis.com/https/internal/request_count`, and with `--request-logs` the logs of the
-  resource `internal_http_lb_rule`: `gcp install` updates a log view filtered before to include it.
+  resource `internal_http_lb_rule`: `gcp routers install` updates a log view filtered before to include it.
 - **The limits.** The visitors' addresses are private, so an IP list is for private ranges. A project's regional serverless
   network endpoint groups share 5,000 queries a second (Google's documentation). A cross-region internal load balancer's waker is in one region. The
   swap's wait is 30 s on an internal load balancer and 150 s on a cross-region one (set from the spreads measured on 2026-11-08: ten times the internal kind's worst, 3 s, and one and a quarter times the cross-region kind's worst, 120 s), so a wake timeout of 90 s or
@@ -2066,16 +2119,17 @@ dormeto gcp routers resume --project my-project --region europe-west1
   (a duration up to 366 days: `90m`, `2h`, `3d`) or `--until` (an RFC 3339 time, or `HH:MM` today), not both (exit 2,
   before any call), `--keep-asleep`, `--dry-run` (prints the router and the body, sends nothing), `--yes` (accepted: one router asks nothing) and `--json` (the controller's answer by router, `{"<router>": …}`, as AWS's). Without `--for` or `--until` it lasts until `routers resume`. The workloads asleep
   are woken and printed unless `--keep-asleep`. A workload's own pause stays when the router is resumed. Routers 0.40.0
-  and later; an older one answers `router <version> doesn't have the router's pause: dormeto gcp install --version <this
+  and later; an older one answers `router <version> doesn't have the router's pause: dormeto gcp routers install --version <this
   CLI's>`.
 - `workloads onboard --name <text> --set-tag k=v` set the workload's name for people (up to 64 characters, default its ID) and
   its Dormeto tags, as on AWS: `--set-tag` is repeatable, at most 50, a key of 1 to 128 characters, a value of up to 256,
   letters, digits, spaces and `_ . : / = + - @`, no key starting with `dormeto:`; a bad one is refused (exit 2) before any
   call. `workloads show` prints `name` and `tags`. Routers 0.40.0 and later: with either flag the router's version is read
   after the dry run, and an older router, which drops them, is refused before any change with the install to run, as
-  `Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first: dormeto gcp install …`
+  `Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first: dormeto gcp routers install …`
   (exit 1).
-- `schedule set --file` takes the schedule's JSON, the same as on AWS
+- `schedule set --file` (`-` for the standard input; a `schedule show --json` output is read as well) takes the schedule's
+  JSON, the same as on AWS
   ([Keeping workloads awake and scheduling them](#keeping-workloads-awake-and-scheduling-them), and
   [Schedule recurrences](#schedule-recurrences) from router 0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`.
   The controller checks it and a refused one prints what is wrong, exit 1. `schedule show` prints the windows, a
@@ -2091,7 +2145,8 @@ dormeto gcp routers resume --project my-project --region europe-west1
   within 283 s, none failed. A nap that finds the map busy gives up and tries again at a later check (the router's
   Compute Engine scenario page says why).
 - `pause <id> --reason <text>` (required, at most 256 characters) stops every nap, by the idle window, the schedule or
-  `nap`, until `resume` or `--until` (RFC 3339, at most 366 days away). A workload asleep is woken. With `--keep-asleep`
+  `nap`, until `resume`, `--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today, at most 366
+  days away). A workload asleep is woken. With `--keep-asleep`
   it is not, but a visitor still wakes it: only scheduled and maintenance wakes wait for the pause to end.
 - Two windows of one kind with a short gap between them are one, as on AWS: the gap that joins is the schedule's own
   `joinMinutes`, else the router's (`gcp routers settings --join-minutes`), else 15. `schedule show` says which, as in
@@ -2131,7 +2186,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   (Google lists it as testing in custom roles) and `container.roles.bind`.
 - `access revoke` prints what it removes and asks (`--yes` without a terminal and with `--json`), then removes the RoleBinding and the Role that are Dormeto's and takes them out of the record; one of that
   name without the label is left and said. While another subject holds the binding, only the router's subject goes, and
-  both objects stay. It works after `dormeto gcp uninstall`, which lists what it leaves in a cluster.
+  both objects stay. It works after `dormeto gcp routers uninstall`, which lists what it leaves in a cluster.
 - The CLI and the router reach the cluster on its DNS endpoint, which must be open to traffic from outside its network:
   the router calls it from Cloud Run with its own token, with no VPC. A cluster with no DNS endpoint is refused, saying
   what to turn on; a private cluster is reached by its DNS endpoint only.
@@ -2197,7 +2252,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 - *Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both released on 2026-11-05: regional and classic
   load balancers (`--load-balancer`), zonal network endpoint groups, schedules and pauses (`workloads schedule`, `pause`,
   `resume`), IP lists (`--ip-list`), Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and GKE (`--with gke`,
-  `--gke-cluster`, `workloads access`), installed by `gcp install --with cloud-sql,gke` and removed by `gcp uninstall`.
+  `--gke-cluster`, `workloads access`), installed by `gcp routers install --with cloud-sql,gke` and removed by `gcp routers uninstall`.
   Not run: an operator holding exactly the permissions `gcp check` lists for `onboard`, and a Cloud SQL start refused
   for lack of capacity.
 - *Accepted on a real project on 2026-11-08*, with router image 0.38.0-dev.2 and the CLI built from `main`: the swap of
@@ -2208,8 +2263,10 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   napped it for scanners alone. The waker reading the client's address behind global, regional and classic load
   balancers. A nap through a new revision of the router. The uninstall, which left the policy as before. Not run: an
   install interrupted while its database is being created (unit-tested).
-- *Not run against Google yet*: `gcp connect`, `gcp disconnect`, `gcp routers pause` and `resume`, and the manager reaching
-  a router through the connection, with manager 0.24.0 and router 0.40.0, not released. Their tests play Google's answers.
+- *Accepted in `dormeto-dev` on 2026-11-09 and 2026-11-10, not released*: `gcp connect` and `gcp disconnect`, and the
+  manager reaching a router through the connection (its lists, the onboarding of a Google Cloud candidate, the savings
+  and the idle window), with dev builds of manager 0.24.0 and router 0.40.0.
+- *Not run against Google yet*: `gcp routers pause` and `resume`, whose tests play Google's answers.
 
 The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
 CLI 0.12.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for

@@ -243,13 +243,13 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		"container-engine-robot", "cloud-filer", "gcp-sa-gkenode", "gcp-sa-cloud-sql",
 		"`autoscaling`", "`containerfilesystem`", "`dns`", "`file`", "`gkebackup`", "`networkconnectivity`",
 		// IP lists
-		"--ip-list name=<n>,url=<u>[,refresh=<hours>]", "--no-ip-lists", "`DMT_IP_LISTS`", "512 MiB",
+		"--ip-list name=<n>,url=<u>[,refresh_hours=<hours>]", "--no-ip-lists", "`DMT_IP_LISTS`", "512 MiB",
 		"a listed address's `POST /_dormeto/wake` still wakes",
 		// schedules and pauses
 		"workloads schedule show", "workloads schedule set", "workloads schedule clear", "--reason", "--until", "at most 10 scheduled naps",
 		"`--keep-asleep`", "a visitor still wakes it",
 		// the onboarding's flags
-		"--load-balancer global|regional|classic", "--wake-timeout", "60 to 1700", "--cloud-sql <instance>", "--gke-cluster <location>/<name>",
+		"--load-balancer global|regional|classic", "--wake-timeout", "60 to 1700", "--database <instance>", "--gke-cluster <location>/<name>",
 		// the Kubernetes access
 		"workloads access show", "workloads access grant", "workloads access revoke", "dormeto-<workload>", "nothing cluster-wide",
 		"`container.roles.escalate`", "`container.roles.bind`",
@@ -268,15 +268,15 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		"62 s after a `POST /_dormeto/wake`", "`AWAKE` 123 to 188 s and 287 s after the wake", "551 s",
 		// the router's image (vision docs/specs/2026-11-07-google-cloud-fixes-design.md, §4), in the words the CLI prints
 		"`<europe|us|asia>-docker.pkg.dev/dormeto-releases/router/router:<version>`", "`<name>@sha256:…`",
-		"Unlike `dormeto aws install`, whose default is the latest manager release because that release carries its own access, `dormeto gcp install` writes the router's IAM from the manifest this CLI embeds",
+		"Unlike `dormeto aws install`, whose default is the latest manager release because that release carries its own access, `dormeto gcp routers install` writes the router's IAM from the manifest this CLI embeds",
 		"`router <v> needs a newer CLI: brew upgrade dormeto`",
 		"`router <v> is newer than this CLI knows (<default>): brew upgrade dormeto`",
-		"`the router isn't installed: dormeto gcp install --version <default>`",
-		"`router <v> is available: dormeto gcp install --version <v>`",
+		"`the router isn't installed: dormeto gcp routers install --version <default>`",
+		"`router <v> is available: dormeto gcp routers install --version <v>`",
 		"`--image`, `--version` and `--access-only` exclude each other",
 		// the request logs (§5) and the log view, in the words the CLI prints
 		"`! the idle check counts every request, scanners included: --request-logs reads the requests instead (Cloud Logging's price past its free tier)`",
-		"`--request-logs needs router 0.38.0 or later: dormeto gcp install --version <default>`",
+		"`--request-logs needs router 0.38.0 or later: dormeto gcp routers install --version <default>`",
 		"`! the router's log view isn't created: the project's _Default log bucket isn't in global; the idle check counts every request`",
 		"log_config { enable = true sample_rate = 1.0 }",
 		"router 0.38.0 and CLI 0.12.0, which are not released yet",
@@ -369,7 +369,7 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		"dormeto gcp workloads settings", "dormeto gcp routers settings", "`--idle-minutes`", "`--failed-retry-seconds`", "`--no-wake-rules-file`", "`--wake-rules-file`", "`--hibernate`", "`--type`", "`--join-minutes`",
 		"The organization level and the custom types are the manager's",
 		"`instance` is a VM of an unmanaged instance group or of a zonal network endpoint group, `asg` a managed instance group, `k8s` GKE pods and `databases` a Cloud SQL companion",
-		"`router <version> doesn't have the settings levels: dormeto gcp install --version <this CLI's>`",
+		"`router <version> doesn't have the settings levels: dormeto gcp routers install --version <this CLI's>`",
 		"`set on this workload`, `type <name>`, `router`, `organization`, `built-in` or `fixed on Google Cloud`",
 		// what Google Cloud fixes, and why
 		"| `--wait-seconds` | 0 | The waker holds no request: it answers the waiting page at once, and the page waits for the wake. |",
@@ -391,7 +391,7 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		"A visitor on a `.php` URL or on a path a no-wake rule keeps gets a page whose probe never wakes the workload",
 		// the page
 		"### The waiting page on Google Cloud", "dormeto gcp workloads waiting-page", "dormeto gcp routers waiting-page",
-		"`custom pages are off on this router: an administrator turns them on with dormeto gcp install --custom-pages`",
+		"`custom pages are off on this router: an administrator turns them on with dormeto gcp routers install --custom-pages`",
 		"anyone who can invoke the controller sets a page",
 		"`--custom-pages=false`",
 		"A custom page stored while they are off is shown as `off`",
@@ -399,7 +399,7 @@ func TestReadmeGoogleCloudDocumentsSettingsTheWaitingPageFallbackTypesAndTheInte
 		// the capacity and the fallback machine types
 		"### Capacity and fallback machine types", "30 s, 60 s, then every 120 s until the wake's deadline",
 		"`fallback machine types are for VMs of unmanaged instance groups: a managed group's machine type is its template's`",
-		"`compute.instances.setMachineType`", "`the router's role lacks compute.instances.setMachineType: run dormeto gcp install again`",
+		"`compute.instances.setMachineType`", "`the router's role lacks compute.instances.setMachineType: run dormeto gcp routers install again`",
 		"`InstanceTypeNotReverted`",
 		// the internal kinds
 		"### Internal load balancers", "`cross-region-internal`", "`loadbalancing.googleapis.com/https/internal/request_count`", "`internal_http_lb_rule`",
@@ -530,7 +530,7 @@ func TestReadmeGoogleCloudSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
 	for _, want := range []string{
 		// the internal kinds in the section's introduction
 		"of a global, regional or classic external Application Load Balancer, or of an internal one",
-		// gcp status and the custom pages switch
+		// gcp routers show and the custom pages switch
 		"the record's features, IP lists, custom pages switch (`custom pages: on` or `off`) and Kubernetes access",
 		"such as `DMT_IP_LISTS` or `DMT_CUSTOM_PAGES` on a service after an interrupted run",
 		// uninstall --force and offboard name the VMs on a fallback type
@@ -598,8 +598,8 @@ func TestChangelogUnreleasedSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) 
 		"for the VMs of unmanaged instance groups and zonal network endpoint groups",
 		"With `--request-logs`, the onboarding turns on the logs of the backend service in the map's scope: global, or regional in the router's region",
 		"`--json` carries the router's `fallbacks`",
-		"`dormeto gcp uninstall --force` names them too",
-		"`gcp status` prints `custom pages: on` or `off` from the record, and exits 1 when a service's `DMT_CUSTOM_PAGES` differs from it",
+		"`dormeto gcp routers uninstall --force` names them too",
+		"`gcp routers show` prints `custom pages: on` or `off` from the record, and exits 1 when a service's `DMT_CUSTOM_PAGES` differs from it",
 		"An empty `--wake-mode` is refused (exit 2)",
 		"`{\"dryRun\":true,\"targets\":[…]}`",
 		"not what a no-wake rule of any level matches",
@@ -646,9 +646,9 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 		// routers pause and resume, the name and the tags
 		"dormeto gcp routers pause --project my-project --region europe-west1 --reason \"release freeze\" --for 3h",
 		"`--json` (the controller's answer by router, `{\"<router>\": …}`, as AWS's)",
-		"`router <version> doesn't have the router's pause: dormeto gcp install --version <this CLI's>`",
+		"`router <version> doesn't have the router's pause: dormeto gcp routers install --version <this CLI's>`",
 		"an older router, which drops them, is refused before any change with the install to run",
-		"`Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first: dormeto gcp install …`",
+		"`Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first: dormeto gcp routers install …`",
 		// the organization level, from a connected manager
 		"the workload, its type, its router, the organization, then the built-in value",
 		"a manager connected with [`dormeto gcp connect`](#connecting-the-manager) pushes its settings to the router",
@@ -656,7 +656,7 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 		"the organization's is the manager's page, which a [connected](#connecting-the-manager) manager pushes to the router with its settings",
 		"The manager reaches Google Cloud routers once [connected](#connecting-the-manager): its commands and its dashboard list them",
 		// how far it was tried
-		"*Not run against Google yet*: `gcp connect`, `gcp disconnect`, `gcp routers pause` and `resume`, and the manager reaching a router through the connection",
+		"*Not run against Google yet*: `gcp routers pause` and `resume`",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)
@@ -678,7 +678,7 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 		"Lists each router's name, cloud (`aws` or `gcp`), account or project",
 		"`workloads list` and `show`, `routers show` and `discovery access` print the same `CLOUD` column",
 		"`--account <id>`: only the routers of these AWS accounts or Google Cloud projects",
-		"a Google Cloud router below the version available, which the line says to upgrade with `dormeto gcp install --project <p> --region <r> --version <available>`",
+		"a Google Cloud router below the version available, which the line says to upgrade with `dormeto gcp routers install --project <p> --region <r> --version <available>`",
 		"A Google Cloud router (`cloud gcp`, `project <id>`) has no Lambda, queue, concurrency or wake statistics metrics row",
 		"inherit the organization level the manager pushes to it",
 	} {
@@ -686,7 +686,7 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 			t.Errorf("the Routers and workloads section lacks %q", want)
 		}
 	}
-	if strings.Contains(routers, "a Google Cloud router, which the line says to upgrade with `dormeto gcp install --project <p> --region <r>`.") {
+	if strings.Contains(routers, "a Google Cloud router, which the line says to upgrade with `dormeto gcp routers install --project <p> --region <r>`.") {
 		t.Error("routers upgrade's Google Cloud line has no --version")
 	}
 }
@@ -701,7 +701,7 @@ func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
 	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
 	text := strings.Join(strings.Fields(unreleased), " ")
 	for _, want := range []string{
-		"skips a Google Cloud router below the version available with one line naming `dormeto gcp install --project <p> --region <r> --version <available>`",
+		"skips a Google Cloud router below the version available with one line naming `dormeto gcp routers install --project <p> --region <r> --version <available>`",
 		"`--account` selects Google Cloud projects too",
 		"`discovery access` lists `NAME`, `CLOUD`, `ACCOUNT OR PROJECT`, the routers list's order",
 		"its `hibernate` and `join windows` rows inherit the organization level the manager pushes to it",
@@ -720,7 +720,7 @@ func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
 			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"skip each Google Cloud router with one line naming `dormeto gcp install` or", "router 8cc9f6f's"} {
+	for _, gone := range []string{"skip each Google Cloud router with one line naming `dormeto gcp routers install` or", "router 8cc9f6f's"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
 		}
@@ -815,5 +815,91 @@ func TestDocsSaySavingsAndIdleWindowOnGoogleCloud(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
 		}
+	}
+}
+
+// The AWS and Google Cloud review's plan 2 (the CLI): the README and the CHANGELOG say the tree and its old names, the flags
+// of both subtrees, the dry run's shape, and the behaviours that changed, as the code does them.
+func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
+	text := strings.Join(strings.Fields(readme(t)), " ")
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
+	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
+	log := strings.Join(strings.Fields(unreleased), " ")
+	for _, want := range []string{
+		// the tree and the old names
+		"`gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`, `gcp connect` and `gcp disconnect`",
+		"were `gcp install`, `gcp uninstall` and `gcp status` until CLI 0.11.0: those names still work, hidden, with the same output and exit code",
+		"`dormeto: \"dormeto gcp install\" is now \"dormeto gcp routers install\"; the old name goes in a later release.`",
+		"`--cloud-sql` is now `--database`, the `refresh=` of `--ip-list` now `refresh_hours=` and `--wake-timeout` now `--wake-timeout-seconds`",
+		"On a router's commands, `dormeto gcp routers` and `dormeto gcp workloads`, `--region` is the router's",
+		// the clouds, --yes and --dry-run
+		"`discovery candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before any call)",
+		"every command that takes `--account` takes `--project` too",
+		"Every writing command of both subtrees takes `--yes`, a no-op where nothing is asked, and `--dry-run`",
+		"Two commands have no `--dry-run`: `aws install` and `aws uninstall`, whose plan, the step before `apply`, needs the bootstrap",
+		"the plan is the look before acting",
+		// the JSON
+		"`candidate` on `aws workloads onboard` (the candidate's row as discovery listed it), `eligibility` on `gcp workloads onboard` (the router's dry-run answer)",
+		"`aws install check --json` and `aws install status --json` print their object once they have read what it holds",
+		"and nothing on stdout when they fail early (no install found, an AWS error)",
+		"`--json` prints AWS's shapes, on stdout alone",
+		"`workloadId` (`id` before CLI 0.14.0)",
+		// the onboarding defaults
+		"Not given, none is sent and the levels decide (the type's, the router's, the organization's, then 15 built in)",
+		"`--wake-timeout-seconds`: how long a wake may take, 60 to 3600 (60 to 1700 for a Google Cloud candidate)",
+		// gcp's own
+		"A nap of a workload asleep already says `not awake (ASLEEP)` and exits 0: the router does not refuse it",
+		"`workloads wake <id> [--wait] [--timeout <d>]`",
+		"A refused nap, wake, pause or resume prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
+		"`--cloud-sql` is its old name, which still works, hidden, and says `--cloud-sql is now --database`",
+		"`--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today",
+		"Without a setting flag it shows each router's level",
+		"`inherit` removes a value on every level, the organization's and a type's too, and `default` is its old name there",
+		// the acceptance
+		"*Accepted in `dormeto-dev` on 2026-11-09 and 2026-11-10, not released*: `gcp connect` and `gcp disconnect`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("README.md lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"*Not run against Google yet*: `gcp connect`", "prints the controller's answer as it is. `onboard`"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("README.md still says %q", gone)
+		}
+	}
+	for _, want := range []string{
+		"The router's commands are under `dormeto gcp routers`: `gcp routers install`, `uninstall` and `show`",
+		"(`gcp install`, `gcp uninstall` and `gcp status` of 0.11.0 go on working, hidden from the help, with the same output and exit code",
+		"`--cloud-sql` (`--cloud-sql is now --database`), `--ip-list`'s `refresh=` (`--ip-list: refresh= is now refresh_hours=`; both in one list exit 2)",
+		"take `--cloud aws|gcp`",
+		"but `dormeto aws install` and `uninstall`, whose plan is the step before `apply` and needs the bootstrap first",
+		"with its own key beside them where it has a context: `candidate` (`aws workloads onboard`), `eligibility` (`gcp workloads onboard`), `plan`",
+		"`dormeto gcp workloads offboard` now confirms as AWS's does",
+		"without one it exits 2 with `confirmation needed: pass --yes to act on 1 workload without a terminal` and changes nothing",
+		"a rerun that only finishes the untag and the access cleanup, because the controller no longer holds the workload, needs it too",
+		"A refused `gcp` nap, wake, pause or resume prints AWS's head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
+		"`dormeto gcp workloads wake --wait [--timeout <d>]`",
+		"`gcp workloads list` takes `--state`, `--search` and `--tag`",
+		"`gcp workloads pause` takes `--for` and `--until`",
+		"`gcp workloads schedule set --file` reads `-` and the output of `schedule show --json`",
+		"says `<router>/<workload>: not awake (ASLEEP)` and exits 0",
+		"`dormeto aws routers settings <router>...` without a setting flag shows each router's level (it was a usage error, exit 2)",
+		"`inherit` unsets a setting on every level, the organization's (`aws settings set`) and a type's (`aws types set`) too, and `default`, their old word",
+		"name Google Cloud's limits: a wake timeout of 60 to 1700, and a hold, held requests and a drain of 0",
+		"have one description each, in one order, with the levels' defaults",
+		"answers `409` with its message and the command that fixes it (`no_access`, `router_too_old`, `router_unknown`; it was a `502` `router_error`",
+		"AWS's now says `estimated: false`",
+		"a Google Cloud workload's note has no such clause",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+		}
+	}
+	if strings.Contains(log, "AWS's advice has none") {
+		t.Error("CHANGELOG.md's Unreleased still says AWS's advice has no estimated field")
 	}
 }
