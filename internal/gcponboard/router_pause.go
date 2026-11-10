@@ -120,8 +120,5 @@ func (x *run) printByRouter(answer json.RawMessage) error {
 // routerDryRun says what the pause or resume would send, to which router, and stops: no call. Under --json, stdout is
 // {"dryRun":true,"targets":[router]}, as AWS's.
 func (x *run) routerDryRun(verb string, in map[string]any) error {
-	body, _ := json.Marshal(in)
-	out := x.textOut()
-	fmt.Fprintf(out, "dry run: would %s router, nothing sent\n  %s: POST /v1/%s %s\n", verb, x.n.router, verb, body)
-	return x.printStop("dryRun", true, []string{x.n.router})
+	return x.dryRun(verb+" router", x.n.router, http.MethodPost, "/v1/"+verb, in)
 }

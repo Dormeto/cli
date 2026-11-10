@@ -39,20 +39,19 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "workloads", Short: "Workloads of a Dormeto router in Google Cloud", Args: noArgs, SilenceErrors: true,
 		Long: "List, show, onboard, offboard, nap, wake, schedule, pause, resume, settings and waiting-page the workloads of the router dmtr-<region>, through its controller\n" +
 			"with your identity token (the Cloud Run invoker role on it). 'access' writes a GKE workload's Kubernetes RBAC, in the cluster."}
-	offboard := newGcpWorkloadsWrite("offboard", "Offboard a workload and remove its tag bindings and Kubernetes access",
-		"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
-			"unbound from its VMs, groups and databases, its Role and RoleBinding are removed from its cluster, and the request logs\n"+
-			"its onboarding turned on (--request-logs) are set back unless they changed since, as you. A workload\n"+
-			"that cannot wake is refused; --force offboards it anyway and leaves its backends down (they are listed). --force passes\n"+
-			"only a failed wake: a workload still NAPPING or WAKING is refused as busy, with or without it, until that ends or\n"+
-			"the router's check fails it. With --force, a tag or an access it cannot remove does not stop the rest: it names each,\n"+
-			"exit 1, and it names what is left when the controller does not answer, removing nothing. It is always confirmed on a\n"+
-			"terminal, as AWS's (--yes without one; --dry-run says what it would send and sends nothing).", runs.offboard, version, true)
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
 		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version, false),
 		newGcpWorkloadsOnboard(runs.onboard, version),
-		offboard,
+		newGcpWorkloadsWrite("offboard", "Offboard a workload and remove its tag bindings and Kubernetes access",
+			"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
+				"unbound from its VMs, groups and databases, its Role and RoleBinding are removed from its cluster, and the request logs\n"+
+				"its onboarding turned on (--request-logs) are set back unless they changed since, as you. A workload\n"+
+				"that cannot wake is refused; --force offboards it anyway and leaves its backends down (they are listed). --force passes\n"+
+				"only a failed wake: a workload still NAPPING or WAKING is refused as busy, with or without it, until that ends or\n"+
+				"the router's check fails it. With --force, a tag or an access it cannot remove does not stop the rest: it names each,\n"+
+				"exit 1, and it names what is left when the controller does not answer, removing nothing. It is always confirmed on a\n"+
+				"terminal, as AWS's (--yes without one; --dry-run says what it would send and sends nothing).", runs.offboard, version, true),
 		newGcpWorkloadsWrite("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
 		newGcpWorkloadsWake(runs.wake, version),
 		newGcpWorkloadsSchedule(runs, version),
