@@ -132,7 +132,8 @@ type run struct {
 	others       map[string]Record // the uninstall's other routers' records of the project, by region
 	iam          []string          // the IAM lines of the running step
 	editorWarned bool              // the default service account's Editor, appeared during this run, was warned of
-	madeHere     map[string]bool   // the URLs of what this run created, by URL: false once its reads gave up on a 404
+	madeHere     map[string]bool   // the URLs of what this run created
+	seenRetries  int               // the retries of seen spent: one budget for the run
 	delayTold    bool              // the delay of Google showing what this run created was said
 
 	workloadsUnknown bool     // the uninstall goes on, with --force, without its controller's list of workloads
@@ -686,26 +687,23 @@ func (x *run) settle(f func() error) error {
 func (x *run) made(u string) { x.madeHere[u] = true }
 
 // seen runs the read f of the resource at u, or of its policy. When this run created the resource, a 404 is tried again
-// every 5 s for up to 2 minutes, saying once on stderr that Google has not shown it yet: Google shows a new service
-// account, its policy, a role, the pool or the provider after a delay. A 404 after that, or of a resource this run did
-// not create, is the read's answer.
+// every 5 s, saying once on stderr that Google has not shown it yet: Google shows a new service account, its policy, a
+// role, the pool or the provider after a delay. The run has one budget for all its reads, 2 minutes (seenTries retries);
+// once spent, and for a resource this run did not create, a 404 is the read's answer.
 func (x *run) seen(u string, f func() error) error {
-	key := ""
-	for k, live := range x.madeHere {
-		if live && strings.HasPrefix(u, k) && (len(u) == len(k) || strings.ContainsRune(":/?", rune(u[len(k)]))) {
-			key = k
+	made := false
+	for k := range x.madeHere {
+		if strings.HasPrefix(u, k) && (len(u) == len(k) || strings.ContainsRune(":/?", rune(u[len(k)]))) {
+			made = true
 			break
 		}
 	}
-	for tries := 0; ; tries++ {
+	for {
 		err := f()
-		if key == "" || !gcp.IsNotFound(err) {
+		if !made || !gcp.IsNotFound(err) || x.seenRetries >= seenTries {
 			return err
 		}
-		if tries == seenTries {
-			x.madeHere[key] = false
-			return err
-		}
+		x.seenRetries++
 		if !x.delayTold {
 			x.delayTold = true
 			fmt.Fprintf(x.d.Err, "Google has not shown what this run created yet (%s): waiting for it, up to 2 minutes\n", u)
