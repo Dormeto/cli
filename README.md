@@ -2287,7 +2287,8 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 - *Accepted in `dormeto-dev` on 2026-11-09 and 2026-11-10, not released*: `gcp connect` and `gcp disconnect`, and the
   manager reaching a router through the connection (its lists, the onboarding of a Google Cloud candidate, the savings
   and the idle window), with dev builds of manager 0.24.0 and router 0.40.0.
-- *Not run against Google yet*: `gcp routers pause` and `resume`, whose tests play Google's answers.
+- *Accepted in `dormeto-dev` on 2026-11-10, not released*: `gcp routers pause` and `resume`, run against router
+  0.40.0-dev.6 (the router's pause and resume, `--json` keyed by the manager's name).
 
 The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.38.0 and
 CLI 0.12.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for

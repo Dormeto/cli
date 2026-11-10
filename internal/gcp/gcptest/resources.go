@@ -481,10 +481,16 @@ func (s *Server) iam(w http.ResponseWriter, r *http.Request, body []byte) {
 		a := &ServiceAccount{DisplayName: in.ServiceAccount.DisplayName, Description: in.ServiceAccount.Description}
 		s.ServiceAccounts[email] = a
 		s.lag[email] = s.AccountLag
+		s.readLag[email] = s.ReadLag
 		Reply(w, s.accountBody(email, a))
 	case kind == "serviceAccounts" && item != "":
 		a, ok := s.ServiceAccounts[item]
 		if !ok {
+			Fail(w, 404, "NOT_FOUND", "Unknown service account")
+			return
+		}
+		if verb == "" && r.Method == http.MethodGet && s.readLag[item] > 0 {
+			s.readLag[item]--
 			Fail(w, 404, "NOT_FOUND", "Unknown service account")
 			return
 		}

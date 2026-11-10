@@ -19,7 +19,8 @@ func (x *run) verify() (warnings []string, err error) {
 	var problems []string
 	add := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
 	lacks := func(rp ResourcePolicy, what string, grants ...accessGrant) *Policy {
-		p, err := read(x.ctx, x.d.Google, rp)
+		var p *Policy
+		err := x.seen(rp.Get, func() (err error) { p, err = read(x.ctx, x.d.Google, rp); return })
 		if err != nil {
 			add("the policy of %s: %s", what, err)
 			return nil
@@ -38,7 +39,7 @@ func (x *run) verify() (warnings []string, err error) {
 	for _, id := range x.roleIDs() {
 		want := x.wantRole(id)
 		var got googleRole
-		if err := x.d.Google.Do(x.ctx, http.MethodGet, x.rolesURL()+"/"+id, nil, &got); err != nil {
+		if err := x.seen(x.rolesURL()+"/"+id, func() error { return x.d.Google.Do(x.ctx, http.MethodGet, x.rolesURL()+"/"+id, nil, &got) }); err != nil {
 			add("role %s: %s", id, err)
 			continue
 		}
@@ -59,7 +60,7 @@ func (x *run) verify() (warnings []string, err error) {
 	var account struct {
 		Disabled bool `json:"disabled"`
 	}
-	if err := x.d.Google.Do(x.ctx, http.MethodGet, x.accountURL(), nil, &account); err != nil {
+	if err := x.seen(x.accountURL(), func() error { return x.d.Google.Do(x.ctx, http.MethodGet, x.accountURL(), nil, &account) }); err != nil {
 		add("service account %s: %s", x.n.email, err)
 	} else {
 		if account.Disabled {

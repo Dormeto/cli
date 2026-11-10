@@ -35,6 +35,9 @@ const (
 	settleEvery  = 5 * time.Second
 	accountTries = 12
 	apiTries     = 60
+	// seenTries: up to 2 minutes (every settleEvery) for Google to show a thing this run created, whose read answers 404
+	// meanwhile (a service account, a role, the pool or the provider, and a service account's policy).
+	seenTries = 24
 
 	exitInterrupted = 130
 )
@@ -129,6 +132,8 @@ type run struct {
 	others       map[string]Record // the uninstall's other routers' records of the project, by region
 	iam          []string          // the IAM lines of the running step
 	editorWarned bool              // the default service account's Editor, appeared during this run, was warned of
+	madeHere     map[string]bool   // the URLs of what this run created, by URL: false once its reads gave up on a 404
+	delayTold    bool              // the delay of Google showing what this run created was said
 
 	workloadsUnknown bool     // the uninstall goes on, with --force, without its controller's list of workloads
 	offboarding      []string // the workloads the uninstall's plan offboards: their Kubernetes access goes with them
@@ -152,7 +157,7 @@ func newRun(ctx context.Context, d Deps, r Request) *run {
 	}
 	_, tag, _ := splitImage(r.Image)
 	return &run{ctx: ctx, d: d, r: r, n: newNames(r.Project, r.Region), image: r.Image, version: cmp.Or(r.Version, tag), granted: map[string]bool{},
-		google: map[string]bool{}, waitedFor: map[string]bool{}}
+		google: map[string]bool{}, waitedFor: map[string]bool{}, madeHere: map[string]bool{}}
 }
 
 func (x *run) say(format string, a ...any) { fmt.Fprintf(x.d.Out, format+"\n", a...) }
@@ -671,6 +676,40 @@ func (x *run) settle(f func() error) error {
 			x.say("  … %s is on but does not answer yet: waiting for Google to propagate it (up to 5 minutes)", name)
 		}
 		tries[kind]++
+		if err := x.d.Sleep(x.ctx, settleEvery); err != nil {
+			return err
+		}
+	}
+}
+
+// made records that this run created the resource at u: its reads (seen) wait for Google to show it.
+func (x *run) made(u string) { x.madeHere[u] = true }
+
+// seen runs the read f of the resource at u, or of its policy. When this run created the resource, a 404 is tried again
+// every 5 s for up to 2 minutes, saying once on stderr that Google has not shown it yet: Google shows a new service
+// account, its policy, a role, the pool or the provider after a delay. A 404 after that, or of a resource this run did
+// not create, is the read's answer.
+func (x *run) seen(u string, f func() error) error {
+	key := ""
+	for k, live := range x.madeHere {
+		if live && strings.HasPrefix(u, k) && (len(u) == len(k) || strings.ContainsRune(":/?", rune(u[len(k)]))) {
+			key = k
+			break
+		}
+	}
+	for tries := 0; ; tries++ {
+		err := f()
+		if key == "" || !gcp.IsNotFound(err) {
+			return err
+		}
+		if tries == seenTries {
+			x.madeHere[key] = false
+			return err
+		}
+		if !x.delayTold {
+			x.delayTold = true
+			fmt.Fprintf(x.d.Err, "Google has not shown what this run created yet (%s): waiting for it, up to 2 minutes\n", u)
+		}
 		if err := x.d.Sleep(x.ctx, settleEvery); err != nil {
 			return err
 		}

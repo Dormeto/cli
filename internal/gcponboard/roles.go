@@ -144,6 +144,7 @@ func (x *run) changeRoles(changes []roleChange) (string, error) {
 			if err := x.call(http.MethodPost, x.rolesURL(), in, nil); err != nil {
 				return "", err
 			}
+			x.made(u)
 			done = append(done, "created "+c.id)
 		case "undelete":
 			if err := x.call(http.MethodPost, u+":undelete", map[string]any{"etag": c.etag}, nil); err != nil {

@@ -656,7 +656,8 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 		"the organization's is the manager's page, which a [connected](#connecting-the-manager) manager pushes to the router with its settings",
 		"The manager reaches Google Cloud routers once [connected](#connecting-the-manager): its commands and its dashboard list them",
 		// how far it was tried
-		"*Not run against Google yet*: `gcp routers pause` and `resume`",
+		"*Accepted in `dormeto-dev` on 2026-11-10, not released*: `gcp routers pause` and `resume`, run against router",
+		"0.40.0-dev.6 (the router's pause and resume, `--json` keyed by the manager's name)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the Google Cloud section lacks %q", want)
@@ -667,6 +668,7 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 		"the organization's comes with the manager",
 		"There is no dashboard or manager for Google Cloud yet",
 		"(its 1 router unregistered)",
+		"*Not run against Google yet*: `gcp routers pause` and `resume`",
 	} {
 		if strings.Contains(text, gone) {
 			t.Errorf("the Google Cloud section still says %q", gone)

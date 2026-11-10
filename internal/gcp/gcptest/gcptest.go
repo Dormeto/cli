@@ -196,6 +196,9 @@ type Server struct {
 	// AccountLag is how many setIamPolicy calls naming a service account created here are refused, per account, with
 	// "Service account … does not exist." (IAM's eventual consistency).
 	AccountLag int
+	// ReadLag is how many reads of a service account created here (GET of the account) answer 404 "Unknown service
+	// account" before IAM shows it, per account.
+	ReadLag int
 	// DefaultEditor makes enabling compute.googleapis.com grant roles/editor to the Compute Engine default service
 	// account, as Google does in a project without the organization policy iam.automaticIamGrantsForDefaultServiceAccounts.
 	DefaultEditor bool
@@ -223,6 +226,7 @@ type Server struct {
 	refusals []*Refusal
 	ops      map[string]*operation
 	lag      map[string]int
+	readLag  map[string]int
 	serial   int
 }
 
@@ -246,7 +250,7 @@ func New(t testing.TB) *Server {
 		LogViews: map[string]*LogView{}, BackendServices: map[string]*BackendService{},
 		Pools: map[string]*Pool{}, Providers: map[string]*Provider{}, Scopes: map[string]bool{}, OrgRoles: map[string]*Role{},
 		OtherProjects: map[string]*OtherProject{}, OtherRoles: map[string]*Role{}, Withheld: map[string]map[string]bool{},
-		ops: map[string]*operation{}, lag: map[string]int{},
+		ops: map[string]*operation{}, lag: map[string]int{}, readLag: map[string]int{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)

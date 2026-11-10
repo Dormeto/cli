@@ -53,6 +53,7 @@ func (x *run) createAccount() (string, error) {
 		return "", err
 	}
 	x.accountExists = true
+	x.made(x.accountURL())
 	return "created " + x.n.email, nil
 }
 

@@ -898,6 +898,7 @@ func (x *link) planManagerRoles() (*step, error) {
 					}
 					return "", err
 				}
+				x.made(c.at.url())
 				done = append(done, "created "+c.at.id+" in "+c.at.where())
 			case "undelete":
 				if err := x.call(http.MethodPost, c.at.url()+":undelete", map[string]any{"etag": c.etag}, nil); err != nil {
@@ -1020,6 +1021,9 @@ func (x *link) planFederation() (*step, error) {
 				}
 				return update()
 			}
+			if err == nil {
+				x.made(x.providerURL())
+			}
 			return done, err
 		})
 	case provider.State == "DELETED":
@@ -1055,7 +1059,11 @@ func (x *link) planFederation() (*step, error) {
 func (x *link) createPool() (string, error) {
 	in := map[string]any{"displayName": "Dormeto manager " + x.m.Env,
 		"description": fmt.Sprintf("The Dormeto manager %s's AWS roles (account %s): set up by dormeto gcp connect", x.m.Env, x.m.Account)}
-	return x.operation(http.MethodPost, x.poolsURL()+"?workloadIdentityPoolId="+url.QueryEscape(x.poolID()), in, "created pool "+x.poolID())()
+	done, err := x.operation(http.MethodPost, x.poolsURL()+"?workloadIdentityPoolId="+url.QueryEscape(x.poolID()), in, "created pool "+x.poolID())()
+	if err == nil {
+		x.made(x.poolURL())
+	}
+	return done, err
 }
 
 // operation is a call answering a long-running operation, awaited.
@@ -1116,6 +1124,7 @@ func (x *link) planAccounts() (*step, error) {
 				return "", err
 			}
 			x.accounts[x.email(kind)] = true
+			x.made(x.serviceAccountURL(x.email(kind)))
 			done = append(done, x.email(kind))
 		}
 		return "created " + strings.Join(done, ", "), nil
@@ -1378,13 +1387,13 @@ func (x *link) verifyConnect() (warnings []string, err error) {
 	var problems []string
 	add := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
 	var pool googlePool
-	if err := x.d.Google.Do(x.ctx, http.MethodGet, x.poolURL(), nil, &pool); err != nil {
+	if err := x.seen(x.poolURL(), func() error { return x.d.Google.Do(x.ctx, http.MethodGet, x.poolURL(), nil, &pool) }); err != nil {
 		add("pool %s: %s", x.poolID(), err)
 	} else if pool.State != "ACTIVE" || pool.Disabled {
 		add("pool %s is not active", x.poolID())
 	}
 	var provider googleProvider
-	if err := x.d.Google.Do(x.ctx, http.MethodGet, x.providerURL(), nil, &provider); err != nil {
+	if err := x.seen(x.providerURL(), func() error { return x.d.Google.Do(x.ctx, http.MethodGet, x.providerURL(), nil, &provider) }); err != nil {
 		add("provider %s: %s", x.providerID(), err)
 	} else if d := x.providerDifferences(provider); provider.State != "ACTIVE" || len(d) > 0 {
 		add("provider %s is %s, differs by %s", x.providerID(), provider.State, strings.Join(d, ", "))
@@ -1393,7 +1402,8 @@ func (x *link) verifyConnect() (warnings []string, err error) {
 		var account struct {
 			Disabled bool `json:"disabled"`
 		}
-		if err := x.d.Google.Do(x.ctx, http.MethodGet, x.serviceAccountURL(x.email(kind)), nil, &account); err != nil {
+		accountURL := x.serviceAccountURL(x.email(kind))
+		if err := x.seen(accountURL, func() error { return x.d.Google.Do(x.ctx, http.MethodGet, accountURL, nil, &account) }); err != nil {
 			add("service account %s: %s", x.email(kind), err)
 		} else if account.Disabled {
 			add("service account %s is disabled", x.email(kind))
@@ -1402,7 +1412,7 @@ func (x *link) verifyConnect() (warnings []string, err error) {
 	for _, at := range x.roles {
 		want := x.wantManagerRole(at)
 		var got googleRole
-		if err := x.d.Google.Do(x.ctx, http.MethodGet, at.url(), nil, &got); err != nil {
+		if err := x.seen(at.url(), func() error { return x.d.Google.Do(x.ctx, http.MethodGet, at.url(), nil, &got) }); err != nil {
 			add("role %s in %s: %s", at.id, at.where(), err)
 			continue
 		}
@@ -1454,4 +1464,7 @@ func (x *link) verifyConnect() (warnings []string, err error) {
 	return warnings, nil
 }
 
-func read1(x *link, rp ResourcePolicy) (*Policy, error) { return read(x.ctx, x.d.Google, rp) }
+func read1(x *link, rp ResourcePolicy) (p *Policy, err error) {
+	err = x.seen(rp.Get, func() (err error) { p, err = read(x.ctx, x.d.Google, rp); return })
+	return p, err
+}
