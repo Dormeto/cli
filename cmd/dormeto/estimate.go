@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,7 +43,13 @@ func execute(root *cobra.Command, args ...string) int {
 	switch {
 	case errors.As(err, &code):
 		return int(code)
+	case err != nil && strings.HasPrefix(err.Error(), "unknown command "):
+		// The root's own refusal, said as the groups' one line, exit 2.
+		line, _, _ := strings.Cut(err.Error(), "\n")
+		fmt.Fprintln(root.ErrOrStderr(), line)
+		return 2
 	case err != nil:
+		fmt.Fprintln(root.ErrOrStderr(), "Error:", err)
 		return 1
 	}
 	return 0

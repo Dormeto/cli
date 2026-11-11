@@ -2266,7 +2266,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
   Engine VMs (unmanaged and managed groups, suspended when possible) behind a global external Application Load Balancer.
 - *Accepted on a real project on 2026-11-04*, with router 0.37.0 and CLI 0.11.0, both released on 2026-11-05: regional
   and classic load balancers (`--load-balancer`), zonal network endpoint groups, schedules and pauses (`workloads
-  schedule`, `pause`, `resume`), IP lists (`--ip-list`), Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`) and
+  schedule`, `pause`, `resume`), IP lists (`--ip-list`), Cloud SQL companions (`--with cloud-sql`, `--cloud-sql`, now `--database`) and
   GKE (`--with gke`, `--gke-cluster`, `workloads access`), installed by `gcp routers install --with cloud-sql,gke` and
   removed by `gcp routers uninstall`. Not run: an operator holding exactly the permissions `gcp check` lists for
   `onboard`, and a Cloud SQL start refused for lack of capacity.

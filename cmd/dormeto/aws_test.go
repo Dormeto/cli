@@ -106,6 +106,8 @@ func TestOldTopLevelFormsAreUnknownCommands(t *testing.T) {
 		{"help", "routers"},
 		{"uninstall", "--help"},
 		{"operations", "watch"},
+		{"bogus"},
+		{"bogus", "--project", "p"},
 	} {
 		out, errs, code := executed(t, build{}, args...)
 		if args[0] == "help" { // cobra's own answer to a help topic it does not have
@@ -114,12 +116,12 @@ func TestOldTopLevelFormsAreUnknownCommands(t *testing.T) {
 			}
 			continue
 		}
-		if code == 0 || out != "" || !strings.Contains(errs, "unknown command") || strings.Contains(errs, "is now") {
+		if want := fmt.Sprintf("unknown command %q for \"dormeto\"\n", args[0]); code != 2 || out != "" || errs != want {
 			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, out, errs)
 		}
 	}
 	for _, name := range movedToAws {
-		if _, errs, code := executed(t, build{}, name); code == 0 || !strings.Contains(errs, "unknown command") {
+		if _, errs, code := executed(t, build{}, name); code != 2 || errs != fmt.Sprintf("unknown command %q for \"dormeto\"\n", name) {
 			t.Errorf("%s: exit %d, stderr %q", name, code, errs)
 		}
 	}

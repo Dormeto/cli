@@ -43,6 +43,7 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 	first, _, _ := strings.Cut(b.describe(), "\n")
 	root := &cobra.Command{Use: "dormeto", Short: "Dormeto command line", SilenceUsage: true, Version: first}
 	root.SetVersionTemplate("{{.Version}}\n")
+	root.SilenceErrors = true // execute says the error, an unknown command as the groups do
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print the version, commit and date, and the versions of the shared test cases",
@@ -194,7 +195,7 @@ func (b build) describe() string {
 }
 
 // refuseUnknownSubcommands makes a group command (aws, gcp) answer a word that is none of its commands, and the flags
-// after it, as the root does an unknown command: said on stderr, exit 2. Bare, it prints its help.
+// after it, as one unknown command: said on stderr, exit 2. Bare, it prints its help.
 func refuseUnknownSubcommands(group *cobra.Command) {
 	group.Args = cobra.ArbitraryArgs
 	group.FParseErrWhitelist.UnknownFlags = true
