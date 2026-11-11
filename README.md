@@ -2286,7 +2286,7 @@ dormeto gcp workloads access revoke --project my-project --region europe-west1 \
 
 The public router image, the request logs and this section's other changes since CLI 0.11.0 come with router 0.40.0 and
 CLI 0.14.0, which are not released yet. Their acceptance passed on 2026-11-08. Dormeto's public router image is the default. To build and push your own for
-`--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Google Cloud page](https://dormeto.com/google-cloud.html). The settings levels, the waiting page, the fallback machine types and the internal load balancers
+`--image`, see `scripts/gcp-image.sh` in the router's repository and the website's [Router page](https://dormeto.com/router.html#image). The settings levels, the waiting page, the fallback machine types and the internal load balancers
 are newer still, and not released. Measured on Google in `dormeto-dev` on 2026-11-08 and 2026-11-09: what the global load
 balancer's error fetch carries, and that the page's language, its policy, a 256 KiB page and a 59 KB icon reach the browser;
 a stopped VM's machine type changed within its series and across to N2D, and a start refused for quota leaving the VM stopped;
