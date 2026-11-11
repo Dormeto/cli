@@ -3149,34 +3149,30 @@ func TestInstallRefusesBadIPLists(t *testing.T) {
 }
 
 func TestParseIPList(t *testing.T) {
-	l, old, err := ParseIPList("name=scanners,url=https://example.com/l.txt?a=1")
-	if err != nil || old || l != (IPList{Name: "scanners", URL: "https://example.com/l.txt?a=1", RefreshHours: 24}) {
-		t.Fatalf("%+v %v %v", l, old, err)
+	l, err := ParseIPList("name=scanners,url=https://example.com/l.txt?a=1")
+	if err != nil || l != (IPList{Name: "scanners", URL: "https://example.com/l.txt?a=1", RefreshHours: 24}) {
+		t.Fatalf("%+v %v", l, err)
 	}
-	if l, old, err = ParseIPList("url=http://example.com/l,name=x,refresh_hours=6"); err != nil || old || l.RefreshHours != 6 || l.Name != "x" {
-		t.Fatalf("%+v %v %v", l, old, err)
-	}
-	// refresh, the name of 0.11.0, reads the same and says so.
-	if l, old, err = ParseIPList("url=http://example.com/l,name=x,refresh=6"); err != nil || !old || l.RefreshHours != 6 || l.Name != "x" {
-		t.Fatalf("%+v %v %v", l, old, err)
+	if l, err = ParseIPList("url=http://example.com/l,name=x,refresh_hours=6"); err != nil || l.RefreshHours != 6 || l.Name != "x" {
+		t.Fatalf("%+v %v", l, err)
 	}
 	for in, want := range map[string]string{
 		"name=a,url=https://example.com,refresh_hours=0":           "refresh_hours",
-		"name=a,url=https://example.com,refresh=2,refresh_hours=2": "refresh_hours is given twice",
+		"name=a,url=https://example.com,refresh=2,refresh_hours=2": "refresh is not a key",
 		"name=a,url=HTTP://example.com":                            "http",
 		"name=a,url=https://example.com,action=defer":              "only ignore",
 		"name=a":                  "url",
 		"url=https://example.com": "name",
-		"name=a,url=https://example.com,refresh=0":  "refresh",
-		"name=a,url=https://example.com,refresh=x":  "refresh",
-		"name=a,url=https://example.com,refresh=-3": "refresh",
-		"name=a,url=https://example.com,color=red":  "color",
-		"name=a,url=https://example.com,name=b":     "twice",
-		"name=a,url=s3://x/y":                       "http",
-		"name=a,url=https://u:p@example.com":        "credentials",
-		"nonsense":                                  "name=",
+		"name=a,url=https://example.com,refresh=6":        "refresh is not a key",
+		"name=a,url=https://example.com,refresh_hours=x":  "refresh_hours",
+		"name=a,url=https://example.com,refresh_hours=-3": "refresh_hours",
+		"name=a,url=https://example.com,color=red":        "color",
+		"name=a,url=https://example.com,name=b":           "twice",
+		"name=a,url=s3://x/y":                             "http",
+		"name=a,url=https://u:p@example.com":              "credentials",
+		"nonsense":                                        "name=",
 	} {
-		if _, _, err := ParseIPList(in); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := ParseIPList(in); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v, want %q", in, err, want)
 		}
 	}

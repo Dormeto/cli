@@ -48,17 +48,9 @@ func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
 		Long: "Dormeto in Google Cloud: the routers (install, uninstall, show, settings, pause, waiting page), the workloads'\n" +
 			"onboarding and the manager's connection to a project. The manager's own commands (routers list, workloads list,\n" +
 			"savings, users...) serve AWS and Google Cloud and live under `dormeto aws`.\n\n" + regionRule}
+	refuseUnknownSubcommands(cmd)
 	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
 		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
-	// The 0.11.0 names, hidden, run as the new ones with a notice (execute).
-	for _, old := range []struct {
-		cmd *cobra.Command
-		to  string
-	}{{newGcpInstall(runs.install, version), "gcp routers install"}, {newGcpStatus(runs.status, "status", version), "gcp routers show"}, {newGcpUninstall(runs.uninstall, version), "gcp routers uninstall"}} {
-		old.cmd.Hidden = true
-		old.cmd.Annotations = map[string]string{movedAnnotation: old.to}
-		cmd.AddCommand(old.cmd)
-	}
 	return cmd
 }
 
@@ -84,18 +76,13 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 		Use: use, Short: short, Long: long, Args: noArgs, SilenceErrors: true,
 		RunE: func(c *cobra.Command, _ []string) error {
 			var lists []gcponboard.IPList
-			moved := false
 			for _, s := range f.ipLists {
-				l, old, err := gcponboard.ParseIPList(s)
+				l, err := gcponboard.ParseIPList(s)
 				if err != nil {
 					fmt.Fprintln(c.ErrOrStderr(), err)
 					return exitCode(2)
 				}
-				lists, moved = append(lists, l), moved || old
-			}
-			// The old name of refresh_hours, 0.11.0's: the line of a moved flag, once.
-			if moved {
-				fmt.Fprintln(c.ErrOrStderr(), "--ip-list: refresh= is now refresh_hours=")
+				lists = append(lists, l)
 			}
 			if err := gcponboard.CheckIPLists(lists, f.noIPLists); err != nil {
 				fmt.Fprintln(c.ErrOrStderr(), err)

@@ -335,7 +335,7 @@ func TestGcpInstallRefusesABadIPListBeforeAnyRun(t *testing.T) {
 		{"--ip-list", "name=a,url=https://example.com,action=defer"},
 		{"--ip-list", "name=a/b,url=https://example.com"},
 		{"--ip-list", "name=a,url=https://u:p@example.com"},
-		{"--ip-list", "name=a,url=https://example.com,refresh=0"},
+		{"--ip-list", "name=a,url=https://example.com,refresh_hours=0"},
 		{"--ip-list", "name=a,url=https://example.com", "--ip-list", "name=a,url=https://example.org"},
 		{"--ip-list", "name=a,url=https://example.com", "--no-ip-lists"},
 	} {
@@ -505,34 +505,18 @@ func TestGcpRoutersPauseAndResumeTakeDryRunAndYes(t *testing.T) {
 	}
 }
 
-const gcpMoved = "dormeto: \"dormeto gcp %s\" is now \"dormeto gcp routers %s\"; the old name goes in a later release.\n"
-
-// A script written for 0.11.0 runs the old names, hidden, with one notice line and the new form's run and exit code.
-func TestGcpOldInstallUninstallAndStatusRunAsTheRoutersCommandsWithOneNotice(t *testing.T) {
-	for _, tc := range []struct{ old, new, run string }{{"install", "install", "install"}, {"uninstall", "uninstall", "uninstall"}, {"status", "show", "status"}} {
-		for _, code := range []int{0, 1} {
-			args := []string{"--project", "p", "--region", "europe-west1"}
-			oldCalls, oldErr, oldExit := gcpRan(t, code, append([]string{"gcp", tc.old}, args...)...)
-			newCalls, newErr, newExit := gcpRan(t, code, append([]string{"gcp", "routers", tc.new}, args...)...)
-			if oldExit != code || newExit != code || len(oldCalls) != 1 || len(newCalls) != 1 || oldCalls[0].run != tc.run || !reflect.DeepEqual(oldCalls[0].r, newCalls[0].r) {
-				t.Errorf("%s: old exit %d calls %+v, new exit %d calls %+v", tc.old, oldExit, oldCalls, newExit, newCalls)
-			}
-			if want := fmt.Sprintf(gcpMoved, tc.old, tc.new); oldErr != want || newErr != "" {
-				t.Errorf("%s: old stderr %q (want %q), new %q", tc.old, oldErr, want, newErr)
-			}
+// The 0.11.0 names are gone: a word that is no command, refused as the root does,, and nothing run.
+func TestGcpOldInstallUninstallAndStatusAreUnknownCommands(t *testing.T) {
+	for _, old := range []string{"install", "uninstall", "status"} {
+		calls, errs, exit := gcpRan(t, 0, "gcp", old)
+		if exit != 2 || len(calls) != 0 || errs != fmt.Sprintf("unknown command %q for \"dormeto gcp\"\n", old) {
+			t.Errorf("gcp %s: exit %d calls %+v stderr %q", old, exit, calls, errs)
 		}
-	}
-}
-
-func TestGcpHelpOfAnOldNameSaysItAndGivesTheNewOnes(t *testing.T) {
-	oldOut, oldErr, oldCode := executed(t, build{}, "help", "gcp", "install")
-	newOut, newErr, newCode := executed(t, build{}, "help", "gcp", "routers", "install")
-	if oldOut != newOut || oldCode != newCode || oldErr != fmt.Sprintf(gcpMoved, "install", "install")+newErr {
-		t.Errorf("old %d %q %q, new %d %q %q", oldCode, oldOut, oldErr, newCode, newOut, newErr)
-	}
-	_, errs, _ := executed(t, build{}, "gcp", "status", "--help")
-	if errs != fmt.Sprintf(gcpMoved, "status", "show") {
-		t.Errorf("stderr %q", errs)
+		// With the flags of the old form it refuses all the same, and runs nothing.
+		calls, errs, exit = gcpRan(t, 0, "gcp", old, "--project", "p", "--region", "europe-west1")
+		if exit != 2 || len(calls) != 0 || errs != fmt.Sprintf("unknown command %q for \"dormeto gcp\"\n", old) {
+			t.Errorf("gcp %s with flags: exit %d calls %+v stderr %q", old, exit, calls, errs)
+		}
 	}
 }
 

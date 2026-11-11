@@ -529,7 +529,7 @@ func TestSettingsConfirmationReadsToTheValueForTheTargets(t *testing.T) {
 	}
 }
 
-// How long an ended window stays, the organization's (manager 0.21.0, router 0.36.0): 0 keeps them, default unsets it.
+// How long an ended window stays, the organization's (manager 0.21.0, router 0.36.0): 0 keeps them, inherit unsets it.
 func TestSettingsShowPrintsHowLongAnEndedWindowStays(t *testing.T) {
 	for members, want := range map[string]string{
 		`"endedWindowDays":90,`:   "Ended windows: removed 90 days after their last occurrence\n",
@@ -553,7 +553,7 @@ func TestSettingsSetSendsHowLongAnEndedWindowStays(t *testing.T) {
 	}{
 		{[]string{"--ended-window-days", "90"}, `"endedWindowDays":90,`, `{"endedWindowDays":90}`},
 		{[]string{"--ended-window-days", "0"}, `"endedWindowDays":0,`, `{"endedWindowDays":0}`},
-		{[]string{"--ended-window-days", "default"}, `"endedWindowDays":null,`, `{"endedWindowDays":null}`},
+		{[]string{"--ended-window-days", "inherit"}, `"endedWindowDays":null,`, `{"endedWindowDays":null}`},
 		{[]string{"--join-minutes", "30", "--ended-window-days", "3650"}, `"joinMinutes":30,"endedWindowDays":3650,`, `{"endedWindowDays":3650,"joinMinutes":30}`},
 	} {
 		a := &globalAPI{join: c.members}

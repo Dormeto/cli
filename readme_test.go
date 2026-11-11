@@ -833,11 +833,10 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
 	log := strings.Join(strings.Fields(unreleased), " ")
 	for _, want := range []string{
-		// the tree and the old names
+		// the tree; the old names are gone
 		"`gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`, `gcp connect` and `gcp disconnect`",
-		"were `gcp install`, `gcp uninstall` and `gcp status` until CLI 0.11.0: those names still work, hidden, with the same output and exit code",
-		"`dormeto: \"dormeto gcp install\" is now \"dormeto gcp routers install\"; the old name goes in a later release.`",
-		"`--cloud-sql` is now `--database`, the `refresh=` of `--ip-list` now `refresh_hours=` and `--wake-timeout` now `--wake-timeout-seconds`",
+		"`gcp install`, `gcp uninstall` and `gcp status`, their names until CLI 0.11.0, are gone",
+		"it is `--database`, `refresh_hours=` in `--ip-list` and `--wake-timeout-seconds`",
 		"On a router's commands, `dormeto gcp routers` and `dormeto gcp workloads`, `--region` is the router's",
 		// the clouds, --yes and --dry-run
 		"`discovery candidates` and `discovery access` take `--cloud aws|gcp` for the rows of one cloud (another value exits 2 before any call)",
@@ -863,10 +862,9 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"in `gcp routers show --json`'s `router` (as 0.11.0 printed it)",
 		"`pause <id> --reason <text>` (required, 1 to 256 characters)",
 		"dormeto aws settings set --idle-minutes 30 --wake-mode inherit",
-		"`--cloud-sql` is its old name, which still works, hidden, and says `--cloud-sql is now --database`",
 		"`--for` (a duration, as `routers pause`'s) or `--until` (RFC 3339 or `HH:MM` today",
 		"Without a setting flag it shows each router's level",
-		"`inherit` removes a value on every level, the organization's and a type's too, and `default` is its old name there",
+		"`inherit` removes a value on every level, the organization's and a type's too. The settings that Google Cloud fixes",
 		"The settings that Google Cloud fixes or limits say so in their flags' help, as each level has them: at a router's and a workload's, which the Google Cloud router checks, it refuses a wake timeout past 1700 and any hold, held requests or drain (they are 0; `inherit` is accepted); the organization's and the types' take any value, and a Google Cloud workload takes 0, and at most 1700 for the wake timeout, whatever they set",
 		// one dry-run text
 		"and `--dry-run`, which asks nothing, says each request it would send, one per target",
@@ -877,15 +875,15 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 			t.Errorf("README.md lacks %q", want)
 		}
 	}
-	for _, gone := range []string{"*Not run against Google yet*: `gcp connect`", "prints the controller's answer as it is. `onboard`", "`--dry-run` lists the targets", "`--dry-run`, which lists its targets"} {
+	for _, gone := range []string{"is now \"dormeto", "the old name goes in a later release", "go on working", "still work, hidden", "is its old name", "`default` is its old name", "default, its old name", "*Not run against Google yet*: `gcp connect`", "prints the controller's answer as it is. `onboard`", "`--dry-run` lists the targets", "`--dry-run`, which lists its targets"} {
 		if strings.Contains(text, gone) {
 			t.Errorf("README.md still says %q", gone)
 		}
 	}
 	for _, want := range []string{
 		"The router's commands are under `dormeto gcp routers`: `gcp routers install`, `uninstall` and `show`",
-		"(`gcp install`, `gcp uninstall` and `gcp status` of 0.11.0 go on working, hidden from the help, with the same output and exit code",
-		"`--cloud-sql` (`--cloud-sql is now --database`), `--ip-list`'s `refresh=` (`--ip-list: refresh= is now refresh_hours=`; both in one list exit 2)",
+		"(`gcp install`, `gcp uninstall` and `gcp status` of 0.11.0 are gone: unknown commands, with no alias and no notice",
+		"The old flags are gone too, unknown ones: `--cloud-sql` is `--database`, `--ip-list`'s `refresh=` is `refresh_hours=` and `--wake-timeout` is `--wake-timeout-seconds`",
 		"take `--cloud aws|gcp`",
 		"but `dormeto aws install`, `uninstall` and their `apply`, whose plan is the step before `apply` and needs the bootstrap first",
 		"with its own key beside them where it has a context: `candidate` (`aws workloads onboard`), `eligibility` (`gcp workloads onboard`), `plan`",
@@ -899,7 +897,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"`gcp workloads schedule set --file` reads `-` and the output of `schedule show --json`",
 		"says `<router>/<workload>: not awake (ASLEEP)`, AWS's refusal words, as an answer: it exits 0, as 0.11.0 did, since the controller does not refuse it (AWS exits 1)",
 		"`dormeto aws routers settings <router>...` without a setting flag shows each router's level (it was a usage error, exit 2)",
-		"`inherit` unsets a setting on every level, the organization's (`aws settings set`) and a type's (`aws types set`) too, and `default`, their old word",
+		"`inherit` unsets a setting on every level, the organization's (`aws settings set`) and a type's (`aws types set`) too. The flags of the four commands that set a level",
 		"name Google Cloud's limits as their level has them: at a router's and a workload's, which the Google Cloud router checks, a wake timeout of 60 to 1700 and a hold, held requests and a drain of 0 (any value refused, `inherit` accepted); at the organization's and the types', which the manager takes for both clouds and refuses none of, a Google Cloud workload takes 0, and at most 1700 for the wake timeout, whatever they set",
 		"have one description each, in one order, with the levels' defaults",
 		"answers `409` with its message and the command that fixes it (`no_access`, `router_too_old`, `router_unknown`; it was a `502` `router_error`",

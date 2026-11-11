@@ -49,20 +49,17 @@ type RecordIPList struct {
 const ipListForm = "name=<n>,url=<u>[,refresh_hours=<hours>]"
 
 // ParseIPList reads the value of one --ip-list. An error is a bad flag (exit 2). The period is refresh_hours, AWS's name (the
-// router module's); oldRefresh says the list gave it as refresh, its name in 0.11.0, still read for one release.
-func ParseIPList(s string) (l IPList, oldRefresh bool, err error) {
+// router module's).
+func ParseIPList(s string) (l IPList, err error) {
 	l = IPList{RefreshHours: defaultRefreshHours}
 	seen := map[string]bool{}
 	for _, part := range strings.Split(s, ",") {
 		key, value, ok := strings.Cut(part, "=")
 		if !ok {
-			return IPList{}, false, fmt.Errorf("--ip-list: %q is not key=value: %s (a comma in a URL is written %%2C)", part, ipListForm)
-		}
-		if key == "refresh" {
-			key, oldRefresh = "refresh_hours", true
+			return IPList{}, fmt.Errorf("--ip-list: %q is not key=value: %s (a comma in a URL is written %%2C)", part, ipListForm)
 		}
 		if seen[key] {
-			return IPList{}, false, fmt.Errorf("--ip-list: %s is given twice", key)
+			return IPList{}, fmt.Errorf("--ip-list: %s is given twice", key)
 		}
 		seen[key] = true
 		switch key {
@@ -73,22 +70,22 @@ func ParseIPList(s string) (l IPList, oldRefresh bool, err error) {
 		case "refresh_hours":
 			n, err := strconv.Atoi(value)
 			if err != nil || n <= 0 {
-				return IPList{}, false, fmt.Errorf("--ip-list: refresh_hours %q is not a positive whole number of hours", value)
+				return IPList{}, fmt.Errorf("--ip-list: refresh_hours %q is not a positive whole number of hours", value)
 			}
 			l.RefreshHours = n
 		case "action":
-			return IPList{}, false, fmt.Errorf("--ip-list: action is not a choice on Google Cloud: only ignore exists, and it is the one written. Every wake there already is the waiting page's probe, so defer would mean nothing: a listed address's GET /_dormeto/wake never wakes, and an explicit POST /_dormeto/wake still does")
+			return IPList{}, fmt.Errorf("--ip-list: action is not a choice on Google Cloud: only ignore exists, and it is the one written. Every wake there already is the waiting page's probe, so defer would mean nothing: a listed address's GET /_dormeto/wake never wakes, and an explicit POST /_dormeto/wake still does")
 		default:
-			return IPList{}, false, fmt.Errorf("--ip-list: %s is not a key: name, url, refresh_hours", key)
+			return IPList{}, fmt.Errorf("--ip-list: %s is not a key: name, url, refresh_hours", key)
 		}
 	}
 	if l.Name == "" {
-		return IPList{}, false, fmt.Errorf("--ip-list: name is needed: %s", ipListForm)
+		return IPList{}, fmt.Errorf("--ip-list: name is needed: %s", ipListForm)
 	}
 	if l.URL == "" {
-		return IPList{}, false, fmt.Errorf("--ip-list %s: url is needed: %s", l.Name, ipListForm)
+		return IPList{}, fmt.Errorf("--ip-list %s: url is needed: %s", l.Name, ipListForm)
 	}
-	return l, oldRefresh, checkIPList(l)
+	return l, checkIPList(l)
 }
 
 // checkIPList refuses a list the router cannot use, or that must not go into a Cloud Run environment and the record.

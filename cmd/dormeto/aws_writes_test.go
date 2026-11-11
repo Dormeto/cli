@@ -76,46 +76,49 @@ func TestRoutersSettingsWithoutAFlagShowTheRoutersLevel(t *testing.T) {
 	}
 }
 
-// inherit unsets a level on every level; at the organization's and the types', default is its alias and sends the same.
-func TestSettingsAndTypesSetTakeInheritAsDefault(t *testing.T) {
-	for _, args := range [][]string{
-		{"--idle-minutes", "inherit", "--wake-mode", "inherit", "--wake-rules-file", "inherit"},
-		{"--idle-minutes", "default", "--wake-mode", "default", "--wake-rules-file", "default"},
-	} {
-		a := &globalAPI{}
-		r := runSettings(t, a, append([]string{"set"}, args...)...)
-		if want := []string{`{"defaults":{"idleMinutes":null,"wakeMode":null,"wakeRules":null}}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
-			t.Errorf("settings set %q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
-		}
+// inherit unsets a level on every level; default is no word for it, at the organization's and the types' too.
+func TestSettingsAndTypesSetTakeInherit(t *testing.T) {
+	a := &globalAPI{}
+	r := runSettings(t, a, "set", "--idle-minutes", "inherit", "--wake-mode", "inherit", "--wake-rules-file", "inherit")
+	if want := []string{`{"defaults":{"idleMinutes":null,"wakeMode":null,"wakeRules":null}}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
+		t.Errorf("settings set: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
-	for _, args := range [][]string{{"--ended-window-days", "inherit"}, {"--ended-window-days", "default"}} {
-		a := &globalAPI{join: `"endedWindowDays":null,`}
-		r := runSettings(t, a, append([]string{"set"}, args...)...)
-		if want := []string{`{"endedWindowDays":null}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
-			t.Errorf("settings set %q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
-		}
+	a = &globalAPI{join: `"endedWindowDays":null,`}
+	r = runSettings(t, a, "set", "--ended-window-days", "inherit")
+	if want := []string{`{"endedWindowDays":null}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
+		t.Errorf("settings set: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
-	for _, args := range [][]string{{"--join-minutes", "inherit"}, {"--join-minutes", "default"}} {
-		a := &globalAPI{join: `"joinMinutes":null,`}
-		r := runSettings(t, a, append([]string{"set"}, args...)...)
-		if want := []string{`{"joinMinutes":null}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
-			t.Errorf("settings set %q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
-		}
+	a = &globalAPI{join: `"joinMinutes":null,`}
+	r = runSettings(t, a, "set", "--join-minutes", "inherit")
+	if want := []string{`{"joinMinutes":null}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
+		t.Errorf("settings set: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
 	}
 	const stored = `[{"name":"api","tags":{"kind":"api"},"settings":{"idleMinutes":30,"wakeMode":"any"}}]`
-	for _, word := range []string{"inherit", "default"} {
-		a := &typesAPI{types: stored}
-		r := runTypes(t, a, "set", "api", "--idle-minutes", word)
-		if want := []string{`{"types":[{"name":"api","settings":{"wakeMode":"any"},"tags":{"kind":"api"}}]}`}; r.exit != 0 || !reflect.DeepEqual(a.writes, want) {
-			t.Errorf("types set %s: exit %d, writes %q, stderr %q", word, r.exit, a.writes, r.stderr)
-		}
+	ta := &typesAPI{types: stored}
+	r = runTypes(t, ta, "set", "api", "--idle-minutes", "inherit")
+	if want := []string{`{"types":[{"name":"api","settings":{"wakeMode":"any"},"tags":{"kind":"api"}}]}`}; r.exit != 0 || !reflect.DeepEqual(ta.writes, want) {
+		t.Errorf("types set: exit %d, writes %q, stderr %q", r.exit, ta.writes, r.stderr)
 	}
 }
 
-func TestSettingsAndTypesSetHelpNameInheritAndItsAlias(t *testing.T) {
+// default, the old word of inherit, is not read: a usage error before any call, at the organization's and the types'.
+func TestSettingsAndTypesSetRefuseDefaultAsAWord(t *testing.T) {
+	for _, args := range [][]string{{"--idle-minutes", "default"}, {"--wake-mode", "default"}, {"--wake-rules-file", "default"}, {"--ended-window-days", "default"}, {"--join-minutes", "default"}} {
+		a := &globalAPI{}
+		if r := runSettings(t, a, append([]string{"set"}, args...)...); r.exit != 2 || len(a.writes) != 0 {
+			t.Errorf("settings set %q: exit %d, writes %q, stderr %q", args, r.exit, a.writes, r.stderr)
+		}
+	}
+	ta := &typesAPI{types: `[{"name":"api","tags":{"kind":"api"},"settings":{"idleMinutes":30}}]`}
+	if r := runTypes(t, ta, "set", "api", "--idle-minutes", "default"); r.exit != 2 || len(ta.writes) != 0 {
+		t.Errorf("types set: exit %d, writes %q, stderr %q", r.exit, ta.writes, r.stderr)
+	}
+}
+
+func TestSettingsAndTypesSetHelpNameInheritOnly(t *testing.T) {
 	for _, args := range [][]string{{"aws", "settings", "set", "--help"}, {"aws", "types", "set", "--help"}} {
 		out, _, code := executed(t, build{}, args...)
-		if code != 0 || !strings.Contains(out, "or inherit") || !strings.Contains(out, "default, its old name") {
+		if code != 0 || !strings.Contains(out, "or inherit") || strings.Contains(out, "old name") {
 			t.Errorf("%v: %d\n%s", args, code, out)
 		}
 	}

@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -187,7 +186,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var hibernating *bool
 	var idleGiven, wakeGiven bool
 	var loadBalancer, cluster, wakeMode string
-	var databases, oldDatabases, fallbackTypes []string
+	var databases, fallbackTypes []string
 	var requestLogs bool
 	var name string
 	var tags []string
@@ -212,7 +211,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			"offboarding sets it back unless it changed since. Cloud Logging bills the logs past its free tier.",
 		&f, []string{"project", "region", "url-map", "backend-service"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.URLMap, r.BackendService, r.ID, r.Hibernate = urlMap, backendService, id, hibernating
-			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, append(slices.Clone(databases), oldDatabases...), cluster, requestLogs
+			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, databases, cluster, requestLogs
 			r.WakeMode, r.FallbackTypes = wakeMode, fallbackTypes
 			r.Name, r.Tags = strings.TrimSpace(name), tagged
 			if idleGiven {
@@ -228,15 +227,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout-seconds") || c.Flags().Changed("wake-timeout")
-		// The old name of --wake-timeout-seconds, AWS's.
-		if c.Flags().Changed("wake-timeout") {
-			fmt.Fprintln(c.ErrOrStderr(), "--wake-timeout is now --wake-timeout-seconds")
-		}
-		// The old name of --database, 0.11.0's.
-		if c.Flags().Changed("cloud-sql") {
-			fmt.Fprintln(c.ErrOrStderr(), "--cloud-sql is now --database")
-		}
+		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout-seconds")
 		// Given empty, as a variable with no value: read as not given, it would onboard something else.
 		for _, name := range []string{"load-balancer", "gke-cluster", "wake-mode"} {
 			if v, _ := c.Flags().GetString(name); v == "" && c.Flags().Changed(name) {
@@ -294,10 +285,6 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	gcpRouterFlags(cmd, &f)
 	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
-	fl.IntVar(&wakeTimeout, "wake-timeout", 0, "the old name of --wake-timeout-seconds")
-	fl.MarkHidden("wake-timeout")
-	fl.StringArrayVar(&oldDatabases, "cloud-sql", nil, "the old name of --database")
-	fl.MarkHidden("cloud-sql")
 	return cmd
 }
 

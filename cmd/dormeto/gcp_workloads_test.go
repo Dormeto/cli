@@ -523,18 +523,19 @@ func TestGcpWorkloadsOnboardFallbackTypeHelpNamesTheVMsItAppliesTo(t *testing.T)
 	}
 }
 
-// The old name is a hidden alias that says what it is now.
-func TestGcpWorkloadsOnboardTakesTheOldWakeTimeoutAndWarns(t *testing.T) {
+// --wake-timeout, the old name of --wake-timeout-seconds, is gone: an unknown flag.
+func TestGcpWorkloadsOnboardHasNoOldWakeTimeout(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--wake-timeout", "900")...)
-	if exit != 0 || len(calls) != 1 || calls[0].r.WakeTimeout == nil || *calls[0].r.WakeTimeout != 900 || !strings.Contains(errs, "--wake-timeout is now --wake-timeout-seconds\n") {
+	if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "unknown flag: --wake-timeout") {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	calls, errs, exit = gcpRan(t, 0, append(strings.Fields(onboardArgs), "--wake-timeout-seconds", "900")...)
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].r.WakeTimeout == nil || *calls[0].r.WakeTimeout != 900 {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	out, _, _ := executed(t, build{}, "gcp", "workloads", "onboard", "--help")
 	if strings.Contains(out, "--wake-timeout ") || !strings.Contains(out, "--wake-timeout-seconds") || !strings.Contains(out, "--wake-mode") || !strings.Contains(out, "--fallback-type") {
 		t.Fatalf("%s", out)
-	}
-	if _, errs, _ := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--wake-timeout-seconds", "900")...); strings.Contains(errs, "is now") {
-		t.Fatalf("warned of the new flag: %q", errs)
 	}
 }
 
@@ -640,20 +641,15 @@ func TestGcpWaitingPageShowAndClearReadTheTarget(t *testing.T) {
 	}
 }
 
-// --database is Cloud SQL's flag on both clouds' onboards; --cloud-sql is its hidden alias, saying what it is now.
-func TestGcpWorkloadsOnboardTakesDatabaseAndTheOldCloudSQL(t *testing.T) {
+// --database is Cloud SQL's flag on both clouds' onboards; --cloud-sql, its old name, is gone: an unknown flag.
+func TestGcpWorkloadsOnboardTakesDatabaseAndNotCloudSQL(t *testing.T) {
 	calls, errs, exit := gcpRan(t, 0, append(strings.Fields(onboardArgs), "--database", "db1", "--database", "db2")...)
-	if exit != 0 || len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db1", "db2"}) || strings.Contains(errs, "is now") {
+	if exit != 0 || len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db1", "db2"}) || errs != "" {
 		t.Fatalf("%d %q %v", exit, errs, calls)
 	}
 	calls, errs, exit = gcpRan(t, 0, append(strings.Fields(onboardArgs), "--cloud-sql", "db1")...)
-	if exit != 0 || len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db1"}) || !strings.Contains(errs, "--cloud-sql is now --database\n") {
+	if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "unknown flag: --cloud-sql") {
 		t.Fatalf("%d %q %v", exit, errs, calls)
-	}
-	calls, _, _ = gcpRan(t, 0, append(strings.Fields(onboardArgs), "--cloud-sql", "db1", "--database", "db2")...)
-	// --database's, then the old flag's: the order the code sends
-	if len(calls) != 1 || !slices.Equal(calls[0].r.CloudSQL, []string{"db2", "db1"}) {
-		t.Fatalf("%v", calls)
 	}
 	out, _, _ := executed(t, build{}, "gcp", "workloads", "onboard", "--help")
 	if strings.Contains(out, "--cloud-sql ") || !strings.Contains(out, "--database") {

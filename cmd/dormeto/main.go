@@ -52,24 +52,18 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 		},
 	})
 	v, _, _ := b.resolve()
-	// The AWS commands live under `dormeto aws`; the old top-level names are the same commands built a second time
-	// (a cobra command has one parent), hidden, and run through aws by execute with a notice.
+	// The AWS commands live under `dormeto aws` only.
 	aws := &cobra.Command{Use: "aws", Short: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers", Args: noArgs, SilenceErrors: true,
 		Long: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers. The manager's commands (routers list,\n" +
 			"workloads list, discovery, savings, users, settings...) cover both clouds, a Google Cloud project being the account of\n" +
 			"its rows, and change a Google Cloud router's pause, settings and workloads; the commands that install, upgrade and\n" +
 			"remove a Google Cloud router are under `dormeto gcp`.\n\n" + regionRule}
+	refuseUnknownSubcommands(aws)
 	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
-	// Born under aws (settings at scale): no hidden twin at the top level.
 	types := newTypes(fleet)
 	sayBothClouds(types)
 	aws.AddCommand(types)
 	root.AddCommand(aws)
-	for _, old := range awsCommands(b, fleet, installs, orDefault(v, "dev")) {
-		old.Hidden = true
-		old.Annotations = map[string]string{movedAnnotation: "aws " + old.Name()}
-		root.AddCommand(old)
-	}
 	root.AddCommand(newGcp(gcps, fleet, orDefault(v, "dev")))
 	return root
 }
@@ -197,4 +191,18 @@ func (b build) describe() string {
 	return fmt.Sprintf("dormeto %s\ncommit: %s\ndate: %s\nmanager: %s\nrouter: %s\n",
 		orDefault(v, "dev"), orDefault(c, "unknown"), orDefault(d, "unknown"),
 		orDefault(cases.Manager, "none"), orDefault(cases.Router, "none"))
+}
+
+// refuseUnknownSubcommands makes a group command (aws, gcp) answer a word that is none of its commands, and the flags
+// after it, as the root does an unknown command: said on stderr, exit 2. Bare, it prints its help.
+func refuseUnknownSubcommands(group *cobra.Command) {
+	group.Args = cobra.ArbitraryArgs
+	group.FParseErrWhitelist.UnknownFlags = true
+	group.RunE = func(c *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			fmt.Fprintf(c.ErrOrStderr(), "unknown command %q for %q\n", args[0], c.CommandPath())
+			return exitCode(2)
+		}
+		return c.Help()
+	}
 }

@@ -109,10 +109,9 @@ type globalSettings struct {
 // endedDaysDefault is how long after its last valid occurrence a window stays in its schedule when the organization does not say (router 0.36.0).
 const endedDaysDefault = 365
 
-// parseEndedDays reads --ended-window-days: 0 keeps ended windows, 30 to 3650 days, inherit (nil) unsets it; default is its
-// old name.
+// parseEndedDays reads --ended-window-days: 0 keeps ended windows, 30 to 3650 days, inherit (nil) unsets it.
 func parseEndedDays(s string) (*int, error) {
-	if s == "inherit" || s == "default" {
+	if s == "inherit" {
 		return nil, nil
 	}
 	days, err := strconv.Atoi(s)
@@ -220,12 +219,9 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"days, 0 keeps them, inherit unsets it (365). The workload settings (--idle-minutes, --wait-seconds, --drain-seconds,\n" +
 			"--wake-timeout-seconds, --max-holders, --failed-retry-seconds, --wake-mode and the rules files) are the organization's\n" +
 			"defaults: a workload, its type or its router that sets one keeps its own; inherit removes one (the built-in value).\n" +
-			"inherit unsets a value as on every level; default, its old name, is read the same. What is not given stays as it\n" +
+			"inherit unsets a value as on every level. What is not given stays as it\n" +
 			"was. Needs an administrator. --json prints the manager's answer.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if join == "default" { // the organization's old word, as its other settings'
-				join = "inherit"
-			}
 			ending := c.Flags().Changed("ended-window-days")
 			settings := levelSettings{body: map[string]any{}}
 			defaults, err := levels.body(c)
@@ -276,7 +272,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd.Flags().StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5; inherit unsets it (default 15)")
 	cmd.Flags().StringVar(&ended, "ended-window-days", "", "days after its last occurrence a window stays, 30 to 3650, 0 keeps them; inherit unsets it (365)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
-	levels = bindLevelFlags(cmd, googleCloudBrings, "inherit", "default")
+	levels = bindLevelFlags(cmd, googleCloudBrings, "inherit")
 	return cmd
 }
 

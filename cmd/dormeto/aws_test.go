@@ -1,10 +1,11 @@
 package main
 
-// `dormeto aws`: every command of the manager and the install lives under it; the old top-level names are hidden, work
-// as before and say once on stderr that they are going.
+// `dormeto aws`: every command of the manager and the install lives under it; the old top-level names are gone, unknown
+// commands as any other.
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -13,11 +14,11 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// movedToAws are the commands that were at the top level before `dormeto aws`.
+// movedToAws are the commands that were at the top level before `dormeto aws`, and are not any more.
 var movedToAws = []string{"alerts", "api", "audit", "discovery", "estimate", "exclusions", "groups", "install", "ip-lists", "manager",
 	"operations", "overview", "routers", "savings", "settings", "uninstall", "users", "whoami", "workloads"}
 
-// bornUnderAws are the commands added under aws since: none of them has an old top-level twin.
+// bornUnderAws are the commands added under aws since.
 var bornUnderAws = []string{"types"}
 
 // atTheTop are the only commands a root may show at its top level besides cobra's own; a new one goes under aws.
@@ -47,52 +48,32 @@ func shape(c *cobra.Command, path string, into map[string]string) {
 	into[path] = c.Use + "\n" + c.Short + "\n" + strings.Join(flags, "\n") + "\n" + strings.Join(subs, ",")
 }
 
-func TestEveryOldCommandIsUnderAwsAndHidden(t *testing.T) {
+func TestEveryOldCommandIsUnderAwsAndNotAtTheTop(t *testing.T) {
 	root := newRoot(build{})
 	aws := child(root, "aws")
 	if aws == nil || aws.Short != awsShort {
 		t.Fatalf("aws: %+v", aws)
 	}
 	for _, name := range movedToAws {
-		old, moved := child(root, name), child(aws, name)
-		if old == nil || moved == nil {
-			t.Errorf("%s: old %v, under aws %v", name, old != nil, moved != nil)
-			continue
+		if child(root, name) != nil {
+			t.Errorf("%s is still at the top level", name)
 		}
-		if !old.Hidden || moved.Hidden {
-			t.Errorf("%s: old hidden %v, under aws hidden %v", name, old.Hidden, moved.Hidden)
-		}
-		if old == moved {
-			t.Errorf("%s: one command for two parents", name)
-		}
-		a, b := map[string]string{}, map[string]string{}
-		shape(old, name, a)
-		shape(moved, name, b)
-		if len(a) != len(b) {
-			t.Errorf("%s: %d old commands, %d under aws", name, len(a), len(b))
-		}
-		for path, want := range a {
-			if b[path] != want {
-				t.Errorf("%s differs under aws:\nold  %q\nnew  %q", path, want, b[path])
-			}
+		if child(aws, name) == nil {
+			t.Errorf("%s is not under aws", name)
 		}
 	}
-	// aws holds exactly these, and none of the old ones is left visible.
+	// aws holds exactly these.
 	for _, sub := range aws.Commands() {
 		if !slices.Contains(movedToAws, sub.Name()) && !slices.Contains(bornUnderAws, sub.Name()) {
 			t.Errorf("aws holds %q, which was not at the top level", sub.Name())
 		}
 	}
 	for _, sub := range root.Commands() {
-		switch {
-		case slices.Contains(atTheTop, sub.Name()):
-			if sub.Hidden {
-				t.Errorf("%s is hidden", sub.Name())
-			}
-		case !slices.Contains(movedToAws, sub.Name()):
+		if !slices.Contains(atTheTop, sub.Name()) {
 			t.Errorf("a new top-level command %q: it belongs under aws (or on the allow-list)", sub.Name())
-		case !sub.Hidden:
-			t.Errorf("the old %q is shown", sub.Name())
+		}
+		if sub.Hidden {
+			t.Errorf("%s is hidden", sub.Name())
 		}
 	}
 }
@@ -114,71 +95,44 @@ func TestTopLevelHelpShowsAwsGcpVersionAndCobrasOwn(t *testing.T) {
 	}
 }
 
-const notice = "dormeto: \"dormeto %s\" is now \"dormeto aws %s\"; the old name goes in a later release.\n"
-
-func TestOldFormsRunAsTheNewOnesWithOneLineOnStderr(t *testing.T) {
-	cases := [][]string{
-		{"workloads", "schedule", "show", "--help"}, // nested, help
+// The old top-level names answer as cobra does for any unknown command, with no notice and nothing run.
+func TestOldTopLevelFormsAreUnknownCommands(t *testing.T) {
+	for _, args := range [][]string{
+		{"workloads", "schedule", "show", "--help"},
 		{"estimate", "--help"},
 		{"install", "check", "--help"},
-		{"routers", "list", "--bogus"}, // usage error
-		{"routers", "bogus"},
-		{"api", "GET"}, // a usage error of the command
+		{"routers", "list", "--bogus"},
+		{"api", "GET"},
 		{"help", "routers"},
 		{"uninstall", "--help"},
-	}
-	for _, args := range cases {
-		name, newArgs := args[0], append([]string{"aws"}, args...)
-		if name == "help" { // dormeto help routers is dormeto help aws routers
-			name, newArgs = args[1], []string{"help", "aws", args[1]}
-		}
-		newOut, newErr, newCode := executed(t, build{}, newArgs...)
-		oldOut, oldErr, oldCode := executed(t, build{}, args...)
-		if oldOut != newOut || oldCode != newCode {
-			t.Errorf("%q: old exit %d out %q, new exit %d out %q", args, oldCode, oldOut, newCode, newOut)
-		}
-		if want := strings.Replace(notice, "%s", name, 2) + newErr; oldErr != want {
-			t.Errorf("%q: old stderr %q, want %q", args, oldErr, want)
-		}
-		if strings.Contains(newErr, "is now") {
-			t.Errorf("%q: the new form says %q", args, newErr)
-		}
-	}
-}
-
-func TestOldFormsWithAJSONCommandAgainstAFakeManager(t *testing.T) {
-	both := func(args ...string) (o, n fleetRan) {
-		for i, a := range [][]string{args, append([]string{"aws"}, args...)} {
-			r := fleetRan{api: &fakeAPI{}}
-			root := buildRoot(build{}, fakeFleetDeps(t, &r, "eu-west-1", nil), installRuns{}, gcpRuns{})
-			got := runOn(root, r.api, &r, a)
-			if i == 0 {
-				o = got
-			} else {
-				n = got
+		{"operations", "watch"},
+	} {
+		out, errs, code := executed(t, build{}, args...)
+		if args[0] == "help" { // cobra's own answer to a help topic it does not have
+			if code != 0 || !strings.Contains(out, "Unknown help topic") || errs != "" {
+				t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, out, errs)
 			}
+			continue
 		}
-		return
-	}
-	for _, args := range [][]string{{"routers", "list", "--json", "--profile", "ops"}, {"workloads", "list", "--json"}} {
-		o, n := both(args...)
-		if n.exit != 0 || n.stdout == "" || o.exit != n.exit || o.stdout != n.stdout {
-			t.Errorf("%q: old exit %d out %q; new exit %d out %q err %q", args, o.exit, o.stdout, n.exit, n.stdout, n.stderr)
-		}
-		if o.stderr != strings.Replace(notice, "%s", args[0], 2)+n.stderr || strings.Contains(n.stderr, "is now") {
-			t.Errorf("%q: old stderr %q, new %q", args, o.stderr, n.stderr)
+		if code == 0 || out != "" || !strings.Contains(errs, "unknown command") || strings.Contains(errs, "is now") {
+			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, out, errs)
 		}
 	}
-}
-
-func TestTheNoticeNamesOnlyTheTopLevelCommandAndIsHiddenFromCompletion(t *testing.T) {
-	_, errs, _ := executed(t, build{}, "operations", "watch", "--help")
-	if errs != strings.Replace(notice, "%s", "operations", 2) {
-		t.Errorf("stderr %q", errs)
+	for _, name := range movedToAws {
+		if _, errs, code := executed(t, build{}, name); code == 0 || !strings.Contains(errs, "unknown command") {
+			t.Errorf("%s: exit %d, stderr %q", name, code, errs)
+		}
 	}
-	for _, name := range []string{"version", "gcp", "aws", "help"} {
-		if _, errs, _ := executed(t, build{}, name, "--help"); strings.Contains(errs, "is now") {
-			t.Errorf("%s: %q", name, errs)
+	// A word that is no command of aws or gcp is refused the same: exit 2, nothing run.
+	for _, args := range [][]string{{"aws", "bogus"}, {"aws", "bogus", "--profile", "p"}, {"gcp", "bogus"}} {
+		if out, errs, code := executed(t, build{}, args...); code != 2 || out != "" || errs != fmt.Sprintf("unknown command \"bogus\" for \"dormeto %s\"\n", args[0]) {
+			t.Errorf("%q: exit %d, stdout %q, stderr %q", args, code, out, errs)
+		}
+	}
+	// Bare, each prints its help, exit 0.
+	for _, name := range []string{"aws", "gcp"} {
+		if out, errs, code := executed(t, build{}, name); code != 0 || errs != "" || !strings.Contains(out, "Available Commands:") {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", name, code, out, errs)
 		}
 	}
 	out, _, _ := executed(t, build{}, "__complete", "")
@@ -302,21 +256,5 @@ func TestProjectIsAnAliasOfAccountOnTheManagersCommands(t *testing.T) {
 	}
 	if f := child(child(aws, "routers"), "install").Flags().Lookup("project"); f != nil {
 		t.Errorf("routers install takes an AWS account only, yet has --project")
-	}
-}
-
-// A flag between the old path's words stays on the line, after the new path.
-func TestAMovedCommandKeepsTheFlagsBetweenItsWords(t *testing.T) {
-	root := newRoot(build{})
-	root.SetErr(&bytes.Buffer{})
-	for _, tc := range []struct{ in, want []string }{
-		{[]string{"gcp", "--x", "install", "--project", "p"}, []string{"gcp", "routers", "install", "--x", "--project", "p"}},
-		{[]string{"help", "--x", "gcp", "status"}, []string{"help", "gcp", "routers", "show", "--x"}},
-		{[]string{"--some-flag", "routers", "list"}, []string{"--some-flag", "aws", "routers", "list"}},
-		{[]string{"routers", "--x", "list"}, []string{"aws", "routers", "--x", "list"}},
-	} {
-		if got := runMoved(root, tc.in); !slices.Equal(got, tc.want) {
-			t.Errorf("%q: %q, want %q", tc.in, got, tc.want)
-		}
 	}
 }

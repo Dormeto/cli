@@ -2,8 +2,7 @@ package main
 
 // Settings at scale (vision settings at scale design §10): the workload settings of a level, the same flags at the
 // organization (`settings set`), a router (`routers settings`), a workload (`workloads settings`) and a type (`types set`),
-// inherit unsetting a value on every level (default, its old name, too at the organization's and the types'), and the
-// organization's types.
+// inherit unsetting a value on every level, and the organization's types.
 
 import (
 	"context"
@@ -31,10 +30,9 @@ var builtInTypes = []string{"instance", "asg", "ecs", "k8s", "databases"}
 var typeName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // levelFlags are the flags of one level; unset is the word that leaves a setting to the levels below (inherit, on every
-// level), aliases the other words read as it (default, its old name at the organization's and the types').
+// level).
 type levelFlags struct {
 	unset     string
-	aliases   []string
 	numbers   map[string]*string
 	wakeMode  string
 	noWake    string
@@ -73,8 +71,8 @@ var googleCloudBrings = map[string]string{
 
 // bindLevelFlags binds a level's flags, each saying what onGoogleCloud says of its flag (googleCloudRefuses or
 // googleCloudBrings, as the level has it).
-func bindLevelFlags(cmd *cobra.Command, onGoogleCloud map[string]string, unset string, aliases ...string) *levelFlags {
-	l := &levelFlags{unset: unset, aliases: aliases, numbers: map[string]*string{}}
+func bindLevelFlags(cmd *cobra.Command, onGoogleCloud map[string]string, unset string) *levelFlags {
+	l := &levelFlags{unset: unset, numbers: map[string]*string{}}
 	for _, s := range levelSettings3 {
 		v := new(string)
 		l.numbers[s.Flag] = v
@@ -86,8 +84,8 @@ func bindLevelFlags(cmd *cobra.Command, onGoogleCloud map[string]string, unset s
 	return l
 }
 
-// unsets tells whether a value is the unset word, or one of its aliases.
-func (l *levelFlags) unsets(v string) bool { return v == l.unset || slices.Contains(l.aliases, v) }
+// unsets tells whether a value is the unset word.
+func (l *levelFlags) unsets(v string) bool { return v == l.unset }
 
 // body reads the flags given, each refused before any call: a value in its range, or the unset word for null.
 func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
@@ -319,10 +317,10 @@ func newTypesSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Args: cobra.ExactArgs(1), SilenceErrors: true,
 		Long: "Add a custom type (lower-case letters, digits and hyphens, at least one --tag that selects it), or change one:\n" +
 			"its description, its tags (given, they replace the old ones), its defaults (each given value replaces the one held,\n" +
-			"inherit removes it, as on every level; default, its old name, too). A built-in type (instance, asg, ecs, k8s,\n" +
+			"inherit removes it, as on every level). A built-in type (instance, asg, ecs, k8s,\n" +
 			"databases) takes defaults only. The routers apply it at their next check, within 5 minutes. Needs an administrator.",
 	}
-	levels := bindLevelFlags(cmd, googleCloudBrings, "inherit", "default")
+	levels := bindLevelFlags(cmd, googleCloudBrings, "inherit")
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		name := args[0]
 		builtIn := slices.Contains(builtInTypes, name)

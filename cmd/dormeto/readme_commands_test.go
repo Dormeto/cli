@@ -47,11 +47,10 @@ func TestReadmeCommandsExistInTheTree(t *testing.T) {
 	if seen < 50 {
 		t.Fatalf("only %d command lines read", seen)
 	}
-	// the names the README says are the new ones, and the hidden old ones that go on working
+	// the names the README says, and the old ones that are gone
 	for _, path := range [][]string{
 		{"gcp", "routers", "install"}, {"gcp", "routers", "uninstall"}, {"gcp", "routers", "show"}, {"gcp", "routers", "settings"},
 		{"gcp", "routers", "pause"}, {"gcp", "routers", "resume"}, {"gcp", "routers", "waiting-page"},
-		{"gcp", "install"}, {"gcp", "uninstall"}, {"gcp", "status"},
 		{"gcp", "workloads", "wake"}, {"gcp", "workloads", "pause"}, {"gcp", "workloads", "list"}, {"gcp", "workloads", "offboard"},
 		{"aws", "routers", "settings"}, {"aws", "types", "set"}, {"aws", "settings", "set"}, {"aws", "workloads", "settings"},
 		{"aws", "install", "check"}, {"aws", "install", "status"}, {"aws", "workloads", "idle-window"},
@@ -61,8 +60,8 @@ func TestReadmeCommandsExistInTheTree(t *testing.T) {
 		}
 	}
 	for _, old := range [][]string{{"gcp", "install"}, {"gcp", "uninstall"}, {"gcp", "status"}} {
-		if c, _, _ := root.Find(old); c == nil || !c.Hidden {
-			t.Errorf("%v is not a hidden command", old)
+		if c, _, _ := root.Find(old); c != nil && c.CommandPath() == "dormeto "+strings.Join(old, " ") {
+			t.Errorf("%v is still a command", old)
 		}
 	}
 	// the commands without --dry-run, which the README names, and the commands that have it

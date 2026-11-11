@@ -30,9 +30,8 @@ the sections after it). These ask the manager, which acts as it does for the das
 
 Every command above, with all of its subcommands and options, is under `dormeto aws`, as the Google Cloud ones are under
 `dormeto gcp` (`dormeto --help` lists `aws`, `gcp` and `version`). Before the CLI that has `aws`, they were top-level
-(`dormeto install`, `dormeto routers list`); those names still work, hidden from the help and from the completion, with
-the same output and exit code, and each prints one line on stderr saying the new name: `dormeto: "dormeto install" is now
-"dormeto aws install"; the old name goes in a later release.` The old names go in a later release.
+(`dormeto install`, `dormeto routers list`); those names are gone: `dormeto install` is an unknown command, and the
+commands are `dormeto aws install`, `dormeto aws routers list`.
 
 ## Install
 
@@ -1041,7 +1040,7 @@ wake mode each come from the first level that sets them: the workload, its type,
 built-in value. Its no-wake and wake rules add up across the levels, the organization's first. A type is built in
 (`instance`, `asg`, `ecs`, `k8s`, or `databases` for a workload with RDS or Aurora) or one of the organization's, picked
 by `--type` on the workload, else by its tags. `inherit` removes a value on every level, the organization's and a type's
-too, and `default` is its old name there, read the same (the settings of a router or a workload never took it). The
+too. The
 settings that Google Cloud fixes or limits say so in their flags' help, as each level has them: at a router's and a
 workload's, which the Google Cloud router checks, it refuses a wake timeout past 1700 and any hold, held requests or
 drain (they are 0; `inherit` is accepted); the organization's and the types' take any value, and a Google Cloud workload
@@ -1607,11 +1606,9 @@ terminal); 128 and the signal's number when stopped.
 The tree is `gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`,
 `gcp connect` and `gcp disconnect`; the manager's own commands (`routers list`, `workloads list`, `savings`, `users`…)
 serve both clouds and stay under `dormeto aws`, where `--cloud gcp` and `--project` choose the rows. The router's
-commands were `gcp install`, `gcp uninstall` and `gcp status` until CLI 0.11.0: those names still work, hidden, with the
-same output and exit code, and each prints one line on stderr, `dormeto: "dormeto gcp install" is now "dormeto gcp
-routers install"; the old name goes in a later release.` (`gcp status` is now `gcp routers show`). The same holds for
-the flags renamed to AWS's: `--cloud-sql` is now `--database`, the `refresh=` of `--ip-list` now `refresh_hours=` and
-`--wake-timeout` now `--wake-timeout-seconds`, each saying so on stderr. Every writing command takes `--yes` (accepted
+commands are `gcp routers install`, `uninstall` and `show`; `gcp install`, `gcp uninstall` and `gcp status`, their names
+until CLI 0.11.0, are gone, as are the flags named otherwise on AWS: it is `--database`, `refresh_hours=` in `--ip-list` and
+`--wake-timeout-seconds`. Every writing command takes `--yes` (accepted
 and ignored where it asks nothing) and `--dry-run` (says each request it would send, and sends nothing), as the
 manager's commands do, and prints AWS's lines, `<router>/<workload>: <what happened>`, the router named as the manager
 names it. A refused nap, wake, pause, resume or `schedule set|clear` prints the same head, `<router>/<workload>:
@@ -1878,8 +1875,7 @@ dormeto gcp routers install --project my-project --region europe-west1 --no-ip-l
 ```
 
 With `--ip-list name=<n>,url=<u>[,refresh_hours=<hours>]`, repeatable, the router downloads each list over HTTP(S),
-every 24 hours unless `refresh_hours` says otherwise (`refresh=`, its name before CLI 0.14.0, is read the same and says
-`--ip-list: refresh= is now refresh_hours=` on stderr; both in one list exit 2), and a visit from an address on one
+every 24 hours unless `refresh_hours` says otherwise, and a visit from an address on one
 never wakes a workload. Only the action `ignore` exists on Google Cloud, and `action=` is refused: a listed address's
 `GET /_dormeto/wake` (the waiting page's probe) never wakes, but a listed address's `POST /_dormeto/wake` still wakes,
 as an API client's explicit wake. A list stops browsers and scanners on those addresses, not a client that means to
@@ -1937,7 +1933,7 @@ The onboarding's other flags:
   path. A wake includes the map's change: allow about 2.5 minutes on regional and 5 on classic (measured: visitors reached
   the application 62 s after a `POST /_dormeto/wake` on regional and 2 min 16 s after one on classic; the router reads the
   workload `AWAKE` 123 to 188 s and 287 s after the wake, its unswap's wait included). Google advises moving a classic load balancer to the global external one. `internal` is an internal Application Load Balancer on a regional map in the router's region, `cross-region-internal` one on a global map ([internal load balancers](#internal-load-balancers)).
-- `--wake-timeout-seconds <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call; `gcp workloads settings` and `gcp routers settings` take the same range). `--wake-timeout` is its old name, which still works and says `--wake-timeout is now --wake-timeout-seconds`. The router's default is 600 s for every kind of workload but one with a Cloud SQL companion, which is 1700 s ([the settings'
+- `--wake-timeout-seconds <seconds>`: how long a wake may take, 60 to 1700 (else exit 2 before any call; `gcp workloads settings` and `gcp routers settings` take the same range). The router's default is 600 s for every kind of workload but one with a Cloud SQL companion, which is 1700 s ([the settings'
   levels](#google-cloud-settings-and-their-levels)). Behind a regional, classic or internal load balancer, a value of the swap's wait + 60 s or less (160 s
   regional, 310 s classic, 90 s internal, 210 s cross-region internal) is refused, as a wake would always fail; if you set it, give a regional
   load balancer about 250 s or more, and a classic one about 340 s or more.
@@ -1947,8 +1943,6 @@ The onboarding's other flags:
   Its warning, the offboarding's set-back and the cost are there.
 - `--database <instance>`, repeatable, as on AWS: a Cloud SQL instance of the project that naps with the workload,
   stopped after the application and started before it. The tag is bound to it as you, and unbound at the offboarding.
-  `--cloud-sql` is its old name, which still works, hidden, and says `--cloud-sql is now --database`; both together send
-  `--database`'s, then the old flag's.
 - `--gke-cluster <location>/<name>`: the workload's pods are in this GKE cluster, behind standalone network endpoint groups
   (the Service's `cloud.google.com/neg` annotation) on a load balancer you own. No tag is bound for pods. The CLI reads the
   Service's owner in the cluster as you, then prints, asks and applies its Kubernetes access before the onboarding; a

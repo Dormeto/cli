@@ -216,8 +216,8 @@ func TestGcpWorkloadsListReadsAwsFilters(t *testing.T) {
 	}
 }
 
-// refresh_hours is AWS's name of the period (the router module's); refresh, the name of 0.11.0, says so and still works.
-func TestGcpIPListTakesRefreshHoursAndRefreshWithItsNotice(t *testing.T) {
+// refresh_hours is AWS's name of the period (the router module's); refresh, the name of 0.11.0, is no key.
+func TestGcpIPListTakesRefreshHoursAndNotRefresh(t *testing.T) {
 	install := []string{"gcp", "routers", "install", "--project", "p", "--region", "europe-west1"}
 	want := []gcponboard.IPList{{Name: "x", URL: "https://example.com/x.txt", RefreshHours: 6}}
 	calls, errs, exit := gcpRan(t, 0, append(slices.Clone(install), "--ip-list", "name=x,url=https://example.com/x.txt,refresh_hours=6")...)
@@ -225,16 +225,7 @@ func TestGcpIPListTakesRefreshHoursAndRefreshWithItsNotice(t *testing.T) {
 		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
 	calls, errs, exit = gcpRan(t, 0, append(slices.Clone(install), "--ip-list", "name=x,url=https://example.com/x.txt,refresh=6")...)
-	if exit != 0 || errs != "--ip-list: refresh= is now refresh_hours=\n" || len(calls) != 1 || !reflect.DeepEqual(calls[0].r.IPLists, want) {
-		t.Fatalf("%d %q %+v", exit, errs, calls)
-	}
-	// The line once, however many lists use it; both names in one list is one given twice.
-	_, errs, _ = gcpRan(t, 0, append(slices.Clone(install), "--ip-list", "name=x,url=https://example.com/x.txt,refresh=6", "--ip-list", "name=y,url=https://example.com/y.txt,refresh=2")...)
-	if errs != "--ip-list: refresh= is now refresh_hours=\n" {
-		t.Fatalf("%q", errs)
-	}
-	calls, errs, exit = gcpRan(t, 0, append(slices.Clone(install), "--ip-list", "name=x,url=https://example.com/x.txt,refresh=6,refresh_hours=6")...)
-	if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "given twice") {
+	if exit != 2 || len(calls) != 0 || !strings.Contains(errs, "refresh is not a key: name, url, refresh_hours") {
 		t.Fatalf("%d %q %+v", exit, errs, calls)
 	}
 }

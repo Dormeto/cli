@@ -26,11 +26,11 @@ func TestSettingsSetSendsTheDefaultsItIsGiven(t *testing.T) {
 		args []string
 		sent string
 	}{
-		{[]string{"--idle-minutes", "30", "--wait-seconds", "default", "--wake-mode", "default"}, `{"defaults":{"idleMinutes":30,"waitSeconds":null,"wakeMode":null}}`},
+		{[]string{"--idle-minutes", "30", "--wait-seconds", "inherit", "--wake-mode", "inherit"}, `{"defaults":{"idleMinutes":30,"waitSeconds":null,"wakeMode":null}}`},
 		{[]string{"--hibernate", "true", "--idle-minutes", "20"}, `{"defaults":{"idleMinutes":20},"hibernate":true}`},
 		{[]string{"--wake-mode", "browser", "--max-holders", "40", "--failed-retry-seconds", "120", "--drain-seconds", "0", "--wake-timeout-seconds", "1800"},
 			`{"defaults":{"drainSeconds":0,"failedRetrySeconds":120,"maxHolders":40,"wakeMode":"browser","wakeTimeoutSeconds":1800}}`},
-		{[]string{"--no-wake-rules-file", rules, "--wake-rules-file", "default"}, `{"defaults":{"noWakeRules":[{"name":"h","pathPrefixes":["/health"]}],"wakeRules":null}}`},
+		{[]string{"--no-wake-rules-file", rules, "--wake-rules-file", "inherit"}, `{"defaults":{"noWakeRules":[{"name":"h","pathPrefixes":["/health"]}],"wakeRules":null}}`},
 	} {
 		a := &globalAPI{}
 		r := runSettings(t, a, append([]string{"set"}, c.args...)...)
@@ -135,7 +135,7 @@ func TestTypesListsSetsAndDeletes(t *testing.T) {
 	}{
 		{[]string{"set", "web", "--tag", "team=shop", "--idle-minutes", "20"},
 			`{"types":[{"description":"Public APIs","name":"api","settings":{"idleMinutes":30},"tags":{"kind":"api"}},{"name":"databases","settings":{"idleMinutes":45}},{"name":"web","settings":{"idleMinutes":20},"tags":{"team":"shop"}}]}`},
-		{[]string{"set", "api", "--idle-minutes", "default", "--wake-mode", "browser"},
+		{[]string{"set", "api", "--idle-minutes", "inherit", "--wake-mode", "browser"},
 			`{"types":[{"description":"Public APIs","name":"api","settings":{"wakeMode":"browser"},"tags":{"kind":"api"}},{"name":"databases","settings":{"idleMinutes":45}}]}`},
 		{[]string{"set", "ecs", "--wait-seconds", "20"},
 			`{"types":[{"description":"Public APIs","name":"api","settings":{"idleMinutes":30},"tags":{"kind":"api"}},{"name":"databases","settings":{"idleMinutes":45}},{"name":"ecs","settings":{"waitSeconds":20}}]}`},

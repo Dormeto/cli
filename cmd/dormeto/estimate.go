@@ -15,8 +15,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"slices"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -37,7 +35,6 @@ func (e exitCode) Error() string { return fmt.Sprintf("exit code %d", int(e)) }
 // default is the process's).
 func execute(root *cobra.Command, args ...string) int {
 	if len(args) > 0 {
-		args = runMoved(root, args)
 		root.SetArgs(args)
 	}
 	err := root.Execute()
@@ -49,47 +46,6 @@ func execute(root *cobra.Command, args ...string) int {
 		return 1
 	}
 	return 0
-}
-
-// movedAnnotation marks a hidden command that moved: its value is the whole new path, below dormeto (a top-level
-// command to `aws <name>`, `gcp install` to `gcp routers install`).
-const movedAnnotation = "moved-to"
-
-// runMoved runs an old command as the new one: when the command line (or `help` of it) goes down the tree to a hidden
-// command that moved, it says so once on stderr and gives the line with the old path replaced by the new one. The new
-// form's tree answers, so its output is the new form's, with the new names in its usage.
-func runMoved(root *cobra.Command, args []string) []string {
-	start := slices.IndexFunc(args, func(a string) bool { return !strings.HasPrefix(a, "-") })
-	if start < 0 {
-		return args
-	}
-	if args[start] == "help" {
-		start++
-	}
-	cur := root
-	for at := start; at < len(args); at++ {
-		if strings.HasPrefix(args[at], "-") {
-			continue
-		}
-		var next *cobra.Command
-		for _, c := range cur.Commands() {
-			if c.Name() == args[at] || slices.Contains(c.Aliases, args[at]) {
-				next = c
-				break
-			}
-		}
-		if next == nil {
-			return args
-		}
-		if to := next.Annotations[movedAnnotation]; to != "" {
-			fmt.Fprintf(root.ErrOrStderr(), "dormeto: %q is now %q; the old name goes in a later release.\n", "dormeto "+strings.TrimPrefix(next.CommandPath(), root.Name()+" "), "dormeto "+to)
-			// The flags given between the old path's words stay on the line, after the new path.
-			flags := slices.DeleteFunc(slices.Clone(args[start:at]), func(a string) bool { return !strings.HasPrefix(a, "-") })
-			return slices.Concat(args[:start], strings.Fields(to), flags, args[at+1:])
-		}
-		cur = next
-	}
-	return args
 }
 
 func newEstimate(b build) *cobra.Command {
