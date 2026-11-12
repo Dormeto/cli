@@ -236,7 +236,7 @@ func TestRoutersPausePostsReasonUntilAndKeepAsleep(t *testing.T) {
 	if len(a.posted) != 1 || a.posted[0] != want {
 		t.Errorf("posted %q, want %q", a.posted, want)
 	}
-	if !strings.Contains(r.stdout, "prod-eu: paused until 2026-10-21 12:00 UTC; woken w-1, w-2\n") {
+	if !strings.Contains(r.stdout, "prod-eu: paused until 2026-10-21 12:00 UTC, keeps asleep; woken w-1, w-2\n") {
 		t.Errorf("stdout %q", r.stdout)
 	}
 }

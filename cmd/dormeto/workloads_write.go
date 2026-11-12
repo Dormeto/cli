@@ -141,7 +141,7 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					var res struct{ Woken []string }
 					_ = json.Unmarshal(raw, &res)
-					return t.String() + ": " + fleet.PauseResult(end, now.Location(), res.Woken) + "\n", raw, nil
+					return t.String() + ": " + fleet.PauseResult(end, now.Location(), pause.keepAsleep, res.Woken) + "\n", raw, nil
 				})
 				return err
 			})

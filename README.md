@@ -1907,7 +1907,8 @@ wake.
 | `workloads waiting-page show`, `set` or `clear <id>`, `routers waiting-page show`, `set` or `clear` | the [waiting page](#the-waiting-page-on-google-cloud) of a workload and of the router |
 
 The text is AWS's: a pause in the local time (`paused by <you> on <time>: <reason>, until <time>, keeps asleep`), a
-workload's and a router's pause line alike (`<target>: paused until resumed` or `until <time>`, `; woken <workloads>`),
+workload's and a router's pause line alike (`<target>: paused until resumed` or `until <time>`, `, keeps asleep` with
+`--keep-asleep`, `; woken <workloads>`),
 the list's table and `show`'s labelled block, in which what Google Cloud does not have is left out. `--json` prints
 AWS's shapes, on stdout alone: a write's answer by target, `{"<router>/<workload>": answer}` (`{}` when
 it is refused, an onboarding or an offboarding too; the router's writes `{"<router>": answer}`), the list's object, and
@@ -2152,7 +2153,8 @@ dormeto gcp routers resume --project my-project --region europe-west1
   0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`. The controller checks it and a refused one prints what
   is wrong, exit 1. `schedule show` prints AWS's words: the time zone, the windows (a recurrence in words), `except`,
   `maximum nap`, the join and the next events in the schedule's zone; `--json` prints AWS's `{schedule, next,
-  joinMinutes, joinFrom, joinInherited}`, the file under `schedule` (with who set it and when), without AWS's
+  joinMinutes, joinFrom, joinInherited}`, the file under `schedule` (with who set it and when, which the text, AWS's,
+  does not say), without AWS's
   `maintenanceDue`, which the router's answer does not have. `schedule set` prints AWS's lines, `<target>: schedule set`
   and the next events. `schedule clear` leaves the workload to its idle window alone.
 - During a nap window, the waiting page tells a visitor when the window ends, and the visitor's browser does not wake

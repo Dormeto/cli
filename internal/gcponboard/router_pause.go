@@ -32,7 +32,10 @@ func RouterResume(ctx context.Context, d Deps, r Request) int {
 }
 
 func (x *run) pauseRouter() error {
-	in, end := x.pauseIn()
+	in, end, err := x.pauseIn()
+	if err != nil {
+		return err
+	}
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
@@ -57,8 +60,8 @@ func (x *run) pauseRouter() error {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("the controller's answer is not a pause: %w", err)
 	}
-	// A workload's pause's words, on both subtrees: <router>: paused until resumed|<local time>[; woken <workloads>].
-	x.say("%s: %s", x.n.managed, fleet.PauseResult(end, x.d.Now().Location(), a.Woken))
+	// A workload's pause's words, on both subtrees: <router>: paused until resumed|<local time>[, keeps asleep][; woken <workloads>].
+	x.say("%s: %s", x.n.managed, fleet.PauseResult(end, x.d.Now().Location(), x.r.KeepAsleep, a.Woken))
 	return nil
 }
 

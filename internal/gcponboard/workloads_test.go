@@ -1336,9 +1336,9 @@ func TestWorkloadsPauseKeepAsleepAndUntilSayWhatTheyDo(t *testing.T) {
 	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
 		t.Fatalf("%v", body)
 	}
-	// AWS's line, the end in the local time; kept asleep, nothing is woken.
+	// AWS's line, the end in the local time and keeps asleep; kept asleep, nothing is woken.
 	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).In(g.d.Now().Location()).Format("2006-01-02 15:04 MST")
-	if out != shopTarget+": paused until "+local+"\n" {
+	if out != shopTarget+": paused until "+local+", keeps asleep\n" {
 		t.Fatalf("%q", out)
 	}
 }
@@ -1455,7 +1455,7 @@ func TestWorkloadsPauseKeepAsleepWakesNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if out != shopTarget+": paused until resumed\n" {
+	if out != shopTarget+": paused until resumed, keeps asleep\n" {
 		t.Fatalf("%q", out)
 	}
 }
@@ -3552,7 +3552,7 @@ func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
 	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, shopRouter+": paused until 2026-12-01 07:00 UTC\n")
+	contains(t, out, shopRouter+": paused until 2026-12-01 07:00 UTC, keeps asleep\n")
 	if strings.Contains(out, "woken") {
 		t.Fatalf("%s", out)
 	}
@@ -3618,12 +3618,12 @@ func TestRouterPauseSaysAWSLines(t *testing.T) {
 	g.call(t, RouterResume, r)
 	r.KeepAsleep, r.Until = true, ""
 	_, out = g.call(t, RouterPause, r)
-	if want := shopRouter + ": paused until resumed\n"; !strings.Contains(out, want) {
+	if want := shopRouter + ": paused until resumed, keeps asleep\n"; !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	r.Until, r.KeepAsleep = "2026-12-01T07:00:00Z", true
 	_, out = g.call(t, RouterPause, r)
-	if want := shopRouter + ": paused until " + local + "\n"; !strings.Contains(out, want) {
+	if want := shopRouter + ": paused until " + local + ", keeps asleep\n"; !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	_, out = g.call(t, RouterResume, r)

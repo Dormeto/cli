@@ -172,22 +172,28 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 
 // pauseIn is the pause's body of --reason, --keep-asleep and --until, without `by`, and its end (zero for none). The command
 // checked them before any call (pauseFlags.gcpEnd: AWS's pauseReason and endOf): the reason trimmed, 1 to 256 characters, and
-// --until an RFC 3339 time, sent in UTC.
-func (x *run) pauseIn() (map[string]any, time.Time) {
+// --until an RFC 3339 time, sent in UTC; one that is not is refused here too, before any call (exit 2).
+func (x *run) pauseIn() (map[string]any, time.Time, error) {
 	in := map[string]any{"reason": x.r.Reason}
 	if x.r.KeepAsleep {
 		in["keepAsleep"] = true
 	}
 	var end time.Time
 	if x.r.Until != "" {
-		end, _ = time.Parse(time.RFC3339, x.r.Until)
+		var err error
+		if end, err = time.Parse(time.RFC3339, x.r.Until); err != nil {
+			return nil, end, &stop{2, fmt.Sprintf("--until: %q is not an RFC 3339 time", x.r.Until)}
+		}
 		in["until"] = end.UTC().Format(time.RFC3339)
 	}
-	return in, end
+	return in, end, nil
 }
 
 func (x *run) pauseWorkload() error {
-	in, end := x.pauseIn()
+	in, end, err := x.pauseIn()
+	if err != nil {
+		return err
+	}
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
@@ -211,7 +217,7 @@ func (x *run) pauseWorkload() error {
 	}
 	// AWS's line: "<target>: paused until resumed[; woken <workloads>]", the workloads woken as the answer names them (none from
 	// a router that names none: never guessed from the state).
-	return x.answeredWorkload(x.r.ID, raw, x.target(x.r.ID)+": "+fleet.PauseResult(end, x.d.Now().Location(), w.Woken))
+	return x.answeredWorkload(x.r.ID, raw, x.target(x.r.ID)+": "+fleet.PauseResult(end, x.d.Now().Location(), x.r.KeepAsleep, w.Woken))
 }
 
 func (x *run) resumeWorkload() error {

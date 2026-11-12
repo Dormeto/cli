@@ -871,8 +871,10 @@ func TestWorkloadsShowIsAWSLayout(t *testing.T) {
 	}
 	// AWAKE: since when, in the state's row, as AWS's.
 	g.s.Workloads["shop"] = "AWAKE"
-	g.s.WorkloadDocs["shop"] = map[string]any{"awakeSince": "2026-10-29T07:00:00Z"}
-	if _, out = g.call(t, WorkloadsShow, r); !hasRow(out, "state", "AWAKE since 2026-10-29 07:00 UTC") || strings.Contains(out, "failure") || strings.Contains(out, "pauses") {
+	// A failure the router still holds of a workload no longer FAILED is not printed, as AWS's show does not (--json has it).
+	g.s.WorkloadDocs["shop"] = map[string]any{"awakeSince": "2026-10-29T07:00:00Z",
+		"failure": map[string]any{"kind": "quota", "step": "wake", "message": "CPUS quota reached", "at": "2026-10-29T06:00:00Z"}}
+	if _, out = g.call(t, WorkloadsShow, r); !hasRow(out, "state", "AWAKE since 2026-10-29 07:00 UTC") || strings.Contains(out, "failure") || strings.Contains(out, "quota") || strings.Contains(out, "pauses") {
 		t.Fatalf("awake:\n%s", out)
 	}
 }
@@ -933,7 +935,8 @@ func TestWorkloadsScheduleShowIsAWSShapeAndText(t *testing.T) {
 	}
 }
 
-// A workload's pause and a router's say one wording, on both subtrees (B14): "paused until …", then "; woken …".
+// A workload's pause and a router's say one wording, on both subtrees (B14): "paused until …", ", keeps asleep" when asked, then
+// "; woken …".
 func TestRouterPauseSaysTheWorkloadsWording(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"], g.s.Workloads["blog"] = "ASLEEP", "ASLEEP"
@@ -944,7 +947,31 @@ func TestRouterPauseSaysTheWorkloadsWording(t *testing.T) {
 	}
 	g.call(t, RouterResume, r)
 	r.Until, r.KeepAsleep = "2026-12-01T07:00:00Z", true
-	if code, out := g.call(t, RouterPause, r); code != 0 || out != shopRouter+": paused until 2026-12-01 07:00 UTC\n" {
+	if code, out := g.call(t, RouterPause, r); code != 0 || out != shopRouter+": paused until 2026-12-01 07:00 UTC, keeps asleep\n" {
 		t.Fatalf("exit %d, %q", code, out)
+	}
+	// A workload's alike.
+	g.s.Workloads["shop"] = "ASLEEP"
+	r.ID = "shop"
+	if code, out := g.call(t, WorkloadsPause, r); code != 0 || out != shopTarget+": paused until 2026-12-01 07:00 UTC, keeps asleep\n" {
+		t.Fatalf("exit %d, %q", code, out)
+	}
+}
+
+// What reaches the run is the command's --until, RFC 3339: anything else is refused before any call (exit 2), a workload's
+// pause and a router's.
+func TestPauseRefusesAnUntilThatIsNotRFC3339BeforeAnyCall(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	r := workloadsEurope
+	r.ID, r.Reason, r.Until = "shop", "freeze", "2026-12-01"
+	mark := len(g.s.Calls())
+	for name, run := range map[string]func(context.Context, Deps, Request) int{"workload": WorkloadsPause, "router": RouterPause} {
+		if code, out := g.call(t, run, r); code != 2 || out != "--until: \"2026-12-01\" is not an RFC 3339 time\n" {
+			t.Errorf("%s: exit %d, %q", name, code, out)
+		}
+	}
+	if got := g.s.Calls()[mark:]; len(got) != 0 {
+		t.Fatalf("calls %v", got)
 	}
 }

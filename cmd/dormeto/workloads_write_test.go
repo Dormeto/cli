@@ -167,7 +167,8 @@ func TestPauseForAndKeepAsleep(t *testing.T) {
 	if !reflect.DeepEqual(a.writes, want) {
 		t.Errorf("writes %q", a.writes)
 	}
-	if !strings.Contains(r.stdout, "paused until 2026-10-21 12:00 UTC") {
+	// The pause says it keeps the workloads asleep, as the router's does.
+	if !strings.Contains(r.stdout, "prod-eu/w-1: paused until 2026-10-21 12:00 UTC, keeps asleep") {
 		t.Errorf("stdout %q", r.stdout)
 	}
 }

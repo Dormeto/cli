@@ -10,11 +10,15 @@ import (
 )
 
 // PauseResult is what a pause write says after its target, a workload's or a router's: "paused until resumed" or "paused until
-// <the end in loc>", then "; woken <workloads>" when the answer names the workloads it woke. A zero end is none.
-func PauseResult(end time.Time, loc *time.Location, woken []string) string {
+// <the end in loc>", ", keeps asleep" for a pause asked to (PauseText's words), then "; woken <workloads>" when the answer names
+// the workloads it woke. A zero end is none.
+func PauseResult(end time.Time, loc *time.Location, keepAsleep bool, woken []string) string {
 	s := "paused until resumed"
 	if !end.IsZero() {
 		s = "paused until " + end.In(loc).Format("2006-01-02 15:04 MST")
+	}
+	if keepAsleep {
+		s += ", keeps asleep"
 	}
 	if len(woken) > 0 {
 		s += "; woken " + strings.Join(woken, ", ")

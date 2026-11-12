@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// A workload's pause and a router's say the same words: the end in the zone, or until resumed, and what the answer woke.
+// A workload's pause and a router's say the same words: the end in the zone, or until resumed, keeps asleep when asked, and
+// what the answer woke.
 func TestPauseResultIsOneWordingForAWorkloadAndARouter(t *testing.T) {
 	paris, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
@@ -13,17 +14,20 @@ func TestPauseResultIsOneWordingForAWorkloadAndARouter(t *testing.T) {
 	}
 	end := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
-		end   time.Time
-		woken []string
-		want  string
+		end        time.Time
+		keepAsleep bool
+		woken      []string
+		want       string
 	}{
-		{time.Time{}, nil, "paused until resumed"},
-		{end, nil, "paused until 2026-12-01 08:00 CET"},
-		{time.Time{}, []string{"w-1", "w-2"}, "paused until resumed; woken w-1, w-2"},
-		{end, []string{"shop"}, "paused until 2026-12-01 08:00 CET; woken shop"},
+		{time.Time{}, false, nil, "paused until resumed"},
+		{end, false, nil, "paused until 2026-12-01 08:00 CET"},
+		{time.Time{}, false, []string{"w-1", "w-2"}, "paused until resumed; woken w-1, w-2"},
+		{end, false, []string{"shop"}, "paused until 2026-12-01 08:00 CET; woken shop"},
+		{time.Time{}, true, nil, "paused until resumed, keeps asleep"},
+		{end, true, []string{"w-1"}, "paused until 2026-12-01 08:00 CET, keeps asleep; woken w-1"},
 	} {
-		if got := PauseResult(c.end, paris, c.woken); got != c.want {
-			t.Errorf("PauseResult(%v, %v) = %q, want %q", c.end, c.woken, got, c.want)
+		if got := PauseResult(c.end, paris, c.keepAsleep, c.woken); got != c.want {
+			t.Errorf("PauseResult(%v, %v, %v) = %q, want %q", c.end, c.keepAsleep, c.woken, got, c.want)
 		}
 	}
 }

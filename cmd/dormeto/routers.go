@@ -312,7 +312,7 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return routerCalls(ctx, c, api, names, "/pause", body, asJSON, func(raw json.RawMessage) string {
 					var a struct{ Woken []string }
 					_ = json.Unmarshal(raw, &a)
-					return fleet.PauseResult(end, deps.now().Location(), a.Woken)
+					return fleet.PauseResult(end, deps.now().Location(), pause.keepAsleep, a.Woken)
 				})
 			})
 		},
