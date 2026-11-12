@@ -34,6 +34,7 @@ import (
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // Manager is the Dormeto manager as connect and disconnect use it, through its /iam API: what it says of itself, its
@@ -774,7 +775,7 @@ func (x *link) confirm(question string) (bool, error) {
 		if err := x.printJSON(map[string]any{"confirmed": false, "targets": []string{x.host}, "plan": x.planLines()}); err != nil {
 			return true, err
 		}
-		return true, &stop{0, notConfirmed}
+		return true, &stop{0, output.NotConfirmed}
 	}
 	return false, nil
 }
@@ -788,7 +789,7 @@ func (x *link) printJSON(v any) error {
 		v = maps.Clone(m)
 		v.(map[string]any)["warnings"] = x.warnings
 	}
-	return writeJSON(x.jsonOut, v)
+	return output.JSON(x.jsonOut, v)
 }
 
 // planManagerAPIs turns on the manager's APIs that are off in the host project, then reads its policy again: what Google

@@ -89,20 +89,13 @@ func (x *run) warnStandard(dry dryRun) {
 	if dry.GKE == nil || dry.GKE.Autopilot {
 		return
 	}
-	w := x.d.Out
-	if x.r.JSON {
-		w = x.d.Err
-	}
-	fmt.Fprintf(w, "  ! Cluster %s is a Standard cluster: scaling pods saves money only on Autopilot, or with the node autoscaler freeing a node; its fixed nodes are paid all the same.\n", x.r.GKECluster)
+	fmt.Fprintf(x.textOut(), "  ! Cluster %s is a Standard cluster: scaling pods saves money only on Autopilot, or with the node autoscaler freeing a node; its fixed nodes are paid all the same.\n", x.r.GKECluster)
 }
 
 // warnReplicas says that a database's read replicas keep running while the workload sleeps (M8: Google stops only the
 // primary), without stopping anything. Under --json, on the error stream, as warnStandard.
 func (x *run) warnReplicas(dry dryRun) {
-	w := x.d.Out
-	if x.r.JSON {
-		w = x.d.Err
-	}
+	w := x.textOut()
 	for _, d := range dry.Databases {
 		if len(d.Replicas) > 0 {
 			fmt.Fprintf(w, "  ! Cloud SQL instance %s has read replicas (%s): Google stops only the primary, its replicas keep running, and billing, while the workload sleeps.\n", d.Name, strings.Join(d.Replicas, ", "))

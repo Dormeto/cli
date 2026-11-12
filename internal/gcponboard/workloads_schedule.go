@@ -16,17 +16,14 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/output"
 	"github.com/Dormeto/cli/internal/schedule"
 
 	// A time zone is looked up by name wherever the CLI runs.
 	_ "time/tzdata"
 )
-
-// reasonMax is the router's (REASON_MAX of controller-core.mjs).
-const reasonMax = 256
 
 // WorkloadsScheduleShow is `dormeto gcp workloads schedule show <id>`.
 func WorkloadsScheduleShow(ctx context.Context, d Deps, r Request) int {
@@ -152,7 +149,7 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 		return x.refusedWorkloadWrite(x.needsRecurrenceRouter(err))
 	}
 	if x.r.JSON && method == http.MethodGet {
-		return writeJSON(x.d.Out, raw)
+		return output.JSON(x.d.Out, raw)
 	}
 	var view struct {
 		Schedule   *scheduleOf `json:"schedule"`
@@ -253,37 +250,28 @@ func (p pausedOf) String() string {
 	return text
 }
 
-// pauseIn validates --reason, --keep-asleep and --until before any call and gives the pause's body, without `by`, and how its
-// end reads in the lines, as AWS's: "until resumed", or "until <the local time>".
-func (x *run) pauseIn() (map[string]any, string, error) {
-	reason := strings.TrimSpace(x.r.Reason)
-	switch {
-	case reason == "":
-		return nil, "", &stop{2, "--reason: needed, the reason of the pause"}
-	case utf8.RuneCountInString(reason) > reasonMax:
-		return nil, "", &stop{2, fmt.Sprintf("--reason: at most %d characters", reasonMax)}
-	}
-	in := map[string]any{"reason": reason}
+// pauseIn is the pause's body of --reason, --keep-asleep and --until, without `by`, and how its end reads in the lines, as
+// AWS's: "until resumed", or "until <the local time>". The command checked --reason and the end before (pauseReason and
+// endOf, AWS's checks): the reason trimmed, 1 to 256 characters, and the end an RFC 3339 time, sent in UTC (a time it did
+// not check goes as it is, for the router to refuse).
+func (x *run) pauseIn() (map[string]any, string) {
+	in := map[string]any{"reason": x.r.Reason}
 	if x.r.KeepAsleep {
 		in["keepAsleep"] = true
 	}
 	ends := "until resumed"
 	if x.r.Until != "" {
-		until, err := time.Parse(time.RFC3339, x.r.Until)
-		if err != nil {
-			return nil, "", &stop{2, fmt.Sprintf("--until: %q is not a time in RFC 3339, such as 2026-12-01T08:00:00+01:00", x.r.Until)}
+		in["until"], ends = x.r.Until, "until "+x.r.Until
+		if until, err := time.Parse(time.RFC3339, x.r.Until); err == nil {
+			in["until"] = until.UTC().Format(time.RFC3339)
+			ends = "until " + until.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
 		}
-		in["until"] = until.UTC().Format(time.RFC3339)
-		ends = "until " + until.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
 	}
-	return in, ends, nil
+	return in, ends
 }
 
 func (x *run) pauseWorkload() error {
-	in, ends, err := x.pauseIn()
-	if err != nil {
-		return err
-	}
+	in, ends := x.pauseIn()
 	if err := x.require("workloads"); err != nil {
 		return err
 	}

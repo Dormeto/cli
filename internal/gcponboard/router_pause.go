@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // routerPauseWords is what a router below 0.40.0 lacks, in the words of its refusal.
@@ -31,19 +33,18 @@ func RouterResume(ctx context.Context, d Deps, r Request) int {
 }
 
 func (x *run) pauseRouter() error {
-	in, _, err := x.pauseIn()
-	if err != nil {
-		return err
-	}
+	in, _ := x.pauseIn()
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
 	if x.r.DryRun {
 		return x.routerDryRun("pause", in)
 	}
-	if in["by"], err = x.d.Google.Tokens.Account(x.ctx); err != nil {
+	by, err := x.d.Google.Tokens.Account(x.ctx)
+	if err != nil {
 		return err
 	}
+	in["by"] = by
 	var raw json.RawMessage
 	if err := x.withRoutes(routerPauseWords, http.MethodPost, "/v1/pause", in, &raw); err != nil {
 		return err
@@ -109,7 +110,7 @@ func (x *run) resumeRouter() error {
 // printByRouter prints the controller's answer under the router's name in the manager, as AWS's routers pause and resume print
 // theirs: {"<router>": <answer>}.
 func (x *run) printByRouter(answer json.RawMessage) error {
-	return writeJSON(x.d.Out, map[string]json.RawMessage{x.n.managed: answer})
+	return output.JSON(x.d.Out, map[string]json.RawMessage{x.n.managed: answer})
 }
 
 // routerDryRun says what the pause or resume would send, to which router, and stops: no call (sayDry).

@@ -251,13 +251,9 @@ func planJSON(cmd *cobra.Command, f *gcpFlags) {
 	cmd.Flags().BoolVar(&f.json, "json", false, "print {targets, plan}: what it acts on and its plan, with dryRun true under --dry-run and confirmed false when declined (the words go to stderr)")
 }
 
-// gcpPromptOut is where the questions are asked: stdout, or stderr under --json, whose stdout holds the JSON alone (AWS's).
-func gcpPromptOut(c *cobra.Command) io.Writer {
-	if jsonFlag(c) {
-		return c.ErrOrStderr()
-	}
-	return c.OutOrStdout()
-}
+// gcpPromptOut is where the questions are asked: stdout, or stderr under --json, whose stdout holds the JSON alone (AWS's
+// textOut).
+func gcpPromptOut(c *cobra.Command) io.Writer { return textOut(c) }
 
 // gcpDeps are the real dependencies.
 func gcpDeps(c *cobra.Command, configuration, version string) gcponboard.Deps {

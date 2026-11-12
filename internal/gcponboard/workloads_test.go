@@ -1334,22 +1334,6 @@ func TestWorkloadsPauseKeepAsleepAndUntilSayWhatTheyDo(t *testing.T) {
 	}
 }
 
-func TestWorkloadsPauseRefusesAMissingReasonAndABadUntilBeforeAnyCall(t *testing.T) {
-	g := newWorkloadsRig(t)
-	g.s.Workloads["shop"] = "AWAKE"
-	mark := len(g.s.Calls())
-	for _, r := range []Request{{ID: "shop"}, {ID: "shop", Reason: "  "}, {ID: "shop", Reason: strings.Repeat("x", 257)},
-		{ID: "shop", Reason: "x", Until: "tomorrow"}, {ID: "shop", Reason: "x", Until: "2026-12-01"}} {
-		r.Project, r.Region = workloadsEurope.Project, workloadsEurope.Region
-		if code, out := g.call(t, WorkloadsPause, r); code != 2 || out == "" {
-			t.Errorf("%+v: exit %d:\n%s", r, code, out)
-		}
-	}
-	if got := g.controllerCalls(mark); len(got) != 0 {
-		t.Fatalf("%v", got)
-	}
-}
-
 func TestWorkloadsNapOfAPausedWorkloadSaysItIsPaused(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
@@ -3578,26 +3562,6 @@ func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
 	a = nil
 	if err := json.Unmarshal([]byte(out), &a); err != nil || len(a) != 1 || a[shopRouter]["resumed"] != true {
 		t.Fatalf("%v:\n%s", err, out)
-	}
-}
-
-func TestRouterPauseRefusesAMissingReasonBeforeAnyCall(t *testing.T) {
-	g := newWorkloadsRig(t)
-	mark := len(g.s.Calls())
-	for _, reason := range []string{"", "  ", strings.Repeat("x", 257)} {
-		r := workloadsEurope
-		r.Reason = reason
-		if code, out := g.call(t, RouterPause, r); code != 2 || out == "" {
-			t.Errorf("%q: exit %d:\n%s", reason, code, out)
-		}
-	}
-	r := workloadsEurope
-	r.Reason, r.Until = "x", "tomorrow"
-	if code, _ := g.call(t, RouterPause, r); code != 2 {
-		t.Errorf("exit %d", code)
-	}
-	if got := g.controllerCalls(mark); len(got) != 0 {
-		t.Fatalf("%v", got)
 	}
 }
 

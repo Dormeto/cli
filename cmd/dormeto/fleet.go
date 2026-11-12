@@ -25,6 +25,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/aws"
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // fleetDeps are what the fleet commands depend on, so that tests inject fakes: the profile's AWS configuration, the
@@ -352,15 +353,8 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	return cmd
 }
 
-// printJSON prints v indented.
-func printJSON(w io.Writer, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "%s\n", data)
-	return err
-}
+// printJSON prints v indented (output.JSON).
+func printJSON(w io.Writer, v any) error { return output.JSON(w, v) }
 
 // newWorkloads is `dormeto aws workloads` and its subcommand list.
 func newWorkloads(deps fleetDeps) *cobra.Command {

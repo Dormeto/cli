@@ -2,7 +2,6 @@ package install
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Dormeto/cli/internal/awserr"
+	"github.com/Dormeto/cli/internal/output"
 	"github.com/Dormeto/cli/internal/progress"
 )
 
@@ -842,15 +842,8 @@ func (x *run) check() error {
 	return nil
 }
 
-// printJSON prints v, under --json, on Deps.JSON.
-func (x *run) printJSON(v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(x.d.JSON, "%s\n", b)
-	return err
-}
+// printJSON prints v, under --json, on Deps.JSON (output.JSON).
+func (x *run) printJSON(v any) error { return output.JSON(x.d.JSON, v) }
 
 // checkJSON is a check as --json prints it: its name, what was found, and its verdict (ok, warn, fail or skip).
 type checkJSON struct {

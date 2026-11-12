@@ -16,14 +16,30 @@ import (
 	"strings"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
-// notConfirmed is AWS's line of a question declined: nothing is sent, exit 0.
-const notConfirmed = "not confirmed: nothing sent"
-
 // needsYes is AWS's refusal of a question without a terminal (exit 2): --yes acts without asking.
-func needsYes(noun string) *stop {
-	return &stop{2, fmt.Sprintf("confirmation needed: pass --yes to act on 1 %s without a terminal", noun)}
+func needsYes(noun string) *stop { return &stop{2, output.NeedsYes(1, noun).Error()} }
+
+// textOut is where a command's words go: stdout, and stderr under --json, whose stdout is JSON alone.
+func (x *run) textOut() io.Writer { return output.Words(x.r.JSON, x.d.Out, x.d.Err) }
+
+// ask asks q as AWS's commands ask before a write (output.Asker): on a terminal, --yes skips it and is needed without one
+// (exit 2). done is true when it is declined: "not confirmed: nothing sent", and under --json {"confirmed":false,
+// "targets":[…]} on stdout.
+func (x *run) ask(q output.Question) (done bool, err error) {
+	done, err = output.Asker{JSON: x.r.JSON, Yes: x.r.Yes, Stdout: x.d.Out, Stderr: x.d.Err,
+		Terminal: func() bool { return x.d.Terminal },
+		Confirm: func(words io.Writer, question string) (bool, error) {
+			return install.Prompted(x.ctx, words, func() (bool, error) { return x.d.Prompter.Confirm(question) })
+		},
+	}.Ask(q)
+	if errors.Is(err, output.ErrNeedsYes) {
+		return false, &stop{2, err.Error()}
+	}
+	return done, err
 }
 
 // sharedKinds are the shared names of the controller's backend kinds.
@@ -135,18 +151,7 @@ func (x *run) answeredWorkload(id string, raw json.RawMessage, lines ...string) 
 
 // printAnswers prints AWS's map of answers, by target, on the standard output.
 func (x *run) printAnswers(answers map[string]json.RawMessage) error {
-	return writeJSON(x.d.Out, answers)
-}
-
-// writeJSON prints v on w as AWS's commands print their JSON: indented by two spaces, a line feed after it (a raw answer
-// of the controller's indented too).
-func writeJSON(w io.Writer, v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "%s\n", b)
-	return err
+	return output.JSON(x.d.Out, answers)
 }
 
 // refusedWrite is a write the controller refused: under --json AWS's map of no answer, {}, then the refusal.
@@ -218,7 +223,7 @@ func (x *run) printList(rows []json.RawMessage, all []workload) error {
 		}
 		list.Workloads = append(list.Workloads, shared)
 	}
-	return writeJSON(x.d.Out, list)
+	return output.JSON(x.d.Out, list)
 }
 
 // dryRequest is a request a dry run says, the shape of both subtrees' (fleet.DryRequest): what it addresses (the
@@ -247,13 +252,5 @@ func (x *run) sayDry(targets []string, requests []dryRequest, after ...string) e
 	for _, l := range after {
 		fmt.Fprintln(out, l)
 	}
-	return x.printStop("dryRun", true, emptyIfNone(targets))
-}
-
-// emptyIfNone is s, or an empty list when nil: JSON's [] rather than null.
-func emptyIfNone[T any](s []T) []T {
-	if s == nil {
-		return []T{}
-	}
-	return s
+	return output.Stop(x.d.Out, x.r.JSON, "dryRun", true, targets)
 }

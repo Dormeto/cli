@@ -26,6 +26,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // Uninstall is `dormeto gcp routers uninstall`: 0 when uninstalled (or the plan only, with DryRun, or declined), 1 when a check
@@ -71,7 +72,7 @@ func (x *run) uninstall() error {
 			if err := x.planObject("confirmed", false); err != nil {
 				return err
 			}
-			return &stop{0, notConfirmed}
+			return &stop{0, output.NotConfirmed}
 		}
 	}
 	if err := x.applyUninstall(); err != nil {

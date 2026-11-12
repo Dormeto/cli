@@ -29,6 +29,7 @@ import (
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/kubernetes"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 const (
@@ -413,7 +414,7 @@ func (x *run) print(raw json.RawMessage, text func(w workload)) error {
 		if err != nil {
 			return err
 		}
-		return writeJSON(x.d.Out, shared)
+		return output.JSON(x.d.Out, shared)
 	}
 	w, err := decodeWorkload(raw)
 	if err != nil {
@@ -795,7 +796,7 @@ func (x *run) onboard() error {
 	if x.r.DryRun {
 		if x.r.JSON {
 			// The released dry run's shape, the controller's eligibility beside it.
-			if err := writeJSON(x.d.Out, map[string]any{"dryRun": true, "targets": []string{x.target(in.ID)}, "eligibility": raw}); err != nil {
+			if err := output.JSON(x.d.Out, map[string]any{"dryRun": true, "targets": []string{x.target(in.ID)}, "eligibility": raw}); err != nil {
 				return err
 			}
 			x.warnCount(logs.BackendService, now, unread, older)
@@ -972,10 +973,7 @@ func (x *run) warnCount(backendService string, now logSetting, unread error, old
 	if x.r.RequestLogs || (unread == nil && (now.everyRequest() || older)) {
 		return
 	}
-	w := x.d.Out
-	if x.r.JSON {
-		w = x.d.Err
-	}
+	w := x.textOut()
 	if unread != nil {
 		fmt.Fprintf(w, "  ! the request logs of backend service %s are not read: %s\n", backendService, refusal(unread))
 		return
@@ -1145,8 +1143,9 @@ func (x *run) offboard() error {
 	if x.r.DryRun {
 		return x.offboardDryRun(id, p, there)
 	}
-	// As AWS's: always confirmed on a terminal, --yes without one.
-	if done, err := x.confirmWorkload("Offboard 1 workload?"); done || err != nil {
+	// As AWS's: always confirmed on a terminal, the workload listed first, --yes without one.
+	q := output.Question{Names: []string{x.target(id)}, Noun: "workload", Text: "Offboard 1 workload?", Always: true, Listed: true}
+	if done, err := x.ask(q); done || err != nil {
 		return err
 	}
 	var forced forcedOff
@@ -1245,11 +1244,7 @@ func (f forcedOff) onFallbackLines() []string {
 // stdout is the one answer (which carries them too, when the run goes through).
 func (x *run) sayOnFallback(f forcedOff) {
 	for _, l := range f.onFallbackLines() {
-		if x.r.JSON {
-			fmt.Fprintf(x.d.Err, "  %s\n", l)
-		} else {
-			x.say("  %s", l)
-		}
+		fmt.Fprintf(x.textOut(), "  %s\n", l)
 	}
 }
 

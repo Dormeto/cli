@@ -16,6 +16,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // StatusReport is a project's routers.
@@ -382,7 +383,7 @@ func RunStatus(ctx context.Context, d Deps, r Request) int {
 	rep, err := Status(ctx, d, r)
 	if err == nil {
 		if r.JSON {
-			err = writeJSON(d.Out, rep)
+			err = output.JSON(d.Out, rep)
 		} else {
 			err = PrintStatus(d.Out, rep)
 		}

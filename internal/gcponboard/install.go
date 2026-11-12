@@ -26,6 +26,7 @@ import (
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 const (
@@ -204,7 +205,7 @@ func (x *run) planObject(key string, value bool) error {
 	if key != "" {
 		v[key] = value
 	}
-	return writeJSON(x.object, v)
+	return output.JSON(x.object, v)
 }
 
 func (x *run) install() error {
@@ -241,7 +242,7 @@ func (x *run) install() error {
 			if err := x.planObject("confirmed", false); err != nil {
 				return err
 			}
-			return &stop{0, notConfirmed}
+			return &stop{0, output.NotConfirmed}
 		}
 	}
 	if err := x.apply(); err != nil {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 const (
@@ -765,7 +766,7 @@ func (x *run) printWrites(p RbacPlan, replaced bool) {
 }
 
 func (x *run) printJSON(v any) error {
-	return writeJSON(x.d.Out, v)
+	return output.JSON(x.d.Out, v)
 }
 
 func (x *run) accessShow() error {
@@ -869,8 +870,8 @@ func (x *run) confirm(question, target string, asked func()) error {
 		return err
 	}
 	if !ok {
-		fmt.Fprintln(out, notConfirmed)
-		if err := x.printStop("confirmed", false, []string{target}); err != nil {
+		fmt.Fprintln(out, output.NotConfirmed)
+		if err := output.Stop(x.d.Out, x.r.JSON, "confirmed", false, []string{target}); err != nil {
 			return err
 		}
 		return &stop{0, ""}

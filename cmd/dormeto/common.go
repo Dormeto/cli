@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // waitFlags say whether and how long the operations started are followed: --no-wait and --timeout.
@@ -299,12 +300,9 @@ func failedText(op fleet.Operation) string {
 }
 
 // textOut is where a command says what it does and asks its questions: stdout, or stderr under its --json, whose
-// stdout holds the JSON alone.
+// stdout holds the JSON alone (output.Words).
 func textOut(c *cobra.Command) io.Writer {
-	if jsonFlag(c) {
-		return c.ErrOrStderr()
-	}
-	return c.OutOrStdout()
+	return output.Words(jsonFlag(c), c.OutOrStdout(), c.ErrOrStderr())
 }
 
 // jsonFlag tells whether the command runs with --json (false for a command without it).
@@ -334,7 +332,7 @@ func sayRequests(c *cobra.Command, api *fleet.Client, names []string) {
 		dry = &fleet.DryRun{Out: textOut(c)}
 		api.SetDryRun(dry)
 	}
-	dry.Targets = emptyIfNil(names)
+	dry.Targets = output.EmptyIfNil(names)
 }
 
 // dryRunning tells whether the command runs with --dry-run (false for a command without it).
@@ -344,42 +342,23 @@ func dryRunning(c *cobra.Command) bool {
 }
 
 // ask asks question on a terminal when there are several names, or always (done: true when it is declined: nothing is
-// sent), the names listed first when listed; --yes skips it, and is needed without a terminal. It is asked on textOut,
-// and under --json a declined question prints {"confirmed":false,"targets":[…]} on stdout.
+// sent), the names listed first when listed; --yes skips it, and is needed without a terminal (a usage error). It is
+// asked on textOut, and under --json a declined question prints {"confirmed":false,"targets":[…]} on stdout
+// (output.Asker).
 func ask(ctx context.Context, c *cobra.Command, deps fleetDeps, names []string, noun, question string, always, yes, listed bool) (done bool, err error) {
-	n := len(names)
 	// A client's dry run asks nothing: it sends nothing, and says what it would send.
-	if (n < 2 && !always) || yes || clientDryRun(c) {
+	if clientDryRun(c) {
 		return false, nil
 	}
-	if !deps.terminal(c.InOrStdin()) {
-		return false, usagef("confirmation needed: pass --yes to act on %d %s without a terminal", n, fleet.Plural(n, noun))
+	in := c.InOrStdin()
+	done, err = output.Asker{JSON: jsonFlag(c), Yes: yes, Stdout: c.OutOrStdout(), Stderr: c.ErrOrStderr(),
+		Terminal: func() bool { return deps.terminal(in) },
+		Confirm:  func(words io.Writer, q string) (bool, error) { return deps.confirm(ctx, in, words, q) },
+	}.Ask(output.Question{Names: names, Noun: noun, Text: question, Always: always, Listed: listed})
+	if errors.Is(err, output.ErrNeedsYes) {
+		return false, usageError{err}
 	}
-	out := textOut(c)
-	if listed {
-		listNames(out, names)
-	}
-	ok, err := deps.confirm(ctx, c.InOrStdin(), out, question)
-	if err != nil || ok {
-		return false, err
-	}
-	fmt.Fprintln(out, "not confirmed: nothing sent")
-	return true, printStop(c, "confirmed", false, names)
-}
-
-// printStop prints, under --json, why nothing was sent and to what: {<key>: <value>, "targets": [names]}.
-func printStop(c *cobra.Command, key string, value bool, names []string) error {
-	if !jsonFlag(c) {
-		return nil
-	}
-	return printJSON(c.OutOrStdout(), map[string]any{key: value, "targets": emptyIfNil(names)})
-}
-
-// listNames prints each name on its line, indented.
-func listNames(out io.Writer, names []string) {
-	for _, n := range names {
-		fmt.Fprintf(out, "  %s\n", n)
-	}
+	return done, err
 }
 
 // daysFirst is a duration that begins with whole days: 3d, 1d12h.
@@ -535,13 +514,6 @@ func printAnswer(c *cobra.Command, asJSON bool, raw json.RawMessage, text func(a
 	_ = json.Unmarshal(raw, &a)
 	fmt.Fprintln(c.OutOrStdout(), text(a))
 	return nil
-}
-
-func emptyIfNil(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
 
 // argCount checks the number of arguments (max -1: any): a wrong one is a usage error naming what is expected.

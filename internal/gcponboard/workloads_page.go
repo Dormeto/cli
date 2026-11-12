@@ -15,6 +15,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // pageRouter is what a controller without the waiting page's routes lacks, in the words of its refusal.
@@ -102,7 +103,7 @@ func (x *run) waitingPage(workload bool, method string) error {
 		return pageRefusal(err)
 	}
 	if x.r.JSON {
-		return writeJSON(x.d.Out, raw)
+		return output.JSON(x.d.Out, raw)
 	}
 	var v fleet.PageView
 	if err := json.Unmarshal(raw, &v); err != nil {

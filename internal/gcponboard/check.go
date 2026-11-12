@@ -19,6 +19,7 @@ import (
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // Deps are what the runs use: the Google client (its token source names the account), the person's terminal, the output,
@@ -514,7 +515,7 @@ func listOrNone(l []string) string {
 
 // PrintJSON prints the report as one JSON object.
 func PrintJSON(w io.Writer, r Report) error {
-	return writeJSON(w, r)
+	return output.JSON(w, r)
 }
 
 // RunCheck is `dormeto gcp check`: the report printed, and the exit code: 0 when every command is allowed, 1 when

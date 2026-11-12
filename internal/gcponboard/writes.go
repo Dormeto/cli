@@ -1,8 +1,8 @@
 package gcponboard
 
 // What the writing commands share with AWS's (the AWS and Google Cloud review's §4.2): a workload named as AWS's targets are,
-// <router>/<workload> with the router's name in the manager; --dry-run saying the request and sending nothing; the
-// offboarding's confirmation; wake --wait; and list's filters, applied to the controller's list.
+// <router>/<workload> with the router's name in the manager; --dry-run saying the request and sending nothing; wake --wait;
+// and list's filters, applied to the controller's list.
 
 import (
 	"encoding/json"
@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Dormeto/cli/internal/gcp"
-	"github.com/Dormeto/cli/internal/install"
 )
 
 // followEvery is how often wake --wait reads the workload, as AWS's.
@@ -32,27 +31,6 @@ func (x *run) workloadDryRun(method, path string, in any) error {
 // routerDryRunOf is workloadDryRun of a write of the router, which it addresses by its name in the manager.
 func (x *run) routerDryRunOf(method, path string, in any) error {
 	return x.sayDry([]string{x.n.managed}, []dryRequest{dryRequestOf(x.n.managed, method, path, in)})
-}
-
-// confirmWorkload asks question on a terminal, the workload listed first, as AWS's commands ask before a destructive write:
-// --yes skips it and is needed without a terminal (exit 2). done is true when it is declined: "not confirmed: nothing sent",
-// and under --json {"confirmed":false,"targets":[…]} on stdout.
-func (x *run) confirmWorkload(question string) (done bool, err error) {
-	if x.r.Yes {
-		return false, nil
-	}
-	if !x.d.Terminal {
-		return false, &stop{2, "confirmation needed: pass --yes to act on 1 workload without a terminal"}
-	}
-	target := x.target(x.r.ID)
-	out := x.textOut()
-	fmt.Fprintf(out, "  %s\n", target)
-	ok, err := install.Prompted(x.ctx, out, func() (bool, error) { return x.d.Prompter.Confirm(question) })
-	if err != nil || ok {
-		return false, err
-	}
-	fmt.Fprintln(out, "not confirmed: nothing sent")
-	return true, x.printStop("confirmed", false, []string{target})
 }
 
 // waitAwake reads the workload every 5 s until AWAKE (a line on stdout, stderr under --json), FAILED (its failure on

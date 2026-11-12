@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 func newUsers(deps fleetDeps) *cobra.Command {
@@ -94,7 +95,7 @@ func newUsersInvite(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err != nil {
 				return finish(c, err)
 			}
-			body := map[string]any{"email": email, "role": role, "groups": emptyIfNil(groups)}
+			body := map[string]any{"email": email, "role": role, "groups": output.EmptyIfNil(groups)}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				raw, err := callAPI(ctx, api, "POST", "/users", body)
 				if err != nil {
@@ -173,7 +174,7 @@ func newUsersGroups(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				raw, err := callAPI(ctx, api, "PUT", userPath(email, "/groups"), map[string]any{"groups": emptyIfNil(names)})
+				raw, err := callAPI(ctx, api, "PUT", userPath(email, "/groups"), map[string]any{"groups": output.EmptyIfNil(names)})
 				if err != nil {
 					return err
 				}
