@@ -43,6 +43,7 @@ type Result struct {
 	Windows          []Row    `json:"windows"`
 	Actual           Actual   `json:"actual"`
 	WakerTargetGroup bool     `json:"wakerTargetGroup"`
+	Estimated        bool     `json:"estimated"`
 	Hours            Hours    `json:"hours"`
 }
 
@@ -68,6 +69,7 @@ type Input struct {
 	Hourly           func(context.Context, stopped.Item) (*float64, error)
 	Baseline         prices.Baseline
 	WakerTargetGroup bool
+	Estimated        bool
 	Now              time.Time
 	Running          []Period
 }
@@ -173,7 +175,7 @@ func Advice(in Input) (Result, error) {
 		Recommended: Recommend(wakeRows), CheckMinutes: in.CheckMinutes, WakeSeconds: wakeSeconds, Priced: priced, Windows: windows,
 		Actual: Actual{Wakes: in.ActualWakes, ReplayedWakes: replayedWakes,
 			Noisy: in.ActualFrom != nil && float64(replayedWakes) > 1.5*actual && float64(replayedWakes) >= actual+3},
-		WakerTargetGroup: in.WakerTargetGroup, Hours: requestHours(in.Requests.Minutes, fromMs, toMs),
+		WakerTargetGroup: in.WakerTargetGroup, Estimated: in.Estimated, Hours: requestHours(in.Requests.Minutes, fromMs, toMs),
 	}, nil
 }
 

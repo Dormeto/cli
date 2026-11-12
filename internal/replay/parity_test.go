@@ -33,6 +33,7 @@ func TestSharedCases(t *testing.T) {
 				Stopped          []stopped.Item  `json:"stopped"`
 				Baseline         prices.Baseline `json:"baseline"`
 				WakerTargetGroup bool            `json:"wakerTargetGroup"`
+				Estimated        bool            `json:"estimated"`
 				Running          []Period        `json:"running"`
 				Now              time.Time       `json:"now"`
 				Prices           []struct {
@@ -66,7 +67,7 @@ func TestSharedCases(t *testing.T) {
 				}
 				got, err = Advice(Input{Requests: in.Requests, Current: in.Current, CheckMinutes: in.CheckMinutes, WakeMs: in.WakeMs,
 					StartAsleep: in.StartAsleep, ActualWakes: in.ActualWakes, ActualFrom: in.ActualFrom, Stopped: in.Stopped, Hourly: hourly,
-					Baseline: in.Baseline, WakerTargetGroup: in.WakerTargetGroup, Now: in.Now, Running: in.Running})
+					Baseline: in.Baseline, WakerTargetGroup: in.WakerTargetGroup, Estimated: in.Estimated, Now: in.Now, Running: in.Running})
 			case "replayIdle":
 				got, err = Replay(ReplayInput{Requests: in.Requests, Windows: in.Windows, CheckMinutes: in.CheckMinutes, WakeSeconds: in.WakeSeconds, StartAsleep: in.StartAsleep})
 			case "recommendWindow":
