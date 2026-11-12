@@ -43,6 +43,60 @@ func (w *waitFlags) check() error {
 	return nil
 }
 
+// The flags of the writes both subtrees have, defined once: a pause's, a wake's --wait and --timeout, and --yes. Each
+// command keeps the help it released, given where it binds them.
+
+// The help of --yes: a command that asks for several targets (several routers), and one that always asks.
+const (
+	yesSeveral        = "do not ask for confirmation of several targets (needed without a terminal)"
+	yesSeveralRouters = "do not ask for confirmation of several routers (needed without a terminal)"
+	yesAlways         = "do not ask for confirmation (needed without a terminal)"
+)
+
+// pauseFlags are a pause's --reason, --for, --until and --keep-asleep, a workload's or a router's.
+type pauseFlags struct {
+	reason, dur, until string
+	keepAsleep         bool
+}
+
+// pauseHelp is a command's help of --reason, --for and --keep-asleep (--until's is every pause's).
+type pauseHelp struct{ reason, dur, keepAsleep string }
+
+// The help of a pause's --reason that the command needs.
+const reasonRequired = "why, 1 to 256 characters, shown in the manager (required)"
+
+func (p *pauseFlags) bind(cmd *cobra.Command, h pauseHelp) {
+	fl := cmd.Flags()
+	fl.StringVar(&p.reason, "reason", "", h.reason)
+	fl.StringVar(&p.dur, "for", "", h.dur)
+	fl.StringVar(&p.until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
+	fl.BoolVar(&p.keepAsleep, "keep-asleep", false, h.keepAsleep)
+}
+
+// end is the pause's end, --for or --until within 366 days (endOf); set is false for neither.
+func (p *pauseFlags) end(now time.Time) (end time.Time, set bool, err error) {
+	return endOf(now, p.dur, p.until, maxPause, false)
+}
+
+// wakeWait is a wake's --wait and --timeout: follow the workloads until they are awake, for at most that long.
+type wakeWait struct {
+	wait    bool
+	timeout time.Duration
+}
+
+func (w *wakeWait) bind(cmd *cobra.Command, waitHelp, timeoutHelp string) {
+	cmd.Flags().BoolVar(&w.wait, "wait", false, waitHelp)
+	cmd.Flags().DurationVar(&w.timeout, "timeout", 15*time.Minute, timeoutHelp)
+}
+
+// check refuses, before any call, a --timeout that is not positive with --wait.
+func (w *wakeWait) check() error {
+	if w.wait && w.timeout <= 0 {
+		return usagef("--timeout: %s is not a positive duration", w.timeout)
+	}
+	return nil
+}
+
 // opItem is an operation for runOperations: label names its target in what is printed, start starts it, get reads it
 // (fleet.GetOperation, or fleet.ListedOperation for the manager's update). A patient one has every failed read waited
 // out until --timeout, each new error said once on stderr (the manager's apply, which replaces the API).
@@ -470,7 +524,7 @@ func printResult(c *cobra.Command, asJSON bool, v any, err error) error {
 	if !asJSON || errors.Is(err, fleet.ErrDryRun) {
 		return err
 	}
-	if perr := printJSON(c.OutOrStdout(), v); perr != nil && err == nil {
+	if perr := output.JSON(c.OutOrStdout(), v); perr != nil && err == nil {
 		err = perr
 	}
 	return err
@@ -508,7 +562,7 @@ func printAnswer(c *cobra.Command, asJSON bool, raw json.RawMessage, text func(a
 		if len(raw) == 0 {
 			raw = json.RawMessage("{}")
 		}
-		return printJSON(c.OutOrStdout(), raw)
+		return output.JSON(c.OutOrStdout(), raw)
 	}
 	var a answer
 	_ = json.Unmarshal(raw, &a)

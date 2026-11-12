@@ -25,9 +25,8 @@ const maxPause = 366 * 24 * time.Hour
 func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
 	var (
-		wait    bool
-		timeout time.Duration
-		asJSON  bool
+		wake   wakeWait
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use: "wake (<router>/<workload>... | --tag k=v...)", Short: "Wake workloads now",
@@ -36,8 +35,8 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			err := w.targets.check(args, false)
-			if err == nil && wait && timeout <= 0 {
-				err = usagef("--timeout: %s is not a positive duration", timeout)
+			if err == nil {
+				err = wake.check()
 			}
 			if err != nil {
 				return finish(c, err)
@@ -55,10 +54,10 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					return t.String() + ": wake requested\n", raw, nil
 				})
-				if !wait || len(ok) == 0 {
+				if !wake.wait || len(ok) == 0 {
 					return err
 				}
-				if werr := waitAwakeJSON(ctx, c, deps, api, ok, timeout, false, asJSON); werr != nil {
+				if werr := waitAwakeJSON(ctx, c, deps, api, ok, wake.timeout, false, asJSON); werr != nil {
 					return werr
 				}
 				return err
@@ -66,9 +65,7 @@ func newWorkloadsWake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	w.bindShared(cmd)
-	fl := cmd.Flags()
-	fl.BoolVar(&wait, "wait", false, "wait until the workloads are awake")
-	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long")
+	wake.bind(cmd, "wait until the workloads are awake", "with --wait, stop waiting after this long")
 	bindJSON(cmd, &asJSON)
 	return cmd
 }
@@ -105,9 +102,8 @@ func newWorkloadsNap(f *fleetFlags, deps fleetDeps) *cobra.Command {
 func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
 	var (
-		reason, dur, until string
-		keepAsleep         bool
-		asJSON             bool
+		pause  pauseFlags
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use: "pause (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>] [--keep-asleep]", Short: "Pause workloads: no automatic nap",
@@ -118,12 +114,13 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			now := deps.now()
-			end, set, err := endOf(now, dur, until, maxPause, false)
+			end, set, err := pause.end(now)
 			if err == nil {
 				err = w.targets.check(args, false)
 			}
+			var reason string
 			if err == nil {
-				reason, err = pauseReason(reason)
+				reason, err = pauseReason(pause.reason)
 			}
 			if err != nil {
 				return finish(c, err)
@@ -132,11 +129,9 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				Reason     string `json:"reason"`
 				Until      string `json:"until,omitempty"`
 				KeepAsleep bool   `json:"keepAsleep,omitempty"`
-			}{Reason: reason, KeepAsleep: keepAsleep}
-			lasts := "until resumed"
+			}{Reason: reason, KeepAsleep: pause.keepAsleep}
 			if set {
 				body.Until = end.UTC().Format("2006-01-02T15:04:05Z")
-				lasts = "until " + end.In(now.Location()).Format("2006-01-02 15:04 MST")
 			}
 			return w.run(c, args, "Pause %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
@@ -146,22 +141,14 @@ func newWorkloadsPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					var res struct{ Woken []string }
 					_ = json.Unmarshal(raw, &res)
-					line := fmt.Sprintf("%s: paused %s", t, lasts)
-					if len(res.Woken) > 0 {
-						line += "; woken " + strings.Join(res.Woken, ", ")
-					}
-					return line + "\n", raw, nil
+					return t.String() + ": " + fleet.PauseResult(end, now.Location(), res.Woken) + "\n", raw, nil
 				})
 				return err
 			})
 		},
 	}
 	w.bindShared(cmd)
-	fl := cmd.Flags()
-	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager (required)")
-	fl.StringVar(&dur, "for", "", "how long, a duration up to 366 days (90m, 2h, 3d); default until resumed")
-	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
-	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake the workloads first")
+	pause.bind(cmd, pauseHelp{reasonRequired, "how long, a duration up to 366 days (90m, 2h, 3d); default until resumed", "do not wake the workloads first"})
 	bindJSON(cmd, &asJSON)
 	return cmd
 }

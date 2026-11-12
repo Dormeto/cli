@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 	"github.com/Dormeto/cli/internal/schedule"
 )
 
@@ -237,9 +238,9 @@ func (w *writeCommand) bindShared(cmd *cobra.Command) {
 // bindConfirmation binds --dry-run and --yes alone (rename takes no --tag).
 func (w *writeCommand) bindConfirmation(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&w.dryRun, "dry-run", false, dryRunUsage)
-	yes := "do not ask for confirmation of several targets (needed without a terminal)"
+	yes := yesSeveral
 	if w.always {
-		yes = "do not ask for confirmation (needed without a terminal)"
+		yes = yesAlways
 	}
 	cmd.Flags().BoolVar(&w.yes, "yes", false, yes)
 }
@@ -282,10 +283,9 @@ func (w *writeCommand) run(c *cobra.Command, args []string, question string, act
 func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	w := &writeCommand{f: f, deps: deps}
 	var (
-		timeout    time.Duration
 		dur, until string
 		why        string
-		wait       bool
+		wake       wakeWait
 		asJSON     bool
 	)
 	cmd := &cobra.Command{
@@ -302,8 +302,8 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			if err == nil {
 				err = w.targets.check(args, false)
 			}
-			if err == nil && wait && timeout <= 0 {
-				err = usagef("--timeout: %s is not a positive duration", timeout)
+			if err == nil {
+				err = wake.check()
 			}
 			if err == nil { // a pause's, as every pause's: 1 to 256 characters
 				why, err = pauseReason(why)
@@ -325,10 +325,10 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						}
 						return fmt.Sprintf("%s: kept awake until %s\n", t, end.Format("2006-01-02 15:04 MST")), raw, nil
 					})
-					if !wait || len(ok) == 0 {
+					if !wake.wait || len(ok) == 0 {
 						return err
 					}
-					if werr := waitAwakeJSON(ctx, c, deps, api, ok, timeout, true, asJSON); werr != nil {
+					if werr := waitAwakeJSON(ctx, c, deps, api, ok, wake.timeout, true, asJSON); werr != nil {
 						return werr
 					}
 					return err
@@ -340,8 +340,7 @@ func newWorkloadsKeepAwake(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 168h (90m, 2h, 2d)")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
 	fl.StringVar(&why, "reason", defaultKeepAwakeReason, "the pause's reason, 1 to 256 characters, shown in the manager")
-	fl.BoolVar(&wait, "wait", false, "wait until the workloads are awake")
-	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long (the pause stays)")
+	wake.bind(cmd, "wait until the workloads are awake", "with --wait, stop waiting after this long (the pause stays)")
 	bindJSON(cmd, &asJSON)
 	return cmd
 }
@@ -533,62 +532,16 @@ func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if err := api.Get(ctx, t.Path(""), nil, &st); err != nil {
 					return fmt.Errorf("%s: %w", t, err)
 				}
-				out := c.OutOrStdout()
 				// A status without a schedule key comes from a router before 0.31.0; a null one is "no schedule".
-				unreported := len(st.Schedule) == 0
-				none := unreported || string(st.Schedule) == "null"
+				shown := fleet.ScheduleShown{Schedule: st.Schedule, Next: st.Next, MaintenanceDue: st.MaintenanceDue, Join: st.Join}
 				if asJSON {
-					var sched *json.RawMessage
-					if !unreported {
-						sched = &st.Schedule
-					}
-					return printJSON(out, struct {
-						Schedule       *json.RawMessage  `json:"schedule,omitempty"`
-						Next           []fleet.NextEvent `json:"next"`
-						MaintenanceDue *string           `json:"maintenanceDue"`
-						schedule.Join
-					}{sched, orNext(st.Next), nilIfEmpty(st.MaintenanceDue), st.Join})
+					return output.JSON(c.OutOrStdout(), shown.JSON())
 				}
-				if unreported {
-					fmt.Fprintf(out, "%s: the router does not report schedules (upgrade it to 0.31.0 or later)\n", t)
-					return nil
+				text, err := shown.Text(t.String())
+				if err != nil {
+					return err
 				}
-				if none {
-					fmt.Fprintf(out, "%s: no schedule\n", t)
-					return nil
-				}
-				var s fleet.ScheduleView
-				if err := json.Unmarshal(st.Schedule, &s); err != nil {
-					return fmt.Errorf("decode the schedule: %w", err)
-				}
-				loc, note := fleet.ZoneOf(s.TimeZone)
-				if len(s.Windows) > 0 {
-					fmt.Fprintf(out, "%s: time zone %s\n", t, orDefault(s.TimeZone, "UTC"))
-				} else {
-					fmt.Fprintf(out, "%s: schedule\n", t)
-					if s.TimeZone != "" {
-						fmt.Fprintf(out, "  time zone %s\n", s.TimeZone)
-					}
-					if s.MaxNapDays == 0 {
-						fmt.Fprintln(out, "  no windows")
-					}
-				}
-				if note != "" {
-					fmt.Fprintf(out, "  %s\n", note)
-				}
-				for _, w := range s.Windows {
-					fmt.Fprintf(out, "  %s\n", fleet.ScheduleWindowText(w))
-				}
-				if len(s.Exceptions) > 0 {
-					fmt.Fprintf(out, "  except %s\n", strings.Join(s.Exceptions, ", "))
-				}
-				if s.MaxNapDays > 0 {
-					fmt.Fprintf(out, "  maximum nap %d %s\n", s.MaxNapDays, fleet.Plural(s.MaxNapDays, "day"))
-				}
-				if line := st.Line(); line != "" {
-					fmt.Fprintf(out, "  %s\n", line)
-				}
-				s.PrintNext(out, loc, st.Next, st.MaintenanceDue)
+				fmt.Fprint(c.OutOrStdout(), text)
 				return nil
 			})
 		},
@@ -645,14 +598,7 @@ func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						s = fleet.ScheduleView{}
 						_ = json.Unmarshal(raw, &s)
 					}
-					loc, note := fleet.ZoneOf(s.TimeZone)
-					var b strings.Builder
-					fmt.Fprintf(&b, "%s: schedule set\n", t)
-					if note != "" {
-						fmt.Fprintf(&b, "  %s\n", note)
-					}
-					s.PrintNext(&b, loc, res.Next, res.MaintenanceDue)
-					return b.String(), answer, nil
+					return s.SetText(t.String(), res.Next, res.MaintenanceDue), answer, nil
 				})
 				return err
 			})
@@ -752,20 +698,6 @@ func orRaw(r json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return r
-}
-
-func orNext(n []fleet.NextEvent) []fleet.NextEvent {
-	if n == nil {
-		return []fleet.NextEvent{}
-	}
-	return n
-}
-
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // bindJSON binds --json of the workload writes.

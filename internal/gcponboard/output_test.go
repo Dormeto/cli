@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -242,7 +243,9 @@ func TestWorkloadsShowNamesTheBackendsByTheirSharedKinds(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  backend: instance web-1 (europe-west1-b)\n", "  backend: asg web-mig (europe-west1)\n", "  backend: cloudsql-instance shop-db\n")
+	if !hasRow(out, "backends", "instance web-1 (europe-west1-b)") || !hasRow(out, "", "asg web-mig (europe-west1)") || !hasRow(out, "", "cloudsql-instance shop-db") {
+		t.Fatalf("%s", out)
+	}
 }
 
 func TestWorkloadsOnboardAndOffboardPrintAWSLineAndMap(t *testing.T) {
@@ -290,7 +293,7 @@ func TestWorkloadsScheduleSetPrintsAWSLineThenTheSchedule(t *testing.T) {
 	r := workloadsEurope
 	r.ID, r.Schedule = "shop", json.RawMessage(parisSchedule)
 	code, out := g.call(t, WorkloadsScheduleSet, r)
-	if code != 0 || !strings.HasPrefix(out, shopTarget+": schedule set\n  time zone: Europe/Paris\n") {
+	if code != 0 || out != shopTarget+": schedule set\n" {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	r.JSON = true
@@ -332,7 +335,7 @@ func TestRouterWritesNameTheRouterAsTheManager(t *testing.T) {
 	g := newWorkloadsRig(t)
 	r := workloadsEurope
 	r.Reason = "freeze"
-	if code, out := g.call(t, RouterPause, r); code != 0 || out != shopRouter+": paused\n" {
+	if code, out := g.call(t, RouterPause, r); code != 0 || out != shopRouter+": paused until resumed\n" {
 		t.Fatalf("pause: exit %d, out %q", code, out)
 	}
 	r.JSON = true
@@ -775,5 +778,173 @@ func TestJSONIsIndentedAsAWSs(t *testing.T) {
 		if code != 0 || !indentedAsAWS(stdout) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", c.name, code, stdout, stderr)
 		}
+	}
+}
+
+// hasRow tells whether text has the labelled row "<label>  <value>" as fleet.Labelled writes it (the label padded, then two
+// spaces at least), at any indent.
+func hasRow(text, label, value string) bool {
+	return regexp.MustCompile(`(?m)^ *` + regexp.QuoteMeta(label) + ` {2,}` + regexp.QuoteMeta(value) + `$`).MatchString(text)
+}
+
+// The reads print what AWS's print (the cloud duplication design's §4, B10 to B14): the list's table (B11).
+func TestWorkloadsListPrintsAWSTable(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.SharedNames = true
+	g.s.Workloads["shop"], g.s.Workloads["blog"] = "AWAKE", "ASLEEP"
+	g.s.WorkloadDocs["shop"] = map[string]any{"name": "The shop", "tags": map[string]any{"team": "web", "env": "prod"},
+		"backendService": "shop-be", "awakeSince": installNow.Add(-3 * time.Hour).Format(time.RFC3339),
+		"paused": map[string]any{"by": "me@example.com", "at": "2026-10-29T08:00:00Z", "reason": "audit", "until": nil, "keepAsleep": false}}
+	g.s.WorkloadDocs["blog"] = map[string]any{"name": "blog"}
+	code, out := g.call(t, WorkloadsList, workloadsEurope)
+	want := "ROUTER                         WORKLOAD  NAME      CLOUD  STATE   TAGS               CHANGED\n" +
+		"dmtr-dormeto-dev-europe-west1  blog      blog      gcp    ASLEEP  —                  —\n" +
+		"dmtr-dormeto-dev-europe-west1  shop      The shop  gcp    AWAKE   env=prod,team=web  3h\n" +
+		"2 workloads (1 ASLEEP, 1 AWAKE)\n"
+	if code != 0 || out != want {
+		t.Fatalf("exit %d:\n%s\nwant:\n%s", code, out, want)
+	}
+	// None: AWS's count alone, the filters' too.
+	g = newWorkloadsRig(t)
+	if code, out := g.call(t, WorkloadsList, workloadsEurope); code != 0 || out != "0 workloads\n" {
+		t.Fatalf("none: exit %d, %q", code, out)
+	}
+}
+
+// `workloads show` is AWS's labelled block from the router's answer (B13): what Google Cloud lacks is left out, what only it has
+// is a row of the same form, and a pause reads as AWS's, in the local time (B12).
+func TestWorkloadsShowIsAWSLayout(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.SharedNames = true
+	g.s.Workloads["shop"] = "FAILED"
+	g.s.WorkloadDocs["shop"] = map[string]any{"name": "The shop", "tags": map[string]any{"team": "web"},
+		"lb": map[string]any{"kind": "regional", "region": "europe-west1"}, "urlMap": "shop-map", "backendService": "shop-be",
+		"wakerBackendService": "dmtr-europe-west1-shop", "hosts": []any{"shop.example.com"},
+		"backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "web-1", "id": "111"},
+			map[string]any{"kind": "cloudsql", "name": "shop-db"}},
+		"failure":        map[string]any{"kind": "quota", "step": "wake", "message": "CPUS quota reached", "at": "2026-10-29T09:00:00Z"},
+		"lastWake":       map[string]any{"durationMs": 41200},
+		"idleReads":      "request logs",
+		"napAborted":     map[string]any{"reason": "backends-changed", "at": "2026-10-29T04:55:57Z"},
+		"companionsGone": []any{"shop-db"},
+		"settings":       map[string]any{"idleMinutes": 30, "waitSeconds": 0, "wakeTimeoutSeconds": 900, "wakeMode": "browser"},
+		"settingsFrom":   map[string]any{"idleMinutes": "router", "waitSeconds": "fixed", "wakeTimeoutSeconds": "workload", "wakeMode": "default"},
+		"type":           map[string]any{"name": "instance", "from": "backends"},
+		"hibernation":    map[string]any{"hibernate": true, "from": "router"},
+		"noWakeRules":    []any{map[string]any{"name": "scanners", "level": "router", "conditions": map[string]any{"userAgentPattern": "bot"}}},
+		"paused":         map[string]any{"by": "me@example.com", "at": "2026-10-29T08:00:00Z", "reason": "audit", "until": "2026-12-01T07:00:00Z", "keepAsleep": true}}
+	r := workloadsEurope
+	r.ID = "shop"
+	code, out := g.call(t, WorkloadsShow, r)
+	want := "workload               " + shopTarget + "\n" +
+		"name                   The shop\n" +
+		"state                  FAILED\n" +
+		"failure                wake failed (quota): CPUS quota reached\n" +
+		"cloud                  gcp\n" +
+		"project                dormeto-dev\n" +
+		"region                 europe-west1\n" +
+		"tags                   team=web\n" +
+		"load balancer          regional (europe-west1)\n" +
+		"URL map                shop-map\n" +
+		"backend service        shop-be\n" +
+		"waker backend service  dmtr-europe-west1-shop\n" +
+		"hosts                  shop.example.com\n" +
+		"backends               instance web-1 (europe-west1-b)\n" +
+		"                       cloudsql-instance shop-db\n" +
+		"last wake              41.2 s\n" +
+		"idle check             request logs\n" +
+		"nap given up           backends-changed, 2026-10-29 04:55 UTC\n" +
+		"problems               Cloud SQL instance shop-db no longer exists: its workload no longer naps; offboard and onboard it again\n" +
+		"\nsettings\n" +
+		"  type           instance (from its backends)\n" +
+		"  idle window    30 min (router)\n" +
+		"  hold           0 s (fixed on Google Cloud)\n" +
+		"  wake timeout   15 min (set on this workload)\n" +
+		"  hibernate      on, from the router\n" +
+		"  wake mode      browser (built-in)\n" +
+		"  no-wake rules  scanners: user agent ~ bot (router)\n" +
+		"  wake rules     none\n" +
+		"\npauses\n" +
+		"  paused by me@example.com on 2026-10-29 08:00 UTC: audit, until 2026-12-01 07:00 UTC, keeps asleep\n"
+	if code != 0 || out != want {
+		t.Fatalf("exit %d:\n%s\nwant:\n%s", code, out, want)
+	}
+	// AWAKE: since when, in the state's row, as AWS's.
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.WorkloadDocs["shop"] = map[string]any{"awakeSince": "2026-10-29T07:00:00Z"}
+	if _, out = g.call(t, WorkloadsShow, r); !hasRow(out, "state", "AWAKE since 2026-10-29 07:00 UTC") || strings.Contains(out, "failure") || strings.Contains(out, "pauses") {
+		t.Fatalf("awake:\n%s", out)
+	}
+}
+
+// `schedule show` is AWS's text and --json AWS's shape, {schedule, next, …} (B10); the router's maintenanceDue, which its answer
+// does not have, is left out rather than said none.
+func TestWorkloadsScheduleShowIsAWSShapeAndText(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.NextEvents = parisEvents
+	g.s.ScheduleJoin = map[string]any{"joinMinutes": 15, "joinFrom": "router", "joinInherited": map[string]any{"joinMinutes": 15, "joinFrom": "router"}}
+	r := workloadsEurope
+	r.ID, r.Schedule = "shop", json.RawMessage(parisSchedule)
+	code, out := g.call(t, WorkloadsScheduleSet, r)
+	if want := shopTarget + ": schedule set\n  next\n    Mon 2 Nov 22:00 CET nap window starts\n    Tue 3 Nov 06:00 CET nap window ends\n"; code != 0 || out != want {
+		t.Fatalf("set: exit %d:\n%s\nwant:\n%s", code, out, want)
+	}
+	r.Schedule = nil
+	code, out = g.call(t, WorkloadsScheduleShow, r)
+	want := shopTarget + ": time zone Europe/Paris\n" +
+		"  nap mon,tue 22:00–06:00 (next day), wake: never\n" +
+		"  maximum nap 14 days\n" +
+		"  join windows up to 15 min apart (router)\n" +
+		"  next\n" +
+		"    Mon 2 Nov 22:00 CET nap window starts\n" +
+		"    Tue 3 Nov 06:00 CET nap window ends\n"
+	if code != 0 || out != want {
+		t.Fatalf("show: exit %d:\n%s\nwant:\n%s", code, out, want)
+	}
+	r.JSON = true
+	code, out = g.call(t, WorkloadsScheduleShow, r)
+	var shown map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &shown); code != 0 || err != nil || !indentedAsAWS(out) {
+		t.Fatalf("exit %d, %v:\n%s", code, err, out)
+	}
+	var keys []string
+	for k := range shown {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"joinFrom", "joinInherited", "joinMinutes", "next", "schedule"}) ||
+		compacted(string(shown["next"])) != `[{"at":"2026-11-02T21:00:00.000Z","kind":"nap-start","window":0},{"at":"2026-11-03T05:00:00.000Z","kind":"nap-end","window":0}]` {
+		t.Fatalf("not AWS's shape: %s", out)
+	}
+	// The schedule as the router answered it, who set it and when too.
+	var s map[string]any
+	if json.Unmarshal(shown["schedule"], &s) != nil || s["timeZone"] != "Europe/Paris" || s["by"] != "me@example.com" || s["at"] != "2026-11-01T10:00:00.000Z" {
+		t.Fatalf("schedule: %s", shown["schedule"])
+	}
+	// None: AWS's words, and null with no next event.
+	g.call(t, WorkloadsScheduleClear, Request{Project: r.Project, Region: r.Region, ID: "shop"})
+	if _, out = g.call(t, WorkloadsScheduleShow, r); compacted(out) != `{"schedule":null,"next":[],"joinMinutes":15,"joinFrom":"router","joinInherited":{"joinFrom":"router","joinMinutes":15}}` {
+		t.Fatalf("none: %s", out)
+	}
+	r.JSON = false
+	if _, out = g.call(t, WorkloadsScheduleShow, r); out != shopTarget+": no schedule\n" {
+		t.Fatalf("none: %q", out)
+	}
+}
+
+// A workload's pause and a router's say one wording, on both subtrees (B14): "paused until …", then "; woken …".
+func TestRouterPauseSaysTheWorkloadsWording(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"], g.s.Workloads["blog"] = "ASLEEP", "ASLEEP"
+	r := workloadsEurope
+	r.Reason = "freeze"
+	if code, out := g.call(t, RouterPause, r); code != 0 || out != shopRouter+": paused until resumed; woken blog, shop\n" {
+		t.Fatalf("exit %d, %q", code, out)
+	}
+	g.call(t, RouterResume, r)
+	r.Until, r.KeepAsleep = "2026-12-01T07:00:00Z", true
+	if code, out := g.call(t, RouterPause, r); code != 0 || out != shopRouter+": paused until 2026-12-01 07:00 UTC\n" {
+		t.Fatalf("exit %d, %q", code, out)
 	}
 }

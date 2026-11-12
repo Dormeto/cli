@@ -137,7 +137,7 @@ func gcpConnectCommand(use, short, long string, f *gcpConnectFlags, deps fleetDe
 	fl.StringVar(&f.manager.region, "manager-region", "", "the manager's AWS region (default: the profile's); --region is a Google Cloud region in dormeto gcp")
 	fl.StringVar(&f.manager.apiURL, "api-url", "",
 		"the manager API's execute-api endpoint (not the dashboard's URL), skipping the lookup by name (needs no apigateway:GET)")
-	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	fl.BoolVar(&f.yes, "yes", false, yesAlways)
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
 	fl.BoolVar(&f.json, "json", false, "print the manager's record as JSON on stdout ({\"connection\": …}; a dry run's {\"dryRun\": true, \"targets\": [<host project>], \"plan\": […]}), the words on stderr")
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {

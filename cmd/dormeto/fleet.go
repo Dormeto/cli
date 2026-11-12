@@ -200,7 +200,7 @@ func (f *fleetFlags) run(c *cobra.Command, deps fleetDeps, do func(ctx context.C
 // would have sent.
 func endDryRun(c *cobra.Command, dry *fleet.DryRun) error {
 	if jsonFlag(c) {
-		return printJSON(c.OutOrStdout(), dry.JSON())
+		return output.JSON(c.OutOrStdout(), dry.JSON())
 	}
 	return nil
 }
@@ -335,7 +335,7 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), fleet.Routers{Rows: rows, Available: all.Available})
+					return output.JSON(c.OutOrStdout(), fleet.Routers{Rows: rows, Available: all.Available})
 				}
 				out := c.OutOrStdout()
 				if len(rows) > 0 {
@@ -352,9 +352,6 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the API's answer, its rows after the filters")
 	return cmd
 }
-
-// printJSON prints v indented (output.JSON).
-func printJSON(w io.Writer, v any) error { return output.JSON(w, v) }
 
 // newWorkloads is `dormeto aws workloads` and its subcommand list.
 func newWorkloads(deps fleetDeps) *cobra.Command {

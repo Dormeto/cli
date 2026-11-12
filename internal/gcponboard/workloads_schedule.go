@@ -12,11 +12,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 	"github.com/Dormeto/cli/internal/output"
 	"github.com/Dormeto/cli/internal/schedule"
@@ -53,22 +53,6 @@ func WorkloadsPause(ctx context.Context, d Deps, r Request) int {
 func WorkloadsResume(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.workloadsEnd(x.resumeWorkload())
-}
-
-// scheduleOf and nextEvent are the controller's schedule and next events (lambda/src/lib/schedule.mjs).
-type scheduleOf struct {
-	TimeZone   string            `json:"timeZone"`
-	Windows    []schedule.Window `json:"windows"`
-	Exceptions []string          `json:"exceptions"`
-	MaxNapDays *int              `json:"maxNapDays"`
-	By         string            `json:"by"`
-	At         string            `json:"at"`
-}
-
-type nextEvent struct {
-	At     string `json:"at"`
-	Kind   string `json:"kind"` // nap-start, nap-end, awake-start, awake-end
-	Window int    `json:"window"`
 }
 
 // scheduleSet checks the schedule first, before any call; the body of the PUT is the schedule, `by` the operator's account.
@@ -148,130 +132,62 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 		}
 		return x.refusedWorkloadWrite(x.needsRecurrenceRouter(err))
 	}
-	if x.r.JSON && method == http.MethodGet {
-		return output.JSON(x.d.Out, raw)
-	}
-	var view struct {
-		Schedule   *scheduleOf `json:"schedule"`
-		NextEvents []nextEvent `json:"nextEvents"`
+	// The controller's answer, {schedule, nextEvents, joinMinutes, …} (onboarding.mjs), read as AWS's {schedule, next, …}; it has no
+	// maintenanceDue (unknown: left out, not null).
+	var answer struct {
+		Schedule   json.RawMessage   `json:"schedule"`
+		NextEvents []fleet.NextEvent `json:"nextEvents"`
 		schedule.Join
 	}
-	if err := json.Unmarshal(raw, &view); err != nil {
+	if err := json.Unmarshal(raw, &answer); err != nil {
 		return fmt.Errorf("the controller's answer is not a schedule: %w", err)
 	}
-	// The writes: AWS's line, "<target>: schedule set" and the schedule under it, or "<target>: schedule cleared".
-	target := x.target(x.r.ID)
-	var b strings.Builder
-	switch {
-	case method == http.MethodDelete:
-		return x.answered(x.r.ID, raw, target+": schedule cleared")
-	case method == http.MethodPut:
-		fmt.Fprintf(&b, "%s: schedule set\n", target)
-		if view.Schedule != nil {
-			x.printSchedule(&b, *view.Schedule, view.NextEvents, view.Line())
-		}
-		return x.answered(x.r.ID, raw, strings.TrimSuffix(b.String(), "\n"))
-	case view.Schedule == nil:
-		x.say("Workload %s has no schedule.", x.r.ID)
-	default:
-		fmt.Fprintf(&b, "Schedule of workload %s (set by %s, %s):\n", x.r.ID, view.Schedule.By, view.Schedule.At)
-		x.printSchedule(&b, *view.Schedule, view.NextEvents, view.Line())
-		fmt.Fprint(x.d.Out, b.String())
+	if len(answer.Schedule) == 0 {
+		answer.Schedule = json.RawMessage("null")
 	}
+	target := x.target(x.r.ID)
+	switch method {
+	case http.MethodDelete:
+		return x.answered(x.r.ID, raw, target+": schedule cleared")
+	case http.MethodPut: // AWS's lines: "<target>: schedule set", the zone's note and the next events
+		var s fleet.ScheduleView
+		if json.Unmarshal(answer.Schedule, &s) != nil || s.TimeZone == "" { // the zone as stored, else the file's
+			s = fleet.ScheduleView{}
+			_ = json.Unmarshal(x.r.Schedule, &s)
+		}
+		return x.answered(x.r.ID, raw, strings.TrimSuffix(s.SetText(target, answer.NextEvents, ""), "\n"))
+	}
+	// AWS's text and --json (the cloud duplication design's B10).
+	view := fleet.ScheduleShown{Schedule: answer.Schedule, Next: answer.NextEvents, NoDue: true, Join: answer.Join}
+	if x.r.JSON {
+		return output.JSON(x.d.Out, view.JSON())
+	}
+	text, err := view.Text(target)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(x.d.Out, text)
 	return nil
 }
 
-// printSchedule writes a schedule's lines, under the line that names it.
-func (x *run) printSchedule(out io.Writer, s scheduleOf, events []nextEvent, join string) {
-	say := func(format string, a ...any) { fmt.Fprintf(out, format+"\n", a...) }
-	say("  time zone: %s", s.TimeZone)
-	for _, w := range s.Windows {
-		line := fmt.Sprintf("  %s window: %s %s-%s", w.Kind, strings.Join(w.Days, ","), w.Start, w.End)
-		if !w.Plain() {
-			line = fmt.Sprintf("  %s window: %s", w.Kind, w.Text())
-		}
-		if w.Wake != "" {
-			line += ", wake " + w.Wake
-		}
-		say("%s", line)
-	}
-	if len(s.Exceptions) > 0 {
-		say("  exceptions: %s", strings.Join(s.Exceptions, ", "))
-	}
-	if s.MaxNapDays != nil {
-		say("  maxNapDays: %d", *s.MaxNapDays)
-	}
-	if join != "" {
-		say("  %s", join)
-	}
-	if len(events) == 0 {
-		say("No next event.")
-		return
-	}
-	say("Next events:")
-	zone, err := time.LoadLocation(s.TimeZone)
-	for _, e := range events {
-		at, perr := time.Parse(time.RFC3339, e.At)
-		what := strings.Replace(e.Kind, "-start", " starts", 1)
-		what = strings.Replace(what, "-end", " ends", 1)
-		if perr != nil {
-			say("  %s  %s", e.At, what)
-			continue
-		}
-		if err != nil {
-			say("  %s UTC  %s", at.UTC().Format("2006-01-02 15:04"), what)
-			continue
-		}
-		say("  %s (%s)  %s", at.In(zone).Format("2006-01-02 15:04 MST"), s.TimeZone, what)
-	}
-}
-
-// pausedOf is a workload's active pause: its own, or (scope router) its router's.
-type pausedOf struct {
-	Scope      string  `json:"scope"`
-	By         string  `json:"by"`
-	At         string  `json:"at"`
-	Reason     string  `json:"reason"`
-	Until      *string `json:"until"`
-	KeepAsleep bool    `json:"keepAsleep"`
-}
-
-func (p pausedOf) String() string {
-	text := fmt.Sprintf("paused by %s: %s", p.By, p.Reason)
-	if p.Scope == "router" {
-		text = "router " + text
-	}
-	if p.KeepAsleep {
-		text += " (keep asleep)"
-	}
-	if p.Until != nil {
-		text += ", until " + *p.Until
-	}
-	return text
-}
-
-// pauseIn is the pause's body of --reason, --keep-asleep and --until, without `by`, and how its end reads in the lines, as
-// AWS's: "until resumed", or "until <the local time>". The command checked --reason and the end before (pauseReason and
-// endOf, AWS's checks): the reason trimmed, 1 to 256 characters, and the end an RFC 3339 time, sent in UTC (a time it did
-// not check goes as it is, for the router to refuse).
-func (x *run) pauseIn() (map[string]any, string) {
+// pauseIn is the pause's body of --reason, --keep-asleep and --until, without `by`, and its end (zero for none). The command
+// checked them before any call (pauseFlags.gcpEnd: AWS's pauseReason and endOf): the reason trimmed, 1 to 256 characters, and
+// --until an RFC 3339 time, sent in UTC.
+func (x *run) pauseIn() (map[string]any, time.Time) {
 	in := map[string]any{"reason": x.r.Reason}
 	if x.r.KeepAsleep {
 		in["keepAsleep"] = true
 	}
-	ends := "until resumed"
+	var end time.Time
 	if x.r.Until != "" {
-		in["until"], ends = x.r.Until, "until "+x.r.Until
-		if until, err := time.Parse(time.RFC3339, x.r.Until); err == nil {
-			in["until"] = until.UTC().Format(time.RFC3339)
-			ends = "until " + until.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
-		}
+		end, _ = time.Parse(time.RFC3339, x.r.Until)
+		in["until"] = end.UTC().Format(time.RFC3339)
 	}
-	return in, ends
+	return in, end
 }
 
 func (x *run) pauseWorkload() error {
-	in, ends := x.pauseIn()
+	in, end := x.pauseIn()
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
@@ -295,11 +211,7 @@ func (x *run) pauseWorkload() error {
 	}
 	// AWS's line: "<target>: paused until resumed[; woken <workloads>]", the workloads woken as the answer names them (none from
 	// a router that names none: never guessed from the state).
-	line := fmt.Sprintf("%s: paused %s", x.target(x.r.ID), ends)
-	if len(w.Woken) > 0 {
-		line += "; woken " + strings.Join(w.Woken, ", ")
-	}
-	return x.answeredWorkload(x.r.ID, raw, line)
+	return x.answeredWorkload(x.r.ID, raw, x.target(x.r.ID)+": "+fleet.PauseResult(end, x.d.Now().Location(), w.Woken))
 }
 
 func (x *run) resumeWorkload() error {

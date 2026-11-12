@@ -236,7 +236,7 @@ func TestRoutersPausePostsReasonUntilAndKeepAsleep(t *testing.T) {
 	if len(a.posted) != 1 || a.posted[0] != want {
 		t.Errorf("posted %q, want %q", a.posted, want)
 	}
-	if !strings.Contains(r.stdout, "prod-eu: paused until 2026-10-21 12:00 UTC, keeping asleep") {
+	if !strings.Contains(r.stdout, "prod-eu: paused until 2026-10-21 12:00 UTC; woken w-1, w-2\n") {
 		t.Errorf("stdout %q", r.stdout)
 	}
 }
@@ -247,7 +247,7 @@ func TestRoutersPauseWithoutEndPrintsTheWokenWorkloads(t *testing.T) {
 	if r.exit != 0 || a.posted[0] != `/iam/routers/prod-eu/pause {"reason":"freeze","keepAsleep":false}` {
 		t.Fatalf("exit %d, posted %q, stderr %q", r.exit, a.posted, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "prod-eu: paused, woke w-1, w-2") {
+	if !strings.Contains(r.stdout, "prod-eu: paused until resumed; woken w-1, w-2\n") {
 		t.Errorf("stdout %q", r.stdout)
 	}
 }
@@ -314,7 +314,7 @@ func TestRoutersPauseAndResumeJSON(t *testing.T) {
 	if r.exit != 1 || json.Unmarshal([]byte(r.stdout), &answers) != nil || len(answers) != 1 || answers["r1"]["woken"] == nil {
 		t.Errorf("pause: exit %d, stdout %q", r.exit, r.stdout)
 	}
-	if r.stderr != "r1: paused, woke w-1, w-2\nr2: too old\n" {
+	if r.stderr != "r1: paused until resumed; woken w-1, w-2\nr2: too old\n" {
 		t.Errorf("pause: stderr %q", r.stderr)
 	}
 	r = runRouters(t, &routersAPI{refuse: map[string]string{"r1": "too old"}}, nil, "pause", "r1", "--reason", "x", "--json")

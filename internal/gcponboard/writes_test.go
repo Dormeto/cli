@@ -262,8 +262,8 @@ func TestWorkloadsListFiltersByStateSearchAndTag(t *testing.T) {
 			}
 			var listed []string
 			for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-				if f := strings.Fields(line); len(f) > 0 && g.s.Workloads[f[0]] != "" {
-					listed = append(listed, f[0])
+				if f := strings.Fields(line); len(f) > 1 && f[0] == shopRouter && g.s.Workloads[f[1]] != "" { // AWS's table: ROUTER, WORKLOAD…
+					listed = append(listed, f[1])
 				}
 			}
 			if !slices.Equal(listed, c.want) {
@@ -297,7 +297,9 @@ func TestWorkloadsListSaysWhenNoneMatchesTheFilters(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "no workload of router dmtr-europe-west1 matches")
+	if out != "0 workloads\n" { // AWS's count of the rows the filters keep
+		t.Fatalf("%q", out)
+	}
 }
 
 // A router before 0.40.0 answers no tags: --tag says so, rather than list none.

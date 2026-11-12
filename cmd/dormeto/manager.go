@@ -15,6 +15,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // managerChangelog is where the release notes of a manager the CLI did not install are read.
@@ -65,7 +66,7 @@ func newManagerStatus(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), m)
+					return output.JSON(c.OutOrStdout(), m)
 				}
 				fmt.Fprint(c.OutOrStdout(), m.Text(deps.now().Location()))
 				return nil
@@ -111,7 +112,7 @@ func newManagerCheck(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), saved)
+					return output.JSON(c.OutOrStdout(), saved)
 				}
 				fmt.Fprint(c.OutOrStdout(), saved.Text(deps.now().Location()))
 				return nil
@@ -156,7 +157,7 @@ func newManagerChanges(f *fleetFlags, deps fleetDeps) *cobra.Command {
 							return errors.New("the releases could not be read: try again later")
 						}
 						if asJSON {
-							return printJSON(out, []any{})
+							return output.JSON(out, []any{})
 						}
 						fmt.Fprintf(out, "the manager is up to date (%s)\n", s.Version)
 						return nil
@@ -170,7 +171,7 @@ func newManagerChanges(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(out, changes)
+					return output.JSON(out, changes)
 				}
 				fmt.Fprint(out, changes.Text())
 				return nil
@@ -209,7 +210,7 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if run.Operations == nil {
 						run.Operations = []fleet.Operation{}
 					}
-					if perr := printJSON(c.OutOrStdout(), run); perr != nil && err == nil {
+					if perr := output.JSON(c.OutOrStdout(), run); perr != nil && err == nil {
 						err = perr
 					}
 				}
@@ -220,7 +221,7 @@ func newManagerUpdate(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&u.version, "version", "", "the version to update to (default: the newest the manager offers)")
 	fl.BoolVar(&u.dryRun, "dry-run", false, "plan the update and print the plan, without applying it")
-	fl.BoolVar(&u.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	fl.BoolVar(&u.yes, "yes", false, yesAlways)
 	fl.DurationVar(&u.wait.timeout, "timeout", 60*time.Minute, "stop following the plan, or the apply, after this long (the build goes on in the manager)")
 	fl.BoolVar(&u.wait.noWait, "no-wait", false, "start the apply and print its operation's id instead of following it (the plan is always followed)")
 	fl.BoolVar(&u.asJSON, "json", false, "print {update, operations}: the update's state as last read and the operations followed (progress goes to stderr)")

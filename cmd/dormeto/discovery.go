@@ -23,6 +23,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // runPoll is how often --wait reads the last run again.
@@ -61,7 +62,7 @@ func newDiscoveryStatus(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), st)
+					return output.JSON(c.OutOrStdout(), st)
 				}
 				fmt.Fprint(c.OutOrStdout(), st.Text(deps.now().Location()))
 				return nil
@@ -104,7 +105,7 @@ func newDiscoveryRun(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				}
 				if !wait {
 					if asJSON {
-						return printJSON(c.OutOrStdout(), accepted)
+						return output.JSON(c.OutOrStdout(), accepted)
 					}
 					fmt.Fprintln(c.OutOrStdout(), "discovery run requested: dormeto aws discovery status shows it")
 					return nil
@@ -121,7 +122,7 @@ func newDiscoveryRun(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					if err := printJSON(c.OutOrStdout(), st); err != nil {
+					if err := output.JSON(c.OutOrStdout(), st); err != nil {
 						return err
 					}
 				} else {
@@ -233,7 +234,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON { // every page merged: no cursor
-					return printJSON(c.OutOrStdout(), map[string]any{"candidates": orEmpty(cs)})
+					return output.JSON(c.OutOrStdout(), map[string]any{"candidates": orEmpty(cs)})
 				}
 				fmt.Fprint(c.OutOrStdout(), candidatesText(cs, status))
 				return nil
@@ -373,7 +374,7 @@ func moveCandidates(c *cobra.Command, f *fleetFlags, deps fleetDeps, refs []stri
 			return fleet.ErrDryRun
 		}
 		if asJSON {
-			if err := printJSON(c.OutOrStdout(), orEmpty(done)); err != nil && failure == nil {
+			if err := output.JSON(c.OutOrStdout(), orEmpty(done)); err != nil && failure == nil {
 				failure = err
 			}
 		} else if len(done) > 0 {
@@ -485,7 +486,7 @@ func newDiscoveryAccess(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				}
 				r = r.OnlyCloud(string(cloud))
 				if asJSON {
-					return printJSON(c.OutOrStdout(), r)
+					return output.JSON(c.OutOrStdout(), r)
 				}
 				fmt.Fprint(c.OutOrStdout(), r.Text(deps.now().Location()))
 				return nil
@@ -512,7 +513,7 @@ func newDiscoveryConfigShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), cfg)
+					return output.JSON(c.OutOrStdout(), cfg)
 				}
 				fmt.Fprint(c.OutOrStdout(), cfg.Text())
 				fmt.Fprint(c.ErrOrStderr(), fleet.LintText(cfg.Lint))
@@ -555,7 +556,7 @@ func newDiscoveryConfigSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), cfg)
+					return output.JSON(c.OutOrStdout(), cfg)
 				}
 				fmt.Fprintln(c.OutOrStdout(), "discovery configuration replaced")
 				fmt.Fprint(c.OutOrStdout(), fleet.LintText(cfg.Lint))

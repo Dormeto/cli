@@ -11,9 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/output"
 )
 
@@ -33,7 +32,7 @@ func RouterResume(ctx context.Context, d Deps, r Request) int {
 }
 
 func (x *run) pauseRouter() error {
-	in, _ := x.pauseIn()
+	in, end := x.pauseIn()
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
@@ -58,20 +57,8 @@ func (x *run) pauseRouter() error {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("the controller's answer is not a pause: %w", err)
 	}
-	// AWS's line: <router>: paused[ until <local time>][, keeping asleep][, woke <workloads>].
-	line := x.n.managed + ": paused"
-	if until, ok := in["until"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, until); err == nil {
-			line += " until " + t.In(x.d.Now().Location()).Format("2006-01-02 15:04 MST")
-		}
-	}
-	if x.r.KeepAsleep {
-		line += ", keeping asleep"
-	}
-	if len(a.Woken) > 0 {
-		line += ", woke " + strings.Join(a.Woken, ", ")
-	}
-	x.say("%s", line)
+	// A workload's pause's words, on both subtrees: <router>: paused until resumed|<local time>[; woken <workloads>].
+	x.say("%s: %s", x.n.managed, fleet.PauseResult(end, x.d.Now().Location(), a.Woken))
 	return nil
 }
 

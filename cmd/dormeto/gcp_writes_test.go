@@ -110,6 +110,7 @@ func TestGcpWorkloadsPauseRefusesWhatRoutersPauseRefusesBeforeAnyCall(t *testing
 		{"--reason", "x", "--for", "1h", "--until", "18:00"},
 		{"--reason", "x", "--for", "400d"},
 		{"--reason", "x", "--until", "tomorrow"},
+		{"--reason", "x", "--until", "2026-12-01"}, // a date alone is no RFC 3339 time: gcponboard gets only one
 		{"--reason", "x", "--until", "08:00"},
 		{"--reason", "x", "--until", "2001-01-01T00:00:00Z"},
 	} {
@@ -278,7 +279,7 @@ func TestGcpQuestionsGoToStderrUnderJSON(t *testing.T) {
 		if asJSON {
 			want = &e
 		}
-		if got := gcpPromptOut(c); got != want {
+		if got := textOut(c); got != want {
 			t.Errorf("--json %v: the questions go to %v", asJSON, got)
 		}
 	}

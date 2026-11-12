@@ -134,11 +134,6 @@ func (x *run) matches(w workload) bool {
 	return true
 }
 
-// filtering tells whether the list has a filter.
-func (x *run) filtering() bool {
-	return len(x.r.States) > 0 || x.r.Search != "" || len(x.r.HasTags) > 0
-}
-
 // offboardDryRun says what the offboarding would send and stops: the controller's delete (none for a workload it no longer
 // holds: a rerun), then the tags it would unbind, the Kubernetes access it would remove and the request logs it would set back.
 func (x *run) offboardDryRun(id string, p pendingOffboarding, there bool) error {

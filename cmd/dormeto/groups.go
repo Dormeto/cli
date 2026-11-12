@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 const grantHelp = "--grant <tags>:<permissions> (repeat for several, at most 20): the permissions read, wake and nap, comma-separated,\n" +
@@ -50,7 +51,7 @@ func newGroupsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if gs == nil {
 						gs = []fleet.Group{}
 					}
-					return printJSON(c.OutOrStdout(), map[string]any{"groups": gs})
+					return output.JSON(c.OutOrStdout(), map[string]any{"groups": gs})
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.GroupsText(gs, deps.now()))
 				return nil
@@ -79,7 +80,7 @@ func newGroupsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				for _, g := range gs {
 					if g.Name == name {
 						if asJSON {
-							return printJSON(c.OutOrStdout(), g)
+							return output.JSON(c.OutOrStdout(), g)
 						}
 						fmt.Fprint(c.OutOrStdout(), fleet.GroupText(g, deps.now().Location()))
 						return nil
@@ -213,7 +214,7 @@ func newGroupsDelete(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	cmd.Flags().BoolVar(&yes, "yes", false, yesAlways)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/cli"
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // descriptionFlags are the three ways to write a description.
@@ -172,7 +173,7 @@ func printDescription(c *cobra.Command, detail json.RawMessage, asJSON bool, loc
 		return errors.New("the manager did not return the description")
 	}
 	if asJSON {
-		return printJSON(c.OutOrStdout(), struct {
+		return output.JSON(c.OutOrStdout(), struct {
 			Description json.RawMessage `json:"description"`
 		}{a.Description})
 	}

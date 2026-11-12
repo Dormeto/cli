@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // maxDiscount is the highest discount, in percent, the manager accepts.
@@ -42,7 +43,7 @@ func newOverview(deps fleetDeps) *cobra.Command {
 			}
 			var err error
 			if asJSON {
-				err = printJSON(c.OutOrStdout(), o.JSON())
+				err = output.JSON(c.OutOrStdout(), o.JSON())
 			} else {
 				fmt.Fprint(c.OutOrStdout(), o.Text(deps.now()))
 			}
@@ -72,7 +73,7 @@ func newAlerts(deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), a)
+					return output.JSON(c.OutOrStdout(), a)
 				}
 				fmt.Fprint(c.OutOrStdout(), a.Text(deps.now()))
 				return nil
@@ -101,7 +102,7 @@ func newIPLists(deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), a)
+					return output.JSON(c.OutOrStdout(), a)
 				}
 				fmt.Fprint(c.OutOrStdout(), a.Text(deps.now()))
 				return nil
@@ -135,7 +136,7 @@ func newSavingsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), a)
+					return output.JSON(c.OutOrStdout(), a)
 				}
 				fmt.Fprint(c.OutOrStdout(), a.Text(deps.now().Location()))
 				return nil
@@ -177,7 +178,7 @@ func newSavingsDiscounts(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), answer)
+					return output.JSON(c.OutOrStdout(), answer)
 				}
 				var set struct{ Settings fleet.Discounts }
 				if json.Unmarshal(answer, &set) == nil && (set.Settings != fleet.Discounts{}) {
@@ -257,7 +258,7 @@ func newAudit(deps fleetDeps) *cobra.Command {
 				if shown == nil {
 					shown = []fleet.AuditEntry{}
 				}
-				return printJSON(c.OutOrStdout(), map[string]any{"entries": shown})
+				return output.JSON(c.OutOrStdout(), map[string]any{"entries": shown})
 			}
 			out := c.OutOrStdout()
 			fmt.Fprint(out, fleet.AuditTable(shown, deps.now().Location()))

@@ -1818,7 +1818,7 @@ other header never does, so the request counts.
   gcp routers install --version <default>`, and an onboarding without it says nothing of the request logs.
 - **The offboarding** sets the `logConfig` back when it is still what Dormeto set, and says so. If you changed it since,
   it is left, with a notice naming the backend service.
-- **`workloads show`** says what the idle check reads: `idle check: request logs` or `idle check: request count`. It also says why the last nap was given up, `nap given up: backends-changed, 2026-11-08T04:55:57Z`, until a nap succeeds (`--json` carries it as `napAborted`).
+- **`workloads show`** says what the idle check reads: `idle check  request logs` or `idle check  request count`. It also says why the last nap was given up, in the local time, `nap given up  backends-changed, 2026-11-08 04:55 UTC`, until a nap succeeds (`--json` carries it as `napAborted`).
 - **The cost** is Cloud Logging's: its ingestion is charged past 50 GiB a month and project, about 1 KB per request.
 - **Terraform:** if you write the backend service in Terraform, keep this block in it, so an apply does not turn the logs
   off:
@@ -1895,8 +1895,8 @@ wake.
 
 | Command | What it does |
 |---|---|
-| `workloads list` | the router's workloads and their states; `--state`, `--search` and `--tag` filter them as AWS's (`--tag` needs router 0.40.0, which answers the tags), `--json` prints AWS's list object `{workloads, total, byState, cursor, errors}` |
-| `workloads show <id>` | one workload: state, load balancer, URL map, backend service, waker backend service, settings, backends (VMs, groups, Cloud SQL instances, pods), its pause, what the idle check reads, why the last nap was given up (`nap given up: <reason>, <time>`, until a nap succeeds), and a Cloud SQL instance that no longer exists |
+| `workloads list` | the router's workloads and their states, AWS's table (`ROUTER`, `WORKLOAD`, `NAME`, `CLOUD`, `STATE`, `TAGS`, `CHANGED`) and its count (`2 workloads (1 ASLEEP, 1 AWAKE)`); `--state`, `--search` and `--tag` filter them as AWS's (`--tag` needs router 0.40.0, which answers the tags), `--json` prints AWS's list object `{workloads, total, byState, cursor, errors}` |
+| `workloads show <id>` | one workload, as AWS's `workloads show` lays it out: state, name, tags, then Google Cloud's own rows (load balancer, URL map, backend service, waker backend service, hosts, backends: VMs, groups, Cloud SQL instances, pods; the last wake, what the idle check reads, why the last nap was given up, `nap given up  <reason>, <time>`, until a nap succeeds, and a Cloud SQL instance that no longer exists), its settings and its pauses, in the local time |
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
 | `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed). It is confirmed on a terminal, as AWS's (`Offboard 1 workload?`; without one, `--yes` is needed: exit 2, nothing changed; declined: `not confirmed: nothing sent`, exit 0); a rerun that only finishes the untag and the access cleanup, the controller no longer holding the workload, is confirmed too |
 | `workloads nap <id>`, `workloads wake <id> [--wait] [--timeout <d>]` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; `wake --wait` follows it until the workload is awake (`<router>/<id>: awake`; 15 minutes by default, `failed to wake` and `timeout` exit 1), or follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends). A nap of a workload asleep already says `not awake (ASLEEP)`, as AWS words its refusal, but exits 0, since the controller does not refuse it (AWS exits 1) |
@@ -1906,7 +1906,10 @@ wake.
 | `workloads settings <id>...`, `routers settings` | the [settings](#google-cloud-settings-and-their-levels) of a workload, and of the router's level |
 | `workloads waiting-page show`, `set` or `clear <id>`, `routers waiting-page show`, `set` or `clear` | the [waiting page](#the-waiting-page-on-google-cloud) of a workload and of the router |
 
-`--json` prints AWS's shapes, on stdout alone: a write's answer by target, `{"<router>/<workload>": answer}` (`{}` when
+The text is AWS's: a pause in the local time (`paused by <you> on <time>: <reason>, until <time>, keeps asleep`), a
+workload's and a router's pause line alike (`<target>: paused until resumed` or `until <time>`, `; woken <workloads>`),
+the list's table and `show`'s labelled block, in which what Google Cloud does not have is left out. `--json` prints
+AWS's shapes, on stdout alone: a write's answer by target, `{"<router>/<workload>": answer}` (`{}` when
 it is refused, an onboarding or an offboarding too; the router's writes `{"<router>": answer}`), the list's object, and
 a workload as a manager row has it, whatever the router's version: `router`, `account` (the project), `region`, `cloud:
 "gcp"`, `workloadId` (`id` before CLI 0.14.0) and `pauses`, each with its `scope` (`paused` before), and its backends as
@@ -2097,7 +2100,7 @@ resumes, as Google changes no type while a VM is suspended. The next stop gives 
   install` adds to the role `dormetoRouterBackends`, under its `dormeto=managed` condition: run it again on a router
   installed before. Without it a wake that needs a fallback fails with `the router's role lacks
   compute.instances.setMachineType: run dormeto gcp routers install again`.
-- **What you see.** `workloads show` lists the fallback types and the VMs running on one (`running on a fallback type: web-1 e2-medium
+- **What you see.** `workloads show` lists the fallback types and the VMs running on one (`running on a fallback type  web-1 e2-medium
   (was e2-small)`); the log says `InstanceTypeFallback`, and `InstanceTypeNotReverted` when a VM could not be given its own type back
   (the next stop tries again). An offboarding names each VM that keeps a fallback type.
 
@@ -2147,8 +2150,11 @@ dormeto gcp routers resume --project my-project --region europe-west1
   schedule's JSON, the same as on AWS ([Keeping workloads awake and scheduling
   them](#keeping-workloads-awake-and-scheduling-them), and [Schedule recurrences](#schedule-recurrences) from router
   0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`. The controller checks it and a refused one prints what
-  is wrong, exit 1. `schedule show` prints the windows, a recurrence in words, and the next events with their local time
-  and zone; `--json` prints the file under `schedule`. `schedule clear` leaves the workload to its idle window alone.
+  is wrong, exit 1. `schedule show` prints AWS's words: the time zone, the windows (a recurrence in words), `except`,
+  `maximum nap`, the join and the next events in the schedule's zone; `--json` prints AWS's `{schedule, next,
+  joinMinutes, joinFrom, joinInherited}`, the file under `schedule` (with who set it and when), without AWS's
+  `maintenanceDue`, which the router's answer does not have. `schedule set` prints AWS's lines, `<target>: schedule set`
+  and the next events. `schedule clear` leaves the workload to its idle window alone.
 - During a nap window, the waiting page tells a visitor when the window ends, and the visitor's browser does not wake
   the workload. Google Cloud has no maintenance wake of its own, so `maxNapDays` is only yours.
 - The router's check asks at most 10 scheduled naps each run, every 5 minutes, oldest first: 30 workloads in one nap

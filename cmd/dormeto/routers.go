@@ -22,6 +22,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 	"github.com/Dormeto/cli/internal/schedule"
 )
 
@@ -79,7 +80,7 @@ func newRoutersShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), d)
+					return output.JSON(c.OutOrStdout(), d)
 				}
 				fmt.Fprint(c.OutOrStdout(), d.Text(deps.now().Location(), deps.now()))
 				return nil
@@ -184,7 +185,7 @@ func newRoutersUninstall(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	fl.BoolVar(&yes, "yes", false, yesAlways)
 	fl.BoolVar(&asJSON, "json", false, "print the operations, as the manager last said them")
 	wait.bind(cmd)
 	return cmd
@@ -269,10 +270,9 @@ func routerSends(ctx context.Context, c *cobra.Command, api *fleet.Client, names
 
 func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		reason, dur, until string
-		keepAsleep         bool
-		dryRun, yes        bool
-		asJSON             bool
+		pause       pauseFlags
+		dryRun, yes bool
+		asJSON      bool
 	)
 	cmd := &cobra.Command{
 		Use: "pause <router>... --reason <text> [--for <duration> | --until <time>] [--keep-asleep]", Short: "Pause routers: no automatic nap of their workloads",
@@ -285,13 +285,14 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"others (exit 1). Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			names, err := routerNames(args)
+			var reason string
 			if err == nil {
-				reason, err = pauseReason(reason)
+				reason, err = pauseReason(pause.reason)
 			}
 			var end time.Time
 			var set bool
 			if err == nil {
-				end, set, err = endOf(deps.now(), dur, until, maxPause, false)
+				end, set, err = pause.end(deps.now())
 			}
 			if err != nil {
 				return finish(c, err)
@@ -300,7 +301,7 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				Reason     string `json:"reason"`
 				Until      string `json:"until,omitempty"`
 				KeepAsleep bool   `json:"keepAsleep"`
-			}{Reason: reason, KeepAsleep: keepAsleep}
+			}{Reason: reason, KeepAsleep: pause.keepAsleep}
 			if set {
 				body.Until = end.UTC().Format("2006-01-02T15:04:05Z")
 			}
@@ -311,28 +312,15 @@ func newRoutersPause(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				return routerCalls(ctx, c, api, names, "/pause", body, asJSON, func(raw json.RawMessage) string {
 					var a struct{ Woken []string }
 					_ = json.Unmarshal(raw, &a)
-					s := "paused"
-					if set {
-						s += " until " + end.In(deps.now().Location()).Format("2006-01-02 15:04 MST")
-					}
-					if keepAsleep {
-						s += ", keeping asleep"
-					}
-					if len(a.Woken) > 0 {
-						s += ", woke " + strings.Join(a.Woken, ", ")
-					}
-					return s
+					return fleet.PauseResult(end, deps.now().Location(), a.Woken)
 				})
 			})
 		},
 	}
+	pause.bind(cmd, pauseHelp{"why, 1 to 256 characters, shown in the manager", "for how long, up to 366 days (90m, 2h, 3d)", "do not wake the workloads that are asleep"})
 	fl := cmd.Flags()
-	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager")
-	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d)")
-	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
-	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake the workloads that are asleep")
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
+	fl.BoolVar(&yes, "yes", false, yesSeveralRouters)
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	return cmd
 }
@@ -369,7 +357,7 @@ func newRoutersResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
+	fl.BoolVar(&yes, "yes", false, yesSeveralRouters)
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	return cmd
 }
@@ -463,7 +451,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the manager's default)")
 	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit (the manager's default)")
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation of several routers (needed without a terminal)")
+	fl.BoolVar(&yes, "yes", false, yesSeveralRouters)
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	return cmd

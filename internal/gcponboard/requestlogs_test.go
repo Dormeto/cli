@@ -815,7 +815,7 @@ func TestUninstallForceAsksTheRequestLogsStep(t *testing.T) {
 }
 
 func TestWorkloadsShowSaysWhatTheIdleCheckReads(t *testing.T) {
-	for reads, want := range map[string]string{"request logs": "  idle check: request logs\n", "request count": "  idle check: request count\n", "": ""} {
+	for reads, want := range map[string]string{"request logs": "request logs", "request count": "request count", "": ""} {
 		g := newLogsRig(t)
 		g.s.Workloads["shop"] = "AWAKE"
 		g.s.WorkloadDocs["shop"] = map[string]any{"backendService": "shop"}
@@ -826,7 +826,7 @@ func TestWorkloadsShowSaysWhatTheIdleCheckReads(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("exit %d:\n%s", code, out)
 		}
-		if want == "" && strings.Contains(out, "idle check") || !strings.Contains(out, want) {
+		if want == "" && strings.Contains(out, "idle check") || want != "" && !hasRow(out, "idle check", want) {
 			t.Errorf("%q:\n%s", reads, out)
 		}
 	}

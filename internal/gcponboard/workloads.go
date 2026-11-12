@@ -124,8 +124,8 @@ type workload struct {
 		Reason string `json:"reason"`
 		At     string `json:"at"`
 	} `json:"napAborted"`
-	Paused *pausedOf  `json:"paused"`
-	Pauses []pausedOf `json:"pauses"`
+	Paused *fleet.Pause  `json:"paused"`
+	Pauses []fleet.Pause `json:"pauses"`
 	// Woken are the workloads a pause's answer says it woke, when the router answers them.
 	Woken []string `json:"woken"`
 	LB    *lbRef   `json:"lb"`
@@ -439,22 +439,20 @@ func (x *run) list() error {
 	if x.r.JSON {
 		return x.printList(rows, every)
 	}
-	switch {
-	case len(all) == 0 && x.filtering():
-		x.say("no workload of router %s matches the filters", x.n.router)
-		return nil
-	case len(all) == 0:
-		x.say("no workload is onboarded in router %s", x.n.router)
-		return nil
-	}
+	// AWS's table and the line under it ("0 workloads" for none, filtered or not), the rows as the manager's (fleet.Workload):
+	// CHANGED since the state began, which the router answers of an AWAKE workload alone.
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	for _, w := range all {
-		mark := ""
-		if w.Paused != nil {
-			mark = " [paused]"
+	shown := make([]fleet.Workload, len(all))
+	for i, w := range all {
+		shown[i] = fleet.Workload{Router: x.n.managed, WorkloadID: w.ID, Name: w.Name, Cloud: "gcp", State: w.State, Tags: w.Tags}
+		if w.State == "AWAKE" {
+			shown[i].StateAt = w.AwakeSince
 		}
-		x.say("%-30s %-8s %s%s", w.ID, w.State, w.BackendService, mark)
 	}
+	if len(shown) > 0 {
+		fmt.Fprint(x.d.Out, fleet.WorkloadsTable(shown, x.d.Now()))
+	}
+	fmt.Fprintln(x.d.Out, fleet.WorkloadsSummary(fleet.Workloads{Rows: shown, Total: len(shown)}))
 	return nil
 }
 
@@ -471,30 +469,95 @@ func (x *run) show() error {
 		return err
 	}
 	return x.print(raw, func(w workload) {
-		x.say("Workload %s: %s", w.ID, w.State)
-		x.details(w)
-		if w.AwakeSince != "" {
-			x.say("  awake since: %s", w.AwakeSince)
-		}
-		if w.LastWake != nil {
-			x.say("  last wake: %.1f s", float64(w.LastWake.DurationMs)/1000)
-		}
-		if w.IdleReads != "" {
-			x.say("  idle check: %s", w.IdleReads)
-		}
-		if w.NapAborted != nil {
-			x.say("  nap given up: %s, %s", w.NapAborted.Reason, w.NapAborted.At)
-		}
-		if len(w.Failure) > 0 && string(w.Failure) != "null" {
-			x.say("  failure: %s", w.Failure)
-		}
-		if w.Paused != nil {
-			x.say("  %s (since %s)", w.Paused, w.Paused.At)
-		}
+		loc := x.d.Now().Location()
+		fmt.Fprint(x.d.Out, x.detailsOf(w).TextWith(x.n.managed, loc, w.more(loc)))
 	})
 }
 
-// details prints a workload's configuration.
+// detailsOf is the workload as AWS's `workloads show` reads the manager's (fleet.WorkloadDetails), each field from the
+// controller's answer: what it does not answer (the URL, the router's version, the manager's history and costs) is left out.
+func (x *run) detailsOf(w workload) fleet.WorkloadDetails {
+	d := fleet.WorkloadDetails{WorkloadID: w.ID, Name: w.Name, State: w.State, Cloud: "gcp", Account: x.n.project, Region: x.n.region, Tags: w.Tags,
+		SettingsFrom: w.SettingsFrom, Type: w.Type, Hibernation: w.Hibernation, Pauses: w.Pauses}
+	if w.State == "AWAKE" {
+		d.UpdatedAt = w.AwakeSince // the state's start, which the router answers of an AWAKE workload alone
+	}
+	if len(d.Pauses) == 0 && w.Paused != nil { // a router before 0.40.0 answers paused alone
+		d.Pauses = []fleet.Pause{*w.Paused}
+	}
+	_ = json.Unmarshal(w.Failure, &d.Failure) // a failure of another shape is left out
+	s := &d.Settings
+	for key, value := range map[string]**int{"idleMinutes": &s.IdleMinutes, "waitSeconds": &s.WaitSeconds, "drainSeconds": &s.DrainSeconds,
+		"wakeTimeoutSeconds": &s.WakeTimeoutSeconds, "maxHolders": &s.MaxHolders, "failedRetrySeconds": &s.FailedRetrySeconds} {
+		if n, ok := w.Settings[key].(float64); ok {
+			v := int(n)
+			*value = &v
+		}
+	}
+	return d
+}
+
+// more is what only Google Cloud's router answers, in rows of AWS's form, times in loc: its load balancer, URL map, backend
+// services, hosts and backends, its last wake, what the idle check reads, the nap given up and the databases gone; and after the
+// settings, the wake mode, the fallback machine types and the rules of every level (a router with the levels).
+func (w workload) more(loc *time.Location) fleet.DetailsMore {
+	var lb, lastWake, napAborted string
+	if w.LB != nil {
+		lb = w.LB.String()
+	}
+	if w.LastWake != nil {
+		lastWake = fmt.Sprintf("%.1f s", float64(w.LastWake.DurationMs)/1000)
+	}
+	if w.NapAborted != nil {
+		napAborted = w.NapAborted.Reason + ", " + fleet.When(w.NapAborted.At, loc)
+	}
+	var backends, gone []string
+	for _, b := range w.Backends {
+		backends = append(backends, b.String())
+	}
+	for _, name := range w.CompanionsGone {
+		gone = append(gone, "Cloud SQL instance "+name+" no longer exists: its workload no longer naps; offboard and onboard it again")
+	}
+	more := fleet.DetailsMore{Rows: [][2]string{{"load balancer", lb}, {"URL map", w.URLMap}, {"backend service", w.BackendService},
+		{"waker backend service", w.WakerBackendService}, {"hosts", strings.Join(w.Hosts, ", ")}, {"backends", strings.Join(backends, "\n")},
+		{"last wake", lastWake}, {"idle check", w.IdleReads}, {"nap given up", napAborted}, {"problems", strings.Join(gone, "\n")}}}
+	var mode string
+	if m, ok := w.Settings["wakeMode"].(string); ok {
+		mode = m
+		if w.SettingsFrom["wakeMode"] != "" {
+			mode += " (" + w.sourceText("wakeMode") + ")"
+		}
+	}
+	var onFallback []string
+	for _, t := range w.Fallbacks {
+		onFallback = append(onFallback, fmt.Sprintf("%s %s (was %s)", t.Instance, t.To, t.From))
+	}
+	sort.Strings(onFallback)
+	more.Settings = [][2]string{{"wake mode", mode}, {"fallback machine types", strings.Join(w.FallbackInstanceTypes, ", ")},
+		{"running on a fallback type", strings.Join(onFallback, ", ")}}
+	if len(w.SettingsFrom) > 0 { // the rules of every level, with the levels alone: an older router says none of them
+		more.Settings = append(more.Settings, [2]string{"no-wake rules", rulesText(w.NoWakeRules)}, [2]string{"wake rules", rulesText(w.WakeRules)})
+	}
+	return more
+}
+
+// rulesText is the rules of every level, one a line with its level, or none.
+func rulesText(rules []describedRule) string {
+	if len(rules) == 0 {
+		return "none"
+	}
+	lines := make([]string, len(rules))
+	for i, r := range rules {
+		level := r.Level
+		if r.From != "" { // a wake rule's level
+			level = r.From
+		}
+		lines[i] = fleet.RuleText(r.NoWake) + " (" + level + ")"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// details prints a workload's configuration under the onboarding's line (`workloads show` prints AWS's layout: detailsOf, more).
 func (x *run) details(w workload) {
 	line := func(name, value string) {
 		if value != "" {

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // oneTarget is the single <router>/<workload id> a read command names, or a usage error.
@@ -139,7 +140,7 @@ func workloadCloud(ctx context.Context, api *fleet.Client, router string, a flee
 // printRead prints the manager's answer as it is under --json, else the text of its decoding.
 func printRead[T any](c *cobra.Command, raw json.RawMessage, asJSON bool, text func(T) string) error {
 	if asJSON {
-		return printJSON(c.OutOrStdout(), raw)
+		return output.JSON(c.OutOrStdout(), raw)
 	}
 	var v T
 	if err := json.Unmarshal(raw, &v); err != nil {

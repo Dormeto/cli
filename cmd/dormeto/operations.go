@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 func newOperations(deps fleetDeps) *cobra.Command {
@@ -51,7 +52,7 @@ func newOperationsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if shown == nil {
 						shown = []fleet.Operation{}
 					}
-					return printJSON(c.OutOrStdout(), map[string]any{"operations": shown})
+					return output.JSON(c.OutOrStdout(), map[string]any{"operations": shown})
 				}
 				out := c.OutOrStdout()
 				fmt.Fprint(out, fleet.OperationsTable(shown, deps.now()))
@@ -107,7 +108,7 @@ func newOperationsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), op)
+					return output.JSON(c.OutOrStdout(), op)
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.OperationText(op, deps.now().Location()))
 				return nil
@@ -184,13 +185,13 @@ func watch(ctx context.Context, c *cobra.Command, deps fleetDeps, api *fleet.Cli
 			}
 			fmt.Fprintf(errs, "%s\n%s: still running in the manager: dormeto aws operations watch %s\n", cause, label, id)
 			if asJSON {
-				_ = printJSON(c.OutOrStdout(), op)
+				_ = output.JSON(c.OutOrStdout(), op)
 			}
 			return exitCode(1)
 		}
 	}
 	if asJSON {
-		if err := printJSON(c.OutOrStdout(), op); err != nil {
+		if err := output.JSON(c.OutOrStdout(), op); err != nil {
 			return err
 		}
 	}

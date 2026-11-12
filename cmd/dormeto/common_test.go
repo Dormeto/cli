@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // opsAPI is a fake manager's operations: each one started runs two reads, a step changing at each, then ends succeeded
@@ -143,7 +144,7 @@ func newOpsTest(deps fleetDeps) *cobra.Command {
 			}
 			ops, err := runOperations(ctx, c, deps, items, concurrency, w)
 			if asJSON {
-				if jerr := printJSON(c.OutOrStdout(), ops); jerr != nil {
+				if jerr := output.JSON(c.OutOrStdout(), ops); jerr != nil {
 					return jerr
 				}
 			}

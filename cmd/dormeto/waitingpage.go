@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // pageLevel says what a waiting-page command acts on.
@@ -122,9 +123,22 @@ func readLimited(name string, stdin io.Reader, limit int) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(in, int64(limit)+1))
 }
 
-// pageDocument is the document the flags of set ask for: a template from --icon, --title and --description, or a custom
-// page from --html, never both. The icon and the page are read and checked here, before any call.
-func pageDocument(c *cobra.Command, icon, title, description, html string) (fleet.PageDoc, error) {
+// pageFlags are waiting-page set's --icon, --title, --description and --html, on both subtrees.
+type pageFlags struct{ icon, title, description, html string }
+
+// bind binds them, --html with the command's help (who may set a custom page).
+func (p *pageFlags) bind(cmd *cobra.Command, htmlHelp string) {
+	fl := cmd.Flags()
+	fl.StringVar(&p.icon, "icon", "", "auto, none or an image file (PNG, JPEG, WebP, SVG or ICO, at most 64 KiB)")
+	fl.StringVar(&p.title, "title", "", "the page's title, at most 80 characters")
+	fl.StringVar(&p.description, "description", "", "the page's description, plain text, at most 500 characters")
+	fl.StringVar(&p.html, "html", "", htmlHelp)
+}
+
+// document is the document the flags ask for: a template from --icon, --title and --description, or a custom page from
+// --html, never both. The icon and the page are read and checked here, before any call.
+func (p *pageFlags) document(c *cobra.Command) (fleet.PageDoc, error) {
+	icon, title, description, html := p.icon, p.title, p.description, p.html
 	fl := c.Flags()
 	if fl.Changed("html") {
 		for _, other := range []string{"icon", "title", "description"} {
@@ -179,7 +193,7 @@ func pageDocument(c *cobra.Command, icon, title, description, html string) (flee
 }
 
 func newWaitingPageSet(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Command {
-	var icon, title, description, html string
+	var page pageFlags
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "set" + l.use + " [--icon auto|none|<file>] [--title <text>] [--description <text>] | --html <file or ->", SilenceErrors: true,
@@ -195,7 +209,7 @@ func newWaitingPageSet(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Comman
 			label, path, err := l.target(args)
 			var doc fleet.PageDoc
 			if err == nil {
-				doc, err = pageDocument(c, icon, title, description, html)
+				doc, err = page.document(c)
 			}
 			if err != nil {
 				return finish(c, err)
@@ -206,7 +220,7 @@ func newWaitingPageSet(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Comman
 					return pageError(label, err)
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), orRaw(raw))
+					return output.JSON(c.OutOrStdout(), orRaw(raw))
 				}
 				var v fleet.PageView
 				_ = json.Unmarshal(raw, &v)
@@ -219,12 +233,8 @@ func newWaitingPageSet(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Comman
 			})
 		},
 	}
-	fl := cmd.Flags()
-	fl.StringVar(&icon, "icon", "", "auto, none or an image file (PNG, JPEG, WebP, SVG or ICO, at most 64 KiB)")
-	fl.StringVar(&title, "title", "", "the page's title, at most 80 characters")
-	fl.StringVar(&description, "description", "", "the page's description, plain text, at most 500 characters")
-	fl.StringVar(&html, "html", "", "a custom page: an HTML file, - for standard input (at most 256 KiB; needs an administrator)")
-	fl.BoolVar(&asJSON, "json", false, "print the manager's answer")
+	page.bind(cmd, "a custom page: an HTML file, - for standard input (at most 256 KiB; needs an administrator)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }
 
@@ -245,7 +255,7 @@ func newWaitingPageClear(f *fleetFlags, deps fleetDeps, l pageLevel) *cobra.Comm
 					return pageError(label, err)
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), orRaw(raw))
+					return output.JSON(c.OutOrStdout(), orRaw(raw))
 				}
 				fmt.Fprintf(c.OutOrStdout(), "%s: waiting page cleared\n", label)
 				var v fleet.PageView

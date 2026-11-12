@@ -1,7 +1,7 @@
 package main
 
 // `dormeto gcp workloads|routers waiting-page show|set|clear`: the branded waiting page of a workload or of the Google Cloud router,
-// on AWS's flags and checks (pageDocument): a template from --icon, --title and --description, or a custom page from --html, the
+// on AWS's flags and checks (pageFlags.document): a template from --icon, --title and --description, or a custom page from --html, the
 // icon and the page checked before any call (exit 2). The router's answers are printed as AWS's (fleet.PageView).
 
 import (
@@ -84,7 +84,7 @@ func newGcpPageClear(run gcpRun, version string, workload bool, noun string) *co
 
 func newGcpPageSet(run gcpRun, version string, workload bool, noun string) *cobra.Command {
 	var f gcpFlags
-	var icon, title, description, html string
+	var page pageFlags
 	var doc *fleet.PageDoc
 	cmd := gcpPageTarget("set", "Set the "+noun+"'s waiting page (replacing the level's document)",
 		"Set the "+noun+"'s waiting page, replacing what this level has. A template is written by --icon (auto: the favicon read from the\n"+
@@ -102,7 +102,7 @@ func newGcpPageSet(run gcpRun, version string, workload bool, noun string) *cobr
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		p, err := pageDocument(c, icon, title, description, html)
+		p, err := page.document(c)
 		if err != nil {
 			return finish(c, err)
 		}
@@ -110,10 +110,6 @@ func newGcpPageSet(run gcpRun, version string, workload bool, noun string) *cobr
 		return nil
 	}
 	gcpWriteFlags(cmd, &f)
-	fl := cmd.Flags()
-	fl.StringVar(&icon, "icon", "", "auto, none or an image file (PNG, JPEG, WebP, SVG or ICO, at most 64 KiB)")
-	fl.StringVar(&title, "title", "", "the page's title, at most 80 characters")
-	fl.StringVar(&description, "description", "", "the page's description, plain text, at most 500 characters")
-	fl.StringVar(&html, "html", "", "a custom page: an HTML file, - for standard input (at most 256 KiB; the router's custom pages must be on)")
+	page.bind(cmd, "a custom page: an HTML file, - for standard input (at most 256 KiB; the router's custom pages must be on)")
 	return cmd
 }

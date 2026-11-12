@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -115,35 +114,32 @@ func newGcpWorkloadsWrite(verb, short, long string, run gcpRun, version string, 
 		gcpWriteFlags(cmd, &f)
 		return cmd
 	}
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
-	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, dryRunUsage)
+	cmd.Flags().BoolVar(&f.yes, "yes", false, yesAlways)
 	return cmd
 }
 
 func newGcpWorkloadsWake(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	var wait bool
-	var timeout time.Duration
+	var wake wakeWait
 	cmd := newGcpWorkloadsOneWith("wake", "Wake a workload now",
 		"Wake a workload now. --wait follows it every 5 s until it is awake (FAILED ends it with the failure, exit 1;\n"+
 			"--timeout, exit 1; Ctrl-C, exit 130), as AWS's.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			if wait {
-				r.Wait, r.Timeout = true, timeout
+			if wake.wait {
+				r.Wait, r.Timeout = true, wake.timeout
 			}
 			return run(ctx, d, r)
 		}, version, &f, false)
 	gcpWriteFlags(cmd, &f)
-	fl := cmd.Flags()
-	fl.BoolVar(&wait, "wait", false, "wait until the workload is awake")
-	fl.DurationVar(&timeout, "timeout", 15*time.Minute, "with --wait, stop waiting after this long")
+	wake.bind(cmd, "wait until the workload is awake", "with --wait, stop waiting after this long")
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {
 			return err
 		}
-		if wait && timeout <= 0 {
-			return finish(c, usagef("--timeout: %s is not a positive duration", timeout))
+		if err := wake.check(); err != nil {
+			return finish(c, err)
 		}
 		return nil
 	}
@@ -283,7 +279,7 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&requestLogs, "request-logs", false, "turn the backend service's request logs on, every request, for the idle check to read them (set back at the offboarding)")
 	fl.StringVar(&cluster, "gke-cluster", "", "the workload's pods are in this GKE cluster, as <location>/<name>: its Kubernetes RBAC is printed, asked and applied")
 	gcpRouterFlags(cmd, &f)
-	fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	fl.BoolVar(&f.yes, "yes", false, yesAlways)
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
 	return cmd
 }
@@ -326,8 +322,8 @@ func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Comman
 
 func newGcpWorkloadsPause(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	var reason, dur, until, end string
-	var keepAsleep bool
+	var pause pauseFlags
+	var reason, end string
 	cmd := newGcpWorkloadsOneWith("pause", "Pause a workload's naps",
 		"Pause a workload: it is not napped, by its idle window, its schedule or 'nap', until it is resumed or the pause ends.\n"+
 			"A workload asleep is woken. With --keep-asleep it is not: it stays as it is, a visitor still wakes the workload,\n"+
@@ -335,22 +331,19 @@ func newGcpWorkloadsPause(run gcpRun, version string) *cobra.Command {
 			"2h, 3d); --until is an RFC 3339 time (2026-12-01T08:00:00+01:00) or HH:MM today in the local time zone, within 366\n"+
 			"days; without either the pause lasts until 'resume'. --reason (1 to 256 characters) is shown in the manager.",
 		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, end
+			r.Reason, r.KeepAsleep, r.Until = reason, pause.keepAsleep, end
 			return run(ctx, d, r)
 		}, version, &f, false)
 	gcpWriteFlags(cmd, &f)
-	fl := cmd.Flags()
-	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager (required)")
-	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake a workload asleep: a visitor still wakes it, scheduled and maintenance wakes wait")
-	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d); default until resumed")
-	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
+	pause.bind(cmd, pauseHelp{reasonRequired, "for how long, up to 366 days (90m, 2h, 3d); default until resumed",
+		"do not wake a workload asleep: a visitor still wakes it, scheduled and maintenance wakes wait"})
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {
 			return err
 		}
 		var err error
-		if reason, end, err = gcpPauseEnd(reason, dur, until); err != nil {
+		if reason, end, err = pause.gcpEnd(); err != nil {
 			return finish(c, err)
 		}
 		return nil
@@ -397,7 +390,7 @@ func newGcpWorkloadsAccessVerb(verb, short, long string, run gcpRun, version str
 	fl.StringVar(&workload, "workload", "", "the workload's ID, which names the objects (required)")
 	fl.BoolVar(&f.json, "json", false, "print the result as JSON")
 	if writes {
-		fl.BoolVar(&f.yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+		fl.BoolVar(&f.yes, "yes", false, yesAlways)
 		fl.BoolVar(&f.dryRun, "dry-run", false, "print what it would change and stop")
 	}
 	return cmd

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 func newExclusions(deps fleetDeps) *cobra.Command {
@@ -42,7 +43,7 @@ func newExclusionsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if es == nil {
 						es = []fleet.Exclusion{}
 					}
-					return printJSON(c.OutOrStdout(), map[string]any{"exclusions": es})
+					return output.JSON(c.OutOrStdout(), map[string]any{"exclusions": es})
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.ExclusionsText(es, deps.now().Location()))
 				return nil
@@ -142,7 +143,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 366 days (90m, 2h, 3d); default until lifted")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	fl.BoolVar(&yes, "yes", false, yesAlways)
 	fl.BoolVar(&asJSON, "json", false, "print the operation, as the manager last said it")
 	wait.bind(cmd)
 	return cmd

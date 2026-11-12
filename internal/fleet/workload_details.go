@@ -94,8 +94,20 @@ type WorkloadDetails struct {
 // monthHours is the hours of a month the dashboard prices a saving by.
 const monthHours = 730
 
+// DetailsMore is what one cloud's router answers of a workload beyond the shared details, in rows of their form: Rows after the
+// workload's own (Google Cloud's load balancer, URL map, backend services, hosts and backends…), Settings after its settings'.
+// A row with an empty value is left out.
+type DetailsMore struct {
+	Rows, Settings [][2]string
+}
+
 // Text is the workload as labelled lines (times in loc), then its settings, pauses, schedule, last 7 days and costs.
 func (d WorkloadDetails) Text(router string, loc *time.Location) string {
+	return d.TextWith(router, loc, DetailsMore{})
+}
+
+// TextWith is Text with a cloud's own rows, more, among the shared ones.
+func (d WorkloadDetails) TextWith(router string, loc *time.Location, more DetailsMore) string {
 	state := d.State
 	if d.UpdatedAt != "" {
 		state += " since " + When(d.UpdatedAt, loc)
@@ -113,20 +125,20 @@ func (d WorkloadDetails) Text(router string, loc *time.Location) string {
 		tags = append(tags, k+"="+d.Tags[k])
 	}
 	var b strings.Builder
-	b.WriteString(Labelled([][2]string{
+	b.WriteString(Labelled(append([][2]string{
 		{"workload", router + "/" + d.WorkloadID}, {"name", d.Name}, {"state", state}, {"failure", failure}, {"url", d.URL},
 		{"cloud", CloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"router version", version}, {"tags", strings.Join(tags, ", ")},
-	}))
+	}, more.Rows...)))
 	b.WriteString(d.Description.block(loc))
 	section := func(title, text string) {
 		if text != "" {
 			b.WriteString("\n" + title + "\n" + text)
 		}
 	}
-	section("settings", d.settingsText())
+	section("settings", d.settingsText(more.Settings))
 	var pauses []string
 	for _, p := range d.Pauses {
-		pauses = append(pauses, "  "+pauseText(p, loc)+"\n")
+		pauses = append(pauses, "  "+PauseText(p, loc)+"\n")
 	}
 	section("pauses", strings.Join(pauses, ""))
 	section("schedule", d.scheduleText())
@@ -135,7 +147,7 @@ func (d WorkloadDetails) Text(router string, loc *time.Location) string {
 	return b.String()
 }
 
-func (d WorkloadDetails) settingsText() string {
+func (d WorkloadDetails) settingsText(more [][2]string) string {
 	s := d.Settings
 	n := func(v *int, format func(int) string) string {
 		if v == nil {
@@ -160,7 +172,7 @@ func (d WorkloadDetails) settingsText() string {
 		}
 		return value + " (" + d.sourceText(d.SettingsFrom[key]) + ")"
 	}
-	return block(Labelled([][2]string{
+	return block(Labelled(append([][2]string{
 		{"type", d.typeText()},
 		{"idle window", from("idleMinutes", n(s.IdleMinutes, func(v int) string { return fmt.Sprintf("%d min", v) }))},
 		{"hold", from("waitSeconds", n(s.WaitSeconds, func(v int) string { return Seconds(v) }))},
@@ -169,7 +181,7 @@ func (d WorkloadDetails) settingsText() string {
 		{"held requests", from("maxHolders", n(s.MaxHolders, func(v int) string { return fmt.Sprintf("≤ %d", v) }))},
 		{"retry after a failed wake", from("failedRetrySeconds", n(s.FailedRetrySeconds, func(v int) string { return Seconds(v) }))},
 		{"hibernate", hibernate}, {"hibernate readiness", instances},
-	}))
+	}, more...)))
 }
 
 // sourceText is a level in a few words, as the dashboard says it.
@@ -257,21 +269,7 @@ func (d WorkloadDetails) scheduleText() string {
 	if s.TimeZone != "" {
 		fmt.Fprintf(&b, "  time zone %s\n", s.TimeZone)
 	}
-	if note != "" {
-		fmt.Fprintf(&b, "  %s\n", note)
-	}
-	for _, w := range s.Windows {
-		fmt.Fprintf(&b, "  %s\n", ScheduleWindowText(w))
-	}
-	if len(s.Exceptions) > 0 {
-		fmt.Fprintf(&b, "  except %s\n", strings.Join(s.Exceptions, ", "))
-	}
-	if s.MaxNapDays > 0 {
-		fmt.Fprintf(&b, "  maximum nap %d %s\n", s.MaxNapDays, Plural(s.MaxNapDays, "day"))
-	}
-	if line := d.Line(); line != "" {
-		fmt.Fprintf(&b, "  %s\n", line)
-	}
+	s.lines(&b, note, d.Line())
 	s.PrintNext(&b, loc, d.Next, d.MaintenanceDue)
 	return b.String()
 }

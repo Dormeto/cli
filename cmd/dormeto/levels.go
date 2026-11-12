@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -237,7 +238,7 @@ func newTypesList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return printJSON(c.OutOrStdout(), a)
+					return output.JSON(c.OutOrStdout(), a)
 				}
 				out := c.OutOrStdout()
 				for _, t := range a.Types {
@@ -293,7 +294,7 @@ func newTypesShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if shown["settings"] == nil {
 						shown["settings"] = map[string]any{}
 					}
-					return printJSON(c.OutOrStdout(), shown)
+					return output.JSON(c.OutOrStdout(), shown)
 				}
 				fmt.Fprintln(c.OutOrStdout(), typeText(args[0], entry))
 				if d, ok := entry["description"].(string); ok && d != "" {
@@ -441,7 +442,7 @@ func putTypes(ctx context.Context, c *cobra.Command, api *fleet.Client, list []m
 	_ = json.Unmarshal(raw, &a)
 	fmt.Fprintf(textOut(c), "%s: %s\n", done, a.Note)
 	if jsonFlag(c) {
-		return printJSON(c.OutOrStdout(), orRaw(raw))
+		return output.JSON(c.OutOrStdout(), orRaw(raw))
 	}
 	return nil
 }

@@ -178,7 +178,7 @@ func (d RouterDetails) Text(loc *time.Location, now time.Time) string {
 	}
 	var pauses []string
 	for _, p := range d.Pauses {
-		pauses = append(pauses, pauseText(p, loc))
+		pauses = append(pauses, PauseText(p, loc))
 	}
 	workloads := fmt.Sprintf("%d", d.Workloads.Total)
 	if len(d.Workloads.ByState) > 0 {
@@ -239,21 +239,6 @@ func withSource(text, source string) string {
 		return text
 	}
 	return text + " (" + source + ")"
-}
-
-func pauseText(p Pause, loc *time.Location) string {
-	s := fmt.Sprintf("%spaused by %s", map[bool]string{true: "router "}[p.Scope == "router"], p.By)
-	if p.At != "" {
-		s += " on " + When(p.At, loc)
-	}
-	s += ": " + p.Reason
-	if p.Until != "" {
-		s += ", until " + When(p.Until, loc)
-	}
-	if p.KeepAsleep {
-		s += ", keeps asleep"
-	}
-	return s
 }
 
 func lambdaText(d RouterDetails) string {

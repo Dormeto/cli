@@ -112,7 +112,7 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 	cmd.Flags().StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the router's)")
 	cmd.Flags().StringVar(&kind, "type", "", "a type's name, or inherit (its backends')")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, dryRunUsage)
-	cmd.Flags().BoolVar(&f.yes, "yes", false, "do not ask for confirmation of several targets (needed without a terminal)")
+	cmd.Flags().BoolVar(&f.yes, "yes", false, yesSeveral)
 	return cmd
 }
 
@@ -178,14 +178,14 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 // gcpNow is the clock of the gcp commands that read a time: a pause's --for and --until.
 var gcpNow = time.Now
 
-// gcpPauseEnd reads a pause's --reason (1 to 256 characters, trimmed) and its end, --for or --until (RFC 3339, or HH:MM today in
-// the local time zone; within 366 days), before any call, as AWS's: the end in RFC 3339 and UTC, "" for none.
-func gcpPauseEnd(reason, dur, until string) (string, string, error) {
-	reason, err := pauseReason(reason)
-	if err != nil {
+// gcpEnd reads a pause's --reason (1 to 256 characters, trimmed) and its end, --for or --until (RFC 3339, or HH:MM today in the
+// local time zone; within 366 days), before any call, as AWS's: the end in RFC 3339 and UTC, "" for none. gcponboard sends them
+// as they are.
+func (p *pauseFlags) gcpEnd() (reason, end string, err error) {
+	if reason, err = pauseReason(p.reason); err != nil {
 		return "", "", err
 	}
-	t, set, err := endOf(gcpNow(), dur, until, maxPause, false)
+	t, set, err := p.end(gcpNow())
 	if err != nil || !set {
 		return reason, "", err
 	}
@@ -194,9 +194,8 @@ func gcpPauseEnd(reason, dur, until string) (string, string, error) {
 
 func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	var reason, dur, until string
-	var keepAsleep bool
-	var end string
+	var pause pauseFlags
+	var reason, end string
 	cmd := gcpCommand("pause", "Pause the router: no automatic nap of its workloads",
 		"Pause the router, as `dormeto aws routers pause` does: none of its workloads is napped automatically, and the workloads\n"+
 			"asleep are woken unless --keep-asleep (the woken ones are printed). --reason (1 to 256 characters) is shown in the manager.\n"+
@@ -205,23 +204,19 @@ func newGcpRoutersPause(run gcpRun, version string) *cobra.Command {
 			"the router is resumed. --json prints the controller's answer by router, {\"<router>\": …}, as AWS's. Routers 0.40.0 and\n"+
 			"later; an older one is refused with the version to install.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.Reason, r.KeepAsleep, r.Until = reason, keepAsleep, end
+			r.Reason, r.KeepAsleep, r.Until = reason, pause.keepAsleep, end
 			return run(ctx, d, r)
 		})
 	gcpRouterFlags(cmd, &f)
-	gcpRouterDryRunFlags(cmd, &f)
-	fl := cmd.Flags()
-	fl.StringVar(&reason, "reason", "", "why, 1 to 256 characters, shown in the manager (required)")
-	fl.StringVar(&dur, "for", "", "for how long, up to 366 days (90m, 2h, 3d)")
-	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")
-	fl.BoolVar(&keepAsleep, "keep-asleep", false, "do not wake the workloads that are asleep")
+	gcpWriteFlags(cmd, &f)
+	pause.bind(cmd, pauseHelp{reasonRequired, "for how long, up to 366 days (90m, 2h, 3d)", "do not wake the workloads that are asleep"})
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {
 			return err
 		}
 		var err error
-		if reason, end, err = gcpPauseEnd(reason, dur, until); err != nil {
+		if reason, end, err = pause.gcpEnd(); err != nil {
 			return finish(c, err)
 		}
 		return nil
@@ -236,22 +231,16 @@ func newGcpRoutersResume(run gcpRun, version string) *cobra.Command {
 			"\"not paused\". --json prints the controller's answer by router, {\"<router>\": …}, as AWS's. Routers 0.40.0 and later.",
 		&f, []string{"project", "region"}, version, run)
 	gcpRouterFlags(cmd, &f)
-	gcpRouterDryRunFlags(cmd, &f)
+	gcpWriteFlags(cmd, &f)
 	return cmd
 }
 
 // asksNothingYes is AWS's --yes of a command that asks nothing: a script passes it to every writing command.
 const asksNothingYes = "accepted and ignored: this command asks no confirmation"
 
-// gcpWriteFlags are AWS's --dry-run and --yes of a write that asks nothing: --dry-run says the request and sends nothing,
-// --yes is accepted, a no-op, so that a script passes it to every write.
+// gcpWriteFlags are AWS's --dry-run and --yes of a write that asks nothing (a single workload's, or a router's pause and
+// resume): --dry-run says the request and sends nothing, --yes is accepted, a no-op, so that a script passes it to every write.
 func gcpWriteFlags(cmd *cobra.Command, f *gcpFlags) {
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
-	cmd.Flags().BoolVar(&f.yes, "yes", false, asksNothingYes)
-}
-
-// gcpRouterDryRunFlags are AWS's --dry-run and --yes of a router's pause and resume: a single router asks nothing.
-func gcpRouterDryRunFlags(cmd *cobra.Command, f *gcpFlags) {
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "say what would be sent and stop")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, dryRunUsage)
 	cmd.Flags().BoolVar(&f.yes, "yes", false, asksNothingYes)
 }

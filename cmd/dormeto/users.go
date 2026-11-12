@@ -59,7 +59,7 @@ func newUsersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					if us == nil {
 						us = []fleet.User{}
 					}
-					return printJSON(c.OutOrStdout(), map[string]any{"users": us})
+					return output.JSON(c.OutOrStdout(), map[string]any{"users": us})
 				}
 				fmt.Fprint(c.OutOrStdout(), fleet.UsersText(us, deps.now()))
 				return nil
@@ -147,7 +147,7 @@ func newUsersRole(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	cmd.Flags().BoolVar(&yes, "yes", false, yesAlways)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }
@@ -214,7 +214,7 @@ func newUsersDisable(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, dryRunUsage)
-	cmd.Flags().BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	cmd.Flags().BoolVar(&yes, "yes", false, yesAlways)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/install"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 // unfinishedHint is printed when upgrades are started whose end the run did not see.
@@ -63,7 +64,7 @@ func newRoutersUpgrade(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.IntVar(&concurrency, "concurrency", 4, "how many upgrades run at once, from 1 to 20")
 	fl.DurationVar(&timeout, "timeout", 60*time.Minute, "stop following the upgrades after this long (they go on in the manager)")
 	fl.BoolVar(&dryRun, "dry-run", false, "print the plan and stop")
-	fl.BoolVar(&yes, "yes", false, "do not ask for confirmation (needed without a terminal)")
+	fl.BoolVar(&yes, "yes", false, yesAlways)
 	fl.BoolVar(&asJSON, "json", false, "print the result as JSON; the plan and progress go to stderr")
 	return cmd
 }
@@ -101,7 +102,7 @@ func runUpgrade(ctx context.Context, c *cobra.Command, deps fleetDeps, api *flee
 			r.Skipped = []fleet.Skip{}
 		}
 		if o.asJSON {
-			return printJSON(c.OutOrStdout(), r)
+			return output.JSON(c.OutOrStdout(), r)
 		}
 		return nil
 	}

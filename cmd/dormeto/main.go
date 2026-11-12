@@ -103,7 +103,7 @@ func acceptYes(top *cobra.Command) {
 	var walk func(c *cobra.Command, path string)
 	walk = func(c *cobra.Command, path string) {
 		if asksNothing[path] && c.Flags().Lookup("yes") == nil {
-			c.Flags().Bool("yes", false, "accepted and ignored: this command asks no confirmation")
+			c.Flags().Bool("yes", false, asksNothingYes)
 		}
 		for _, sub := range c.Commands() {
 			walk(sub, path+" "+sub.Name())

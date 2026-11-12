@@ -60,6 +60,39 @@ func TestHistoryCauseText(t *testing.T) {
 	}
 }
 
+// A cloud's own rows take the form of the shared ones: after the workload's rows and after its settings, aligned with them.
+func TestWorkloadDetailsTextWithMoreRowsKeepsTheLayout(t *testing.T) {
+	idle := 30
+	d := WorkloadDetails{WorkloadID: "shop", Name: "The shop", State: "AWAKE", UpdatedAt: "2026-11-08T05:00:00Z", Cloud: "gcp", Account: "p", Region: "europe-west1",
+		Pauses: []Pause{{Scope: "workload", By: "me", Reason: "audit"}}}
+	d.Settings.IdleMinutes = &idle
+	d.SettingsFrom = map[string]string{"idleMinutes": "router"}
+	got := d.TextWith("r", time.UTC, DetailsMore{
+		Rows:     [][2]string{{"URL map", "shop-map"}, {"backends", "instance web-1 (europe-west1-b)\nasg web-mig (europe-west1)"}, {"idle check", ""}},
+		Settings: [][2]string{{"wake mode", "browser (fixed on Google Cloud)"}},
+	})
+	want := "workload  r/shop\n" +
+		"name      The shop\n" +
+		"state     AWAKE since 2026-11-08 05:00 UTC\n" +
+		"cloud     gcp\n" +
+		"project   p\n" +
+		"region    europe-west1\n" +
+		"URL map   shop-map\n" +
+		"backends  instance web-1 (europe-west1-b)\n" +
+		"          asg web-mig (europe-west1)\n" +
+		"\nsettings\n" +
+		"  idle window  30 min (router)\n" +
+		"  wake mode    browser (fixed on Google Cloud)\n" +
+		"\npauses\n" +
+		"  paused by me: audit\n"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if d.Text("r", time.UTC) != d.TextWith("r", time.UTC, DetailsMore{}) {
+		t.Error("Text is TextWith without more")
+	}
+}
+
 func TestHoursIsSingularForOneAlone(t *testing.T) {
 	for in, want := range map[float64]string{1: "1 hour", 1.5: "1.5 hours", 0.5: "0.5 hours", 300: "300 hours", 0: "0 hours", 1.02: "1 hour"} {
 		if got := hours(in); got != want {

@@ -174,14 +174,20 @@ func TestWorkloadsShowPrintsEachSettingWithItsOriginThenTheTypeAndTheRules(t *te
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	// AWS's words for its origins, and one for fixed.
-	contains(t, out, "idle window: 30 min (router)", "hold: 0 s (fixed on Google Cloud)", "wake timeout: 15 min (set on this workload)", "retry after a failed wake: 1 min (built-in)",
-		"wake mode: browser (fixed on Google Cloud)", "type: instance (from its backends)", "hibernate: on, from the router",
-		"no-wake rules", "scanners", "(router)", "wake rules", "cron", "(workload)")
-	// A workload of a router before the levels keeps its settings line.
+	for _, row := range [][2]string{{"idle window", "30 min (router)"}, {"hold", "0 s (fixed on Google Cloud)"}, {"wake timeout", "15 min (set on this workload)"},
+		{"retry after a failed wake", "1 min (built-in)"}, {"wake mode", "browser (fixed on Google Cloud)"}, {"type", "instance (from its backends)"},
+		{"hibernate", "on, from the router"}, {"no-wake rules", "scanners: user agent ~ bot (router)"}, {"wake rules", "cron: path /jobs* (workload)"}} {
+		if !hasRow(out, row[0], row[1]) {
+			t.Errorf("no row %q %q:\n%s", row[0], row[1], out)
+		}
+	}
+	// A workload of a router before the levels: its settings by AWS's labels, without their level, and no rules said.
 	g.s.WorkloadDocs["web"] = map[string]any{"settings": map[string]any{"idleMinutes": 15}}
 	r.ID = "web"
 	_, out = g.call(t, WorkloadsShow, r)
-	contains(t, out, "settings: idleMinutes 15")
+	if !hasRow(out, "idle window", "15 min") || strings.Contains(out, "rules") {
+		t.Errorf("%s", out)
+	}
 }
 
 // The Workload view gives the VMs on a fallback type as AWS's `fallbacks` list.
@@ -194,7 +200,9 @@ func TestWorkloadsShowNamesTheVMsRunningOnAFallbackType(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "running on a fallback type: web-1 e2-medium (was e2-small), web-2 n2-standard-4 (was n2-standard-2)")
+	if !hasRow(out, "running on a fallback type", "web-1 e2-medium (was e2-small), web-2 n2-standard-4 (was n2-standard-2)") {
+		t.Fatalf("%s", out)
+	}
 }
 
 func TestWorkloadsSettingsDryRunSendsNothingAndSaysWhatItWouldSet(t *testing.T) {

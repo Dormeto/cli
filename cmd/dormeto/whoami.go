@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/output"
 )
 
 func newWhoami(deps fleetDeps) *cobra.Command {
@@ -33,7 +34,7 @@ func newWhoami(deps fleetDeps) *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return printJSON(c.OutOrStdout(), struct {
+				return output.JSON(c.OutOrStdout(), struct {
 					Me      json.RawMessage `json:"me"`
 					Version string          `json:"version"`
 					APIURL  string          `json:"apiUrl"`

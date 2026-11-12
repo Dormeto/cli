@@ -420,6 +420,7 @@ func TestGcpRoutersPauseRefusesBeforeAnyCall(t *testing.T) {
 		{"--reason", "x", "--for", "1h", "--until", "2099-12-01T08:00:00Z"},
 		{"--reason", "x", "--for", "400d"},
 		{"--reason", "x", "--until", "tomorrow"},
+		{"--reason", "x", "--until", "2026-12-01"}, // a date alone is no RFC 3339 time: gcponboard gets only one
 		{"--reason", "x", "--until", "2001-01-01T00:00:00Z"},
 		{"--reason", "x", "extra"},
 	} {

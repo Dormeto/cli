@@ -165,7 +165,7 @@ func TestWorkloadsListCallsTheControllerAsTheOperator(t *testing.T) {
 func TestWorkloadsListSaysWhenThereIsNone(t *testing.T) {
 	g := newWorkloadsRig(t)
 	code, out := g.call(t, WorkloadsList, workloadsEurope)
-	if code != 0 || !strings.Contains(out, "no workload") {
+	if code != 0 || out != "0 workloads\n" {
 		t.Fatalf("%d:\n%s", code, out)
 	}
 	r := workloadsEurope
@@ -881,7 +881,9 @@ func TestWorkloadsShowSaysACompanionGone(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "! Cloud SQL instance shop-db no longer exists: its workload no longer naps; offboard and onboard it again")
+	if !hasRow(out, "problems", "Cloud SQL instance shop-db no longer exists: its workload no longer naps; offboard and onboard it again") {
+		t.Fatalf("%s", out)
+	}
 }
 
 func TestWorkloadsShowSaysTheControllersRefusalAlone(t *testing.T) {
@@ -1074,12 +1076,15 @@ func TestWorkloadsScheduleSetShowClearCallTheControllerAsTheOperator(t *testing.
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	// The events with their local time and zone, as the router's nextEvents gives them in UTC.
-	contains(t, out, "Europe/Paris", "nap", "mon", "22:00", "06:00", "maxNapDays", "2026-11-02 22:00", "CET", "nap starts", "2026-11-03 06:00", "nap ends")
+	// The events in the schedule's zone, as the router's nextEvents gives them in UTC.
+	contains(t, out, "time zone Europe/Paris", "nap mon,tue 22:00–06:00", "maximum nap 14 days", "Mon 2 Nov 22:00 CET nap window starts", "Tue 3 Nov 06:00 CET nap window ends")
 	r.JSON = true
 	_, out = g.call(t, WorkloadsScheduleShow, r)
-	var shown map[string]any
-	if err := json.Unmarshal([]byte(out), &shown); err != nil || len(shown["nextEvents"].([]any)) != 2 || shown["schedule"] == nil {
+	var shown struct {
+		Schedule map[string]any
+		Next     []any
+	}
+	if err := json.Unmarshal([]byte(out), &shown); err != nil || len(shown.Next) != 2 || shown.Schedule == nil { // AWS's next (B10)
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	r.JSON = false
@@ -1141,14 +1146,16 @@ func TestWorkloadsScheduleSaysARecurrenceAndKeepsItThroughJSON(t *testing.T) {
 	if !reflect.DeepEqual(body["windows"], want["windows"]) {
 		t.Fatalf("sent %v", body["windows"])
 	}
+	r.Schedule = nil
+	_, out = g.call(t, WorkloadsScheduleShow, r)
 	contains(t, out,
-		"  nap window: Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake header\n",
-		"  awake window: Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, until 2027-06-30\n",
-		"  awake window: Cron 30 8 * * 1-5, 10 h 30 min\n",
-		"  nap window: sat 22:00-23:00, wake header\n")
+		"  nap Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake: header\n",
+		"  awake Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, until 2027-06-30\n",
+		"  awake Cron 30 8 * * 1-5, 10 h 30 min\n",
+		"  nap sat 22:00–23:00, wake: header\n")
 
 	// What show --json prints under "schedule" is the file set takes again.
-	r.Schedule, r.JSON = nil, true
+	r.JSON = true
 	_, out = g.call(t, WorkloadsScheduleShow, r)
 	var shown struct {
 		Schedule json.RawMessage `json:"schedule"`
@@ -1182,7 +1189,7 @@ func TestWorkloadsScheduleShowAnUnreadableRepeatRaisesNoError(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  awake window: repeat unreadable, no occurrence\n", "  maxNapDays: 14\n")
+	contains(t, out, "  awake repeat unreadable, no occurrence\n", "  maximum nap 14 days\n")
 }
 
 func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {
@@ -1221,8 +1228,10 @@ func TestWorkloadsScheduleSaysTheJoinAndKeepsIt(t *testing.T) {
 	if body := g.body(t, "PUT", controllerHost, "/v1/workloads/shop/schedule"); body["joinMinutes"] != float64(0) {
 		t.Fatalf("sent %v", body)
 	}
-	contains(t, out, "  windows never join (workload)\nNext events:\n")
-	r.Schedule, r.JSON = nil, true
+	r.Schedule = nil
+	_, out = g.call(t, WorkloadsScheduleShow, r)
+	contains(t, out, "  windows never join (workload)\n  next\n")
+	r.JSON = true
 	_, out = g.call(t, WorkloadsScheduleShow, r)
 	var shown map[string]any
 	if err := json.Unmarshal([]byte(out), &shown); err != nil {
@@ -1347,26 +1356,18 @@ func TestWorkloadsNapOfAPausedWorkloadSaysItIsPaused(t *testing.T) {
 	contains(t, out, "workload shop is paused by me@example.com: freeze\n")
 }
 
-func TestWorkloadsShowAndListShowAPause(t *testing.T) {
+// show lists the pause as AWS's, in the local time; the list, AWS's table, has no column for it.
+func TestWorkloadsShowShowsAPauseAndListAsAWSDoesNot(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"], g.s.Workloads["blog"] = "ASLEEP", "AWAKE"
 	r := workloadsEurope
 	r.ID, r.Reason, r.KeepAsleep, r.Until = "shop", "audit", true, "2027-01-01T00:00:00Z"
 	g.call(t, WorkloadsPause, r)
 	_, out := g.call(t, WorkloadsShow, r)
-	contains(t, out, "paused by me@example.com", "audit", "2027-01-01T00:00:00Z", "keep asleep")
+	contains(t, out, "\npauses\n  paused by me@example.com on 2026-11-01 10:00 UTC: audit, until 2027-01-01 00:00 UTC, keeps asleep\n")
 	_, out = g.call(t, WorkloadsList, workloadsEurope)
-	var shop, blog string
-	for _, line := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(line, "shop"):
-			shop = line
-		case strings.HasPrefix(line, "blog"):
-			blog = line
-		}
-	}
-	if !strings.Contains(shop, "paused") || strings.Contains(blog, "paused") || strings.Contains(shop, "audit") {
-		t.Fatalf("shop %q blog %q", shop, blog)
+	if strings.Contains(out, "paused") || strings.Contains(out, "audit") {
+		t.Fatalf("%s", out)
 	}
 }
 
@@ -1471,7 +1472,9 @@ func TestWorkloadsNapOfAPausedWorkloadAlreadyAsleepIsNoRefusal(t *testing.T) {
 	}
 }
 
-func TestWorkloadsScheduleShowSaysWhoSetItAndWhen(t *testing.T) {
+// Who set the schedule and when is the router's answer's: --json keeps them in the schedule, as AWS's; the text, AWS's, does
+// not say them.
+func TestWorkloadsScheduleShowJSONSaysWhoSetItAndWhen(t *testing.T) {
 	g := newWorkloadsRig(t)
 	g.s.Workloads["shop"] = "AWAKE"
 	r := workloadsEurope
@@ -1479,11 +1482,12 @@ func TestWorkloadsScheduleShowSaysWhoSetItAndWhen(t *testing.T) {
 	if code, out := g.call(t, WorkloadsScheduleSet, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
+	r.Schedule, r.JSON = nil, true
 	code, out := g.call(t, WorkloadsScheduleShow, r)
-	if code != 0 {
-		t.Fatalf("exit %d:\n%s", code, out)
+	var shown struct{ Schedule map[string]any }
+	if err := json.Unmarshal([]byte(out), &shown); code != 0 || err != nil || shown.Schedule["by"] != "me@example.com" || shown.Schedule["at"] != "2026-11-01T10:00:00.000Z" {
+		t.Fatalf("exit %d, %v:\n%s", code, err, out)
 	}
-	contains(t, out, "Schedule of workload shop (set by me@example.com, 2026-11-01T10:00:00.000Z):\n")
 }
 
 const (
@@ -3271,7 +3275,7 @@ func TestWorkloadsShowSaysWhyTheLastNapWasGivenUp(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("%s: exit %d:\n%s", name, code, out)
 		}
-		has := strings.Contains(out, "  nap given up: backends-changed, 2026-11-08T04:55:57Z\n")
+		has := hasRow(out, "nap given up", "backends-changed, 2026-11-08 04:55 UTC")
 		if has != (aborted != nil) || aborted == nil && strings.Contains(out, "nap given up") {
 			t.Errorf("%s:\n%s", name, out)
 		}
@@ -3492,13 +3496,14 @@ func TestWorkloadsShowPrintsTheNameAndTheTags(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  name: The shop\n", "  tags: env=prod, team=web\n")
+	if !hasRow(out, "name", "The shop") || !hasRow(out, "tags", "env=prod, team=web") {
+		t.Fatalf("%s", out)
+	}
 	// A workload with no tag prints no tags line; its name is the router's default, the ID.
 	g = newWorkloadsRig(t)
 	g.call(t, WorkloadsOnboard, shopOnboarding)
 	_, out = g.call(t, WorkloadsShow, show)
-	contains(t, out, "  name: shop\n")
-	if strings.Contains(out, "tags:") {
+	if !hasRow(out, "name", "shop") || strings.Contains(out, "tags") {
 		t.Fatalf("%s", out)
 	}
 }
@@ -3517,7 +3522,7 @@ func TestRouterPauseAndResumePostToTheController(t *testing.T) {
 	if body["reason"] != "release freeze" || body["by"] != "me@example.com" || len(body) != 2 {
 		t.Fatalf("not asked, keepAsleep and until are not sent: %v", body)
 	}
-	contains(t, out, shopRouter+": paused, woke shop\n")
+	contains(t, out, shopRouter+": paused until resumed; woken shop\n")
 	code, out = g.call(t, RouterResume, r)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -3547,8 +3552,8 @@ func TestRouterPauseKeepAsleepAndUntil(t *testing.T) {
 	if body["keepAsleep"] != true || body["until"] != "2026-12-01T07:00:00Z" {
 		t.Fatalf("%v", body)
 	}
-	contains(t, out, "paused until 2026-12-01 07:00 UTC, keeping asleep\n")
-	if strings.Contains(out, "woke") {
+	contains(t, out, shopRouter+": paused until 2026-12-01 07:00 UTC\n")
+	if strings.Contains(out, "woken") {
 		t.Fatalf("%s", out)
 	}
 	// --json: the router's answer by router, as AWS's {"<router>": <answer>}.
@@ -3606,19 +3611,19 @@ func TestRouterPauseSaysAWSLines(t *testing.T) {
 	r.Reason, r.Until = "freeze", "2026-12-01T07:00:00Z"
 	local := time.Date(2026, 12, 1, 7, 0, 0, 0, time.UTC).Format("2006-01-02 15:04 MST") // the rig's clock is UTC
 	_, out := g.call(t, RouterPause, r)
-	want := shopRouter + ": paused until " + local + ", woke blog, shop\n"
+	want := shopRouter + ": paused until " + local + "; woken blog, shop\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	g.call(t, RouterResume, r)
 	r.KeepAsleep, r.Until = true, ""
 	_, out = g.call(t, RouterPause, r)
-	if want := shopRouter + ": paused, keeping asleep\n"; !strings.Contains(out, want) {
+	if want := shopRouter + ": paused until resumed\n"; !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	r.Until, r.KeepAsleep = "2026-12-01T07:00:00Z", true
 	_, out = g.call(t, RouterPause, r)
-	if want := shopRouter + ": paused until " + local + ", keeping asleep\n"; !strings.Contains(out, want) {
+	if want := shopRouter + ": paused until " + local + "\n"; !strings.Contains(out, want) {
 		t.Fatalf("want %q in:\n%s", want, out)
 	}
 	_, out = g.call(t, RouterResume, r)
