@@ -449,7 +449,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit (the manager's default)")
-	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit (the manager's default)")
+	fl.StringVar(&join, "join-minutes", "", joinMinutesHelp+" (the manager's default)")
 	fl.BoolVar(&dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&yes, "yes", false, yesSeveralRouters)
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")

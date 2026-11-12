@@ -133,10 +133,8 @@ func gcpConnectCommand(use, short, long string, f *gcpConnectFlags, deps fleetDe
 	fl.StringVar(&f.project, "project", "", "the host project, where the federation and the manager's two service accounts live (required)")
 	fl.StringVar(&f.configuration, "gcloud-configuration", "", "the gcloud configuration to use (default: the active one)")
 	fl.StringVar(&f.manager.profile, "profile", "", "the AWS profile that reaches the manager (default: the SDK's)")
-	fl.StringVar(&f.manager.env, "env", "prod", "the manager's environment")
 	fl.StringVar(&f.manager.region, "manager-region", "", "the manager's AWS region (default: the profile's); --region is a Google Cloud region in dormeto gcp")
-	fl.StringVar(&f.manager.apiURL, "api-url", "",
-		"the manager API's execute-api endpoint (not the dashboard's URL), skipping the lookup by name (needs no apigateway:GET)")
+	bindManager(fl, &f.manager.env, &f.manager.apiURL)
 	fl.BoolVar(&f.yes, "yes", false, yesAlways)
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
 	fl.BoolVar(&f.json, "json", false, "print the manager's record as JSON on stdout ({\"connection\": …}; a dry run's {\"dryRun\": true, \"targets\": [<host project>], \"plan\": […]}), the words on stderr")

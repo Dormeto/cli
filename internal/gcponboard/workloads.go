@@ -511,16 +511,13 @@ func (w workload) more(loc *time.Location) fleet.DetailsMore {
 	if w.NapAborted != nil {
 		napAborted = w.NapAborted.Reason + ", " + fleet.When(w.NapAborted.At, loc)
 	}
-	var backends, gone []string
+	var backends []string
 	for _, b := range w.Backends {
 		backends = append(backends, b.String())
 	}
-	for _, name := range w.CompanionsGone {
-		gone = append(gone, "Cloud SQL instance "+name+" no longer exists: its workload no longer naps; offboard and onboard it again")
-	}
 	more := fleet.DetailsMore{Rows: [][2]string{{"load balancer", lb}, {"URL map", w.URLMap}, {"backend service", w.BackendService},
 		{"waker backend service", w.WakerBackendService}, {"hosts", strings.Join(w.Hosts, ", ")}, {"backends", strings.Join(backends, "\n")},
-		{"last wake", lastWake}, {"idle check", w.IdleReads}, {"nap given up", napAborted}, {"problems", strings.Join(gone, "\n")}}}
+		{"last wake", lastWake}, {"idle check", w.IdleReads}, {"nap given up", napAborted}, {"problems", strings.Join(w.goneLines(), "\n")}}}
 	var mode string
 	if m, ok := w.Settings["wakeMode"].(string); ok {
 		mode = m
@@ -528,13 +525,8 @@ func (w workload) more(loc *time.Location) fleet.DetailsMore {
 			mode += " (" + w.sourceText("wakeMode") + ")"
 		}
 	}
-	var onFallback []string
-	for _, t := range w.Fallbacks {
-		onFallback = append(onFallback, fmt.Sprintf("%s %s (was %s)", t.Instance, t.To, t.From))
-	}
-	sort.Strings(onFallback)
 	more.Settings = [][2]string{{"wake mode", mode}, {"fallback machine types", strings.Join(w.FallbackInstanceTypes, ", ")},
-		{"running on a fallback type", strings.Join(onFallback, ", ")}}
+		{"running on a fallback type", strings.Join(w.onFallback(), ", ")}}
 	if len(w.SettingsFrom) > 0 { // the rules of every level, with the levels alone: an older router says none of them
 		more.Settings = append(more.Settings, [2]string{"no-wake rules", rulesText(w.NoWakeRules)}, [2]string{"wake rules", rulesText(w.WakeRules)})
 	}
@@ -548,13 +540,38 @@ func rulesText(rules []describedRule) string {
 	}
 	lines := make([]string, len(rules))
 	for i, r := range rules {
-		level := r.Level
-		if r.From != "" { // a wake rule's level
-			level = r.From
-		}
-		lines[i] = fleet.RuleText(r.NoWake) + " (" + level + ")"
+		lines[i] = fleet.RuleText(r.NoWake) + " (" + r.level() + ")"
 	}
 	return strings.Join(lines, "\n")
+}
+
+// What both printers of a workload say alike, `workloads show`'s rows and the onboarding's lines.
+
+// goneLines say each Cloud SQL instance named at the onboarding that no longer exists, and what to do.
+func (w workload) goneLines() []string {
+	var lines []string
+	for _, name := range w.CompanionsGone {
+		lines = append(lines, "Cloud SQL instance "+name+" no longer exists: its workload no longer naps; offboard and onboard it again")
+	}
+	return lines
+}
+
+// onFallback is each VM running on a fallback machine type, "web-1 e2-medium (was e2-small)", in the order of their names.
+func (w workload) onFallback() []string {
+	var vms []string
+	for _, t := range w.Fallbacks {
+		vms = append(vms, fmt.Sprintf("%s %s (was %s)", t.Instance, t.To, t.From))
+	}
+	sort.Strings(vms)
+	return vms
+}
+
+// level is the level a rule comes from: a wake rule's `from`, else its `level`.
+func (r describedRule) level() string {
+	if r.From != "" {
+		return r.From
+	}
+	return r.Level
 }
 
 // details prints a workload's configuration under the onboarding's line (`workloads show` prints AWS's layout: detailsOf, more).
@@ -591,8 +608,8 @@ func (x *run) details(w workload) {
 	for _, b := range w.Backends {
 		x.say("  backend: %s", b)
 	}
-	for _, name := range w.CompanionsGone {
-		x.say("  ! Cloud SQL instance %s no longer exists: its workload no longer naps; offboard and onboard it again", name)
+	for _, line := range w.goneLines() {
+		x.say("  ! %s", line)
 	}
 }
 

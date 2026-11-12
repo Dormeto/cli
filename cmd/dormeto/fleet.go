@@ -96,9 +96,7 @@ func (f *fleetFlags) bind(cmd *cobra.Command) {
 	p := cmd.PersistentFlags()
 	p.StringVar(&f.profile, "profile", "", "the AWS profile (default: the SDK's)")
 	p.StringVar(&f.region, "region", "", "the manager's region (default: the profile's)")
-	p.StringVar(&f.env, "env", "prod", "the manager's environment")
-	p.StringVar(&f.apiURL, "api-url", "",
-		"the manager API's execute-api endpoint (not the dashboard's URL), skipping the lookup by name (needs no apigateway:GET)")
+	bindManager(p, &f.env, &f.apiURL)
 }
 
 var envName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,8}[a-z0-9])?$`)
@@ -367,10 +365,10 @@ func newWorkloads(deps fleetDeps) *cobra.Command {
 
 func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		states, tags []string
-		router, text string
-		cloud        cloudFilter
-		asJSON       bool
+		filters listFilters
+		router  string
+		cloud   cloudFilter
+		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use: "list", Short: "List the workloads of both clouds, their state and tags", Args: noArgs, SilenceErrors: true,
@@ -380,24 +378,24 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"manager lists only a page (its total then counts both clouds). --json's byState stays the manager's, which counts\n" +
 			"every workload of both clouds whatever the filters.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			if _, err := fleet.ParseTags(tags); err != nil {
+			if _, err := fleet.ParseTags(filters.tags); err != nil {
 				return finish(c, usageError{err})
 			}
 			if err := cloud.check(); err != nil {
 				return finish(c, err)
 			}
 			q := url.Values{}
-			if s := upper(states); len(s) > 0 {
+			if s := upper(filters.states); len(s) > 0 {
 				q.Set("state", strings.Join(s, ","))
 			}
-			if len(tags) > 0 {
-				q["tag"] = tags // API Gateway joins repeated parameters with commas, the manager splits them
+			if len(filters.tags) > 0 {
+				q["tag"] = filters.tags // API Gateway joins repeated parameters with commas, the manager splits them
 			}
 			if router != "" {
 				q.Set("router", router)
 			}
-			if text != "" {
-				q.Set("q", text)
+			if filters.search != "" {
+				q.Set("q", filters.search)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
@@ -441,11 +439,9 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			})
 		},
 	}
+	filters.bind(cmd)
 	fl := cmd.Flags()
-	fl.StringSliceVar(&states, "state", nil, "only the workloads in these states (repeatable or comma-separated; case-insensitive)")
 	fl.StringVar(&router, "router", "", "only the workloads of this router")
-	fl.StringArrayVar(&tags, "tag", nil, "only the workloads with this Dormeto tag, key=value (repeatable: all must match)")
-	fl.StringVar(&text, "search", "", "only the workloads whose name or id contains this text")
 	cloud.bind(cmd)
 	fl.BoolVar(&asJSON, "json", false, "print the API's answer")
 	return cmd

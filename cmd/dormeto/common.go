@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/output"
@@ -36,15 +37,41 @@ func (w *waitFlags) bind(cmd *cobra.Command) {
 }
 
 // check refuses, before any call, a --timeout that is not positive.
-func (w *waitFlags) check() error {
-	if w.timeout <= 0 {
-		return usagef("--timeout: %s is not a positive duration", w.timeout)
+func (w *waitFlags) check() error { return positiveTimeout(w.timeout) }
+
+// positiveTimeout refuses a --timeout that is not positive (a usage error), the operations' and a wake's.
+func positiveTimeout(d time.Duration) error {
+	if d <= 0 {
+		return usagef("--timeout: %s is not a positive duration", d)
 	}
 	return nil
 }
 
-// The flags of the writes both subtrees have, defined once: a pause's, a wake's --wait and --timeout, and --yes. Each
-// command keeps the help it released, given where it binds them.
+// The flags both subtrees have, defined once: a pause's, a wake's --wait and --timeout, --yes, the list's filters, a level's
+// --join-minutes and where the manager is. Each command keeps the help it released, given where it binds them.
+
+// listFilters are `workloads list`'s --state, --tag and --search.
+type listFilters struct {
+	states, tags []string
+	search       string
+}
+
+func (l *listFilters) bind(cmd *cobra.Command) {
+	fl := cmd.Flags()
+	fl.StringSliceVar(&l.states, "state", nil, "only the workloads in these states (repeatable or comma-separated; case-insensitive)")
+	fl.StringArrayVar(&l.tags, "tag", nil, "only the workloads with this Dormeto tag, key=value (repeatable: all must match)")
+	fl.StringVar(&l.search, "search", "", "only the workloads whose name or id contains this text")
+}
+
+// joinMinutesHelp is a router level's --join-minutes, AWS's adding what inherit follows.
+const joinMinutesHelp = "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit"
+
+// bindManager binds where the manager is beyond the AWS profile and region: --env and --api-url.
+func bindManager(fl *pflag.FlagSet, env, apiURL *string) {
+	fl.StringVar(env, "env", "prod", "the manager's environment")
+	fl.StringVar(apiURL, "api-url", "",
+		"the manager API's execute-api endpoint (not the dashboard's URL), skipping the lookup by name (needs no apigateway:GET)")
+}
 
 // The help of --yes: a command that asks for several targets (several routers), and one that always asks.
 const (
@@ -91,10 +118,10 @@ func (w *wakeWait) bind(cmd *cobra.Command, waitHelp, timeoutHelp string) {
 
 // check refuses, before any call, a --timeout that is not positive with --wait.
 func (w *wakeWait) check() error {
-	if w.wait && w.timeout <= 0 {
-		return usagef("--timeout: %s is not a positive duration", w.timeout)
+	if !w.wait {
+		return nil
 	}
-	return nil
+	return positiveTimeout(w.timeout)
 }
 
 // opItem is an operation for runOperations: label names its target in what is printed, start starts it, get reads it

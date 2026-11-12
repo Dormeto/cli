@@ -2154,9 +2154,9 @@ dormeto gcp routers resume --project my-project --region europe-west1
   is wrong, exit 1. `schedule show` prints AWS's words: the time zone, the windows (a recurrence in words), `except`,
   `maximum nap`, the join and the next events in the schedule's zone; `--json` prints AWS's `{schedule, next,
   joinMinutes, joinFrom, joinInherited}`, the file under `schedule` (with who set it and when, which the text, AWS's,
-  does not say), without AWS's
-  `maintenanceDue`, which the router's answer does not have. `schedule set` prints AWS's lines, `<target>: schedule set`
-  and the next events. `schedule clear` leaves the workload to its idle window alone.
+  does not say), without AWS's `maintenanceDue`, which the router's answer does not have. `schedule set` prints AWS's
+  lines, `<target>: schedule set` and the next events; `set --json` and `clear --json` print each answer by target in
+  `show`'s shape (`next`). `schedule clear` leaves the workload to its idle window alone.
 - During a nap window, the waiting page tells a visitor when the window ends, and the visitor's browser does not wake
   the workload. Google Cloud has no maintenance wake of its own, so `maxNapDays` is only yours.
 - The router's check asks at most 10 scheduled naps each run, every 5 minutes, oldest first: 30 workloads in one nap

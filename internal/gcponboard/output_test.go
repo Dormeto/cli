@@ -243,7 +243,7 @@ func TestWorkloadsShowNamesTheBackendsByTheirSharedKinds(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if !hasRow(out, "backends", "instance web-1 (europe-west1-b)") || !hasRow(out, "", "asg web-mig (europe-west1)") || !hasRow(out, "", "cloudsql-instance shop-db") {
+	if !hasRow(out, "backends", "instance web-1 (europe-west1-b)", "asg web-mig (europe-west1)", "cloudsql-instance shop-db") {
 		t.Fatalf("%s", out)
 	}
 }
@@ -782,9 +782,46 @@ func TestJSONIsIndentedAsAWSs(t *testing.T) {
 }
 
 // hasRow tells whether text has the labelled row "<label>  <value>" as fleet.Labelled writes it (the label padded, then two
-// spaces at least), at any indent.
-func hasRow(text, label, value string) bool {
-	return regexp.MustCompile(`(?m)^ *` + regexp.QuoteMeta(label) + ` {2,}` + regexp.QuoteMeta(value) + `$`).MatchString(text)
+// spaces at least), at any indent, and right under it each of more on a line of its own, aligned with value: a value on
+// several lines.
+func hasRow(text, label, value string, more ...string) bool {
+	head := regexp.MustCompile(`^( *` + regexp.QuoteMeta(label) + ` {2,})` + regexp.QuoteMeta(value) + `$`)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		m := head.FindStringSubmatch(line)
+		if m == nil || i+len(more) >= len(lines) {
+			continue
+		}
+		next := lines[i+1 : i+1+len(more)]
+		aligned := true
+		for j, v := range more {
+			aligned = aligned && next[j] == strings.Repeat(" ", len(m[1]))+v
+		}
+		if aligned {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRow's lines under a row are that row's: right under it and aligned with its value, not any indented line.
+func TestHasRowTiesTheLinesToTheirRow(t *testing.T) {
+	text := "backends  instance web-1\n          asg web-mig\nhosts     shop.example.com\n  other   cloudsql-instance shop-db\n"
+	for _, c := range []struct {
+		label, value string
+		more         []string
+		want         bool
+	}{
+		{"backends", "instance web-1", []string{"asg web-mig"}, true},
+		{"backends", "instance web-1", nil, true},
+		{"backends", "instance web-1", []string{"asg web-mig", "cloudsql-instance shop-db"}, false}, // another row's
+		{"hosts", "shop.example.com", []string{"asg web-mig"}, false},                               // above, not under
+		{"other", "cloudsql-instance shop-db", nil, true},
+	} {
+		if got := hasRow(text, c.label, c.value, c.more...); got != c.want {
+			t.Errorf("hasRow(%q, %q, %q) = %v", c.label, c.value, c.more, got)
+		}
+	}
 }
 
 // The reads print what AWS's print (the cloud duplication design's §4, B10 to B14): the list's table (B11).
@@ -932,6 +969,37 @@ func TestWorkloadsScheduleShowIsAWSShapeAndText(t *testing.T) {
 	r.JSON = false
 	if _, out = g.call(t, WorkloadsScheduleShow, r); out != shopTarget+": no schedule\n" {
 		t.Fatalf("none: %q", out)
+	}
+}
+
+// `schedule set` and `clear` under --json print each answer by target in show's shape, AWS's {schedule, next, …}: one name for
+// the next events in gcp's schedule commands (the router's nextEvents stays on the wire).
+func TestWorkloadsScheduleSetAndClearJSONAreShowsShape(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.s.Workloads["shop"] = "AWAKE"
+	g.s.NextEvents = parisEvents
+	g.s.ScheduleJoin = map[string]any{"joinMinutes": 15, "joinFrom": "router", "joinInherited": map[string]any{"joinMinutes": 15, "joinFrom": "router"}}
+	r := workloadsEurope
+	r.ID, r.JSON, r.Schedule = "shop", true, json.RawMessage(parisSchedule)
+	for name, run := range map[string]func(context.Context, Deps, Request) int{"set": WorkloadsScheduleSet, "clear": WorkloadsScheduleClear} {
+		code, stdout, stderr := g.split(t, run, r)
+		var got map[string]map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(stdout), &got); code != 0 || err != nil || len(got) != 1 || !indentedAsAWS(stdout) {
+			t.Fatalf("%s: exit %d, %v, stdout %q, stderr %q", name, code, err, stdout, stderr)
+		}
+		answer := got[shopTarget]
+		var keys []string
+		for k := range answer {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		if !slices.Equal(keys, []string{"joinFrom", "joinInherited", "joinMinutes", "next", "schedule"}) {
+			t.Errorf("%s: not show's shape: %s", name, stdout)
+		}
+		want := map[string]string{"set": `[{"at":"2026-11-02T21:00:00.000Z","kind":"nap-start","window":0},{"at":"2026-11-03T05:00:00.000Z","kind":"nap-end","window":0}]`, "clear": `[]`}[name]
+		if compacted(string(answer["next"])) != want {
+			t.Errorf("%s: next %s", name, answer["next"])
+		}
 	}
 }
 

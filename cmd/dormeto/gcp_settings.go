@@ -169,7 +169,7 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 	gcpRouterFlags(cmd, &f)
 	fl := cmd.Flags()
 	fl.StringVar(&hibernate, "hibernate", "", "true, false, or inherit")
-	fl.StringVar(&join, "join-minutes", "", "the largest gap that joins two windows, 0 to 120, a multiple of 5, or inherit")
+	fl.StringVar(&join, "join-minutes", "", joinMinutesHelp)
 	fl.BoolVar(&f.dryRun, "dry-run", false, dryRunUsage)
 	fl.BoolVar(&f.yes, "yes", false, asksNothingYes)
 	return cmd

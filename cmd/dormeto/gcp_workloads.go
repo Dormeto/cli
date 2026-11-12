@@ -70,8 +70,7 @@ func gcpRouterFlags(cmd *cobra.Command, f *gcpFlags) {
 
 func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
-	var states, tags []string
-	var search string
+	var filters listFilters
 	var has map[string]string
 	cmd := gcpCommand("list", "List the workloads of a router",
 		"List the router's workloads and their states. --state, --search and --tag keep the workloads AWS's list would keep,\n"+
@@ -80,7 +79,7 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 			"account, region, cloud, workloadId, pauses, the backends' kinds instance, asg, k8s, cloudsql-instance), and the\n"+
 			"router's counts by state.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.States, r.Search, r.HasTags = upper(states), search, has
+			r.States, r.Search, r.HasTags = upper(filters.states), filters.search, has
 			return run(ctx, d, r)
 		})
 	prior := cmd.PreRunE
@@ -89,7 +88,7 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 			return err
 		}
 		var err error
-		if has, err = fleet.ParseTags(tags); err != nil {
+		if has, err = fleet.ParseTags(filters.tags); err != nil {
 			return finish(c, usageError{err})
 		}
 		if len(has) == 0 {
@@ -98,10 +97,7 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 		return nil
 	}
 	gcpRouterFlags(cmd, &f)
-	fl := cmd.Flags()
-	fl.StringSliceVar(&states, "state", nil, "only the workloads in these states (repeatable or comma-separated; case-insensitive)")
-	fl.StringArrayVar(&tags, "tag", nil, "only the workloads with this Dormeto tag, key=value (repeatable: all must match)")
-	fl.StringVar(&search, "search", "", "only the workloads whose name or id contains this text")
+	filters.bind(cmd)
 	return cmd
 }
 

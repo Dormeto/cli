@@ -145,20 +145,25 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 	if len(answer.Schedule) == 0 {
 		answer.Schedule = json.RawMessage("null")
 	}
+	// AWS's text and --json (the cloud duplication design's B10), a write's answer in show's shape too.
+	view := fleet.ScheduleShown{Schedule: answer.Schedule, Next: answer.NextEvents, NoDue: true, Join: answer.Join}
 	target := x.target(x.r.ID)
-	switch method {
-	case http.MethodDelete:
-		return x.answered(x.r.ID, raw, target+": schedule cleared")
-	case http.MethodPut: // AWS's lines: "<target>: schedule set", the zone's note and the next events
+	if method != http.MethodGet {
+		shown, err := json.Marshal(view.JSON())
+		if err != nil {
+			return err
+		}
+		if method == http.MethodDelete {
+			return x.answered(x.r.ID, shown, target+": schedule cleared")
+		}
+		// AWS's lines: "<target>: schedule set", the zone's note and the next events.
 		var s fleet.ScheduleView
 		if json.Unmarshal(answer.Schedule, &s) != nil || s.TimeZone == "" { // the zone as stored, else the file's
 			s = fleet.ScheduleView{}
 			_ = json.Unmarshal(x.r.Schedule, &s)
 		}
-		return x.answered(x.r.ID, raw, strings.TrimSuffix(s.SetText(target, answer.NextEvents, ""), "\n"))
+		return x.answered(x.r.ID, shown, strings.TrimSuffix(s.SetText(target, answer.NextEvents, ""), "\n"))
 	}
-	// AWS's text and --json (the cloud duplication design's B10).
-	view := fleet.ScheduleShown{Schedule: answer.Schedule, Next: answer.NextEvents, NoDue: true, Join: answer.Join}
 	if x.r.JSON {
 		return output.JSON(x.d.Out, view.JSON())
 	}

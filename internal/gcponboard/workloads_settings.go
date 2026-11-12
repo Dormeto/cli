@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/Dormeto/cli/internal/fleet"
@@ -260,12 +259,7 @@ func (x *run) levelDetails(w workload) {
 	if len(w.FallbackInstanceTypes) > 0 {
 		x.say("  fallback machine types: %s", strings.Join(w.FallbackInstanceTypes, ", "))
 	}
-	var vms []string
-	for _, t := range w.Fallbacks {
-		vms = append(vms, fmt.Sprintf("%s %s (was %s)", t.Instance, t.To, t.From))
-	}
-	sort.Strings(vms)
-	if len(vms) > 0 {
+	if vms := w.onFallback(); len(vms) > 0 {
 		x.say("  running on a fallback type: %s", strings.Join(vms, ", "))
 	}
 	for _, r := range []struct {
@@ -278,11 +272,7 @@ func (x *run) levelDetails(w workload) {
 		}
 		x.say("  %s:", r.label)
 		for _, rule := range r.rules {
-			level := rule.Level
-			if rule.From != "" {
-				level = rule.From
-			}
-			x.say("    %s (%s)", fleet.RuleText(rule.NoWake), level)
+			x.say("    %s (%s)", fleet.RuleText(rule.NoWake), rule.level())
 		}
 	}
 }
