@@ -36,6 +36,22 @@ func section(t *testing.T, text, title string) string {
 	return body
 }
 
+// changelogSection is the text of CHANGELOG.md's "## <title>" section, its words joined by single spaces. A test reads
+// the notes it pins in the version that released them: a release turns "## Unreleased" into "## <version>".
+func changelogSection(t *testing.T, title string) string {
+	t.Helper()
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, ok := strings.Cut(string(b), "\n## "+title+"\n")
+	if !ok {
+		t.Fatalf("CHANGELOG.md has no '## %s' section", title)
+	}
+	body, _, _ := strings.Cut(rest, "\n## ")
+	return strings.Join(strings.Fields(body), " ")
+}
+
 func names(re *regexp.Regexp, text string) []string {
 	var out []string
 	for _, m := range re.FindAllStringSubmatch(text, -1) {
@@ -585,15 +601,9 @@ func TestReadmeGoogleCloudSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
 	}
 }
 
-// The CHANGELOG's Unreleased section says what the measures and the fix waves changed, and none of what they made false.
-func TestChangelogUnreleasedSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
-	b, err := os.ReadFile("CHANGELOG.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
-	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
-	text := strings.Join(strings.Fields(unreleased), " ")
+// The CHANGELOG's 0.14.0 section says what the measures and the fix waves changed, and none of what they made false.
+func TestChangelogSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) {
+	text := changelogSection(t, "0.14.0")
 	for _, want := range []string{
 		"more than 160 s regional, more than 310 s classic, more than 90 s internal, more than 210 s cross-region internal",
 		"for the VMs of unmanaged instance groups and zonal network endpoint groups",
@@ -610,7 +620,7 @@ func TestChangelogUnreleasedSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) 
 		"The router checks a rules file's rules, with AWS's words",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+			t.Errorf("CHANGELOG.md's 0.14.0 lacks %q", want)
 		}
 	}
 	for _, gone := range []string{
@@ -621,7 +631,7 @@ func TestChangelogUnreleasedSaysWhatTheMeasuresAndTheFixesChanged(t *testing.T) 
 		"`gkemcg1-` or `mci-`,",
 	} {
 		if strings.Contains(text, gone) {
-			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
+			t.Errorf("CHANGELOG.md's 0.14.0 still says %q", gone)
 		}
 	}
 }
@@ -694,15 +704,9 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 	}
 }
 
-// The CHANGELOG's Unreleased says the connection's final fixes as the code does them.
-func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
-	b, err := os.ReadFile("CHANGELOG.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
-	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
-	text := strings.Join(strings.Fields(unreleased), " ")
+// The CHANGELOG's 0.14.0 section says the connection's final fixes as the code does them.
+func TestChangelogSaysTheConnectionsFixes(t *testing.T) {
+	text := changelogSection(t, "0.14.0")
 	for _, want := range []string{
 		"skips a Google Cloud router below the version available with one line naming `dormeto gcp routers install --project <p> --region <r> --version <available>`",
 		"`--account` selects Google Cloud projects too",
@@ -720,12 +724,12 @@ func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
 		"The CLI embeds router 228bd0c's `gcp/access.json`",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+			t.Errorf("CHANGELOG.md's 0.14.0 lacks %q", want)
 		}
 	}
 	for _, gone := range []string{"skip each Google Cloud router with one line naming `dormeto gcp routers install` or", "router 8cc9f6f's"} {
 		if strings.Contains(text, gone) {
-			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
+			t.Errorf("CHANGELOG.md's 0.14.0 still says %q", gone)
 		}
 	}
 }
@@ -733,13 +737,7 @@ func TestChangelogUnreleasedSaysTheConnectionsFixes(t *testing.T) {
 // G2 plan 2: the README and the CHANGELOG say what the manager's commands do for a Google Cloud candidate, as the code does.
 func TestDocsSayOnboardOffboardExcludeAndCandidatesOnGoogleCloud(t *testing.T) {
 	text := strings.Join(strings.Fields(readme(t)), " ")
-	b, err := os.ReadFile("CHANGELOG.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
-	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
-	log := strings.Join(strings.Fields(unreleased), " ")
+	log := changelogSection(t, "0.14.0")
 	for _, want := range []string{
 		"**A Google Cloud candidate** is a backend service named in a URL map, given by its id",
 		"`--database` is a Cloud SQL instance name such as `orders-db` (sent as `{kind: cloudsql-instance, id}`)",
@@ -780,7 +778,7 @@ func TestDocsSayOnboardOffboardExcludeAndCandidatesOnGoogleCloud(t *testing.T) {
 		"These need router 0.40.0 on Google Cloud",
 	} {
 		if !strings.Contains(log, want) {
-			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+			t.Errorf("CHANGELOG.md's 0.14.0 lacks %q", want)
 		}
 	}
 }
@@ -788,13 +786,7 @@ func TestDocsSayOnboardOffboardExcludeAndCandidatesOnGoogleCloud(t *testing.T) {
 // G2 plan 3: the README and the CHANGELOG say what the savings and the idle window advice do for Google Cloud, as the code does.
 func TestDocsSaySavingsAndIdleWindowOnGoogleCloud(t *testing.T) {
 	text := strings.Join(strings.Fields(readme(t)), " ")
-	b, err := os.ReadFile("CHANGELOG.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
-	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
-	log := strings.Join(strings.Fields(unreleased), " ")
+	log := changelogSection(t, "0.14.0")
 	for _, want := range []string{
 		"what is not priced (how many workloads; a Google Cloud item without its Google list price counts there, never at $0; `--json` has their hours)",
 		"(EC2, Fargate, EKS nodes, Compute Engine VMs; never off Spot)",
@@ -816,7 +808,7 @@ func TestDocsSaySavingsAndIdleWindowOnGoogleCloud(t *testing.T) {
 		"`idle-window` names `dormeto aws workloads settings <router>/<workload> --idle-minutes <n>` to change the window",
 	} {
 		if !strings.Contains(log, want) {
-			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+			t.Errorf("CHANGELOG.md's 0.14.0 lacks %q", want)
 		}
 	}
 }
@@ -825,13 +817,7 @@ func TestDocsSaySavingsAndIdleWindowOnGoogleCloud(t *testing.T) {
 // of both subtrees, the dry run's shape, and the behaviours that changed, as the code does them.
 func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 	text := strings.Join(strings.Fields(readme(t)), " ")
-	b, err := os.ReadFile("CHANGELOG.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, unreleased, _ := strings.Cut(string(b), "## Unreleased\n")
-	unreleased, _, _ = strings.Cut(unreleased, "\n## ")
-	log := strings.Join(strings.Fields(unreleased), " ")
+	log := changelogSection(t, "0.14.0")
 	for _, want := range []string{
 		// the tree; the old names are gone
 		"`gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`, `gcp connect` and `gcp disconnect`",
@@ -914,12 +900,12 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		"their `--json` is unchanged",
 	} {
 		if !strings.Contains(log, want) {
-			t.Errorf("CHANGELOG.md's Unreleased lacks %q", want)
+			t.Errorf("CHANGELOG.md's 0.14.0 lacks %q", want)
 		}
 	}
 	for _, gone := range []string{"AWS's advice has none", "would act on 2 workloads", "an AWS candidate's default stays `any`", "now a 409 with its message, was a 502"} {
 		if strings.Contains(log, gone) {
-			t.Errorf("CHANGELOG.md's Unreleased still says %q", gone)
+			t.Errorf("CHANGELOG.md's 0.14.0 still says %q", gone)
 		}
 	}
 }
