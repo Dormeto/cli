@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.1
 
 The macOS binaries are signed with the Developer ID of KLOUDY (team PP3PVUEBBT) and notarized by Apple: macOS runs a `dormeto` downloaded with a browser with no quarantine to remove (`codesign -dv --verbose=2 ./dormeto` shows the signature), and the Homebrew cask no longer removes the quarantine attribute when it installs.
 
