@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The checks after a release: scripts/after-release.sh <version>. Run by release.sh; safe to run again.
 # The release's assets and checksums; brew; install.sh; go install. Each waits a little for the
-# registries, then fails with what it saw.
+# registries, then fails with what it saw. On macOS, the binaries brew and install.sh installed are signed by KLOUDY's
+# Developer ID and notarized by Apple (scripts/sign-macos.sh --verify, an online check).
 #
 # install.sh: https://dormeto.com/install.sh, or while it does not answer 200 (the website not deployed yet, Ruling
 # P17) the website checkout's site/install.sh, DORMETO_WEBSITE_DIR (default: ../website beside this repository).
@@ -46,11 +47,13 @@ if brew list --cask dormeto >/dev/null 2>&1; then brew upgrade --cask dormeto/ta
 # Homebrew's own dormeto, linked in its prefix's bin/, not whichever is first on PATH (a go install build).
 brewed="$(brew --prefix)/bin/dormeto"
 [ "$("$brewed" version | head -n 1)" = "dormeto $version" ] || fail "brew gave '$("$brewed" version | head -n 1)' ($brewed), not 'dormeto $version'"
-# macOS: the cask's postflight removed the quarantine (Gatekeeper would refuse the unsigned binary otherwise).
-if [ "$(uname -s)" = Darwin ]; then
+# macOS: Gatekeeper runs the cask's binary, quarantined as Homebrew downloads it, as it is signed and notarized.
+darwin=0
+[ "$(uname -s)" != Darwin ] || darwin=1
+if [ "$darwin" = 1 ]; then
   staged="$(brew --caskroom)/dormeto/$version/dormeto"
-  [ -e "$staged" ] || fail "the cask's binary is not at $staged: the quarantine cannot be checked"
-  if xattr -p com.apple.quarantine "$staged" >/dev/null 2>&1; then fail "the installed binary $staged still has the macOS quarantine attribute"; fi
+  [ -e "$staged" ] || fail "the cask's binary is not at $staged: its signature cannot be checked"
+  "$root/scripts/sign-macos.sh" --verify "$staged" || fail "Homebrew's dormeto ($staged) is not signed by KLOUDY and notarized"
 fi
 
 echo "after-release: install.sh"
@@ -66,6 +69,9 @@ else
 fi
 DORMETO_VERSION="$version" DORMETO_INSTALL_DIR="$scratch/install" sh "$installer" || fail "install.sh ($installer) failed"
 [ "$("$scratch/install/dormeto" version | head -n 1)" = "dormeto $version" ] || fail "install.sh ($installer) did not install $version"
+if [ "$darwin" = 1 ]; then
+  "$root/scripts/sign-macos.sh" --verify "$scratch/install/dormeto" || fail "the dormeto install.sh ($installer) installed is not signed by KLOUDY and notarized"
+fi
 
 echo "after-release: go install"
 mkdir "$scratch/gobin" "$scratch/gowork"

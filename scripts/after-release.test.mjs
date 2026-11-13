@@ -19,8 +19,8 @@ function write(file, text, mode) {
 // Shell that writes, at <path>, a dormeto saying the version <version> (a shell word, expanded when it runs).
 const installs = (path, version) => `printf '#!/bin/sh\\necho "dormeto %s"\\n' ${version} > ${path} && chmod 755 ${path}`;
 
-// A throwaway checkout of the cli with scripts/after-release.sh copied in and the website's beside it (../website),
-// stubs for curl (the web served from web/), brew, npx (a tripwire), go and sleep, and the release's six archives with their
+// A throwaway checkout of the cli with scripts/after-release.sh and sign-macos.sh copied in and the website's beside it
+// (../website), stubs for curl (the web served from web/), brew, npx (a tripwire), go, codesign and sleep, and the release's six archives with their
 // checksums.txt. Options: served (https://dormeto.com/install.sh deployed), website (a website checkout beside the cli),
 // shadow (a dev build of dormeto first on PATH, as `go install` leaves one), installed (brew has the cask already).
 function fixture({ served = false, website = true, shadow = true, installed = false } = {}) {
@@ -32,6 +32,7 @@ function fixture({ served = false, website = true, shadow = true, installed = fa
   const log = join(root, 'calls.log');
   mkdirSync(join(work, 'scripts'), { recursive: true });
   cpSync(join(repo, 'scripts', 'after-release.sh'), join(work, 'scripts', 'after-release.sh'));
+  cpSync(join(repo, 'scripts', 'sign-macos.sh'), join(work, 'scripts', 'sign-macos.sh'));
   mkdirSync(join(prefix, 'bin'), { recursive: true });
 
   // The release: six archives and checksums.txt.
@@ -103,14 +104,25 @@ echo "brew: unexpected $*" >&2; exit 1
   // npm is not a channel (the user, 2026-10-13): an npx stub records any call, which the tests refuse.
   write(join(bin, 'npx'), `#!/bin/sh\necho "npx $*" >> "${log}"\nexit 1\n`, 0o755);
   write(join(bin, 'go'), `#!/bin/sh\necho "go $*" >> "${log}"\nmkdir -p "$GOBIN" && ${installs('"$GOBIN/dormeto"', '"${2##*@v}"')}\n`, 0o755);
-  // uname: the system under test (UNAME, default Darwin: the quarantine is a macOS matter); xattr: the quarantine is
-  // there when XATTR_QUARANTINED is set, as `xattr -p` prints it, else it fails as it does without the attribute.
+  // uname: the system under test (UNAME, default Darwin: the signature is a macOS matter). codesign: every binary is
+  // signed by KLOUDY's team and notarized, but with CODESIGN_FAULT (signature, team or notarization) the binaries whose
+  // path holds CODESIGN_BAD (all of them without it) fail that check. xattr and spctl: tripwires, as nothing reads the
+  // quarantine any more and spctl cannot assess a bare executable.
   write(join(bin, 'uname'), '#!/bin/sh\necho "${UNAME:-Darwin}"\n', 0o755);
-  write(join(bin, 'xattr'), `#!/bin/sh
-echo "xattr $*" >> "${log}"
-[ -n "$XATTR_QUARANTINED" ] && { echo "0083;5f5e1000;Safari;"; exit 0; }
-echo "xattr: $3: No such xattr: com.apple.quarantine" >&2; exit 1
+  write(join(bin, 'codesign'), `#!/bin/sh
+set +eu
+echo "codesign $*" >> "${log}"
+for target in "$@"; do :; done
+bad=""
+[ -n "$CODESIGN_FAULT" ] && case "$target" in *"$CODESIGN_BAD"*) bad="$CODESIGN_FAULT";; esac
+case " $* " in
+  *" -dv "*) team=PP3PVUEBBT; [ "$bad" = team ] && team=ABCDE12345; printf 'Executable=%s\\nTeamIdentifier=%s\\n' "$target" "$team" >&2; exit 0;;
+  *" --check-notarization "*) [ "$bad" = notarization ] && { echo "test-requirement: code failed to satisfy specified code requirement(s)" >&2; exit 3; }; exit 0;;
+  *" --verify "*) [ "$bad" = signature ] && { echo "$target: code object is not signed at all" >&2; exit 1; }; exit 0;;
+esac
+echo "codesign: unexpected $*" >&2; exit 2
 `, 0o755);
+  for (const tool of ['xattr', 'spctl']) write(join(bin, tool), `#!/bin/sh\necho "${tool} $*" >> "${log}"\nexit 1\n`, 0o755);
   write(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', 0o755);
   if (shadow) write(join(bin, 'dormeto'), '#!/bin/sh\necho "dormeto dev"\n', 0o755);
   if (installed) writeFileSync(join(root, 'installed'), '');
@@ -236,42 +248,70 @@ test('after-release.sh fails when Homebrew\'s dormeto is not the version release
   } finally { f.cleanup(); }
 });
 
-// --- the quarantine ---------------------------------------------------------------------------------------------
+// --- the signature: KLOUDY's Developer ID, notarized by Apple ------------------------------------------------------
 
-test('after-release.sh passes on macOS when the installed binary has no quarantine attribute', () => {
+const signatureChecks = (binary) => [
+  `codesign --verify --strict ${binary}`,
+  `codesign -dv ${binary}`,
+  `codesign --verify --strict --check-notarization -R=notarized ${binary}`,
+];
+
+test('after-release.sh checks on macOS that the cask\'s binary and install.sh\'s are signed by team PP3PVUEBBT and notarized', () => {
   const f = fixture({ shadow: true });
   try {
     const out = f.run();
     assert.equal(out.status, 0, out.stdout + out.stderr);
-    assert.ok(f.calls().includes(`xattr -p com.apple.quarantine ${f.prefix}/Caskroom/dormeto/${VERSION}/dormeto\n`), f.calls());
+    const codesign = f.calls().split('\n').filter((l) => l.startsWith('codesign '));
+    const staged = `${f.prefix}/Caskroom/dormeto/${VERSION}/dormeto`;
+    assert.deepEqual(codesign.slice(0, 3), signatureChecks(staged));
+    const installed = codesign[3]?.split(' ').at(-1) ?? '';
+    assert.match(installed, /\/install\/dormeto$/);
+    assert.deepEqual(codesign.slice(3), signatureChecks(installed));
+    assert.doesNotMatch(f.calls(), /^(xattr|spctl) /m, 'no quarantine to look for; spctl rejects any bare executable');
+    assert.match(out.stdout, /all checks pass/);
   } finally { f.cleanup(); }
 });
 
-test('after-release.sh fails on macOS when the installed binary is quarantined', () => {
+for (const [fault, pattern] of [['signature', /signature/], ['team', /team 'ABCDE12345', not PP3PVUEBBT/], ['notarization', /notariz/]]) {
+  test(`after-release.sh fails on macOS when the cask's binary fails the ${fault} check`, () => {
+    const f = fixture({ shadow: true });
+    try {
+      const out = f.run({ CODESIGN_FAULT: fault, CODESIGN_BAD: '/Caskroom/' });
+      assert.notEqual(out.status, 0, out.stdout);
+      assert.match(out.stderr, pattern);
+      assert.match(out.stderr, /Homebrew/);
+      assert.doesNotMatch(out.stdout, /all checks pass/);
+      assert.doesNotMatch(f.calls(), /install\.sh DORMETO_VERSION/, 'it stops at the cask');
+    } finally { f.cleanup(); }
+  });
+}
+
+test('after-release.sh fails on macOS when install.sh\'s binary is not notarized', () => {
   const f = fixture({ shadow: true });
   try {
-    const out = f.run({ XATTR_QUARANTINED: '1' });
+    const out = f.run({ CODESIGN_FAULT: 'notarization', CODESIGN_BAD: '/install/dormeto' });
     assert.notEqual(out.status, 0, out.stdout);
-    assert.match(out.stderr, /quarantine/);
+    assert.match(out.stderr, /notariz/);
+    assert.match(out.stderr, /install\.sh/);
     assert.doesNotMatch(out.stdout, /all checks pass/);
   } finally { f.cleanup(); }
 });
 
-test('after-release.sh does not look for the quarantine off macOS', () => {
+test('after-release.sh does not check the signature off macOS', () => {
   const f = fixture({ shadow: true });
   try {
-    const out = f.run({ UNAME: 'Linux', XATTR_QUARANTINED: '1' });
+    const out = f.run({ UNAME: 'Linux', CODESIGN_FAULT: 'signature' });
     assert.equal(out.status, 0, out.stdout + out.stderr);
-    assert.doesNotMatch(f.calls(), /^xattr /m);
+    assert.doesNotMatch(f.calls(), /^codesign /m);
   } finally { f.cleanup(); }
 });
 
-test('after-release.sh fails when the cask\'s binary is not where the quarantine is checked', () => {
+test('after-release.sh fails when the cask\'s binary is not where its signature is checked', () => {
   const f = fixture({ shadow: true });
   try {
     const out = f.run({ CASK_MISSING: '1' });
     assert.notEqual(out.status, 0, out.stdout);
     assert.match(out.stderr, /not at .*Caskroom\/dormeto\/0\.2\.0\/dormeto/);
-    assert.doesNotMatch(f.calls(), /^xattr /m);
+    assert.doesNotMatch(f.calls(), /^codesign /m);
   } finally { f.cleanup(); }
 });

@@ -21,8 +21,8 @@ function write(file, text, mode) {
   if (mode) chmodSync(file, mode);
 }
 
-// A throwaway repository on main with a bare origin and release.sh copied in, a tiny Go module, stubs for security,
-// goreleaser and npm (a tripwire), and a latest.json.
+// A throwaway repository on main with a bare origin and release.sh and sign-macos.sh copied in, a tiny Go module, stubs
+// for security, xcrun (notarytool), goreleaser and npm (a tripwire), and a latest.json.
 function fixture({ manager = '0.10.0', latest = '0.10.0' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'dormeto-release-'));
   const work = join(root, 'work');
@@ -35,6 +35,7 @@ function fixture({ manager = '0.10.0', latest = '0.10.0' } = {}) {
   git(work, 'remote', 'add', 'origin', origin);
   mkdirSync(join(work, 'scripts'));
   cpSync(join(repo, 'scripts', 'release.sh'), join(work, 'scripts', 'release.sh'));
+  cpSync(join(repo, 'scripts', 'sign-macos.sh'), join(work, 'scripts', 'sign-macos.sh'));
   cpSync(join(repo, 'LICENSE'), join(work, 'LICENSE'));
   write(join(work, 'go.mod'), 'module example.com/fixture\n\ngo 1.22\n');
   write(join(work, 'fixture.go'), 'package fixture\n');
@@ -50,10 +51,16 @@ function fixture({ manager = '0.10.0', latest = '0.10.0' } = {}) {
   for (const r of ['cli', 'homebrew-tap']) write(join(root, 'api', 'repos', 'Dormeto', r), '{}');
   write(join(root, 'latest.json'), JSON.stringify({ version: latest, router: '0.29.0', published: '2026-10-12T00:00:00.000Z' }));
 
-  // security: exits 1 for the items listed in MISSING; with -w it prints "token-<item>".
+  // security: exits 1 for the items listed in MISSING; with -w it prints "token-<item>". find-identity lists KLOUDY's
+  // Developer ID, none with "codesigning" in MISSING.
   write(join(bin, 'security'), `#!/bin/sh
 set +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set in the environment
 echo "security $*" >> "${log}"
+if [ "$1" = find-identity ]; then
+  case " $MISSING " in *" codesigning "*) echo "     0 valid identities found"; exit 0;; esac
+  echo '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Developer ID Application: KLOUDY (PP3PVUEBBT)"'
+  echo "     1 valid identities found"; exit 0
+fi
 item=""; want=0
 while [ $# -gt 0 ]; do case "$1" in -s) item="$2"; shift;; -w) want=1;; esac; shift; done
 case " $MISSING " in *" $item "*) echo "The specified item could not be found in the keychain." >&2; exit 44;; esac
@@ -82,6 +89,16 @@ for t in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/arm64 windows
 done
 printf ']' >> dist/artifacts.json
 `, 0o755);
+  // xcrun notarytool: the profile answers its history, but with "dormeto-notary" in MISSING; a submit is GoReleaser's
+  // hook's, never release.sh's: recorded and refused.
+  write(join(bin, 'xcrun'), `#!/bin/sh
+set +eu
+echo "xcrun $*" >> "${log}"
+case "$1 $2" in
+  "notarytool history") case " $MISSING " in *" dormeto-notary "*) echo "Error: No Keychain password item found for profile: dormeto-notary" >&2; exit 69;; esac; echo "Successfully received submission history."; exit 0;;
+esac
+echo "xcrun: unexpected $*" >&2; exit 1
+`, 0o755);
   // npm: not a channel (the user, 2026-10-13): a tripwire that only records a call.
   write(join(bin, 'npm'), `#!/bin/sh\necho "npm $* | cwd=$(basename "$PWD")" >> "${log}"\nexit 1\n`, 0o755);
   write(join(root, 'after.sh'), `#!/bin/sh\nset +eu # bash exports SHELLOPTS (errexit, nounset) to children when it is set in the environment\necho "after $*" >> "${log}"\n[ -z "$AFTER_FAIL" ] || { echo "after-release: simulated failure" >&2; exit 1; }\n`, 0o755);
@@ -90,6 +107,7 @@ printf ']' >> dist/artifacts.json
     HOME: join(root, 'home'),
     GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
     DORMETO_SECURITY: join(bin, 'security'),
+    DORMETO_XCRUN: join(bin, 'xcrun'),
     DORMETO_GORELEASER: join(bin, 'goreleaser'),
     DORMETO_NPM: join(bin, 'npm'),
     DORMETO_AFTER: join(root, 'after.sh'),
@@ -295,6 +313,80 @@ test('release.sh refuses a missing Keychain item github-dormeto', () => {
     f.run.env = { MISSING: 'github-dormeto' };
     refused(null, f, [VERSION, '--dry-run'], /Keychain.*github-dormeto/);
     assert.equal(/ -w/.test(f.calls()), false, 'a check never reads the token');
+  } finally { f.cleanup(); }
+});
+
+// --- the macOS signature's prerequisites: KLOUDY's Developer ID and the notary profile (scripts/sign-macos.sh) -----------
+
+const IDENTITY_MISSING = /"Developer ID Application: KLOUDY \(PP3PVUEBBT\)" is not in the Keychain/;
+const PROFILE_MISSING = /xcrun notarytool store-credentials dormeto-notary --apple-id <Apple ID> --team-id PP3PVUEBBT/;
+
+test('release.sh checks the signing identity and the notary profile before it changes anything, and notarizes nothing itself', () => {
+  const f = fixture();
+  try {
+    withChangelog(f, UNRELEASED);
+    const out = f.run(VERSION);
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    const calls = f.calls();
+    assert.match(calls, /^security find-identity -v -p codesigning$/m);
+    assert.match(calls, /^xcrun notarytool history --keychain-profile dormeto-notary/m);
+    assert.ok(calls.indexOf('xcrun notarytool history') < calls.indexOf('goreleaser check'), 'among the checks');
+    assert.doesNotMatch(calls, /notarytool submit/, 'GoReleaser\'s build hook notarizes');
+  } finally { f.cleanup(); }
+});
+
+for (const [what, missing, pattern] of [['the signing identity', 'codesigning', IDENTITY_MISSING], ['the notary profile', 'dormeto-notary', PROFILE_MISSING]]) {
+  test(`release.sh refuses without ${what}, before the release commit, saying what to do`, () => {
+    const f = fixture();
+    try {
+      withChangelog(f, UNRELEASED);
+      const head = git(f.work, 'rev-parse', 'HEAD');
+      f.run.env = { MISSING: missing };
+      const out = refused(null, f, [VERSION], pattern);
+      assert.match(out.stderr, /release: the macOS binaries cannot be signed and notarized/);
+      assert.equal(readFileSync(join(f.work, 'CHANGELOG.md'), 'utf8'), UNRELEASED);
+      assert.equal(git(f.work, 'rev-parse', 'HEAD'), head);
+      assert.equal(git(f.origin, 'rev-parse', 'main'), head);
+      assert.doesNotMatch(f.calls(), / -w/, 'no token read');
+    } finally { f.cleanup(); }
+  });
+}
+
+test('--dry-run without the identity nor the notary profile says both are missing, and still builds the snapshot', () => {
+  const f = fixture();
+  try {
+    f.run.env = { MISSING: 'codesigning dormeto-notary' };
+    const out = f.run(VERSION, '--dry-run');
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.match(out.stdout, IDENTITY_MISSING);
+    assert.match(out.stdout, PROFILE_MISSING);
+    assert.match(out.stdout, /release: a release would stop on what is missing above/);
+    assert.match(out.stdout, /signs the macOS binaries only with the identity in the Keychain, and sends nothing to Apple/);
+    assert.match(f.calls(), /goreleaser release --snapshot --clean/);
+    assert.doesNotMatch(f.calls(), /notarytool submit/);
+  } finally { f.cleanup(); }
+});
+
+test('--dry-run with the identity alone names the notary profile missing', () => {
+  const f = fixture();
+  try {
+    f.run.env = { MISSING: 'dormeto-notary' };
+    const out = f.run(VERSION, '--dry-run');
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.doesNotMatch(out.stdout, IDENTITY_MISSING);
+    assert.match(out.stdout, /the signing identity "Developer ID Application: KLOUDY \(PP3PVUEBBT\)" is in the Keychain/);
+    assert.match(out.stdout, PROFILE_MISSING);
+    assert.match(out.stdout, /a release would stop/);
+  } finally { f.cleanup(); }
+});
+
+test('--dry-run with both says the snapshot signs the macOS binaries and sends nothing to Apple', () => {
+  const f = fixture();
+  try {
+    const out = f.run(VERSION, '--dry-run');
+    assert.equal(out.status, 0, out.stdout + out.stderr);
+    assert.match(out.stdout, /release: the snapshot signs the macOS binaries with KLOUDY's Developer ID and sends nothing to Apple/);
+    assert.doesNotMatch(out.stdout, /would stop/);
   } finally { f.cleanup(); }
 });
 

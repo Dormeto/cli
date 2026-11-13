@@ -2,18 +2,22 @@
 # Releases Dormeto/cli from the Mac: scripts/release.sh <version> [--dry-run]
 #
 #   1. the checks (main, clean, not behind origin, no such tag, the CHANGELOG's notes,
-#      go vet and go test, the shared cases against the manager's latest release, the Keychain item github-dormeto)
+#      go vet and go test, the shared cases against the manager's latest release, the Keychain item github-dormeto,
+#      the macOS signature's prerequisites: KLOUDY's Developer ID in the Keychain and the notary profile dormeto-notary)
 #   2. a leading "## Unreleased" with notes becomes "## <version>": the release commit; main pushed, with any local commits
 #   3. the annotated tag v<version>, pushed
-#   4. GoReleaser: archives, checksums, GitHub release, Homebrew tap (GITHUB_TOKEN from the Keychain)
+#   4. GoReleaser: the macOS binaries signed and notarized as they are built (its build hook, scripts/sign-macos.sh),
+#      archives, checksums, GitHub release, Homebrew tap (GITHUB_TOKEN from the Keychain)
 #   5. the next iteration: "## Unreleased" back at the top of the CHANGELOG, committed and pushed
 #   6. scripts/after-release.sh: the checks after
 # npm is not a channel (the user, 2026-10-13): the 0.1.0 packages are deprecated, no other is published.
 #
-# --dry-run runs the checks and a GoReleaser snapshot, and publishes nothing: no tag, no push, no token read.
+# --dry-run runs the checks and a GoReleaser snapshot, and publishes nothing: no tag, no push, no token read. A missing
+# signature prerequisite is said, not fatal: the snapshot signs the macOS binaries only when the identity is in the
+# Keychain, and never sends them to Apple.
 #
-# Overridable for the tests: DORMETO_SECURITY, DORMETO_GORELEASER, DORMETO_AFTER, DORMETO_MANAGER_LATEST_URL,
-# DORMETO_GITHUB_API.
+# Overridable for the tests: DORMETO_SECURITY and DORMETO_XCRUN (read by scripts/sign-macos.sh too), DORMETO_GORELEASER,
+# DORMETO_AFTER, DORMETO_MANAGER_LATEST_URL, DORMETO_GITHUB_API.
 set -euo pipefail
 # Tracing (bash -x, SHELLOPTS=xtrace) would print the tokens: off, and kept off.
 { set +x; } 2>/dev/null
@@ -150,6 +154,18 @@ older="$(node -e '
 
 "$security" find-generic-password -a "${USER:-$(id -un)}" -s github-dormeto >/dev/null 2>&1 \
   || fail "the Keychain item 'github-dormeto' does not exist (see the README: security add-generic-password -U -a \"\$USER\" -s github-dormeto -w)"
+
+# The macOS signature (scripts/sign-macos.sh, GoReleaser's build hook): KLOUDY's Developer ID in the Keychain and the
+# notary profile. A release needs both; a dry run says which is missing and goes on.
+if [ "$dry_run" = 1 ]; then
+  if "$root/scripts/sign-macos.sh" --check 2>&1; then
+    echo "release: the snapshot signs the macOS binaries with KLOUDY's Developer ID and sends nothing to Apple"
+  else
+    echo "release: a release would stop on what is missing above; this dry run goes on: its snapshot signs the macOS binaries only with the identity in the Keychain, and sends nothing to Apple"
+  fi
+else
+  "$root/scripts/sign-macos.sh" --check || fail "the macOS binaries cannot be signed and notarized: what is missing is above"
+fi
 
 go mod tidy -diff || fail "go mod tidy would change go.mod or go.sum (GoReleaser's own hook refuses it): run go mod tidy and commit"
 "$goreleaser" check || fail "goreleaser check fails"

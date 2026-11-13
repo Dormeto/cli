@@ -70,12 +70,13 @@ Each release has an archive per system (macOS, Linux and Windows, on Intel/AMD a
 (`_arm64` on an ARM PC), unzip it and put `dormeto.exe` in a folder of your `PATH`. Elsewhere, unpack the archive and put
 `dormeto` in your `PATH`.
 
-An archive downloaded with a browser is blocked by the system the first time:
+The macOS binaries are signed with the Developer ID of KLOUDY (team PP3PVUEBBT) and notarized by Apple: macOS runs one
+downloaded with a browser too, as Gatekeeper finds its notarization online at the first run. To check a binary,
+`codesign -dv --verbose=2 ./dormeto` prints `Authority=Developer ID Application: KLOUDY (PP3PVUEBBT)` and
+`TeamIdentifier=PP3PVUEBBT`.
 
-- macOS: remove the quarantine mark, `xattr -d com.apple.quarantine ./dormeto`.
-- Windows: in SmartScreen's warning, choose "More info" and then "Run anyway".
-
-(`curl`, Homebrew and `go install` do not need this.)
+On Windows, an archive downloaded with a browser is blocked the first time: in SmartScreen's warning, choose "More
+info" and then "Run anyway" (`curl` and `go install` do not need this).
 
 Check the install with `dormeto version`.
 
@@ -2352,15 +2353,18 @@ publishes the GitHub release and the Homebrew tap with GoReleaser, and checks th
 `--dry-run`, which checks and builds without changing the changelog, publishing, tagging or reading the token. It stops
 with what was done and the commands that finish it if something fails after the release commit. The checks are: on
 `main`, clean, not behind `origin/main`, no such tag, the notes in [CHANGELOG.md](CHANGELOG.md), `go vet` and `go test`,
-the shared cases not older than the manager's latest release, the Keychain item below, `go mod tidy` and
-`goreleaser check`. npm is not a channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other version is
+the shared cases not older than the manager's latest release, the Keychain item below, the two prerequisites of the
+macOS signature (below), `go mod tidy` and `goreleaser check`. npm is not a channel: 0.1.0's packages (`@dormeto/cli`) are deprecated, and no other version is
 published there.
 
 The checks after it, `make after-release VERSION=<version>` (`scripts/after-release.sh`, safe to run again), install the
 version through each channel and run it: the release's archives against `checksums.txt`, the Homebrew cask (installed, or upgraded when it is), the
 install script and `go install`. The install script is `https://dormeto.com/install.sh`, or, while that does not answer
 (the website not deployed yet), the website checkout's `site/install.sh`: `DORMETO_WEBSITE_DIR`, by default
-`../website` beside this repository.
+`../website` beside this repository. On macOS, the binaries the cask and the install script installed must be signed
+(`codesign --verify --strict`), by team PP3PVUEBBT (`codesign -dv`), and notarized (`codesign --verify --strict
+--check-notarization -R=notarized`, an online check: `spctl --assess --type execute` rejects any bare executable,
+notarized or not).
 
 `make brew-linux [ARCHS="arm64 amd64"]` (`scripts/test-brew-linux.sh`) is an opt-in check of the Homebrew cask on Linux, with podman: it builds a
 snapshot, checks the cask's Linux entries against `checksums.txt`, serves `dist/` locally, and in a `homebrew/brew`
@@ -2386,6 +2390,34 @@ security add-generic-password -U -a "$USER" -s github-dormeto -w
 The release checks the token before it tags anything; an expired or revoked one stops it with a message. That check
 proves only that the token is valid (both repositories are public): its write grant is proven by the release itself,
 and a refusal there stops the release with the state report, what was done and the commands that finish it.
+
+### The macOS signature
+
+GoReleaser signs and notarizes the two macOS binaries as it builds them, before the archives and `checksums.txt` are
+made: its build hook runs `scripts/sign-macos.sh` on each. The script signs with the hardened runtime and a secure
+timestamp (`codesign --options runtime --timestamp`), checks the signature, zips the binary and sends it to Apple's
+notary service (`xcrun notarytool submit --wait`). The release stops unless Apple answers `Accepted`; it prints the
+submission's id, and on a refusal the command that reads Apple's log, `xcrun notarytool log <id> --keychain-profile
+dormeto-notary`. A bare executable cannot be stapled: Gatekeeper finds its notarization online. The Homebrew cask
+therefore no longer removes the quarantine attribute.
+
+It needs two things on the Mac, which the release checks before it changes anything, each failure saying what to do:
+
+- the certificate `Developer ID Application: KLOUDY (PP3PVUEBBT)` with its private key in the login Keychain
+  (`security find-identity -v -p codesigning` lists it): in Xcode, signed in as the team's Account Holder, Settings,
+  Accounts, Manage Certificates, +, Developer ID Application; or the `.p12` exported with its key from the Mac that
+  has it. The first signature asks for the use of the key: "Always Allow".
+- the notarytool Keychain profile `dormeto-notary`, the notary service's credentials, which
+  `xcrun notarytool history --keychain-profile dormeto-notary` reads. `store-credentials` asks for an app-specific
+  password (account.apple.com, Sign-In and Security, App-Specific Passwords), so that no secret is typed in a command
+  line, written to a file or put in the environment:
+
+```sh
+xcrun notarytool store-credentials dormeto-notary --apple-id <Apple ID> --team-id PP3PVUEBBT
+```
+
+A dry run, and any snapshot (`make snapshot`, `make brew-linux`), signs the macOS binaries when the identity is in the
+Keychain and sends nothing to Apple; a dry run says which of the two is missing instead of stopping.
 
 ## License
 

@@ -19,6 +19,13 @@ builds:
       - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
     goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
+    # The macOS binaries are signed with KLOUDY's Developer ID and notarized by Apple as each is built, before the
+    # archives and checksums.txt are made (scripts/sign-macos.sh). A snapshot signs them only when the identity is in
+    # the Keychain, and sends nothing to Apple. The other systems' hook renders empty, which GoReleaser skips.
+    hooks:
+      post:
+        - cmd: '{{ if eq .Os "darwin" }}scripts/sign-macos.sh{{ if .IsSnapshot }} --snapshot{{ end }} "{{ .Path }}"{{ end }}'
+          output: true
 
 archives:
   - id: dormeto
@@ -63,13 +70,3 @@ homebrew_casks:
       name: Fabrice Daugan
       email: fabrice.daugan@gmail.com
     commit_msg_template: "chore: dormeto {{ .Tag }}"
-    # The binaries are unsigned: macOS would block the first run of a download.
-    # Homebrew 7's install steps (a `postflight` block is deprecated); the
-    # template escapes keep `{{staged_path}}` literal, Homebrew expands it.
-    custom_block: |
-      postflight_steps do
-        on_macos do
-          run "/usr/bin/xattr",
-              args: ["-dr", "com.apple.quarantine", "{{ "{{" }}staged_path{{ "}}" }}/dormeto"]
-        end
-      end

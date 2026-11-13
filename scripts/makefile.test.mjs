@@ -55,11 +55,10 @@ test('make help lists every target, with its name apart from its text', () => {
   }
 });
 
-test('the cask removes the quarantine with Homebrew 7 install steps, not a postflight hook', () => {
+test('the cask leaves the quarantine to Gatekeeper: the macOS binaries are signed and notarized, nothing removes it', () => {
   const yaml = readFileSync(join(repo, '.goreleaser.yaml'), 'utf8');
-  assert.match(yaml, /postflight_steps do/);
-  assert.match(yaml, /on_macos do/);
-  assert.doesNotMatch(yaml, /^ {4}hooks:/m);
-  // the template escapes that leave `{{staged_path}}` literal for Homebrew
-  assert.ok(yaml.includes('{{ "{{" }}staged_path{{ "}}" }}'), 'staged_path is escaped for goreleaser');
+  const cask = yaml.slice(yaml.indexOf('\nhomebrew_casks:'));
+  assert.match(cask, /binaries: \[dormeto\]/);
+  assert.doesNotMatch(cask, /custom_block|postflight|on_macos|xattr|quarantine|staged_path|hooks:/);
+  assert.doesNotMatch(yaml, /unsigned/);
 });
