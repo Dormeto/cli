@@ -1,0 +1,6 @@
+{
+  "command": "gcp routers pause",
+  "line": "dormeto gcp routers pause --project my-project --region europe-west1 --reason \"database migration\" --for 2h",
+  "table": "dmtr-my-project-europe-west1: paused until 2026-11-14 12:00 UTC; woken shop\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1\": {\n    \"pause\": {\n      \"at\": \"2026-11-09T10:00:00.000Z\",\n      \"by\": \"ops@example.com\",\n      \"keepAsleep\": false,\n      \"reason\": \"database migration\",\n      \"until\": \"2026-11-14T12:00:00Z\"\n    },\n    \"woken\": [\n      \"shop\"\n    ]\n  }\n}\n"
+}

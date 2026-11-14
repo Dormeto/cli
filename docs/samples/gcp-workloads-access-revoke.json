@@ -1,0 +1,6 @@
+{
+  "command": "gcp workloads access revoke",
+  "line": "dormeto gcp workloads access revoke --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop --yes",
+  "table": "Kubernetes access of workload shop, namespace shop, cluster europe-west1-b/shop-cluster (gke-4f2a9c1e7b3d5a60-123456789012.europe-west1-b.gke.goog):\n  - RoleBinding dormeto-shop\n  - Role dormeto-shop\n  ✓ removed RoleBinding dormeto-shop\n  ✓ removed Role dormeto-shop\n",
+  "json": "{\n  \"cluster\": \"europe-west1-b/shop-cluster\",\n  \"namespace\": \"shop\",\n  \"workload\": \"shop\",\n  \"removed\": [\n    \"RoleBinding dormeto-shop\",\n    \"Role dormeto-shop\"\n  ],\n  \"left\": null\n}\n"
+}

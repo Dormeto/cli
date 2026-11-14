@@ -1,0 +1,7 @@
+{
+  "command": "gcp workloads schedule set",
+  "line": "dormeto gcp workloads schedule set shop --project my-project --region europe-west1 --file schedule.json",
+  "table": "dmtr-my-project-europe-west1/shop: schedule set\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/shop\": {\n    \"schedule\": {\n      \"at\": \"2026-11-01T10:00:00.000Z\",\n      \"by\": \"ops@example.com\",\n      \"timeZone\": \"Europe/Paris\",\n      \"windows\": [\n        {\n          \"days\": [\n            \"mon\",\n            \"tue\",\n            \"wed\",\n            \"thu\",\n            \"fri\"\n          ],\n          \"end\": \"19:00\",\n          \"kind\": \"awake\",\n          \"start\": \"08:00\"\n        }\n      ]\n    },\n    \"next\": []\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/shop: schedule set\n"
+}

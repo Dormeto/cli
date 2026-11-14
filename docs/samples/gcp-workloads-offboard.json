@@ -1,0 +1,7 @@
+{
+  "command": "gcp workloads offboard",
+  "line": "dormeto gcp workloads offboard shop --project my-project --region europe-west1 --yes",
+  "table": "dmtr-my-project-europe-west1/shop: offboarded\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/shop\": {\n    \"left\": [],\n    \"offboarded\": true,\n    \"untagged\": null,\n    \"workloadId\": \"shop\"\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/shop: offboarded\n"
+}

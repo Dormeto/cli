@@ -1,0 +1,6 @@
+{
+  "command": "gcp workloads waiting-page show",
+  "line": "dormeto gcp workloads waiting-page show shop --project my-project --region europe-west1",
+  "table": "dmtr-my-project-europe-west1/shop: waiting page, template (from the workload)\nicon     auto (from built-in default)\ntitle    The shop wakes up (from the workload)\nfavicon  not read yet (a workload's favicon is read before its next nap)\nset on this workload by ops@example.com, 2026-11-02 14:00 UTC\n",
+  "json": "{\n  \"at\": \"2026-11-02T14:00:00.000Z\",\n  \"by\": \"ops@example.com\",\n  \"effective\": {\n    \"description\": \"\",\n    \"from\": {\n      \"icon\": \"default\",\n      \"mode\": \"workload\",\n      \"title\": \"workload\"\n    },\n    \"icon\": \"auto\",\n    \"mode\": \"template\",\n    \"title\": \"The shop wakes up\"\n  },\n  \"favicon\": null,\n  \"from\": {\n    \"icon\": \"default\",\n    \"mode\": \"workload\",\n    \"title\": \"workload\"\n  },\n  \"own\": {\n    \"mode\": \"template\",\n    \"title\": \"The shop wakes up\"\n  },\n  \"terraform\": false,\n  \"warnings\": []\n}\n"
+}

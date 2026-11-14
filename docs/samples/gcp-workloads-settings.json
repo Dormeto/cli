@@ -1,0 +1,7 @@
+{
+  "command": "gcp workloads settings",
+  "line": "dormeto gcp workloads settings shop --project my-project --region europe-west1 --idle-minutes 20",
+  "table": "dmtr-my-project-europe-west1/shop: its settings\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/shop\": {\n    \"hibernation\": {\n      \"from\": \"default\",\n      \"hibernate\": false\n    },\n    \"level\": \"workload\",\n    \"resolved\": {\n      \"settings\": {\n        \"idleMinutes\": 20\n      },\n      \"settingsFrom\": {},\n      \"type\": {\n        \"from\": \"backends\",\n        \"name\": \"instance\"\n      }\n    },\n    \"settings\": {\n      \"idleMinutes\": 20\n    }\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/shop: its settings\n"
+}

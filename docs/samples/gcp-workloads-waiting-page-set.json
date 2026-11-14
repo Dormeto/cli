@@ -1,0 +1,6 @@
+{
+  "command": "gcp workloads waiting-page set",
+  "line": "dormeto gcp workloads waiting-page set shop --project my-project --region europe-west1 --title \"The shop wakes up\"",
+  "table": "dmtr-my-project-europe-west1/shop: waiting page set (template)\n",
+  "json": "{\n  \"at\": \"2026-11-08T10:00:00.000Z\",\n  \"by\": \"ops@example.com\",\n  \"effective\": {\n    \"description\": \"\",\n    \"from\": {\n      \"icon\": \"default\",\n      \"mode\": \"workload\",\n      \"title\": \"workload\"\n    },\n    \"icon\": \"auto\",\n    \"mode\": \"template\",\n    \"title\": \"The shop wakes up\"\n  },\n  \"favicon\": null,\n  \"from\": {\n    \"icon\": \"default\",\n    \"mode\": \"workload\",\n    \"title\": \"workload\"\n  },\n  \"own\": {\n    \"mode\": \"template\",\n    \"title\": \"The shop wakes up\"\n  },\n  \"terraform\": false,\n  \"warnings\": []\n}\n"
+}

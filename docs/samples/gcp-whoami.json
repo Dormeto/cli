@@ -1,0 +1,6 @@
+{
+  "command": "gcp whoami",
+  "line": "dormeto gcp whoami --project my-project",
+  "table": "account        ops@example.com\nconfiguration  (active)\nproject        my-project\nnumber         123456789012\nparent         organization 42\n",
+  "json": "{\n  \"account\": \"ops@example.com\",\n  \"configuration\": \"(active)\",\n  \"project\": {\n    \"id\": \"my-project\",\n    \"number\": \"123456789012\",\n    \"parent\": \"organizations/42\"\n  }\n}\n"
+}

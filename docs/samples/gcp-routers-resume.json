@@ -1,0 +1,6 @@
+{
+  "command": "gcp routers resume",
+  "line": "dormeto gcp routers resume --project my-project --region europe-west1",
+  "table": "dmtr-my-project-europe-west1: resumed\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1\": {\n    \"resumed\": true\n  }\n}\n"
+}

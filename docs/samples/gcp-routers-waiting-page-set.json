@@ -1,0 +1,6 @@
+{
+  "command": "gcp routers waiting-page set",
+  "line": "dormeto gcp routers waiting-page set --project my-project --region europe-west1 --title \"Back in a moment\"",
+  "table": "dmtr-my-project-europe-west1: waiting page set (template)\n",
+  "json": "{\n  \"at\": \"2026-11-08T10:00:00.000Z\",\n  \"by\": \"ops@example.com\",\n  \"effective\": {\n    \"description\": \"\",\n    \"from\": {\n      \"icon\": \"default\",\n      \"mode\": \"router\",\n      \"title\": \"router\"\n    },\n    \"icon\": \"auto\",\n    \"mode\": \"template\",\n    \"title\": \"Back in a moment\"\n  },\n  \"favicon\": null,\n  \"from\": {\n    \"icon\": \"default\",\n    \"mode\": \"router\",\n    \"title\": \"router\"\n  },\n  \"own\": {\n    \"mode\": \"template\",\n    \"title\": \"Back in a moment\"\n  },\n  \"terraform\": false,\n  \"warnings\": []\n}\n"
+}

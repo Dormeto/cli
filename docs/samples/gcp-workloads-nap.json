@@ -1,0 +1,7 @@
+{
+  "command": "gcp workloads nap",
+  "line": "dormeto gcp workloads nap blog --project my-project --region europe-west1",
+  "table": "dmtr-my-project-europe-west1/blog: nap requested\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/blog\": {\n    \"account\": \"my-project\",\n    \"backendService\": \"blog\",\n    \"backends\": [\n      {\n        \"id\": \"7730192837465019283\",\n        \"kind\": \"instance\",\n        \"location\": \"europe-west1-c\",\n        \"name\": \"blog-1\"\n      }\n    ],\n    \"cloud\": \"gcp\",\n    \"lb\": {\n      \"kind\": \"global\"\n    },\n    \"name\": \"blog\",\n    \"pauses\": [],\n    \"region\": \"europe-west1\",\n    \"router\": \"dmtr-my-project-europe-west1\",\n    \"state\": \"AWAKE\",\n    \"stateAt\": \"2026-11-14T09:40:00.000Z\",\n    \"tags\": {\n      \"team\": \"web\"\n    },\n    \"urlMap\": \"blog-lb\",\n    \"workloadId\": \"blog\"\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/blog: nap requested\n"
+}

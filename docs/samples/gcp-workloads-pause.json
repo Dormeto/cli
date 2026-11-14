@@ -1,0 +1,7 @@
+{
+  "command": "gcp workloads pause",
+  "line": "dormeto gcp workloads pause shop --project my-project --region europe-west1 --reason \"load test\" --for 4h",
+  "table": "dmtr-my-project-europe-west1/shop: paused until 2026-11-14 14:00 UTC\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/shop\": {\n    \"account\": \"my-project\",\n    \"backendService\": \"shop\",\n    \"backends\": [\n      {\n        \"id\": \"4419283746501928374\",\n        \"kind\": \"instance\",\n        \"location\": \"europe-west1-b\",\n        \"name\": \"shop-1\"\n      }\n    ],\n    \"cloud\": \"gcp\",\n    \"lb\": {\n      \"kind\": \"global\"\n    },\n    \"name\": \"shop\",\n    \"pauses\": [\n      {\n        \"at\": \"2026-11-01T10:00:00.000Z\",\n        \"by\": \"ops@example.com\",\n        \"keepAsleep\": false,\n        \"reason\": \"load test\",\n        \"scope\": \"workload\",\n        \"until\": \"2026-11-14T14:00:00Z\"\n      }\n    ],\n    \"region\": \"europe-west1\",\n    \"router\": \"dmtr-my-project-europe-west1\",\n    \"state\": \"ASLEEP\",\n    \"stateAt\": \"2026-11-14T07:10:00.000Z\",\n    \"tags\": {\n      \"team\": \"web\"\n    },\n    \"urlMap\": \"shop-lb\",\n    \"workloadId\": \"shop\"\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/shop: paused until 2026-11-14 14:00 UTC\n"
+}

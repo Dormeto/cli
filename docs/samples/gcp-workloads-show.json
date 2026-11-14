@@ -1,0 +1,6 @@
+{
+  "command": "gcp workloads show",
+  "line": "dormeto gcp workloads show shop --project my-project --region europe-west1",
+  "table": "workload         dmtr-my-project-europe-west1/shop\nname             shop\nstate            ASLEEP\ncloud            gcp\nproject          my-project\nregion           europe-west1\ntags             team=web\nload balancer    global\nURL map          shop-lb\nbackend service  shop\nbackends         instance shop-1 (europe-west1-b)\n",
+  "json": "{\n  \"account\": \"my-project\",\n  \"backendService\": \"shop\",\n  \"backends\": [\n    {\n      \"id\": \"4419283746501928374\",\n      \"kind\": \"instance\",\n      \"location\": \"europe-west1-b\",\n      \"name\": \"shop-1\"\n    }\n  ],\n  \"cloud\": \"gcp\",\n  \"lb\": {\n    \"kind\": \"global\"\n  },\n  \"name\": \"shop\",\n  \"pauses\": [],\n  \"region\": \"europe-west1\",\n  \"router\": \"dmtr-my-project-europe-west1\",\n  \"state\": \"ASLEEP\",\n  \"stateAt\": \"2026-11-14T07:10:00.000Z\",\n  \"tags\": {\n    \"team\": \"web\"\n  },\n  \"urlMap\": \"shop-lb\",\n  \"workloadId\": \"shop\"\n}\n"
+}

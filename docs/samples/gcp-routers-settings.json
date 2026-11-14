@@ -1,0 +1,6 @@
+{
+  "command": "gcp routers settings",
+  "line": "dormeto gcp routers settings --project my-project --region europe-west1 --idle-minutes 30",
+  "table": "dmtr-my-project-europe-west1: workload settings set\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1\": {\n    \"level\": \"router\",\n    \"settings\": {\n      \"at\": \"2026-11-01T10:00:00.000Z\",\n      \"by\": \"ops@example.com\",\n      \"defaults\": {\n        \"idleMinutes\": 30\n      },\n      \"hibernate\": null,\n      \"joinMinutes\": null\n    }\n  }\n}\n"
+}

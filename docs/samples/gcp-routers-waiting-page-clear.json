@@ -1,0 +1,6 @@
+{
+  "command": "gcp routers waiting-page clear",
+  "line": "dormeto gcp routers waiting-page clear --project my-project --region europe-west1",
+  "table": "dmtr-my-project-europe-west1: waiting page cleared\n",
+  "json": "{\n  \"at\": \"\",\n  \"by\": \"\",\n  \"effective\": {\n    \"description\": \"\",\n    \"from\": {\n      \"icon\": \"default\",\n      \"mode\": \"default\"\n    },\n    \"icon\": \"auto\",\n    \"mode\": \"template\",\n    \"title\": \"\"\n  },\n  \"favicon\": null,\n  \"from\": {\n    \"icon\": \"default\",\n    \"mode\": \"default\"\n  },\n  \"own\": null,\n  \"terraform\": false,\n  \"warnings\": []\n}\n"
+}

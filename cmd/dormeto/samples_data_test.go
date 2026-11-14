@@ -1,5 +1,15 @@
 package main
 
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/Dormeto/cli/internal/fleet"
+	"github.com/Dormeto/cli/internal/gcp/gcptest"
+	"github.com/Dormeto/cli/internal/gcponboard"
+)
+
 // The samples' lines (samples_test.go), by method, in the CLI's help order; the manager's answers they share are in
 // testdata/samples/manager.json, a line's own here.
 
@@ -7,6 +17,8 @@ var samples = []sample{
 	// whoami, check
 	{line: "dormeto aws whoami"},
 	{line: "dormeto aws check"},
+	{line: "dormeto gcp whoami --project my-project"},
+	{line: "dormeto gcp check --project my-project --region europe-west1"},
 
 	// alerts, api, audit, overview, ip-lists
 	{line: "dormeto aws alerts list"},
@@ -102,6 +114,39 @@ var samples = []sample{
 	{line: "dormeto aws types show batch"},
 	{line: "dormeto aws types set batch --tag team=batch --idle-minutes 15", stderr: true},
 	{line: "dormeto aws types delete batch", stderr: true},
+
+	// gcp connect, routers
+	{line: "dormeto gcp connect --project my-project --yes", stderr: true},
+	{line: "dormeto gcp disconnect --project my-project --yes", stderr: true, google: connected},
+	{line: "dormeto gcp routers install --project my-project --region europe-west1 --yes", stderr: true},
+	{line: "dormeto gcp routers show --project my-project --region europe-west1"},
+	{line: "dormeto gcp routers settings --project my-project --region europe-west1 --idle-minutes 30", stderr: true},
+	{line: "dormeto gcp routers pause --project my-project --region europe-west1 --reason \"database migration\" --for 2h", stderr: true},
+	{line: "dormeto gcp routers resume --project my-project --region europe-west1", stderr: true, google: routerPaused},
+	{line: "dormeto gcp routers waiting-page show --project my-project --region europe-west1", google: pageOf("router", "Back in a moment")},
+	{line: "dormeto gcp routers waiting-page set --project my-project --region europe-west1 --title \"Back in a moment\"", stderr: true},
+	{line: "dormeto gcp routers waiting-page clear --project my-project --region europe-west1", stderr: true},
+	{line: "dormeto gcp routers uninstall --project my-project --region europe-west1 --yes", stderr: true, google: noWorkloads},
+
+	// gcp workloads
+	{line: "dormeto gcp workloads list --project my-project --region europe-west1"},
+	{line: "dormeto gcp workloads show shop --project my-project --region europe-west1"},
+	{line: "dormeto gcp workloads onboard --project my-project --region europe-west1 --url-map checkout-lb --backend-service checkout --yes", stderr: true},
+	{line: "dormeto gcp workloads offboard shop --project my-project --region europe-west1 --yes", stderr: true},
+	{line: "dormeto gcp workloads wake shop --project my-project --region europe-west1 --wait", stderr: true, google: shopWaking},
+	{line: "dormeto gcp workloads nap blog --project my-project --region europe-west1", stderr: true},
+	{line: "dormeto gcp workloads pause shop --project my-project --region europe-west1 --reason \"load test\" --for 4h", stderr: true},
+	{line: "dormeto gcp workloads resume shop --project my-project --region europe-west1", stderr: true},
+	{line: "dormeto gcp workloads settings shop --project my-project --region europe-west1 --idle-minutes 20", stderr: true},
+	{line: "dormeto gcp workloads schedule show shop --project my-project --region europe-west1", google: shopScheduled},
+	{line: "dormeto gcp workloads schedule set shop --project my-project --region europe-west1 --file schedule.json", stderr: true, files: map[string]string{"schedule.json": sampleSchedule}},
+	{line: "dormeto gcp workloads schedule clear shop --project my-project --region europe-west1", stderr: true},
+	{line: "dormeto gcp workloads waiting-page show shop --project my-project --region europe-west1", google: pageOf("shop", "The shop wakes up")},
+	{line: "dormeto gcp workloads waiting-page set shop --project my-project --region europe-west1 --title \"The shop wakes up\"", stderr: true},
+	{line: "dormeto gcp workloads waiting-page clear shop --project my-project --region europe-west1", stderr: true},
+	{line: "dormeto gcp workloads access show --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop", google: shopAccessGranted},
+	{line: "dormeto gcp workloads access grant --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop --yes", stderr: true},
+	{line: "dormeto gcp workloads access revoke --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop --yes", stderr: true, google: shopAccessGranted},
 }
 
 // sampleSchedule is the schedule file of the schedule set samples: awake on weekdays' office hours.
@@ -111,3 +156,83 @@ const sampleSchedule = `{"timeZone": "Europe/Paris", "windows": [{"kind": "awake
 // sampleDiscoveryConfig is the discovery configuration of discovery config set.
 const sampleDiscoveryConfig = `{"regions": ["eu-west-1", "us-east-1"]}
 `
+
+// shopAccessGranted grants the router its access to the GKE workload shop, as `dormeto gcp workloads access grant` does.
+func shopAccessGranted(t *testing.T, _ *gcptest.Server, d gcponboard.Deps) {
+	t.Helper()
+	r := gcponboard.Request{Project: "my-project", Region: "europe-west1", GKECluster: "europe-west1-b/shop-cluster", Namespace: "shop", ID: "shop", Yes: true}
+	if code := gcponboard.WorkloadsAccessGrant(context.Background(), d, r); code != 0 {
+		t.Fatalf("the access grant: exit %d", code)
+	}
+}
+
+// noWorkloads offboards the router's workloads, as an uninstall without --force needs.
+func noWorkloads(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	clear(g.Workloads)
+}
+
+// connected connects the manager through my-project, as `dormeto gcp connect` does, its record kept in memory.
+func connected(t *testing.T, _ *gcptest.Server, d gcponboard.Deps) {
+	t.Helper()
+	r := gcponboard.ConnectRequest{Project: "my-project", Env: "prod", Yes: true, Manager: &memoryManager{}}
+	if code := gcponboard.Connect(context.Background(), d, r); code != 0 {
+		t.Fatalf("the connect: exit %d", code)
+	}
+}
+
+// memoryManager is the manager prod of account 111122223333 as connect sees it, its record in memory.
+type memoryManager struct{ rec *fleet.GoogleConnection }
+
+func (m *memoryManager) About(context.Context) (gcponboard.ManagerInfo, error) {
+	return gcponboard.ManagerInfo{Version: "0.24.0", Account: "111122223333", Env: "prod", URL: sampleAPI}, nil
+}
+func (m *memoryManager) GoogleConnection(context.Context) (*fleet.GoogleConnection, error) {
+	return m.rec, nil
+}
+func (m *memoryManager) PutGoogleConnection(_ context.Context, rec fleet.GoogleConnection) (*fleet.GoogleConnection, error) {
+	m.rec = &rec
+	return &rec, nil
+}
+func (m *memoryManager) DeleteGoogleConnection(context.Context) error { m.rec = nil; return nil }
+func (m *memoryManager) Disconnected(context.Context, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+// routerPaused pauses the router, as `dormeto gcp routers pause` does.
+func routerPaused(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	g.RouterPause = map[string]any{"by": "ops@example.com", "at": "2026-11-14T08:00:00.000Z", "reason": "database migration", "until": "2026-11-14T12:00:00Z", "keepAsleep": false}
+}
+
+// shopWaking makes shop's wake go through WAKING to AWAKE.
+func shopWaking(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	g.Waking = map[string][]string{"shop": {"WAKING", "AWAKE"}}
+}
+
+// shopScheduled gives shop the schedule of the schedule set sample, and its next events.
+func shopScheduled(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	g.Schedules["shop"] = map[string]any{"timeZone": "Europe/Paris", "windows": []any{map[string]any{"kind": "awake", "days": []any{"mon", "tue", "wed", "thu", "fri"}, "start": "08:00", "end": "19:00"}},
+		"by": "ops@example.com", "at": "2026-11-02T14:00:00.000Z"}
+	g.NextEvents = []any{map[string]any{"at": "2026-11-16T07:00:00.000Z", "kind": "awake-start", "window": 0}}
+}
+
+// pageOf gives a level (router, or a workload's ID) a waiting page of its own with that title.
+func pageOf(level, title string) func(*testing.T, *gcptest.Server, gcponboard.Deps) {
+	return func(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+		t.Helper()
+		g.Lock()
+		defer g.Unlock()
+		g.WaitingPages = map[string]map[string]any{level: {"mode": "template", "title": title, "by": "ops@example.com", "at": "2026-11-02T14:00:00.000Z"}}
+	}
+}

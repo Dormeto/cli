@@ -1,0 +1,6 @@
+{
+  "command": "gcp workloads schedule show",
+  "line": "dormeto gcp workloads schedule show shop --project my-project --region europe-west1",
+  "table": "dmtr-my-project-europe-west1/shop: time zone Europe/Paris\n  awake mon–fri 08:00–19:00\n  next\n    Mon 16 Nov 08:00 CET awake window starts\n",
+  "json": "{\n  \"schedule\": {\n    \"at\": \"2026-11-02T14:00:00.000Z\",\n    \"by\": \"ops@example.com\",\n    \"timeZone\": \"Europe/Paris\",\n    \"windows\": [\n      {\n        \"days\": [\n          \"mon\",\n          \"tue\",\n          \"wed\",\n          \"thu\",\n          \"fri\"\n        ],\n        \"end\": \"19:00\",\n        \"kind\": \"awake\",\n        \"start\": \"08:00\"\n      }\n    ]\n  },\n  \"next\": [\n    {\n      \"at\": \"2026-11-16T07:00:00.000Z\",\n      \"kind\": \"awake-start\",\n      \"window\": 0\n    }\n  ]\n}\n"
+}
