@@ -2018,8 +2018,8 @@ A Google Cloud router has AWS's settings, on AWS's names, flags and lines. A wor
 retry after a failed wake and wake mode each come from the first level that sets them: the workload, its type, its router,
 the organization, then the built-in value. `inherit` gives a value back to the levels. The no-wake and wake rules add up
 across the levels, the most general first. The organization level and the custom types are the manager's: a manager
-connected with [`dormeto gcp connect`](#connecting-the-manager) pushes its settings to the router when they change and at
-its polls, and the router reads them as an AWS router reads the manager's. Without a connected manager the organization
+connected with [`dormeto gcp connect`](#connecting-the-manager) pushes its settings to the router when they change, and
+again when the router's report says it holds others, and the router reads them as an AWS router reads the manager's. Without a connected manager the organization
 level reads as unset, and only the built-in types exist. `routers settings` with no flag shows the router's level. A router without the levels answers 404, which the CLI says as `router <version> doesn't have the settings
 levels: dormeto gcp routers install --version <this CLI's>`.
 
