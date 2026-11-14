@@ -1599,12 +1599,12 @@ visitor's first request wakes them: Compute Engine VMs and managed instance grou
 standalone network endpoint groups, and Cloud SQL instances as their companions. Everything but VMs and groups behind a
 global load balancer comes with router 0.37.0 and CLI 0.11.0, released on 2026-11-05, which carry what the measures of
 2026-11-04 changed and were accepted the same day ([how far each part has been tried](#how-far-google-cloud-has-been-tried)).
-Every command takes `--project` (required) and, but `check`, `connect`, `disconnect` and `routers show`, `--region`
+Every command takes `--project` (required) and, but `whoami`, `check`, `connect`, `disconnect` and `routers show`, `--region`
 (required: the router is `dmtr-<region>`, and `dmtr-<project>-<region>` in the manager). Exit codes: 0; 1 when a command
 lacks a permission, a check fails or Google refuses; 2 for a bad flag or a missing answer (an `--yes` without a
 terminal); 128 and the signal's number when stopped.
 
-The tree is `gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`,
+The tree is `gcp whoami`, `gcp check`, `gcp routers install|uninstall|show|settings|pause|resume|waiting-page`, `gcp workloads …`,
 `gcp connect` and `gcp disconnect`; the manager's own commands (`routers list`, `workloads list`, `savings`, `users`…)
 serve both clouds and stay under `dormeto aws`, where `--cloud gcp` and `--project` choose the rows. The router's
 commands are `gcp routers install`, `uninstall` and `show`; `gcp install`, `gcp uninstall` and `gcp status`, their names
@@ -1620,6 +1620,7 @@ text of `gcp routers install`, `uninstall` and `show`, in `gcp routers show --js
 and where a message names the router to install or upgrade.
 
 ```sh
+dormeto gcp whoami --project my-project
 dormeto gcp check --project my-project --region europe-west1
 dormeto gcp routers install --project my-project --region europe-west1
 dormeto gcp workloads onboard --project my-project --region europe-west1 \
@@ -1628,6 +1629,11 @@ dormeto gcp workloads list --project my-project --region europe-west1
 dormeto gcp routers uninstall --project my-project --region europe-west1
 ```
 
+- **`gcp whoami`** is read-only: the Google account the calls are made as (`account`), the gcloud configuration (the one
+  given with `--gcloud-configuration`, else `(active)`), and the project's ID, number and parent (`organization 42`,
+  `folder 7` or `none`). A project the account cannot see prints `Project <id> is not visible to <account>: no role in
+  it` and exits 1. It reads the project as `gcp check` does and needs nothing more; it does not list the routers.
+  `--json` prints `{account, configuration, project: {id, number, parent}}`.
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
   otherwise, then the project's parent, the APIs already on and the warnings (the Compute Engine default service
   account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:

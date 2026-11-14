@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -37,7 +38,7 @@ func gcpRanWith(t *testing.T, stdin string, code int, args ...string) (calls []g
 			return code
 		}
 	}
-	runs := gcpRuns{check: ran("check"), install: ran("install"), status: ran("status")}
+	runs := gcpRuns{whoami: ran("whoami"), check: ran("check"), install: ran("install"), status: ran("status")}
 	runs.uninstall = ran("uninstall")
 	runs.routerSettings = ran("routers settings")
 	runs.routerPause, runs.routerResume = ran("routers pause"), ran("routers resume")
@@ -79,6 +80,43 @@ func TestGcpCheckExitCodes(t *testing.T) {
 		if exit != 2 || len(calls) != 0 {
 			t.Errorf("%v: exit %d calls %v", args, exit, calls)
 		}
+	}
+}
+
+func TestGcpWhoamiFlagsReadIntoTheRequest(t *testing.T) {
+	calls, errs, exit := gcpRan(t, 0, "gcp", "whoami", "--project", "dormeto-dev", "--gcloud-configuration", "dev", "--json")
+	if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "whoami" {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	want := gcponboard.Request{Project: "dormeto-dev", Configuration: "dev", JSON: true}
+	if !reflect.DeepEqual(calls[0].r, want) {
+		t.Fatalf("%+v", calls[0].r)
+	}
+	if _, _, exit := gcpRan(t, 1, "gcp", "whoami", "--project", "p"); exit != 1 {
+		t.Fatalf("exit %d", exit)
+	}
+}
+
+func TestGcpWhoamiNeedsAProjectAndTakesNoRegion(t *testing.T) {
+	for _, args := range [][]string{{"gcp", "whoami"}, {"gcp", "whoami", "--project", "p", "--region", "europe-west1"}, {"gcp", "whoami", "--project", "p", "extra"}} {
+		calls, _, exit := gcpRan(t, 0, args...)
+		if exit != 2 || len(calls) != 0 {
+			t.Errorf("%v: exit %d calls %v", args, exit, calls)
+		}
+	}
+}
+
+func TestGcpHelpAndTheReadmeNameWhoami(t *testing.T) {
+	out, _, code := executed(t, build{}, "gcp", "--help")
+	if code != 0 || !strings.Contains(out, "whoami") {
+		t.Fatalf("%d %s", code, out)
+	}
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "dormeto gcp whoami --project") || !strings.Contains(string(b), "**`gcp whoami`**") {
+		t.Fatal("README.md does not document dormeto gcp whoami")
 	}
 }
 

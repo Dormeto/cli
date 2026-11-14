@@ -29,26 +29,26 @@ type gcpRun func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) i
 
 // gcpRuns are the runs of the gcp commands: internal/gcponboard's, or a test's.
 type gcpRuns struct {
-	check, install, status, uninstall, routerSettings gcpRun
-	routerPause, routerResume                         gcpRun
-	workloads                                         gcpWorkloadRuns
-	routerPage                                        gcpPageRuns
-	connect, disconnect                               gcpConnectRun
+	whoami, check, install, status, uninstall, routerSettings gcpRun
+	routerPause, routerResume                                 gcpRun
+	workloads                                                 gcpWorkloadRuns
+	routerPage                                                gcpPageRuns
+	connect, disconnect                                       gcpConnectRun
 }
 
 // theGcpRuns are internal/gcponboard's.
-var theGcpRuns = gcpRuns{check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, routerPause: gcponboard.RouterPause, routerResume: gcponboard.RouterResume, workloads: theGcpWorkloadRuns,
+var theGcpRuns = gcpRuns{whoami: gcponboard.RunWhoami, check: gcponboard.RunCheck, install: gcponboard.Install, status: gcponboard.RunStatus, uninstall: gcponboard.Uninstall, routerSettings: gcponboard.RouterSettings, routerPause: gcponboard.RouterPause, routerResume: gcponboard.RouterResume, workloads: theGcpWorkloadRuns,
 	routerPage: gcpPageRuns{gcponboard.RouterPageShow, gcponboard.RouterPageSet, gcponboard.RouterPageClear},
 	connect:    gcponboard.Connect, disconnect: gcponboard.Disconnect}
 
 // newGcp is the gcp commands; connect and disconnect reach the manager with the fleet commands' dependencies.
 func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud: the routers and the workloads' onboarding", Args: noArgs, SilenceErrors: true,
-		Long: "Dormeto in Google Cloud: the routers (install, uninstall, show, settings, pause, waiting page), the workloads'\n" +
+		Long: "Dormeto in Google Cloud: the caller (whoami, check), the routers (install, uninstall, show, settings, pause, waiting page), the workloads'\n" +
 			"onboarding and the manager's connection to a project. The manager's own commands (routers list, workloads list,\n" +
 			"savings, users...) serve AWS and Google Cloud and live under `dormeto aws`.\n\n" + regionRule}
 	refuseUnknownSubcommands(cmd)
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWhoami(runs.whoami, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
 		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
 	return cmd
 }
@@ -144,6 +144,18 @@ func newGcpCheck(run gcpRun, version string) *cobra.Command {
 	cmd.Flags().StringVar(&f.image, "image", "", "a router image of your own: also test its permissions and Artifact Registry's API, needed only for a router of --image")
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the report as JSON")
 	withFlag(cmd, &f, "also test the permissions and APIs of these optional features (those of the install record are tested too with --region)")
+	return cmd
+}
+
+func newGcpWhoami(run gcpRun, version string) *cobra.Command {
+	var f gcpFlags
+	cmd := gcpCommand("whoami", "Show the Google account you act as and the project it reaches (read-only)",
+		"Show, read-only, the Google account the calls are made as, the gcloud configuration (the one given, or\n"+
+			"(active)), and the project: its ID, its number and its parent (an organization, a folder, or none). A project\n"+
+			"the account cannot see prints `Project <id> is not visible to <account>: no role in it` and exits 1. It needs no\n"+
+			"permission beyond the ones `check` tests first.",
+		&f, []string{"project"}, version, run)
+	cmd.Flags().BoolVar(&f.json, "json", false, "print {account, configuration, project: {id, number, parent}}")
 	return cmd
 }
 

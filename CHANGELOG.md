@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto gcp whoami --project <id> [--gcloud-configuration <name>] [--json]` is new: read-only, it prints the Google account the calls are made as, the gcloud configuration (`(active)` when none is given), and the project's ID, number and parent (`organization 42`, `folder 7`, `none`); `--json` prints `{account, configuration, project: {id, number, parent}}`. A project the account cannot see prints `Project <id> is not visible to <account>: no role in it`, exit 1. It needs no permission beyond `gcp check`'s and does not list the routers.
+
 ## 0.14.1
 
 The macOS binaries are signed with the Developer ID of KLOUDY (team PP3PVUEBBT) and notarized by Apple: macOS runs a `dormeto` downloaded with a browser with no quarantine to remove (`codesign -dv --verbose=2 ./dormeto` shows the signature), and the Homebrew cask no longer removes the quarantine attribute when it installs.
