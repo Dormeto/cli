@@ -1,0 +1,6 @@
+{
+  "command": "aws users list",
+  "line": "dormeto aws users list",
+  "table": "EMAIL              ROLE      GROUPS    STATUS                 MFA  CREATED\nops@example.com    admin     —         CONFIRMED              yes  105d\ndev@example.com    operator  payments  CONFIRMED              yes  59d\naudit@example.com  viewer    —         FORCE_CHANGE_PASSWORD  no   17h\n",
+  "json": "{\n  \"users\": [\n    {\n      \"email\": \"ops@example.com\",\n      \"role\": \"admin\",\n      \"groups\": [],\n      \"status\": \"CONFIRMED\",\n      \"enabled\": true,\n      \"createdAt\": \"2026-08-01T09:00:00.000Z\",\n      \"mfa\": true\n    },\n    {\n      \"email\": \"dev@example.com\",\n      \"role\": \"operator\",\n      \"groups\": [\n        \"payments\"\n      ],\n      \"status\": \"CONFIRMED\",\n      \"enabled\": true,\n      \"createdAt\": \"2026-09-15T10:30:00.000Z\",\n      \"mfa\": true\n    },\n    {\n      \"email\": \"audit@example.com\",\n      \"role\": \"viewer\",\n      \"groups\": [],\n      \"status\": \"FORCE_CHANGE_PASSWORD\",\n      \"enabled\": true,\n      \"createdAt\": \"2026-11-13T16:20:00.000Z\",\n      \"mfa\": false\n    }\n  ]\n}\n"
+}

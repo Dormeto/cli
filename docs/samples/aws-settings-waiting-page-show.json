@@ -1,0 +1,6 @@
+{
+  "command": "aws settings waiting-page show",
+  "line": "dormeto aws settings waiting-page show",
+  "table": "the organization: waiting page, template (from the organization)\nicon   auto (from built-in default)\ntitle  Waking up (from the organization)\nset on the organization by ops@example.com, 2026-11-02 14:00 UTC\n",
+  "json": "{\n  \"page\": {\n    \"mode\": \"template\",\n    \"title\": \"Waking up\"\n  },\n  \"warnings\": [],\n  \"by\": \"ops@example.com\",\n  \"at\": \"2026-11-02T14:00:00.000Z\"\n}\n"
+}

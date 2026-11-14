@@ -1,0 +1,6 @@
+{
+  "command": "aws manager changes",
+  "line": "dormeto aws manager changes --to 0.24.0",
+  "table": "## 0.24.0 — 2026-11-12\n\n### Added\n- The Google Cloud routers' pause and resume, from the dashboard and the API.\n\n### Fixed\n- The savings of a workload renamed are kept.\n",
+  "json": "[\n  {\n    \"version\": \"0.24.0\",\n    \"notes\": \"## 0.24.0 \\u2014 2026-11-12\\n\\n### Added\\n- The Google Cloud routers' pause and resume, from the dashboard and the API.\\n\\n### Fixed\\n- The savings of a workload renamed are kept.\",\n    \"access\": null,\n    \"accessNeeded\": false\n  }\n]\n"
+}

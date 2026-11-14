@@ -1,0 +1,6 @@
+{
+  "command": "aws discovery access",
+  "line": "dormeto aws discovery access",
+  "table": "checked   2026-11-14 06:01 UTC\naccounts  2 ready, 0 without the discovery role, 1 without the command role, 0 not checked\n\nNAME      CLOUD  ACCOUNT OR PROJECT  DISCOVERY  COMMAND                FORWARDER\npayments  aws    444455556666        ok         none (discovery only)  —\n",
+  "json": "{\n  \"accounts\": [\n    {\n      \"account\": \"444455556666\",\n      \"name\": \"payments\",\n      \"discovery\": {\n        \"ok\": true\n      },\n      \"command\": {\n        \"ok\": false,\n        \"reason\": \"role dmt-prod-command not found\",\n        \"discoveryOnly\": true\n      },\n      \"cloud\": \"aws\"\n    }\n  ],\n  \"checkedAt\": \"2026-11-14T06:01:12.000Z\",\n  \"counts\": {\n    \"ready\": 2,\n    \"discoveryMissing\": 0,\n    \"commandMissing\": 1,\n    \"unchecked\": 0\n  },\n  \"delegation\": \"ok\"\n}\n"
+}

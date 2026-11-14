@@ -1,0 +1,6 @@
+{
+  "command": "aws manager status",
+  "line": "dormeto aws manager status",
+  "table": "version      0.24.0\ninstalled    with the CLI 0.14.0\nenv          prod\nregion       eu-west-1\napplied      0.24.0 (build dmt-prod-install:3c9e1a74-58b2-4f06-9d1e-7a2b4c6d8e01, 2026-11-12 15:20 UTC)\nnewer        none: up to date\ndaily check  on, alert on\nlast check   2026-11-14 06:00 UTC: 0.24.0 available\n",
+  "json": "{\n  \"version\": \"0.24.0\",\n  \"update\": {\n    \"installedWithCli\": true,\n    \"version\": \"0.24.0\",\n    \"env\": \"prod\",\n    \"region\": \"eu-west-1\",\n    \"applied\": {\n      \"version\": \"0.24.0\",\n      \"build\": \"dmt-prod-install:3c9e1a74-58b2-4f06-9d1e-7a2b4c6d8e01\",\n      \"at\": \"2026-11-12T15:20:00.000Z\"\n    },\n    \"cli\": \"0.14.0\",\n    \"versions\": [],\n    \"build\": null,\n    \"pending\": null,\n    \"plan\": null\n  },\n  \"check\": {\n    \"enabled\": true,\n    \"alert\": true,\n    \"newer\": false,\n    \"updatedAt\": \"2026-11-02T14:00:00.000Z\",\n    \"updatedBy\": \"ops@example.com\",\n    \"result\": {\n      \"checkedAt\": \"2026-11-14T06:00:00.000Z\",\n      \"running\": \"0.24.0\",\n      \"latest\": \"0.24.0\"\n    }\n  }\n}\n"
+}

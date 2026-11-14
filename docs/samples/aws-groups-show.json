@@ -1,0 +1,6 @@
+{
+  "command": "aws groups show",
+  "line": "dormeto aws groups show payments",
+  "table": "name         payments\ndescription  The payments team\nupdated      2026-11-03 11:00 UTC by ops@example.com\ngrants       team=payments: read,wake\n",
+  "json": "{\n  \"name\": \"payments\",\n  \"description\": \"The payments team\",\n  \"grants\": [\n    {\n      \"tags\": {\n        \"team\": \"payments\"\n      },\n      \"permissions\": [\n        \"read\",\n        \"wake\"\n      ]\n    }\n  ],\n  \"updatedAt\": \"2026-11-03T11:00:00.000Z\",\n  \"updatedBy\": \"ops@example.com\"\n}\n"
+}

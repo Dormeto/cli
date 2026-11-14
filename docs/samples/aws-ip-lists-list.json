@@ -1,0 +1,6 @@
+{
+  "command": "aws ip-lists list",
+  "line": "dormeto aws ip-lists list",
+  "table": "NAME             ACTION  ENTRIES  DOWNLOADED  STATUS\nscanners         defer   18,342   4h          ok\nuptime-monitors  ignore  412      4h          ok\ncatalog https://ip-lists.dormeto.com/catalog.json\n",
+  "json": "{\n  \"catalog\": \"https://ip-lists.dormeto.com/catalog.json\",\n  \"lists\": [\n    {\n      \"name\": \"scanners\",\n      \"url\": \"https://ip-lists.dormeto.com/scanners.txt\",\n      \"action\": \"defer\",\n      \"refreshHours\": 24,\n      \"version\": \"2026-11-14\",\n      \"entries\": 18342,\n      \"dropped\": 0,\n      \"fetchedAt\": \"2026-11-14T06:00:00.000Z\"\n    },\n    {\n      \"name\": \"uptime-monitors\",\n      \"url\": \"https://ip-lists.dormeto.com/uptime-monitors.txt\",\n      \"action\": \"ignore\",\n      \"refreshHours\": 24,\n      \"version\": \"2026-11-14\",\n      \"entries\": 412,\n      \"dropped\": 0,\n      \"fetchedAt\": \"2026-11-14T06:00:00.000Z\"\n    }\n  ]\n}\n"
+}

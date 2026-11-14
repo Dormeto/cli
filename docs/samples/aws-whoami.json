@@ -1,0 +1,6 @@
+{
+  "command": "aws whoami",
+  "line": "dormeto aws whoami",
+  "table": "arn      arn:aws:sts::111122223333:assumed-role/ops/ci\nrole     admin\nmanager  0.24.0\napi url  https://abc123.execute-api.eu-west-1.amazonaws.com\nenv      prod\nregion   eu-west-1\n",
+  "json": "{\n  \"me\": {\n    \"email\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n    \"groups\": [],\n    \"role\": \"admin\",\n    \"effectiveRole\": \"admin\",\n    \"grants\": []\n  },\n  \"version\": \"0.24.0\",\n  \"apiUrl\": \"https://abc123.execute-api.eu-west-1.amazonaws.com\"\n}\n"
+}

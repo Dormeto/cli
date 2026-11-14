@@ -1,0 +1,6 @@
+{
+  "command": "aws groups list",
+  "line": "dormeto aws groups list",
+  "table": "NAME      DESCRIPTION        GRANTS  UPDATED\npayments  The payments team  1       10d\nweb       The web team       1       10d\n",
+  "json": "{\n  \"groups\": [\n    {\n      \"name\": \"payments\",\n      \"description\": \"The payments team\",\n      \"grants\": [\n        {\n          \"tags\": {\n            \"team\": \"payments\"\n          },\n          \"permissions\": [\n            \"read\",\n            \"wake\"\n          ]\n        }\n      ],\n      \"updatedAt\": \"2026-11-03T11:00:00.000Z\",\n      \"updatedBy\": \"ops@example.com\"\n    },\n    {\n      \"name\": \"web\",\n      \"description\": \"The web team\",\n      \"grants\": [\n        {\n          \"tags\": {\n            \"team\": \"web\"\n          },\n          \"permissions\": [\n            \"read\",\n            \"wake\",\n            \"nap\"\n          ]\n        }\n      ],\n      \"updatedAt\": \"2026-11-03T11:05:00.000Z\",\n      \"updatedBy\": \"ops@example.com\"\n    }\n  ]\n}\n"
+}

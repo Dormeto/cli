@@ -1,0 +1,6 @@
+{
+  "command": "aws api",
+  "line": "dormeto aws api GET /health",
+  "table": "{\n  \"status\": \"ok\",\n  \"version\": \"0.24.0\"\n}\n",
+  "json": "{\n  \"status\": \"ok\",\n  \"version\": \"0.24.0\"\n}\n"
+}

@@ -1,0 +1,6 @@
+{
+  "command": "aws types show",
+  "line": "dormeto aws types show batch",
+  "table": "batch (team=batch): idle window 15 min, wake mode any\nNight batches\n",
+  "json": "{\n  \"builtIn\": false,\n  \"description\": \"Night batches\",\n  \"name\": \"batch\",\n  \"settings\": {\n    \"idleMinutes\": 15,\n    \"wakeMode\": \"any\"\n  },\n  \"tags\": {\n    \"team\": \"batch\"\n  }\n}\n"
+}

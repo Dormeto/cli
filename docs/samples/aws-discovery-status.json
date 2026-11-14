@@ -1,0 +1,6 @@
+{
+  "command": "aws discovery status",
+  "line": "dormeto aws discovery status",
+  "table": "last run    2026-11-14 06:00 UTC, schedule, ok, 72s\nscanned     7 account-regions, 0 skipped, 0 failed\ncandidates  3 pending-onboarding, 3 managed, 1 ineligible\n",
+  "json": "{\n  \"lastRun\": {\n    \"startedAt\": \"2026-11-14T06:00:00.000Z\",\n    \"finishedAt\": \"2026-11-14T06:01:12.000Z\",\n    \"trigger\": \"schedule\",\n    \"status\": \"ok\",\n    \"targets\": [\n      {\n        \"account\": \"111122223333\",\n        \"region\": \"eu-west-1\",\n        \"status\": \"ok\",\n        \"cloud\": \"aws\"\n      },\n      {\n        \"account\": \"my-project\",\n        \"region\": \"global\",\n        \"status\": \"ok\",\n        \"cloud\": \"gcp\"\n      }\n    ],\n    \"emptyPairs\": 5,\n    \"counts\": {\n      \"pending-onboarding\": 3,\n      \"managed\": 3,\n      \"ineligible\": 1\n    },\n    \"lint\": [],\n    \"google\": {\n      \"projects\": 1,\n      \"routers\": 1,\n      \"added\": 0,\n      \"updated\": 1,\n      \"removed\": 0,\n      \"errors\": []\n    }\n  },\n  \"counts\": {\n    \"pending-onboarding\": 3,\n    \"managed\": 3,\n    \"ineligible\": 1\n  }\n}\n"
+}

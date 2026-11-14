@@ -1,0 +1,6 @@
+{
+  "command": "aws types list",
+  "line": "dormeto aws types list",
+  "table": "batch (team=batch): idle window 15 min, wake mode any\nweb (team=web): idle window 20 min\ninstance (built-in): no defaults\nasg (built-in): no defaults\necs (built-in): no defaults\nk8s (built-in): no defaults\ndatabases (built-in): no defaults\n",
+  "json": "{\n  \"types\": [\n    {\n      \"description\": \"Night batches\",\n      \"name\": \"batch\",\n      \"settings\": {\n        \"idleMinutes\": 15,\n        \"wakeMode\": \"any\"\n      },\n      \"tags\": {\n        \"team\": \"batch\"\n      }\n    },\n    {\n      \"description\": \"Public sites\",\n      \"name\": \"web\",\n      \"settings\": {\n        \"idleMinutes\": 20\n      },\n      \"tags\": {\n        \"team\": \"web\"\n      }\n    }\n  ],\n  \"builtIn\": [\n    \"instance\",\n    \"asg\",\n    \"ecs\",\n    \"k8s\",\n    \"databases\"\n  ],\n  \"note\": \"\"\n}\n"
+}

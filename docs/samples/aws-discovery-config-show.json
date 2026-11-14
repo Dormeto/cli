@@ -1,0 +1,6 @@
+{
+  "command": "aws discovery config show",
+  "line": "dormeto aws discovery config show",
+  "table": "{\n  \"version\": 1,\n  \"mode\": \"organization\",\n  \"regions\": [\n    \"eu-west-1\",\n    \"us-east-1\"\n  ],\n  \"refreshHours\": 24,\n  \"globalExcludes\": [\n    {\n      \"tag\": \"dormeto:skip\"\n    }\n  ],\n  \"filters\": [\n    {\n      \"name\": \"all\",\n      \"include\": [\n        {\n          \"all\": true\n        }\n      ],\n      \"exclude\": []\n    }\n  ]\n}\n",
+  "json": "{\n  \"config\": {\n    \"version\": 1,\n    \"mode\": \"organization\",\n    \"regions\": [\n      \"eu-west-1\",\n      \"us-east-1\"\n    ],\n    \"refreshHours\": 24,\n    \"globalExcludes\": [\n      {\n        \"tag\": \"dormeto:skip\"\n      }\n    ],\n    \"filters\": [\n      {\n        \"name\": \"all\",\n        \"include\": [\n          {\n            \"all\": true\n          }\n        ],\n        \"exclude\": []\n      }\n    ]\n  },\n  \"updatedAt\": \"2026-11-02T14:00:00.000Z\",\n  \"updatedBy\": \"ops@example.com\",\n  \"lint\": []\n}\n"
+}
