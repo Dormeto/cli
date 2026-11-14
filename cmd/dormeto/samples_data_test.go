@@ -119,7 +119,7 @@ var samples = []sample{
 	{line: "dormeto gcp connect --project my-project --yes", stderr: true},
 	{line: "dormeto gcp disconnect --project my-project --yes", stderr: true, google: connected},
 	{line: "dormeto gcp routers install --project my-project --region europe-west1 --yes", stderr: true},
-	{line: "dormeto gcp routers show --project my-project --region europe-west1"},
+	{line: "dormeto gcp routers show --project my-project --region europe-west1", google: routerReporting},
 	{line: "dormeto gcp routers settings --project my-project --region europe-west1 --idle-minutes 30", stderr: true},
 	{line: "dormeto gcp routers pause --project my-project --region europe-west1 --reason \"database migration\" --for 2h", stderr: true},
 	{line: "dormeto gcp routers resume --project my-project --region europe-west1", stderr: true, google: routerPaused},
@@ -199,6 +199,16 @@ func (m *memoryManager) PutGoogleConnection(_ context.Context, rec fleet.GoogleC
 func (m *memoryManager) DeleteGoogleConnection(context.Context) error { m.rec = nil; return nil }
 func (m *memoryManager) Disconnected(context.Context, string) (time.Time, error) {
 	return time.Time{}, nil
+}
+
+// routerReporting makes the controller's health answer where it reports to the manager (a router of 0.41.0 and above does),
+// five minutes before the samples' clock.
+func routerReporting(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	g.HealthFields = map[string]any{"report": map[string]any{"host": "abc123.execute-api.eu-west-1.amazonaws.com",
+		"lastSentAt": "2026-11-14T09:55:00Z", "sentThrough": "j-1042"}}
 }
 
 // routerPaused pauses the router, as `dormeto gcp routers pause` does.

@@ -181,6 +181,9 @@ type Server struct {
 	Digests map[string]string
 	// HealthVersion is the version the controller's health answers instead of its service's DMT_VERSION.
 	HealthVersion string
+	// HealthFields are fields the controller's health answers beside its own (a router of 0.41.0 and above answers
+	// "report"): a key set to nil answers null, a key left out answers nothing.
+	HealthFields map[string]any
 	// GrantOnCreate plays a binding Google adds to the project (role, member) when a resource of a kind (service, neg, job)
 	// is created.
 	GrantOnCreate map[string][2]string

@@ -28,11 +28,14 @@ type StatusReport struct {
 // RouterStatus is one router: Record is nil without an install record; Version is what the controller answers; OK that
 // every resource and grant is as it should be.
 type RouterStatus struct {
-	Router    string           `json:"router"`
-	Region    string           `json:"region"`
-	OK        bool             `json:"ok"`
-	Record    *Record          `json:"record"`
-	Version   string           `json:"version,omitempty"`
+	Router  string  `json:"router"`
+	Region  string  `json:"region"`
+	OK      bool    `json:"ok"`
+	Record  *Record `json:"record"`
+	Version string  `json:"version,omitempty"`
+	// Report is the controller's health "report" as it answered (a router of 0.41.0 and above: where it reports to the
+	// manager), null when it was told nowhere; absent from a router that answers none.
+	Report    json.RawMessage  `json:"report,omitempty"`
 	Resources []ResourceStatus `json:"resources"`
 	Grants    []GrantStatus    `json:"grants"`
 }
@@ -189,7 +192,8 @@ func (x *run) routerStatus() RouterStatus {
 		add("service", s.name, ok, state, detail)
 	}
 	if controllerFound {
-		version, err := x.health()
+		version, report, err := x.healthReport()
+		st.Report = report
 		switch {
 		case err != nil:
 			add("health", x.controllerURL(), false, "unreadable: "+err.Error(), "")
@@ -299,6 +303,42 @@ func (x *run) grantStatuses(grants []RecordGrant) []GrantStatus {
 	return out
 }
 
+// reportLine says what the router's health answered under "report": "" for an older router, which answers none.
+func reportLine(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var r *struct {
+		Host        string  `json:"host"`
+		LastSentAt  *string `json:"lastSentAt"`
+		LastError   string  `json:"lastError"`
+		LastRefusal string  `json:"lastRefusal"`
+		Error       string  `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return "report state not read: " + err.Error()
+	}
+	if r == nil {
+		return "not told where to report (no manager connected, or dormeto gcp connect not run since the router's install)"
+	}
+	if r.Error != "" {
+		return "report state not read: " + r.Error
+	}
+	sent := "none sent yet"
+	if r.LastSentAt != nil {
+		sent = "last " + *r.LastSentAt
+	}
+	switch {
+	case r.LastRefusal == "router_unknown":
+		return "reports refused by " + r.Host + ": the manager does not know this router (dormeto gcp connect)"
+	case r.LastRefusal != "":
+		return "reports refused by " + r.Host + ": " + r.LastRefusal
+	case r.LastError != "":
+		return "reports to " + r.Host + " failing: " + r.LastError + ", " + strings.Replace(sent, "last ", "last sent ", 1)
+	}
+	return "reports to " + r.Host + ", " + sent
+}
+
 var statusKinds = map[string]string{"neg": "network endpoint group"}
 
 func checkMark(ok bool) string {
@@ -354,6 +394,9 @@ func PrintStatus(w io.Writer, rep StatusReport) error {
 				fmt.Fprintf(&b, ", %s", res.Detail)
 			}
 			b.WriteString("\n")
+		}
+		if line := reportLine(r.Report); line != "" {
+			fmt.Fprintf(&b, "  manager: %s\n", line)
 		}
 		for _, g := range r.Grants {
 			fmt.Fprintf(&b, "  %s grant %s", checkMark(g.Present), x.describe(Grant{Role: g.Role, Member: g.Member, Condition: g.Condition}, g.On))

@@ -3,6 +3,7 @@ package gcponboard
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -362,5 +363,74 @@ func TestStatusOfARouterOfThePublicImageComparesItsDigest(t *testing.T) {
 	code, out = g.status(t, europeStatus)
 	if code != 1 || !strings.Contains(out, "  ✗ service "+wakerName+": ready, image europe-docker.pkg.dev/dormeto-releases/router/router@sha256:other: not the recorded image\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// The manager's reporting line (the push design §4, §7): what the controller's health answers under `report`, in a router
+// of 0.41.0 and above; a router below answers none and prints no line.
+func TestStatusSaysWhereTheRouterReports(t *testing.T) {
+	const host = "abc123.execute-api.eu-west-1.amazonaws.com"
+	cases := []struct {
+		name   string
+		report any // the health's "report", absent when not set
+		set    bool
+		want   string // the line, "" for none
+	}{
+		{"a report sent", map[string]any{"host": host, "lastSentAt": "2026-11-14T09:55:00Z", "sentThrough": "j-42"}, true,
+			"  manager: reports to " + host + ", last 2026-11-14T09:55:00Z\n"},
+		{"nothing sent yet", map[string]any{"host": host, "lastSentAt": nil, "sentThrough": nil}, true,
+			"  manager: reports to " + host + ", none sent yet\n"},
+		{"a router the manager does not know", map[string]any{"host": host, "lastSentAt": nil, "sentThrough": nil, "lastRefusal": "router_unknown"}, true,
+			"  manager: reports refused by " + host + ": the manager does not know this router (dormeto gcp connect)\n"},
+		{"a failing report", map[string]any{"host": host, "lastSentAt": "2026-11-14T09:55:00Z", "sentThrough": "j-42", "lastError": "timeout"}, true,
+			"  manager: reports to " + host + " failing: timeout, last sent 2026-11-14T09:55:00Z\n"},
+		{"a failing report never sent", map[string]any{"host": host, "lastSentAt": nil, "sentThrough": nil, "lastError": "timeout"}, true,
+			"  manager: reports to " + host + " failing: timeout, none sent yet\n"},
+		{"told nowhere", nil, true,
+			"  manager: not told where to report (no manager connected, or dormeto gcp connect not run since the router's install)\n"},
+		{"a state not read", map[string]any{"error": "firestore timed out"}, true,
+			"  manager: report state not read: firestore timed out\n"},
+		{"an older router", nil, false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := routerInstalled(t)
+			if c.set {
+				g.s.HealthFields = map[string]any{"report": c.report}
+			}
+			code, out := g.status(t, europeStatus)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if c.want == "" {
+				if strings.Contains(out, "manager:") || strings.Contains(out, "report") {
+					t.Errorf("a line about reports in:\n%s", out)
+				}
+			} else {
+				contains(t, out, c.want)
+			}
+			r := europeStatus
+			r.JSON = true
+			_, js := g.status(t, r)
+			var raw struct {
+				Routers []map[string]json.RawMessage `json:"routers"`
+			}
+			if err := json.Unmarshal([]byte(js), &raw); err != nil {
+				t.Fatal(err)
+			}
+			got, present := raw.Routers[0]["report"]
+			if present != c.set {
+				t.Fatalf("report present %v, want %v in:\n%s", present, c.set, js)
+			}
+			if c.set {
+				want, _ := json.Marshal(c.report)
+				var a, b any
+				_ = json.Unmarshal(got, &a)
+				_ = json.Unmarshal(want, &b)
+				if !reflect.DeepEqual(a, b) {
+					t.Errorf("report %s, want %s", got, want)
+				}
+			}
+		})
 	}
 }

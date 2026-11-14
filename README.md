@@ -1693,7 +1693,11 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
   routers install` again: it adds `compute.instances.setMachineType` to the role `dormetoRouterBackends`.
 - **`gcp routers show`** (read-only, `--json`) shows the router's record and live state: version, services, controller
   health, queue, job, database and grants, and the record's features, IP lists, custom pages switch (`custom pages: on` or
-  `off`) and Kubernetes access. Without `--region` it shows every router of the project. Exit 1 when something differs from
+  `off`) and Kubernetes access. A router of 0.41.0 and above adds a `manager:` row from its health's `report`: `reports to
+  <host>, last <time>` (or `none sent yet`), `reports refused by <host>: the manager does not know this router (dormeto gcp
+  connect)`, `reports to <host> failing: <error>, last sent <time>`, `not told where to report (…)` or `report state not
+  read: <error>`; an older router has no such row. `--json` has the answer as `report` in the router's object, beside
+  `version`. Without `--region` it shows every router of the project. Exit 1 when something differs from
   the record, such as `DMT_IP_LISTS` or `DMT_CUSTOM_PAGES` on a service after an interrupted run.
 - **`gcp routers uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while
   workloads are onboarded (`--force` offboards each first, tag bindings included, and names each VM it leaves on a

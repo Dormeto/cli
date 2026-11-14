@@ -426,7 +426,11 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = svc.Env("DMT_VERSION")
 		}
-		Reply(w, map[string]any{"version": version, "project": s.ProjectID, "region": svc.Env("DMT_REGION")})
+		answer := map[string]any{"version": version, "project": s.ProjectID, "region": svc.Env("DMT_REGION")}
+		for k, v := range s.HealthFields {
+			answer[k] = v
+		}
+		Reply(w, answer)
 		return
 	}
 	noRoute(w, r)

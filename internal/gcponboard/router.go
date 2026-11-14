@@ -7,6 +7,7 @@ package gcponboard
 // (image.go). A new image changes the two services only.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -649,9 +650,17 @@ func (x *run) verifyRouter() []string {
 
 // health is the version the controller answers to the caller's identity token.
 func (x *run) health() (string, error) {
+	version, _, err := x.healthReport()
+	return version, err
+}
+
+// healthReport is health with the answer's "report" as the router gave it: nil when it gave none (a router below 0.41.0),
+// null when the manager has not told it where to report.
+func (x *run) healthReport() (string, json.RawMessage, error) {
 	var out struct {
-		Version string `json:"version"`
+		Version string          `json:"version"`
+		Report  json.RawMessage `json:"report"`
 	}
 	err := x.d.Google.Invoke(x.ctx, http.MethodGet, x.controllerURL()+"/v1/health", x.controllerURL(), nil, &out)
-	return out.Version, err
+	return out.Version, out.Report, err
 }
