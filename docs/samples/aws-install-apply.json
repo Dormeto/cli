@@ -1,6 +1,6 @@
 {
   "command": "aws install apply",
   "line": "dormeto aws install apply",
-  "table": "AWS credentials: account 111122223333 (sandbox), not in an organization\nPlan (build dmt-prod-install:b1)\n  manager 0.24.0: 3 to add, 0 to change, 0 to destroy\n      1 aws_cloudfront_distribution\n      1 aws_cognito_user_pool\n      1 aws_lambda_function\ndormeto: terraform apply\nApply complete! Resources: 3 added, 0 changed, 0 destroyed.\ndormeto: done\nApply (build dmt-prod-install:b2…)  succeeded  0s\n  ✓ applied: 3 added, 0 changed, 0 destroyed\n  ✓ dashboard: https://d1a2b3c4.cloudfront.net answers\n  ✓ administrators: invitation sent to ops@example.com (valid 7 days)\nNext: sign in at https://d1a2b3c4.cloudfront.net; in Discovery, Perimeter settings, add a filter, then Run now.\n",
+  "table": "AWS credentials: account 111122223333 (prod), not in an organization\nPlan (build dmt-prod-install:b1)\n  manager 0.24.0: 3 to add, 0 to change, 0 to destroy\n      1 aws_cloudfront_distribution\n      1 aws_cognito_user_pool\n      1 aws_lambda_function\ndormeto: terraform apply\nApply complete! Resources: 3 added, 0 changed, 0 destroyed.\ndormeto: done\nApply (build dmt-prod-install:b2…)  succeeded  0s\n  ✓ applied: 3 added, 0 changed, 0 destroyed\n  ✓ dashboard: https://d1a2b3c4.cloudfront.net answers\n  ✓ administrators: invitation sent to ops@example.com (valid 7 days)\nNext: sign in at https://d1a2b3c4.cloudfront.net; in Discovery, Perimeter settings, add a filter, then Run now.\n",
   "json": null
 }

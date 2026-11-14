@@ -35,6 +35,7 @@ func samplesWorld(t *testing.T) *rwWorld {
 	w := rwNew(t)
 	w.rwAcct = rwNewAcct(samplesAccount, "dmt-prod-install", "")
 	w.org = nil
+	w.aliasName, w.callerRole, w.callerSession = "prod", "ops", "ci"
 	w.release("0.24.0", true)
 	w.clock = time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
 	return w

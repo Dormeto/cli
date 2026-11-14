@@ -143,7 +143,10 @@ func (a *rwAcct) build(id string) *rwBuild {
 // rwWorld is one account in eu-west-1 (the profile p), member of an organization with all features unless org is nil;
 // with rwOrganization, the organization's management account (the profile m) and other accounts too.
 type rwWorld struct {
-	rwAcct        // the manager's account
+	rwAcct               // the manager's account
+	aliasName     string // the account's alias; "": sandbox
+	callerRole    string // the caller's role; "": rwRole
+	callerSession string // the caller's session name; "": you@example.com
 	t             *testing.T
 	json          *bytes.Buffer // where --json prints, when set
 	org           *Organization
@@ -435,7 +438,7 @@ func (f rwSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, .
 	if f.w.identityErr != nil {
 		return nil, f.w.identityErr
 	}
-	return &sts.GetCallerIdentityOutput{Account: aws.String(f.a.id), Arn: aws.String("arn:aws:sts::" + f.a.id + ":assumed-role/" + rwRole + "/you@example.com")}, nil
+	return &sts.GetCallerIdentityOutput{Account: aws.String(f.a.id), Arn: aws.String("arn:aws:sts::" + f.a.id + ":assumed-role/" + or(f.w.callerRole, rwRole) + "/" + or(f.w.callerSession, "you@example.com"))}, nil
 }
 
 type rwOrgs struct {
@@ -472,6 +475,14 @@ func (f rwOrgs) DescribeResourcePolicy(context.Context, *organizations.DescribeR
 	return &organizations.DescribeResourcePolicyOutput{ResourcePolicy: &orgtypes.ResourcePolicy{Content: f.w.policy}}, nil
 }
 
+// or is v, or def when v is empty.
+func or(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
 type rwIAM struct {
 	IAM
 	w *rwWorld
@@ -479,12 +490,12 @@ type rwIAM struct {
 }
 
 func (f rwIAM) ListAccountAliases(context.Context, *iam.ListAccountAliasesInput, ...func(*iam.Options)) (*iam.ListAccountAliasesOutput, error) {
-	return &iam.ListAccountAliasesOutput{AccountAliases: []string{"sandbox"}}, nil
+	return &iam.ListAccountAliasesOutput{AccountAliases: []string{or(f.w.aliasName, "sandbox")}}, nil
 }
 
 func (f rwIAM) GetRole(_ context.Context, in *iam.GetRoleInput, _ ...func(*iam.Options)) (*iam.GetRoleOutput, error) {
 	switch name := aws.ToString(in.RoleName); {
-	case name == rwRole:
+	case name == or(f.w.callerRole, rwRole):
 		return &iam.GetRoleOutput{Role: &iamtypes.Role{Arn: aws.String("arn:aws:iam::" + f.a.id + ":role/aws-reserved/sso.amazonaws.com/eu-west-1/" + name)}}, nil
 	case name == f.a.name && f.a.role:
 		return &iam.GetRoleOutput{Role: &iamtypes.Role{RoleName: aws.String(name), Path: aws.String("/dormeto/"),
