@@ -58,7 +58,8 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 		Long: "Dormeto in AWS: the manager, which serves AWS and Google Cloud, and the AWS routers. The manager's commands (routers list,\n" +
 			"workloads list, discovery, savings, users, settings...) cover both clouds, a Google Cloud project being the account of\n" +
 			"its rows, and change a Google Cloud router's pause, settings and workloads; the commands that install, upgrade and\n" +
-			"remove a Google Cloud router are under `dormeto gcp`.\n\n" + regionRule}
+			"remove a Google Cloud router are under `dormeto gcp`. `whoami` shows the caller the manager sees; `check` shows the\n" +
+			"permissions the profile lacks for each command.\n\n" + regionRule}
 	refuseUnknownSubcommands(aws)
 	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
 	types := newTypes(fleet)
@@ -71,7 +72,7 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 
 // awsCommands are the commands of `dormeto aws`, built anew at each call.
 func awsCommands(b build, fleet fleetDeps, installs installRuns, version string) []*cobra.Command {
-	return append([]*cobra.Command{newEstimate(b), newInstall(installs, version), newUninstall(installs, version)}, managerCommands(fleet)...)
+	return append([]*cobra.Command{newEstimate(b), newInstall(installs, version), newUninstall(installs, version), newAwsCheck(fleet)}, managerCommands(fleet)...)
 }
 
 // managerCommands are the commands that call the manager's API, with deps.

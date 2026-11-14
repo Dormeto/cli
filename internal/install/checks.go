@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
@@ -164,49 +163,25 @@ func checkCredentials(w Where) Check {
 
 func checkRights(ctx context.Context, c Clients, w Where) Check {
 	const name = "administrator rights"
-	kind, who := principal(w.Caller)
-	source := w.Caller
-	switch kind {
-	case "root":
+	source, root, err := PolicySource(ctx, c.IAM, w.Caller)
+	var denied map[Grant]bool
+	switch {
+	case root:
 		return Check{name, "root", OK}
-	case "assumed-role":
-		out, err := c.IAM.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(who)})
-		if err != nil {
-			if isDenied(err) {
-				return Check{name, rightsDenied, Warn}
-			}
-			return failure(name, err)
-		}
-		source = aws.ToString(out.Role.Arn)
+	case err == nil:
+		denied, err = Denied(ctx, c.IAM, source, rightsActions, []string{"*"})
 	}
-	denied := map[string]bool{}
-	var marker *string
-	for {
-		out, err := c.IAM.SimulatePrincipalPolicy(ctx, &iam.SimulatePrincipalPolicyInput{
-			PolicySourceArn: aws.String(source), ActionNames: rightsActions, ResourceArns: []string{"*"}, Marker: marker,
-		})
-		if err != nil {
-			if isDenied(err) {
-				return Check{name, rightsDenied, Warn}
-			}
-			return failure(name, err)
-		}
-		for _, r := range out.EvaluationResults {
-			if r.EvalDecision != iamtypes.PolicyEvaluationDecisionTypeAllowed {
-				denied[aws.ToString(r.EvalActionName)] = true
-			}
-		}
-		if !out.IsTruncated || out.Marker == nil {
-			break
-		}
-		marker = out.Marker
-	}
-	if len(denied) == 0 {
+	switch {
+	case err != nil && isDenied(err):
+		return Check{name, rightsDenied, Warn}
+	case err != nil:
+		return failure(name, err)
+	case len(denied) == 0:
 		return Check{name, "administrator rights (simulated)", OK}
 	}
 	var list []string
 	for _, a := range rightsActions {
-		if denied[a] {
+		if denied[Grant{a, "*"}] || denied[Grant{a, ""}] {
 			list = append(list, a)
 		}
 	}

@@ -490,6 +490,7 @@ targets, confirmations, operations and output work, the exit codes and the permi
 
 ```sh
 dormeto aws whoami
+dormeto aws check
 dormeto aws routers list --env dev --outdated
 dormeto aws workloads list --tag team=payments --state ASLEEP
 dormeto aws workloads wake prod-eu/w-1 --wait
@@ -512,6 +513,36 @@ dormeto aws whoami [--json]
 `whoami` shows the caller as the manager names it (the profile's identity, by its ARN) and its role, then the manager
 that answered: its version, its API's URL, the environment it was found by (not with `--api-url`) and its region. Run
 it first to check the profile and the permission. `--json` prints `{me, version, apiUrl}`.
+
+```sh
+dormeto aws check [--json]
+```
+
+`check` is read-only: for each method of `dormeto aws`, ✓ when the profile holds every permission it needs, ✗ with the
+missing ones otherwise. It asks IAM to simulate the profile's policies (`iam:SimulatePrincipalPolicy`, on the role of an
+assumed role, which `iam:GetRole` reads). A manager's method needs `apigateway:GET` to find the API (not with
+`--api-url`) and `execute-api:Invoke` on each route its commands call ([Permission](#permission-to-call-the-manager)).
+`install` and `uninstall` need the install's actions ([Permissions to install](#permissions-to-install)), `estimate` its
+reads ([Permissions](#permissions)). The first line names the account, the manager's API and version, and the caller.
+
+```
+Account 111122223333 (prod), manager dmt-prod-manager-api 0.24.0, checked as arn:aws:sts::111122223333:assumed-role/ops/ci
+  ✓ whoami: every permission held
+  ✗ savings: missing execute-api:Invoke on PUT /iam/savings/settings
+  ! IAM's simulation leaves out service control policies and the API's own refusals
+```
+
+- It finds the manager as every manager command does, then reads its version (`GET /iam/health`). It calls no other
+  route of the manager and changes nothing.
+- With no manager in the region for the environment, it checks `install`, `uninstall` and `estimate` only, and says so.
+  When the lookup is refused, the manager's methods lack `apigateway:GET`, their routes unchecked.
+- A route's `{…}` is `*` in the simulation: a policy narrowed to some routers or workloads shows those routes missing.
+- When IAM refuses the simulation, every method is `not checked`, a warning says which call was refused, and it exits 0.
+- The simulation leaves out service control policies and the manager's own refusals.
+- Exit codes: 0; 1 when a method lacks a permission, or AWS refuses another call; 2 for a bad flag.
+- `--json` prints `{account, caller, manager: {api, version} | null, commands: [{command, checked, held, missing}],
+  warnings}`; `checked` is false when IAM refused the simulation.
+- `install check` stays: it checks the prerequisites of an install, not the caller's rights on a manager.
 
 ### What every manager command shares
 
@@ -586,7 +617,7 @@ it first to check the profile and the permission. `--json` prints `{me, version,
 ### Exit codes
 
 - 0: success (and a declined confirmation, which sends nothing).
-- 1: AWS or the manager refused, an operation or an upgrade failed or did not start, a workload failed to wake, an
+- 1: AWS or the manager refused, `aws check` found a permission missing, an operation or an upgrade failed or did not start, a workload failed to wake, an
   operation or a wait was not followed to its end (`--timeout`), a `--tag` selection was incomplete, or `dormeto aws api`
   got a status other than 2xx.
 - 2: a bad flag or argument, or no `--yes` without a terminal.
@@ -598,7 +629,7 @@ The caller needs `execute-api:Invoke` on the manager API's `/iam/*` routes, with
 caller from another account assumes a role there that has it). Whatever it may call, such a caller acts as an
 administrator of the manager, outside its MFA policy: the audit log, the operations, the pauses and every change name
 its ARN. Its IAM policy is the only limit: grant it the routes, by method and path, that its commands call. Three
-policies, from the narrowest.
+policies, from the narrowest. `dormeto aws check` tells, for each method, the routes the profile cannot call.
 
 **Read-only.** Every command that only reads: the lists, `show`, `history`, `idle-window`, `schedule show`, `whoami`,
 `overview`, `audit`, `operations watch`, `manager status` and `changes`, and the `--dry-run` of the writes (but

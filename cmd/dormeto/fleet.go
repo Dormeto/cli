@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/aws"
+	"github.com/Dormeto/cli/internal/awscheck"
 	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/output"
 )
@@ -39,6 +40,8 @@ type fleetDeps struct {
 	sleep    func(context.Context, time.Duration) error                                            // between two reads of an operation
 	timeout  func(context.Context, time.Duration) (context.Context, context.CancelFunc)            // ends the following
 	confirm  func(ctx context.Context, in io.Reader, out io.Writer, question string) (bool, error) // y/N on a terminal
+	// checkClients are the IAM and STS clients `aws check` simulates the profile's rights with.
+	checkClients func(cfg awssdk.Config) (awscheck.IAM, awscheck.STS)
 }
 
 // theFleetDeps are the real ones: the SDK's configuration of the profile, API Gateway's lookup, HTTPS with a 30 s
@@ -53,6 +56,8 @@ func theFleetDeps() fleetDeps {
 		sleep:    sleepFor,
 		timeout:  context.WithTimeout,
 		confirm:  promptConfirm,
+
+		checkClients: theCheckClients,
 	}
 }
 
