@@ -133,6 +133,13 @@ func fallbacksOf(on map[string]map[string]string) []map[string]string {
 	return list
 }
 
+// wakerOf is the waker backend service the router names for a workload: dmtr-<region>-<id>, the region its controller's
+// (dmtr-<region>-controller-<number>.<region>.run.app).
+func wakerOf(host, id string) string {
+	region, _, _ := strings.Cut(strings.TrimPrefix(host, "dmtr-"), "-controller")
+	return "dmtr-" + region + "-" + id
+}
+
 type workloadIn struct {
 	URLMap         string         `json:"urlMap"`
 	BackendService string         `json:"backendService"`
@@ -353,7 +360,7 @@ func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Workloads[id] = "AWAKE"
 	s.WorkloadDocs[id] = map[string]any{"urlMap": in.URLMap, "backendService": in.BackendService, "backends": backends,
-		"wakerBackendService": "dmtr-fake-" + id, "settings": in.Settings, "name": cmp.Or(in.Name, id)}
+		"wakerBackendService": wakerOf(r.Host, id), "settings": in.Settings, "name": cmp.Or(in.Name, id)}
 	if len(in.Tags) > 0 {
 		s.WorkloadDocs[id]["tags"] = in.Tags
 	}
