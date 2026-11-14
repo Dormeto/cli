@@ -81,6 +81,34 @@ func absolute(path string) string {
 // sampleFileName is a command's file: its path with hyphens, aws-routers-waiting-page-set.json.
 func sampleFileName(command string) string { return strings.ReplaceAll(command, " ", "-") + ".json" }
 
+// externalSamples are the commands whose samples another package's test writes, with its fakes: the install's
+// (internal/install) and the estimate's (internal/cli).
+var externalSamples = []string{"aws install", "aws install apply", "aws install check", "aws install status", "aws uninstall",
+	"aws uninstall apply", "aws estimate"}
+
+// runnableCommands are the paths of the runnable commands under aws and gcp, the groups themselves left out.
+func runnableCommands(t *testing.T) []string {
+	t.Helper()
+	root := newRoot(build{})
+	var out []string
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.Hidden || c.Name() == "help" {
+			return
+		}
+		path := strings.TrimPrefix(c.CommandPath(), "dormeto ")
+		if c.Runnable() && strings.Contains(path, " ") && (strings.HasPrefix(path, "aws ") || strings.HasPrefix(path, "gcp ")) {
+			out = append(out, path)
+		}
+		for _, s := range c.Commands() {
+			walk(s)
+		}
+	}
+	walk(root)
+	slices.Sort(out)
+	return out
+}
+
 // splitLine splits a sample's line as a shell does for these lines: words, and quoted words ("…" or '…').
 func splitLine(line string) []string {
 	var out []string
@@ -119,6 +147,49 @@ func commandOf(t *testing.T, args []string) (string, *cobra.Command) {
 		t.Fatalf("%v: %v", args, err)
 	}
 	return strings.TrimPrefix(c.CommandPath(), "dormeto "), c
+}
+
+// Every runnable command has its sample file, and every file is a command's.
+func TestSamplesEveryCommandHasItsFile(t *testing.T) {
+	commands := runnableCommands(t)
+	if len(commands) < 120 {
+		t.Fatalf("only %d commands found", len(commands))
+	}
+	want := map[string]bool{}
+	for _, c := range commands {
+		want[sampleFileName(c)] = true
+		if _, err := os.Stat(filepath.Join(samplesDir, sampleFileName(c))); err != nil {
+			t.Errorf("%s has no sample: docs/samples/%s (go test ./cmd/dormeto -run Samples -update)", c, sampleFileName(c))
+		}
+	}
+	entries, err := os.ReadDir(samplesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !want[e.Name()] {
+			t.Errorf("docs/samples/%s is no command's", e.Name())
+		}
+	}
+	// Each command is sampled here or by its package's test, once.
+	sampled := map[string]int{}
+	for _, s := range samples {
+		c, _ := commandOf(t, splitLine(s.line)[1:])
+		sampled[c]++
+	}
+	for _, c := range externalSamples {
+		sampled[c]++
+	}
+	for _, c := range commands {
+		if sampled[c] != 1 {
+			t.Errorf("%s is sampled %d times", c, sampled[c])
+		}
+	}
+	for c := range sampled {
+		if !slices.Contains(commands, c) {
+			t.Errorf("%s is sampled but is no command", c)
+		}
+	}
 }
 
 // realIDs are what a sample must not hold: the real accounts, project and names, an address outside example.com, a local

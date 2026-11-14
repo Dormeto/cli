@@ -2361,6 +2361,21 @@ make after-release VERSION=0.1.0                    # the checks after, safe to 
 make brew-linux                                     # the Homebrew cask on Linux, with podman
 ```
 
+### The samples
+
+`docs/samples/` holds, for every command of `dormeto aws` and `dormeto gcp`, one sample line and what it prints: a JSON
+file per command, named by its path (`aws-routers-waiting-page-set.json`), with `command`, `line`, `table` (stdout),
+`json` (stdout with `--json`, `null` without the flag) and `stderr` when a write says something there. The website shows
+them on its CLI pages, from a copy. Tests write them, nothing is typed: each line runs against the fake manager
+(`cmd/dormeto/testdata/samples/manager.json`, the manager's answers), the fake Google and a fixed clock, with one
+fictional fleet (account 111122223333, project `my-project`, `ops@example.com`); the install's and the estimate's run
+with the fakes of `internal/install` and `internal/cli`. A command without its file, a file that differs from what its
+command prints, or a real account, project or address fails `go test`. After a change to a command's output:
+
+```sh
+go test ./cmd/dormeto ./internal/install ./internal/cli -run Samples -update
+```
+
 ## Releasing
 
 For maintainers. A release, from `main`:
