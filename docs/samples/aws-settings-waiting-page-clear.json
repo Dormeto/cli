@@ -1,0 +1,6 @@
+{
+  "command": "aws settings waiting-page clear",
+  "line": "dormeto aws settings waiting-page clear",
+  "table": "the organization: waiting page cleared\nrouters at 0.35.0 or later apply it within about a minute\n",
+  "json": "{\n  \"page\": null,\n  \"warnings\": [],\n  \"by\": null,\n  \"at\": null,\n  \"note\": \"routers at 0.35.0 or later apply it within about a minute\"\n}\n"
+}

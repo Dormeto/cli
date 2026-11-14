@@ -1,0 +1,7 @@
+{
+  "command": "aws routers pause",
+  "line": "dormeto aws routers pause prod-eu --reason \"database migration\" --for 2h",
+  "table": "prod-eu: paused until 2026-11-14 12:00 UTC; woken web\n",
+  "json": "{\n  \"prod-eu\": {\n    \"pause\": {\n      \"scope\": \"router\",\n      \"by\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n      \"at\": \"2026-11-14T10:00:00.000Z\",\n      \"reason\": \"database migration\",\n      \"until\": \"2026-11-14T12:00:00.000Z\",\n      \"keepAsleep\": false\n    },\n    \"woken\": [\n      \"web\"\n    ]\n  }\n}\n",
+  "stderr": "prod-eu: paused until 2026-11-14 12:00 UTC; woken web\n"
+}

@@ -1,0 +1,6 @@
+{
+  "command": "aws users reset-mfa",
+  "line": "dormeto aws users reset-mfa dev@example.com",
+  "table": "mfa of dev@example.com reset (token deleted)\n",
+  "json": "{\n  \"email\": \"dev@example.com\",\n  \"mfa\": false,\n  \"tokenDeleted\": true\n}\n"
+}

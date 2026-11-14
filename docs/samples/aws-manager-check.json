@@ -1,0 +1,6 @@
+{
+  "command": "aws manager check",
+  "line": "dormeto aws manager check --enable",
+  "table": "daily check  on, alert on\nlast check   2026-11-14 06:00 UTC: 0.24.0 available\n",
+  "json": "{\n  \"enabled\": true,\n  \"alert\": true,\n  \"newer\": false,\n  \"updatedAt\": \"2026-11-14T10:00:00.000Z\",\n  \"updatedBy\": \"ops@example.com\",\n  \"result\": {\n    \"checkedAt\": \"2026-11-14T06:00:00.000Z\",\n    \"running\": \"0.24.0\",\n    \"latest\": \"0.24.0\"\n  }\n}\n"
+}

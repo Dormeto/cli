@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads settings",
+  "line": "dormeto aws workloads settings prod-eu/web --idle-minutes 20",
+  "table": "prod-eu/web: its settings\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"level\": \"workload\",\n    \"settings\": {\n      \"idleMinutes\": 20\n    }\n  }\n}\n",
+  "stderr": "prod-eu/web: its settings\n"
+}

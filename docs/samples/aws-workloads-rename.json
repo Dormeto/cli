@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads rename",
+  "line": "dormeto aws workloads rename prod-eu/web \"Web shop\"",
+  "table": "prod-eu/web: renamed to Web shop\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"workloadId\": \"web\",\n    \"name\": \"Web shop\"\n  }\n}\n",
+  "stderr": "prod-eu/web: renamed to Web shop\n"
+}

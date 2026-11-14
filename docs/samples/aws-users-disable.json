@@ -1,0 +1,6 @@
+{
+  "command": "aws users disable",
+  "line": "dormeto aws users disable dev@example.com --yes",
+  "table": "disabled dev@example.com\n",
+  "json": "{\n  \"email\": \"dev@example.com\",\n  \"enabled\": false\n}\n"
+}

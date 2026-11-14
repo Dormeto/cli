@@ -1,0 +1,6 @@
+{
+  "command": "aws routers description",
+  "line": "dormeto aws routers description prod-eu --set \"Production, Ireland\"",
+  "table": "prod-eu: description set (19 characters)\n",
+  "json": "{\n  \"description\": {\n    \"text\": \"Production, Ireland\",\n    \"by\": \"ops@example.com\",\n    \"at\": \"2026-11-14T10:00:00.000Z\"\n  }\n}\n"
+}

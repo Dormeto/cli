@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads tags",
+  "line": "dormeto aws workloads tags prod-eu/web --set owner=web-team",
+  "table": "prod-eu/web: env=prod, owner=web-team, team=web\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"workloadId\": \"web\",\n    \"tags\": {\n      \"team\": \"web\",\n      \"env\": \"prod\",\n      \"owner\": \"web-team\"\n    }\n  }\n}\n",
+  "stderr": "prod-eu/web: env=prod, owner=web-team, team=web\n"
+}

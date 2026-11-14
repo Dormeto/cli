@@ -1,0 +1,7 @@
+{
+  "command": "aws types delete",
+  "line": "dormeto aws types delete batch",
+  "table": "type batch removed: routers apply it at their next check, within 5 minutes\n",
+  "json": "{\n  \"types\": [\n    {\n      \"name\": \"batch\",\n      \"description\": \"Night batches\",\n      \"tags\": {\n        \"team\": \"batch\"\n      },\n      \"settings\": {\n        \"idleMinutes\": 15,\n        \"wakeMode\": \"any\"\n      }\n    },\n    {\n      \"name\": \"web\",\n      \"description\": \"Public sites\",\n      \"tags\": {\n        \"team\": \"web\"\n      },\n      \"settings\": {\n        \"idleMinutes\": 20\n      }\n    }\n  ],\n  \"builtIn\": [\n    \"instance\",\n    \"asg\",\n    \"ecs\",\n    \"k8s\",\n    \"databases\"\n  ],\n  \"updatedAt\": \"2026-11-14T10:00:00.000Z\",\n  \"updatedBy\": \"ops@example.com\",\n  \"note\": \"routers apply it at their next check, within 5 minutes\"\n}\n",
+  "stderr": "type batch removed: routers apply it at their next check, within 5 minutes\n"
+}

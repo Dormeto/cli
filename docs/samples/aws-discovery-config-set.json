@@ -1,0 +1,6 @@
+{
+  "command": "aws discovery config set",
+  "line": "dormeto aws discovery config set --file discovery.json --yes",
+  "table": "discovery configuration replaced\nno lint findings\n",
+  "json": "{\n  \"config\": {\n    \"version\": 1,\n    \"mode\": \"organization\",\n    \"regions\": [\n      \"eu-west-1\",\n      \"us-east-1\"\n    ],\n    \"refreshHours\": 24,\n    \"globalExcludes\": [],\n    \"filters\": [\n      {\n        \"name\": \"all\",\n        \"include\": [\n          {\n            \"all\": true\n          }\n        ],\n        \"exclude\": []\n      }\n    ]\n  },\n  \"lint\": []\n}\n"
+}

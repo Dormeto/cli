@@ -1,0 +1,6 @@
+{
+  "command": "aws groups delete",
+  "line": "dormeto aws groups delete payments --yes",
+  "table": "deleted group payments\n",
+  "json": "{\n  \"name\": \"payments\"\n}\n"
+}

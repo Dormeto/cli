@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads schedule set",
+  "line": "dormeto aws workloads schedule set prod-eu/web --file schedule.json",
+  "table": "prod-eu/web: schedule set\n  next\n    Mon 16 Nov 08:00 CET awake window starts\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"schedule\": {\n      \"timeZone\": \"Europe/Paris\",\n      \"windows\": [\n        {\n          \"kind\": \"awake\",\n          \"days\": [\n            \"mon\",\n            \"tue\",\n            \"wed\",\n            \"thu\",\n            \"fri\"\n          ],\n          \"start\": \"08:00\",\n          \"end\": \"19:00\"\n        }\n      ],\n      \"by\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n      \"at\": \"2026-11-14T10:00:00.000Z\"\n    },\n    \"next\": [\n      {\n        \"at\": \"2026-11-16T07:00:00.000Z\",\n        \"kind\": \"awake-start\",\n        \"window\": 0\n      }\n    ],\n    \"maintenanceDue\": null\n  }\n}\n",
+  "stderr": "prod-eu/web: schedule set\n  next\n    Mon 16 Nov 08:00 CET awake window starts\n"
+}

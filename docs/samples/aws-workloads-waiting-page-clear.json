@@ -1,0 +1,6 @@
+{
+  "command": "aws workloads waiting-page clear",
+  "line": "dormeto aws workloads waiting-page clear prod-eu/web",
+  "table": "prod-eu/web: waiting page cleared\n",
+  "json": "{\n  \"own\": null,\n  \"inherited\": {\n    \"mode\": \"template\",\n    \"icon\": \"auto\",\n    \"title\": \"Waking up\",\n    \"from\": {\n      \"mode\": \"organization\",\n      \"icon\": \"default\",\n      \"title\": \"organization\"\n    }\n  },\n  \"effective\": {\n    \"mode\": \"template\",\n    \"icon\": \"auto\",\n    \"title\": \"Waking up\",\n    \"from\": {\n      \"mode\": \"organization\",\n      \"icon\": \"default\",\n      \"title\": \"organization\"\n    }\n  },\n  \"from\": {\n    \"mode\": \"organization\",\n    \"icon\": \"default\",\n    \"title\": \"organization\"\n  },\n  \"favicon\": null,\n  \"warnings\": [],\n  \"terraform\": false,\n  \"by\": null,\n  \"at\": null\n}\n"
+}

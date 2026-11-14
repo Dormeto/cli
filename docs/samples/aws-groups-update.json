@@ -1,0 +1,6 @@
+{
+  "command": "aws groups update",
+  "line": "dormeto aws groups update payments --grant team=payments:read,wake,nap",
+  "table": "updated group payments\n",
+  "json": "{\n  \"group\": {\n    \"name\": \"payments\",\n    \"description\": \"The payments team\",\n    \"grants\": [\n      {\n        \"tags\": {\n          \"team\": \"payments\"\n        },\n        \"permissions\": [\n          \"read\",\n          \"wake\",\n          \"nap\"\n        ]\n      }\n    ],\n    \"updatedAt\": \"2026-11-14T10:00:00.000Z\",\n    \"updatedBy\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\"\n  }\n}\n"
+}

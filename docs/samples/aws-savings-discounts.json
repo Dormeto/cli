@@ -1,0 +1,6 @@
+{
+  "command": "aws savings discounts",
+  "line": "dormeto aws savings discounts --compute 20 --databases 10",
+  "table": "discounts set: compute 20%, databases 10% (they apply from the next day computed)\n",
+  "json": "{\n  \"settings\": {\n    \"compute\": 20,\n    \"databases\": 10,\n    \"updatedAt\": \"2026-11-14T10:00:00.000Z\",\n    \"updatedBy\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\"\n  }\n}\n"
+}

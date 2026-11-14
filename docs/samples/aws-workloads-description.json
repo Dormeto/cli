@@ -1,0 +1,6 @@
+{
+  "command": "aws workloads description",
+  "line": "dormeto aws workloads description prod-eu/web --set \"The public site\"",
+  "table": "prod-eu/web: description set (15 characters)\n",
+  "json": "{\n  \"description\": {\n    \"text\": \"The public site\",\n    \"by\": \"ops@example.com\",\n    \"at\": \"2026-11-14T10:00:00.000Z\"\n  }\n}\n"
+}

@@ -1,0 +1,7 @@
+{
+  "command": "aws routers upgrade",
+  "line": "dormeto aws routers upgrade prod-us --yes",
+  "table": "1 router to upgrade to 0.40.0\n  prod-us  0.39.0 → 0.40.0\n… prod-us upgrading (operation 7a2c9e41-0b5d-4f83-9c6e-2d1a8b7f4e05)\n✓ prod-us 0.39.0 → 0.40.0 in 0s (operation 7a2c9e41-0b5d-4f83-9c6e-2d1a8b7f4e05)\n1 upgraded\n",
+  "json": "{\n  \"available\": \"0.40.0\",\n  \"upgraded\": [\n    {\n      \"router\": \"prod-us\",\n      \"from\": \"0.39.0\",\n      \"to\": \"0.40.0\",\n      \"operation\": \"7a2c9e41-0b5d-4f83-9c6e-2d1a8b7f4e05\",\n      \"status\": \"succeeded\"\n    }\n  ],\n  \"skipped\": []\n}\n",
+  "stderr": "1 router to upgrade to 0.40.0\n  prod-us  0.39.0 → 0.40.0\n… prod-us upgrading (operation 7a2c9e41-0b5d-4f83-9c6e-2d1a8b7f4e05)\n✓ prod-us 0.39.0 → 0.40.0 in 0s (operation 7a2c9e41-0b5d-4f83-9c6e-2d1a8b7f4e05)\n1 upgraded\n"
+}

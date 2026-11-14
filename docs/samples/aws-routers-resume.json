@@ -1,0 +1,7 @@
+{
+  "command": "aws routers resume",
+  "line": "dormeto aws routers resume prod-eu",
+  "table": "prod-eu: resumed\n",
+  "json": "{\n  \"prod-eu\": {\n    \"resumed\": true\n  }\n}\n",
+  "stderr": "prod-eu: resumed\n"
+}

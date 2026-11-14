@@ -1,0 +1,6 @@
+{
+  "command": "aws settings set",
+  "line": "dormeto aws settings set --idle-minutes 30",
+  "table": "Hibernate: on (changed by ops@example.com at 2026-11-14 10:00 UTC)\nJoin windows: up to 15 min apart\nEnded windows: not set (removed 365 days after their last occurrence by default)\nWorkload settings: idle window 30 min, hold 20 s\nrouters apply it at their next check, within 5 minutes\n",
+  "json": "{\n  \"hibernate\": true,\n  \"joinMinutes\": 15,\n  \"endedWindowDays\": null,\n  \"defaults\": {\n    \"idleMinutes\": 30,\n    \"waitSeconds\": 20\n  },\n  \"updatedAt\": \"2026-11-14T10:00:00.000Z\",\n  \"updatedBy\": \"ops@example.com\",\n  \"note\": \"routers apply it at their next check, within 5 minutes\"\n}\n"
+}

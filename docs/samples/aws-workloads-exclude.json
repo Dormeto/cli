@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads exclude",
+  "line": "dormeto aws workloads exclude prod-eu/web --reason \"always on\" --for 30d --yes",
+  "table": "started exclude 6a0d3f7b-4e2c-4a1e-9b8d-3c5f1a7e9d26 for prod-eu/web\n✓ prod-eu/web: exclude succeeded in 1m30s\n",
+  "json": "[\n  {\n    \"id\": \"6a0d3f7b-4e2c-4a1e-9b8d-3c5f1a7e9d26\",\n    \"type\": \"exclude\",\n    \"target\": {\n      \"account\": \"111122223333\",\n      \"region\": \"eu-west-1\",\n      \"cloud\": \"aws\"\n    },\n    \"input\": {\n      \"exclusionId\": \"a2c4e6f8-1b3d-4f5a-8c7e-9d0b2f4a6c18\"\n    },\n    \"status\": \"succeeded\",\n    \"steps\": [\n      {\n        \"name\": \"pause workloads\",\n        \"status\": \"done\",\n        \"startedAt\": \"2026-11-14T10:00:00.000Z\",\n        \"finishedAt\": \"2026-11-14T10:01:30.000Z\",\n        \"attempts\": 1\n      }\n    ],\n    \"cursor\": 1,\n    \"holds\": {\n      \"locks\": [],\n      \"slots\": []\n    },\n    \"activeKey\": \"\",\n    \"context\": {},\n    \"by\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n    \"createdAt\": \"2026-11-14T10:00:00.000Z\",\n    \"updatedAt\": \"2026-11-14T10:01:30.000Z\",\n    \"finishedAt\": \"2026-11-14T10:01:30.000Z\"\n  }\n]\n",
+  "stderr": "started exclude 6a0d3f7b-4e2c-4a1e-9b8d-3c5f1a7e9d26 for prod-eu/web\n  … pause workloads\n  ✓ pause workloads (1m30s)\n✓ prod-eu/web: exclude succeeded in 1m30s\n"
+}

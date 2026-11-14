@@ -1,0 +1,6 @@
+{
+  "command": "aws users role",
+  "line": "dormeto aws users role dev@example.com viewer --yes",
+  "table": "dev@example.com is now viewer\n",
+  "json": "{\n  \"email\": \"dev@example.com\",\n  \"role\": \"viewer\"\n}\n"
+}

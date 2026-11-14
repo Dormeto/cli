@@ -1,0 +1,6 @@
+{
+  "command": "aws users resend",
+  "line": "dormeto aws users resend dev@example.com",
+  "table": "invitation sent again to dev@example.com\n",
+  "json": "{\n  \"invitation\": \"sent\"\n}\n"
+}

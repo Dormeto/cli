@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads wake",
+  "line": "dormeto aws workloads wake prod-eu/web --wait",
+  "table": "prod-eu/web: wake requested (WAKING)\nprod-eu/web: awake\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"state\": \"WAKING\"\n  }\n}\n",
+  "stderr": "prod-eu/web: wake requested (WAKING)\nprod-eu/web: awake\n"
+}

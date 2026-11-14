@@ -1,0 +1,6 @@
+{
+  "command": "aws users invite",
+  "line": "dormeto aws users invite dev@example.com --role operator --group payments",
+  "table": "invited dev@example.com as operator: invitation sent\n",
+  "json": "{\n  \"email\": \"dev@example.com\",\n  \"role\": \"operator\",\n  \"groups\": [\n    \"payments\"\n  ],\n  \"invitation\": \"sent\"\n}\n"
+}

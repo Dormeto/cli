@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads nap",
+  "line": "dormeto aws workloads nap prod-eu/web",
+  "table": "prod-eu/web: nap requested\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"accepted\": true\n  }\n}\n",
+  "stderr": "prod-eu/web: nap requested\n"
+}

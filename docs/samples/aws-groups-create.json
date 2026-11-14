@@ -1,0 +1,6 @@
+{
+  "command": "aws groups create",
+  "line": "dormeto aws groups create payments --description \"The payments team\" --grant team=payments:read,wake",
+  "table": "created group payments\n",
+  "json": "{\n  \"group\": {\n    \"name\": \"payments\",\n    \"description\": \"The payments team\",\n    \"grants\": [\n      {\n        \"tags\": {\n          \"team\": \"payments\"\n        },\n        \"permissions\": [\n          \"read\",\n          \"wake\"\n        ]\n      }\n    ],\n    \"updatedAt\": \"2026-11-14T10:00:00.000Z\",\n    \"updatedBy\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\"\n  }\n}\n"
+}

@@ -1,0 +1,7 @@
+{
+  "command": "aws routers settings",
+  "line": "dormeto aws routers settings prod-eu --idle-minutes 30",
+  "table": "prod-eu: workload settings set\n",
+  "json": "{\n  \"prod-eu\": {\n    \"level\": \"router\",\n    \"settings\": {\n      \"hibernate\": true,\n      \"defaults\": {\n        \"idleMinutes\": 30\n      },\n      \"by\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n      \"at\": \"2026-11-14T10:00:00.000Z\"\n    }\n  }\n}\n",
+  "stderr": "prod-eu: workload settings set\n"
+}

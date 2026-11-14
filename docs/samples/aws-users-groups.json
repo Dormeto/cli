@@ -1,0 +1,6 @@
+{
+  "command": "aws users groups",
+  "line": "dormeto aws users groups dev@example.com payments",
+  "table": "dev@example.com is in payments\n",
+  "json": "{\n  \"email\": \"dev@example.com\",\n  \"groups\": [\n    \"payments\"\n  ]\n}\n"
+}

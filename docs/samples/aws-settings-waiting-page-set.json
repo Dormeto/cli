@@ -1,0 +1,6 @@
+{
+  "command": "aws settings waiting-page set",
+  "line": "dormeto aws settings waiting-page set --title \"Waking up\"",
+  "table": "the organization: waiting page set (template)\nrouters at 0.35.0 or later apply it within about a minute\n",
+  "json": "{\n  \"page\": {\n    \"mode\": \"template\",\n    \"title\": \"Waking up\"\n  },\n  \"warnings\": [],\n  \"by\": \"ops@example.com\",\n  \"at\": \"2026-11-14T10:00:00.000Z\",\n  \"note\": \"routers at 0.35.0 or later apply it within about a minute\"\n}\n"
+}

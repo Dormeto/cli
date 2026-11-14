@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads pause",
+  "line": "dormeto aws workloads pause prod-eu/web --reason \"load test\" --for 4h",
+  "table": "prod-eu/web: paused until 2026-11-14 14:00 UTC; woken web\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"pause\": {\n      \"scope\": \"workload\",\n      \"by\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n      \"at\": \"2026-11-14T10:00:00.000Z\",\n      \"reason\": \"load test\",\n      \"until\": \"2026-11-14T14:00:00.000Z\",\n      \"keepAsleep\": false\n    },\n    \"woken\": [\n      \"web\"\n    ]\n  }\n}\n",
+  "stderr": "prod-eu/web: paused until 2026-11-14 14:00 UTC; woken web\n"
+}

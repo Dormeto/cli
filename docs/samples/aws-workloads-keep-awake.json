@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads keep-awake",
+  "line": "dormeto aws workloads keep-awake prod-eu/web --for 2h",
+  "table": "prod-eu/web: kept awake until 2026-11-14 12:00 UTC\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"pause\": {\n      \"scope\": \"workload\",\n      \"by\": \"arn:aws:sts::111122223333:assumed-role/ops/ci\",\n      \"at\": \"2026-11-14T10:00:00.000Z\",\n      \"reason\": \"kept awake\",\n      \"until\": \"2026-11-14T12:00:00.000Z\",\n      \"keepAsleep\": false\n    },\n    \"woken\": [\n      \"web\"\n    ]\n  }\n}\n",
+  "stderr": "prod-eu/web: kept awake until 2026-11-14 12:00 UTC\n"
+}

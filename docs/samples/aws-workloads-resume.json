@@ -1,0 +1,7 @@
+{
+  "command": "aws workloads resume",
+  "line": "dormeto aws workloads resume prod-eu/web",
+  "table": "prod-eu/web: resumed\n",
+  "json": "{\n  \"prod-eu/web\": {\n    \"resumed\": true\n  }\n}\n",
+  "stderr": "prod-eu/web: resumed\n"
+}
