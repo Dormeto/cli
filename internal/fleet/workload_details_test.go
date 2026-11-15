@@ -101,7 +101,7 @@ func TestHoursIsSingularForOneAlone(t *testing.T) {
 	}
 }
 
-// `workloads show` reads a window as `workloads schedule show` does, a recurrence in words, its dates with their year.
+// `workloads show` reads a window as `schedule show` does, a recurrence in words, its dates with their year.
 func TestWorkloadDetailsScheduleSaysARecurrence(t *testing.T) {
 	var d WorkloadDetails
 	raw := `{"workloadId":"w-1","state":"AWAKE","schedule":{"timeZone":"Europe/Paris","windows":[

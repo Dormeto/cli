@@ -44,7 +44,8 @@ func gcpRanWith(t *testing.T, stdin string, code int, args ...string) (calls []g
 	runs.routerPause, runs.routerResume = ran("routers pause"), ran("routers resume")
 	runs.workloads = gcpWorkloadRuns{list: ran("workloads list"), show: ran("workloads show"), onboard: ran("workloads onboard"),
 		offboard: ran("workloads offboard"), nap: ran("workloads nap"), wake: ran("workloads wake"),
-		scheduleShow: ran("workloads schedule show"), scheduleSet: ran("workloads schedule set"), scheduleClear: ran("workloads schedule clear"),
+		scheduleShow: ran("schedule show"), scheduleSet: ran("schedule set"), scheduleClear: ran("schedule clear"),
+		scheduleList: ran("schedule list"), scheduleChange: ran("schedule change"),
 		pause: ran("workloads pause"), resume: ran("workloads resume"),
 		accessShow: ran("workloads access show"), accessGrant: ran("workloads access grant"), accessRevoke: ran("workloads access revoke"), settings: ran("workloads settings"),
 		pageShow: ran("workloads waiting-page show"), pageSet: ran("workloads waiting-page set"), pageClear: ran("workloads waiting-page clear")}

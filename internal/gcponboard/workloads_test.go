@@ -1149,10 +1149,10 @@ func TestWorkloadsScheduleSaysARecurrenceAndKeepsItThroughJSON(t *testing.T) {
 	r.Schedule = nil
 	_, out = g.call(t, WorkloadsScheduleShow, r)
 	contains(t, out,
-		"  nap Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake: header\n",
-		"  awake Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, until 2027-06-30\n",
-		"  awake Cron 30 8 * * 1-5, 10 h 30 min\n",
-		"  nap sat 22:00–23:00, wake: header\n")
+		"  1. nap Every 2 weeks on Mon, Thu, 20:00–07:00 next day, from 2027-01-04, no end date, wake: header\n",
+		"  2. awake Every 3 months on the first Mon, 08:00–18:00, from 2027-01-01, until 2027-06-30\n",
+		"  3. awake Cron 30 8 * * 1-5, 10 h 30 min\n",
+		"  4. nap sat 22:00–23:00, wake: header\n")
 
 	// What show --json prints under "schedule" is the file set takes again.
 	r.JSON = true
@@ -1189,7 +1189,7 @@ func TestWorkloadsScheduleShowAnUnreadableRepeatRaisesNoError(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  awake repeat unreadable, no occurrence\n", "  maximum nap 14 days\n")
+	contains(t, out, "  1. awake repeat unreadable, no occurrence\n", "  maximum nap 14 days\n")
 }
 
 func TestWorkloadsScheduleSetOnARouterBefore036SaysItNeeds036(t *testing.T) {

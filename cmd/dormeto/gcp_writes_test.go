@@ -48,8 +48,12 @@ func TestGcpWritesTakeYesAndDryRun(t *testing.T) {
 		{"workloads pause", []string{"workloads", "pause", "shop", "--reason", "freeze"}},
 		{"workloads resume", []string{"workloads", "resume", "shop"}},
 		{"workloads offboard", []string{"workloads", "offboard", "shop"}},
-		{"workloads schedule set", []string{"workloads", "schedule", "set", "shop", "--file", schedule}},
-		{"workloads schedule clear", []string{"workloads", "schedule", "clear", "shop"}},
+		{"schedule set", []string{"schedule", "set", "shop", "--file", schedule}},
+		{"schedule clear", []string{"schedule", "clear", "shop"}},
+		{"schedule change", []string{"schedule", "add", "shop", "--kind", "nap", "--days", "sat", "--start", "00:00", "--end", "00:00"}},
+		{"schedule change", []string{"schedule", "remove", "shop", "--window", "1"}},
+		{"schedule change", []string{"schedule", "except", "shop", "--date", "2026-12-25"}},
+		{"schedule change", []string{"schedule", "edit", "shop", "--max-nap-days", "7"}},
 		{"workloads settings", []string{"workloads", "settings", "shop", "--idle-minutes", "30"}},
 		{"workloads waiting-page set", []string{"workloads", "waiting-page", "set", "shop", "--title", "Back soon"}},
 		{"workloads waiting-page clear", []string{"workloads", "waiting-page", "clear", "shop"}},
@@ -135,9 +139,9 @@ func TestGcpWorkloadsPauseHelpSaysForUntilAndTheReasonsRange(t *testing.T) {
 
 // The schedule is read as AWS's schedule set reads it: a file or - for the standard input, a schedule or what
 // `schedule show --json` prints.
-func TestGcpWorkloadsScheduleSetReadsAFileOrTheStandardInputAsAws(t *testing.T) {
+func TestGcpScheduleSetReadsAFileOrTheStandardInputAsAws(t *testing.T) {
 	const schedule = `{"timeZone":"Europe/Paris","windows":[{"kind":"nap","days":["mon"],"start":"22:00","end":"06:00"}]}`
-	set := []string{"gcp", "workloads", "schedule", "set", "shop", "--project", "p", "--region", "europe-west1"}
+	set := []string{"gcp", "schedule", "set", "shop", "--project", "p", "--region", "europe-west1"}
 	file := filepath.Join(t.TempDir(), "schedule.json")
 	if err := os.WriteFile(file, []byte(schedule), 0o600); err != nil {
 		t.Fatal(err)

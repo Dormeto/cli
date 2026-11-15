@@ -1,6 +1,6 @@
 package fleet
 
-// The schedule of a workload as `workloads schedule show` and `workloads show` print it: windows, zone, next events.
+// The schedule of a workload as `schedule show` and `workloads show` print it: windows, zone, next events.
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Dormeto/cli/internal/schedule"
@@ -104,7 +105,7 @@ const (
 	farLayout  = "Mon 2 Jan 2006 15:04 MST"
 )
 
-// ScheduleShown is a workload's schedule as `workloads schedule show` prints it on both clouds, from the router's answer: the
+// ScheduleShown is a workload's schedule as `schedule show` prints it on both clouds, from the router's answer: the
 // schedule as answered (null for none, empty from a router that does not report schedules, AWS's before 0.31.0), the next
 // events, the maintenance wake due ("" for none) and the join in force (router 0.36.0). NoDue is an answer that has no
 // maintenance wake at all (Google Cloud's REST answer): unknown, not none.
@@ -143,9 +144,16 @@ func (s ScheduleShown) JSON() any {
 	return shown
 }
 
-// Text is the schedule in words under its target's line: "<target>: time zone <zone>" then the windows, "<target>: schedule"
-// for one without windows, "<target>: no schedule", or what a router that does not report schedules needs.
-func (s ScheduleShown) Text(target string) (string, error) {
+// Text is the schedule in words under its target's line: "<target>: time zone <zone>" then the windows, numbered from 1 as
+// `schedule remove --window` and `except --window` name them, "<target>: schedule" for one without windows, "<target>: no
+// schedule", or what a router that does not report schedules needs.
+func (s ScheduleShown) Text(target string) (string, error) { return s.text(target, true) }
+
+// Changed is what a change (schedule add, remove, except, edit) prints after set's lines: Text without the next events and the
+// maintenance wake, which set's lines said.
+func (s ScheduleShown) Changed(target string) (string, error) { return s.text(target, false) }
+
+func (s ScheduleShown) text(target string, next bool) (string, error) {
 	switch {
 	case len(s.Schedule) == 0:
 		return target + ": the router does not report schedules (upgrade it to 0.31.0 or later)\n", nil
@@ -169,12 +177,14 @@ func (s ScheduleShown) Text(target string) (string, error) {
 			fmt.Fprintln(&b, "  no windows")
 		}
 	}
-	v.lines(&b, note, s.Line())
-	v.PrintNext(&b, loc, s.Next, s.MaintenanceDue)
+	v.lines(&b, note, s.Line(), true)
+	if next {
+		v.PrintNext(&b, loc, s.Next, s.MaintenanceDue)
+	}
 	return b.String(), nil
 }
 
-// SetText is what `workloads schedule set` says of a schedule set: "<target>: schedule set", the zone's note and the next
+// SetText is what `schedule set` says of a schedule set: "<target>: schedule set", the zone's note and the next
 // events.
 func (s ScheduleView) SetText(target string, next []NextEvent, due string) string {
 	loc, note := ZoneOf(s.TimeZone)
@@ -187,13 +197,18 @@ func (s ScheduleView) SetText(target string, next []NextEvent, due string) strin
 	return b.String()
 }
 
-// lines writes what follows the schedule's head: the zone's note, the windows, the exceptions, the maximum nap and the join.
-func (s ScheduleView) lines(w io.Writer, note, join string) {
+// lines writes what follows the schedule's head: the zone's note, the windows (numbered from 1 when numbered), the exceptions,
+// the maximum nap and the join.
+func (s ScheduleView) lines(w io.Writer, note, join string, numbered bool) {
 	if note != "" {
 		fmt.Fprintf(w, "  %s\n", note)
 	}
-	for _, win := range s.Windows {
-		fmt.Fprintf(w, "  %s\n", ScheduleWindowText(win))
+	for i, win := range s.Windows {
+		if numbered {
+			fmt.Fprintf(w, "  %d. %s\n", i+1, ScheduleWindowText(win))
+		} else {
+			fmt.Fprintf(w, "  %s\n", ScheduleWindowText(win))
+		}
 	}
 	if len(s.Exceptions) > 0 {
 		fmt.Fprintf(w, "  except %s\n", strings.Join(s.Exceptions, ", "))
@@ -204,6 +219,84 @@ func (s ScheduleView) lines(w io.Writer, note, join string) {
 	if join != "" {
 		fmt.Fprintf(w, "  %s\n", join)
 	}
+}
+
+// ScheduleRow is a workload as `schedule list` lists it: its router, ID, name, cloud and state, its schedule as the router
+// answered it (null for none) and its next events.
+type ScheduleRow struct {
+	Router     string          `json:"router"`
+	WorkloadID string          `json:"workloadId"`
+	Name       string          `json:"name,omitempty"`
+	Cloud      string          `json:"cloud,omitempty"`
+	State      string          `json:"state"`
+	Schedule   json.RawMessage `json:"schedule"`
+	Next       []NextEvent     `json:"next"`
+}
+
+// ScheduleReads bounds how many workloads' schedules `schedule list` reads at once, on both clouds.
+const ScheduleReads = 8
+
+// ReadSchedules calls read for each row, ScheduleReads at a time, and gives the error of each row that failed, by index.
+func ReadSchedules(rows []ScheduleRow, read func(*ScheduleRow) error) map[int]error {
+	var (
+		mu     sync.Mutex
+		wg     sync.WaitGroup
+		failed = map[int]error{}
+		sem    = make(chan struct{}, ScheduleReads)
+	)
+	for i := range rows {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			err := read(&rows[i])
+			<-sem
+			if err != nil {
+				mu.Lock()
+				failed[i] = err
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return failed
+}
+
+// SchedulesTable is `schedule list`'s table: each workload's time zone, its number of windows and its next event in its zone,
+// as show says it; "—" where it has none.
+func SchedulesTable(rows []ScheduleRow) string {
+	out := [][]string{{"ROUTER", "WORKLOAD", "NAME", "CLOUD", "STATE", "ZONE", "WINDOWS", "NEXT"}}
+	for _, r := range rows {
+		zone, windows, next := none, none, none
+		var v ScheduleView
+		if len(r.Schedule) > 0 && string(r.Schedule) != "null" && json.Unmarshal(r.Schedule, &v) == nil {
+			zone, windows = orNone(v.TimeZone), fmt.Sprint(len(v.Windows))
+			if len(r.Next) > 0 {
+				loc, _ := ZoneOf(v.TimeZone)
+				var b strings.Builder
+				v.PrintNext(&b, loc, r.Next[:1], "")
+				_, line, _ := strings.Cut(b.String(), "\n")
+				next = strings.TrimSpace(line)
+			}
+		}
+		out = append(out, []string{r.Router, r.WorkloadID, orNone(r.Name), CloudName(r.Cloud), r.State, zone, windows, next})
+	}
+	return Table(out)
+}
+
+// SchedulesSummary is the line under the table: "2 workloads with a schedule", or with all (--all) "3 workloads, 2 with a
+// schedule".
+func SchedulesSummary(rows []ScheduleRow, all bool) string {
+	scheduled := 0
+	for _, r := range rows {
+		if len(r.Schedule) > 0 && string(r.Schedule) != "null" {
+			scheduled++
+		}
+	}
+	if !all {
+		return fmt.Sprintf("%d %s with a schedule", scheduled, Plural(scheduled, "workload"))
+	}
+	return fmt.Sprintf("%d %s, %d with a schedule", len(rows), Plural(len(rows), "workload"), scheduled)
 }
 
 // PrintNext prints the schedule's next events and the maintenance wake due, in the zone. The router reads up to 400 days

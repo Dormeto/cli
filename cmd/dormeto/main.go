@@ -77,7 +77,7 @@ func awsCommands(b build, fleet fleetDeps, installs installRuns, version string)
 
 // managerCommands are the commands that call the manager's API, with deps.
 func managerCommands(deps fleetDeps) []*cobra.Command {
-	cmds := []*cobra.Command{newRouters(deps), newWorkloads(deps), newDiscovery(deps), newExclusions(deps), newUsers(deps), newGroups(deps), newOperations(deps), newOverview(deps), newAlerts(deps), newIPLists(deps), newSavings(deps), newAudit(deps), newManager(deps), newSettings(deps), newWhoami(deps), newAPI(deps)}
+	cmds := []*cobra.Command{newRouters(deps), newWorkloads(deps), newSchedule(deps), newDiscovery(deps), newExclusions(deps), newUsers(deps), newGroups(deps), newOperations(deps), newOverview(deps), newAlerts(deps), newIPLists(deps), newSavings(deps), newAudit(deps), newManager(deps), newSettings(deps), newWhoami(deps), newAPI(deps)}
 	for _, c := range cmds {
 		acceptYes(c)
 		acceptDryRun(c)

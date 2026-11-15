@@ -1,0 +1,7 @@
+{
+  "command": "gcp schedule edit",
+  "line": "dormeto gcp schedule edit shop --project my-project --region europe-west1 --max-nap-days 14",
+  "table": "dmtr-my-project-europe-west1/shop: schedule set\n  next\n    Mon 16 Nov 08:00 CET awake window starts\ndmtr-my-project-europe-west1/shop: time zone Europe/Paris\n  1. awake mon–fri 08:00–19:00\n  maximum nap 14 days\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/shop\": {\n    \"schedule\": {\n      \"at\": \"2026-11-01T10:00:00.000Z\",\n      \"by\": \"ops@example.com\",\n      \"maxNapDays\": 14,\n      \"timeZone\": \"Europe/Paris\",\n      \"windows\": [\n        {\n          \"days\": [\n            \"mon\",\n            \"tue\",\n            \"wed\",\n            \"thu\",\n            \"fri\"\n          ],\n          \"end\": \"19:00\",\n          \"kind\": \"awake\",\n          \"start\": \"08:00\"\n        }\n      ]\n    },\n    \"next\": [\n      {\n        \"at\": \"2026-11-16T07:00:00.000Z\",\n        \"kind\": \"awake-start\",\n        \"window\": 0\n      }\n    ]\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/shop: schedule set\n  next\n    Mon 16 Nov 08:00 CET awake window starts\ndmtr-my-project-europe-west1/shop: time zone Europe/Paris\n  1. awake mon–fri 08:00–19:00\n  maximum nap 14 days\n"
+}

@@ -359,9 +359,9 @@ func newRoutersList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 // newWorkloads is `dormeto aws workloads` and its subcommand list.
 func newWorkloads(deps fleetDeps) *cobra.Command {
 	f := &fleetFlags{}
-	cmd := fleetCommand("workloads", "List and show workloads, keep them awake and schedule them")
+	cmd := fleetCommand("workloads", "List and show workloads, wake, nap and keep them awake")
 	f.bind(cmd)
-	cmd.AddCommand(newWorkloadsList(f, deps), newWorkloadsKeepAwake(f, deps), newWorkloadsResume(f, deps), newWorkloadsSchedule(f, deps),
+	cmd.AddCommand(newWorkloadsList(f, deps), newWorkloadsKeepAwake(f, deps), newWorkloadsResume(f, deps),
 		newWorkloadsShow(f, deps), newWorkloadsHistory(f, deps), newWorkloadsIdleWindow(f, deps),
 		newWorkloadsWake(f, deps), newWorkloadsNap(f, deps), newWorkloadsPause(f, deps), newWorkloadsRename(f, deps), newWorkloadsTags(f, deps),
 		newWorkloadsOnboard(f, deps), newWorkloadsOffboard(f, deps), newWorkloadsExclude(f, deps), newWorkloadsSettings(f, deps), newWorkloadsDescription(f, deps), newWorkloadsWaitingPage(f, deps))

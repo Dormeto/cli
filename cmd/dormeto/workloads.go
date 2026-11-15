@@ -1,6 +1,6 @@
 package main
 
-// `dormeto aws workloads keep-awake`, `resume` and `schedule show|set|clear`: pauses and schedules of workloads through the
+// `dormeto aws workloads keep-awake` and `resume`: pauses of workloads through the
 // manager's /iam routes. Targets are <router>/<workload> arguments or --tag (every workload that carries them); more
 // than one target is confirmed on a terminal (--yes without one; --dry-run says each request). Exit codes as the fleet commands:
 // 0; 1 when the manager refused or a workload failed or did not wake in time; 2 for a bad flag or argument, or no --yes
@@ -14,7 +14,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -23,8 +22,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Dormeto/cli/internal/fleet"
-	"github.com/Dormeto/cli/internal/output"
-	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // maxKeepAwake is the longest a keep-awake lasts (the manager's pauses accept more; the CLI is for a CI's hours).
@@ -491,198 +488,6 @@ func newWorkloadsResume(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						return "", nil, err
 					}
 					return t.String() + ": resumed\n", raw, nil
-				})
-				return err
-			})
-		},
-	}
-	w.bindShared(cmd)
-	bindJSON(cmd, &asJSON)
-	return cmd
-}
-
-func newWorkloadsSchedule(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	cmd := fleetCommand("schedule", "Show, set or clear the awake and nap windows of workloads")
-	cmd.AddCommand(newScheduleShow(f, deps), newScheduleSet(f, deps), newScheduleClear(f, deps))
-	return cmd
-}
-
-func newScheduleShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	var asJSON bool
-	cmd := &cobra.Command{
-		Use: "show <router>/<workload>", Short: "Show a workload's schedule and its next events",
-		Long: "Show the schedule: the time zone, the windows (a recurrence in words), the exceptions, the maximum nap and the\n" +
-			"next events, in the schedule's time zone. --json prints {schedule, next, maintenanceDue} (schedule null when none,\n" +
-			"and left out when the router, before 0.31.0, does not report schedules), and from router 0.36.0 joinMinutes,\n" +
-			"joinFrom and joinInherited, the join in force beside the schedule's own. `dormeto aws workloads schedule set\n" +
-			"--file -` accepts it back and sends its schedule.",
-		SilenceErrors: true,
-		RunE: func(c *cobra.Command, args []string) error {
-			if err := (&targetFlags{}).check(args, true); err != nil {
-				return finish(c, err)
-			}
-			t, _ := fleet.ParseTarget(args[0])
-			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
-				var st struct {
-					Schedule       json.RawMessage   `json:"schedule"`
-					Next           []fleet.NextEvent `json:"next"`
-					MaintenanceDue string            `json:"maintenanceDue"`
-					schedule.Join
-				}
-				if err := api.Get(ctx, t.Path(""), nil, &st); err != nil {
-					return fmt.Errorf("%s: %w", t, err)
-				}
-				// A status without a schedule key comes from a router before 0.31.0; a null one is "no schedule".
-				shown := fleet.ScheduleShown{Schedule: st.Schedule, Next: st.Next, MaintenanceDue: st.MaintenanceDue, Join: st.Join}
-				if asJSON {
-					return output.JSON(c.OutOrStdout(), shown.JSON())
-				}
-				text, err := shown.Text(t.String())
-				if err != nil {
-					return err
-				}
-				fmt.Fprint(c.OutOrStdout(), text)
-				return nil
-			})
-		},
-	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print {schedule, next, maintenanceDue}, as schedule set --file accepts")
-	return cmd
-}
-
-func newScheduleSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	w := &writeCommand{f: f, deps: deps}
-	var (
-		file   string
-		asJSON bool
-	)
-	cmd := &cobra.Command{
-		Use: "set (<router>/<workload>... | --tag k=v...) --file <path or ->", Short: "Set the schedule of workloads from a JSON file",
-		Long: "Set the schedule of the workloads from a JSON file (- for standard input), sent as it is: the router checks it\n" +
-			"and a refusal is printed as it words it. The file is the schedule, or `schedule show --json` output (its\n" +
-			"`schedule` member is sent; a null one is refused). Needs manager 0.16.0 and\n" +
-			"routers 0.31.0. The schedule's JSON:\n\n" +
-			"  {\"timeZone\": \"Europe/Paris\",\n" +
-			"   \"windows\": [{\"kind\": \"awake\", \"days\": [\"mon\",\"tue\",\"wed\",\"thu\",\"fri\"], \"start\": \"08:30\", \"end\": \"19:00\"},\n" +
-			"               {\"kind\": \"nap\", \"days\": [\"sat\"], \"start\": \"00:00\", \"end\": \"00:00\", \"wake\": \"header\"}],\n" +
-			"   \"exceptions\": [\"2026-12-25\"], \"maxNapDays\": 7}\n\n" +
-			"From router 0.36.0, a window also takes repeat (daily, weekly, monthly or a cron expression, in place of days),\n" +
-			"from and until, and the schedule joinMinutes; the README has the JSON:\n\n" +
-			"  {\"kind\": \"nap\", \"start\": \"20:00\", \"end\": \"07:00\", \"from\": \"2027-01-04\",\n" +
-			"   \"repeat\": {\"pattern\": \"weekly\", \"interval\": 2, \"days\": [\"mon\", \"thu\"]}}",
-		SilenceErrors: true,
-		RunE: func(c *cobra.Command, args []string) error {
-			err := w.targets.check(args, false)
-			var raw json.RawMessage
-			if err == nil {
-				raw, err = readScheduleFile(c, file)
-			}
-			if err != nil {
-				return finish(c, err)
-			}
-			return w.run(c, args, "Set the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
-					var res struct {
-						Schedule       json.RawMessage   `json:"schedule"`
-						Next           []fleet.NextEvent `json:"next"`
-						MaintenanceDue string            `json:"maintenanceDue"`
-					}
-					var answer json.RawMessage
-					if err := api.Put(ctx, t.Path("/schedule"), raw, &answer); err != nil {
-						return "", nil, needsRecurrenceRouter(err)
-					}
-					_ = json.Unmarshal(answer, &res)
-					// The next events are read in the zone as stored (its canonical name), the file's when the answer has none.
-					var s fleet.ScheduleView
-					if json.Unmarshal(res.Schedule, &s) != nil || s.TimeZone == "" {
-						s = fleet.ScheduleView{}
-						_ = json.Unmarshal(raw, &s)
-					}
-					return s.SetText(t.String(), res.Next, res.MaintenanceDue), answer, nil
-				})
-				return err
-			})
-		},
-	}
-	w.bindShared(cmd)
-	bindJSON(cmd, &asJSON)
-	cmd.Flags().StringVar(&file, "file", "", "the schedule's JSON file, - for standard input")
-	return cmd
-}
-
-// needsRecurrenceRouter adds what a refusal means when it comes from a router too old for recurrences.
-func needsRecurrenceRouter(err error) error {
-	var ae *fleet.APIError
-	if errors.As(err, &ae) && schedule.RefusedAsUnknown(ae.Message) {
-		return fmt.Errorf("%w (recurrences and joined windows need router %s: upgrade the router to %s or later)", err, schedule.RecurrenceRouter, schedule.RecurrenceRouter)
-	}
-	return err
-}
-
-// readScheduleFile reads the schedule's JSON from path or, for "-", the command's input; only its being a JSON object
-// is checked here, the router checks the rest.
-func readScheduleFile(c *cobra.Command, path string) (json.RawMessage, error) {
-	if path == "" {
-		return nil, usagef("--file: the schedule's JSON file is needed (- for standard input)")
-	}
-	var data []byte
-	var err error
-	if path == "-" {
-		data, err = io.ReadAll(c.InOrStdin())
-	} else {
-		data, err = os.ReadFile(path)
-	}
-	if err != nil {
-		return nil, usagef("--file: %v", err)
-	}
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(data, &probe); err != nil {
-		return nil, usagef("--file: not a JSON object: %v", err)
-	}
-	none := usagef("--file: no schedule in %s; use schedule clear", map[bool]string{true: "standard input", false: path}[path == "-"])
-	if probe == nil { // null
-		return nil, none
-	}
-	// AWS's next events, or a Google Cloud controller's.
-	_, hasNext := probe["next"]
-	_, hasDue := probe["maintenanceDue"]
-	_, hasEvents := probe["nextEvents"]
-	if _, ok := probe["schedule"]; !ok && (hasNext || hasDue || hasEvents) { // `schedule show --json` of a router that reports none
-		return nil, none
-	}
-	if member, ok := probe["schedule"]; ok { // the shape of `schedule show --json` and of a PUT's answer
-		var obj map[string]json.RawMessage
-		if json.Unmarshal(member, &obj) != nil || obj == nil {
-			return nil, none
-		}
-		return member, nil
-	}
-	return json.RawMessage(data), nil
-}
-
-func newScheduleClear(f *fleetFlags, deps fleetDeps) *cobra.Command {
-	w := &writeCommand{f: f, deps: deps}
-	var asJSON bool
-	cmd := &cobra.Command{
-		Use: "clear (<router>/<workload>... | --tag k=v...)", Short: "Remove the schedule of workloads",
-		Long:          "Remove the schedule of the workloads: they follow their idle rules alone.",
-		SilenceErrors: true,
-		RunE: func(c *cobra.Command, args []string) error {
-			if err := w.targets.check(args, false); err != nil {
-				return finish(c, err)
-			}
-			return w.run(c, args, "Clear the schedule of %s?", func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
-					var raw json.RawMessage
-					if err := api.Delete(ctx, t.Path("/schedule"), &raw); err != nil {
-						return "", nil, err
-					}
-					var res struct{ Cleared bool }
-					_ = json.Unmarshal(raw, &res)
-					if !res.Cleared {
-						return t.String() + ": no schedule to clear\n", raw, nil
-					}
-					return t.String() + ": schedule cleared\n", raw, nil
 				})
 				return err
 			})

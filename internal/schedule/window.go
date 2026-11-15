@@ -1,6 +1,6 @@
 // Package schedule reads a window of a workload's schedule (the router's lambda/src/lib/schedule.mjs), for `dormeto aws
-// workloads schedule` and `dormeto gcp workloads schedule`: a recurrence in the dashboard's words. The router checks a
-// schedule; nothing here does.
+// schedule` and `dormeto gcp schedule`: a recurrence in the dashboard's words; and changes a schedule window by window
+// (edit.go). The router checks a schedule; nothing here does.
 package schedule
 
 import (

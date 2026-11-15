@@ -19,7 +19,7 @@ var movedToAws = []string{"alerts", "api", "audit", "discovery", "estimate", "ex
 	"operations", "overview", "routers", "savings", "settings", "uninstall", "users", "whoami", "workloads"}
 
 // bornUnderAws are the commands added under aws since.
-var bornUnderAws = []string{"types", "check"}
+var bornUnderAws = []string{"types", "check", "schedule"}
 
 // atTheTop are the only commands a root may show at its top level besides cobra's own; a new one goes under aws.
 var atTheTop = []string{"help", "completion", "version", "gcp", "aws"}

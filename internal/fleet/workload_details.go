@@ -251,7 +251,7 @@ func (d WorkloadDetails) hasInstanceBackend() bool {
 	return false
 }
 
-// scheduleText is the schedule as `workloads schedule show` prints it, without the target's line; "" when the router
+// scheduleText is the schedule as `schedule show` prints it, without the target's line; "" when the router
 // does not report one.
 func (d WorkloadDetails) scheduleText() string {
 	if len(d.Schedule) == 0 {
@@ -269,7 +269,7 @@ func (d WorkloadDetails) scheduleText() string {
 	if s.TimeZone != "" {
 		fmt.Fprintf(&b, "  time zone %s\n", s.TimeZone)
 	}
-	s.lines(&b, note, d.Line())
+	s.lines(&b, note, d.Line(), false)
 	s.PrintNext(&b, loc, d.Next, d.MaintenanceDue)
 	return b.String()
 }

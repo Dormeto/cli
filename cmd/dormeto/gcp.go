@@ -45,10 +45,10 @@ var theGcpRuns = gcpRuns{whoami: gcponboard.RunWhoami, check: gcponboard.RunChec
 func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "gcp", Short: "Dormeto in Google Cloud: the routers and the workloads' onboarding", Args: noArgs, SilenceErrors: true,
 		Long: "Dormeto in Google Cloud: the caller (whoami, check), the routers (install, uninstall, show, settings, pause, waiting page), the workloads'\n" +
-			"onboarding and the manager's connection to a project. The manager's own commands (routers list, workloads list,\n" +
+			"onboarding and schedules, and the manager's connection to a project. The manager's own commands (routers list, workloads list,\n" +
 			"savings, users...) serve AWS and Google Cloud and live under `dormeto aws`.\n\n" + regionRule}
 	refuseUnknownSubcommands(cmd)
-	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWhoami(runs.whoami, version), newGcpWorkloads(runs.workloads, version), newGcpRouters(runs, version),
+	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWhoami(runs.whoami, version), newGcpWorkloads(runs.workloads, version), newGcpSchedule(runs.workloads, version), newGcpRouters(runs, version),
 		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
 	return cmd
 }

@@ -469,7 +469,7 @@ func sampleGoogle(t *testing.T, s sample) *gcptest.Server {
 	})
 	target, _ := url.Parse(kube.URL)
 	g.HTTP = &http.Client{Transport: kubeOrGoogle{google: g.HTTP.Transport, kube: target}}
-	routers := []string{"routers show", "routers settings", "routers pause", "routers resume", "routers waiting-page", "routers uninstall", "workloads", "connect", "disconnect"}
+	routers := []string{"routers show", "routers settings", "routers pause", "routers resume", "routers waiting-page", "routers uninstall", "workloads", "schedule", "connect", "disconnect"}
 	if slices.ContainsFunc(routers, func(r string) bool { return strings.HasPrefix(s.line, "dormeto gcp "+r+" ") }) {
 		var out bytes.Buffer
 		d := sampleGcpDeps(g, &out, &out)
@@ -605,6 +605,7 @@ func sampleGcpRuns(g *gcptest.Server) gcpRuns {
 		routerResume: on(theGcpRuns.routerResume),
 		workloads: gcpWorkloadRuns{list: on(w.list), show: on(w.show), onboard: on(w.onboard), offboard: on(w.offboard), nap: on(w.nap),
 			wake: on(w.wake), scheduleShow: on(w.scheduleShow), scheduleSet: on(w.scheduleSet), scheduleClear: on(w.scheduleClear),
+			scheduleList: on(w.scheduleList), scheduleChange: on(w.scheduleChange),
 			pause: on(w.pause), resume: on(w.resume), accessShow: on(w.accessShow), accessGrant: on(w.accessGrant),
 			accessRevoke: on(w.accessRevoke), settings: on(w.settings), pageShow: on(w.pageShow), pageSet: on(w.pageSet), pageClear: on(w.pageClear)},
 		routerPage: gcpPageRuns{on(theGcpRuns.routerPage.show), on(theGcpRuns.routerPage.set), on(theGcpRuns.routerPage.clear)},

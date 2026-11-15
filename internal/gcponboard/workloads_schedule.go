@@ -1,7 +1,8 @@
 package gcponboard
 
-// `dormeto gcp workloads schedule show|set|clear`, `pause` and `resume`: the controller's GET, PUT and DELETE
-// /v1/workloads/<id>/schedule, and its POST .../pause and .../resume. The operator's gcloud account is the `by` of each
+// `dormeto gcp schedule list|show|set|clear|add|remove|except|edit`, `dormeto gcp workloads pause` and `resume`: the controller's
+// GET, PUT and DELETE /v1/workloads/<id>/schedule, and its POST .../pause and .../resume. A change (add, remove, except, edit) reads
+// the schedule, changes it (internal/schedule, every other field kept) and puts it whole, as set does. The operator's gcloud account is the `by` of each
 // change. The router's checks (a schedule's problems, the 366 days of a pause) are the controller's, said as it says them;
 // what the CLI refuses before any call is a missing schedule or one that is not a JSON object, a missing reason and an --until
 // that is not a time. --dry-run says the request and sends nothing.
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,19 +27,31 @@ import (
 	_ "time/tzdata"
 )
 
-// WorkloadsScheduleShow is `dormeto gcp workloads schedule show <id>`.
+// WorkloadsScheduleList is `dormeto gcp schedule list`.
+func WorkloadsScheduleList(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.workloadsEnd(x.scheduleList())
+}
+
+// WorkloadsScheduleChange is `dormeto gcp schedule add|remove|except|edit <id>`: r.ScheduleChange.
+func WorkloadsScheduleChange(ctx context.Context, d Deps, r Request) int {
+	x := newRun(ctx, d, r)
+	return x.workloadsEnd(x.scheduleChange())
+}
+
+// WorkloadsScheduleShow is `dormeto gcp schedule show <id>`.
 func WorkloadsScheduleShow(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.workloadsEnd(x.schedule(http.MethodGet, nil, nil))
 }
 
-// WorkloadsScheduleSet is `dormeto gcp workloads schedule set <id> --file <schedule.json>`.
+// WorkloadsScheduleSet is `dormeto gcp schedule set <id> --file <schedule.json>`.
 func WorkloadsScheduleSet(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.workloadsEnd(x.scheduleSet())
 }
 
-// WorkloadsScheduleClear is `dormeto gcp workloads schedule clear <id>`.
+// WorkloadsScheduleClear is `dormeto gcp schedule clear <id>`.
 func WorkloadsScheduleClear(ctx context.Context, d Deps, r Request) int {
 	x := newRun(ctx, d, r)
 	return x.workloadsEnd(x.schedule(http.MethodDelete, nil, nil))
@@ -57,18 +71,138 @@ func WorkloadsResume(ctx context.Context, d Deps, r Request) int {
 
 // scheduleSet checks the schedule first, before any call; the body of the PUT is the schedule, `by` the operator's account.
 func (x *run) scheduleSet() error {
+	if _, err := x.scheduleIn(); err != nil {
+		return err
+	}
+	if err := x.require("workloads"); err != nil {
+		return err
+	}
+	path, err := x.workloadPath()
+	if err != nil {
+		return err
+	}
+	return x.putSchedule(path, false)
+}
+
+// putSchedule puts the schedule x.r.Schedule, `by` the operator's account; changed adds the schedule as show says it after set's
+// lines.
+func (x *run) putSchedule(path string, changed bool) error {
 	schedule, err := x.scheduleIn()
 	if err != nil {
 		return err
 	}
-	return x.schedule(http.MethodPut, func() (any, error) {
+	return x.scheduleAt(path, http.MethodPut, func() (any, error) {
 		by, err := x.d.Google.Tokens.Account(x.ctx)
 		if err != nil {
 			return nil, err
 		}
 		schedule["by"] = by
 		return schedule, nil
-	}, schedule)
+	}, schedule, changed)
+}
+
+// scheduleChange reads the workload's schedule, applies x.r.ScheduleChange and puts the result as set does. A change that cannot
+// be built (a window's number out of range, no schedule) is exit 2, said as a refusal is, nothing written.
+func (x *run) scheduleChange() error {
+	change := x.r.ScheduleChange
+	if change == nil {
+		return &stop{2, "no change of the schedule given"}
+	}
+	if err := x.require("workloads"); err != nil {
+		return err
+	}
+	path, err := x.workloadPath()
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := x.controllerSince035(http.MethodGet, path+"/schedule", nil, &raw); err != nil {
+		return x.refusedWorkloadWrite(x.needsRecurrenceRouter(err))
+	}
+	var read struct {
+		Schedule json.RawMessage `json:"schedule"`
+	}
+	if err := json.Unmarshal(raw, &read); err != nil {
+		return fmt.Errorf("the controller's answer is not a schedule: %w", err)
+	}
+	changed, err := change.Apply(read.Schedule)
+	if err != nil {
+		return x.refusedWrite(&stop{2, x.target(x.r.ID) + ": " + err.Error()})
+	}
+	x.r.Schedule = changed
+	err = x.putSchedule(path, true)
+	var s *stop
+	if change.Remove != 0 && schedule.Windows(changed) == 0 && errors.As(err, &s) && s.code == 1 && x.ctx.Err() == nil {
+		s.msg += " (" + schedule.LastWindowHint + ")"
+	}
+	return err
+}
+
+// scheduleList is the router's workloads that the list's filters keep, each with its schedule (one read each, fleet.ScheduleReads
+// at a time): with a schedule, or every one with r.All. A schedule that cannot be read is said on stderr, its row left out, exit 1.
+func (x *run) scheduleList() error {
+	if err := x.require("workloads"); err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := x.controller(http.MethodGet, "/v1/workloads", nil, &raw); err != nil {
+		return err
+	}
+	_, kept, _, err := x.filtered(raw)
+	if err != nil {
+		return err
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
+	rows := make([]fleet.ScheduleRow, len(kept))
+	for i, w := range kept {
+		rows[i] = fleet.ScheduleRow{Router: x.n.managed, WorkloadID: w.ID, Name: w.Name, Cloud: "gcp", State: w.State,
+			Schedule: json.RawMessage("null"), Next: []fleet.NextEvent{}}
+	}
+	failed := fleet.ReadSchedules(rows, func(row *fleet.ScheduleRow) error {
+		var answer struct {
+			Schedule   json.RawMessage   `json:"schedule"`
+			NextEvents []fleet.NextEvent `json:"nextEvents"`
+		}
+		if err := x.controllerSince035(http.MethodGet, "/v1/workloads/"+esc(row.WorkloadID)+"/schedule", nil, &answer); err != nil {
+			return err
+		}
+		if len(answer.Schedule) > 0 {
+			row.Schedule = answer.Schedule
+		}
+		if answer.NextEvents != nil {
+			row.Next = answer.NextEvents
+		}
+		return nil
+	})
+	var shown []fleet.ScheduleRow
+	for i, row := range rows {
+		if err, ok := failed[i]; ok {
+			fmt.Fprintf(x.d.Err, "%s: %s\n", x.target(row.WorkloadID), refusal(err))
+			continue
+		}
+		if x.r.All || string(row.Schedule) != "null" {
+			shown = append(shown, row)
+		}
+	}
+	if x.r.JSON {
+		if shown == nil {
+			shown = []fleet.ScheduleRow{}
+		}
+		if err := output.JSON(x.d.Out, struct {
+			Workloads []fleet.ScheduleRow `json:"workloads"`
+		}{shown}); err != nil {
+			return err
+		}
+	} else {
+		if len(shown) > 0 {
+			fmt.Fprint(x.d.Out, fleet.SchedulesTable(shown))
+		}
+		fmt.Fprintln(x.d.Out, fleet.SchedulesSummary(shown, x.r.All))
+	}
+	if len(failed) > 0 {
+		return &stop{1, ""}
+	}
+	return nil
 }
 
 // scheduleIn is the schedule the command read from --file (AWS's reader: a path or -, and the shape of schedule show --json):
@@ -90,7 +224,7 @@ func (x *run) controllerSince035(method, path string, in, out any) error {
 	err := x.controller(method, path, in, out)
 	var e *gcp.Error
 	if errors.As(err, &e) && e.Code == http.StatusNotFound && strings.HasPrefix(e.Message, "no route for ") {
-		return &stop{1, fmt.Sprintf("Router %s does not have this call: workloads schedule, pause and resume need a router of version %s or later. Upgrade it with: %s",
+		return &stop{1, fmt.Sprintf("Router %s does not have this call: schedule, workloads pause and resume need a router of version %s or later. Upgrade it with: %s",
 			x.n.router, minRouterVersion, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+minRouterVersion+" or later>"))}
 	}
 	return err
@@ -106,8 +240,7 @@ func (x *run) needsRecurrenceRouter(err error) error {
 		refusal(err), schedule.RecurrenceRouter, x.installCommand("--project "+x.n.project+" --region "+x.n.region, "<the router's image, "+schedule.RecurrenceRouter+" or later>"))}
 }
 
-// schedule is the controller's GET, PUT or DELETE of the workload's schedule: body gives the PUT's, and shown is it as a dry run
-// says it (without `by`).
+// schedule is the controller's GET or DELETE of the workload's schedule.
 func (x *run) schedule(method string, body func() (any, error), shown any) error {
 	if err := x.require("workloads"); err != nil {
 		return err
@@ -116,6 +249,13 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 	if err != nil {
 		return err
 	}
+	return x.scheduleAt(path, method, body, shown, false)
+}
+
+// scheduleAt is the controller's GET, PUT or DELETE of the schedule of the workload at path: body gives the PUT's, and shown is
+// it as a dry run says it (without `by`). changed: a change's PUT, whose lines end with the schedule as show says it.
+func (x *run) scheduleAt(path, method string, body func() (any, error), shown any, changed bool) error {
+	var err error
 	if x.r.DryRun && method != http.MethodGet {
 		return x.workloadDryRun(method, path+"/schedule", shown)
 	}
@@ -162,7 +302,18 @@ func (x *run) schedule(method string, body func() (any, error), shown any) error
 			s = fleet.ScheduleView{}
 			_ = json.Unmarshal(x.r.Schedule, &s)
 		}
-		return x.answered(x.r.ID, shown, strings.TrimSuffix(s.SetText(target, answer.NextEvents, ""), "\n"))
+		lines := strings.TrimSuffix(s.SetText(target, answer.NextEvents, ""), "\n")
+		if changed {
+			if view.Schedule == nil || string(view.Schedule) == "null" {
+				view.Schedule = x.r.Schedule
+			}
+			more, err := view.Changed(target)
+			if err != nil {
+				return err
+			}
+			lines += "\n" + strings.TrimSuffix(more, "\n")
+		}
+		return x.answered(x.r.ID, shown, lines)
 	}
 	if x.r.JSON {
 		return output.JSON(x.d.Out, view.JSON())

@@ -703,7 +703,7 @@ needs; in a resource, each `{…}` of a path is `*` (`.../POST/iam/routers/*/pau
 | `workloads waiting-page set`, `clear` | `PUT /workloads/{router}/{id}/waiting-page`, `DELETE` on the same path (**these give custom HTML on the application's address, see Waiting page**) |
 | `routers waiting-page set`, `clear` | `PUT /routers/{router}/waiting-page`, `DELETE` on the same path (**gives custom HTML on the application's address too**) |
 | `settings waiting-page set`, `clear` | `PUT /settings/waiting-page`, `DELETE` on the same path (**gives custom HTML on the application's address too**) |
-| `workloads schedule set`, `clear` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
+| `schedule set`, `clear`, `add`, `remove`, `except`, `edit` | `PUT /workloads/{router}/{id}/schedule`, `DELETE` on the same path |
 | `workloads exclude`, `exclusions add` | `POST /exclusions` |
 | `exclusions lift` | `DELETE /exclusions/{id}` |
 | `discovery run`, `dismiss`, `restore` | `POST /discovery/run` (`dismiss`, `restore`) |
@@ -939,10 +939,9 @@ dormeto aws workloads tags prod-eu/w-1 --set team=payments --unset owner
   when none did); the lines and failures go to stderr. For a workload `tags` leaves unchanged, the answer is its tags
   as they are, in the manager's shape: `{workloadId, tags}`.
 
-### Keeping workloads awake and scheduling them
+### Keeping workloads awake
 
-From CLI 0.5.0, `workloads` also keeps workloads awake for a while and sets their weekly schedules (awake and nap
-windows, a maximum nap that wakes for maintenance). Targets are `<router>/<workload id>` arguments, or
+From CLI 0.5.0, `workloads` also keeps workloads awake for a while. Targets are `<router>/<workload id>` arguments, or
 `--tag key=value`, as for the other workload writes: more than one target is confirmed on a terminal, `--yes` skips it
 and is needed without one, `--dry-run` says each request and sends nothing, and the other workloads go on when one is
 refused (exit 1). From CLI 0.6.0, each of these commands has `--json`, as the other workload writes do.
@@ -950,18 +949,12 @@ refused (exit 1). From CLI 0.6.0, each of these commands has `--json`, as the ot
 ```sh
 dormeto aws workloads keep-awake <target>... | --tag k=v... (--for <duration> | --until <time>) [--reason <text>] [--wait] [--timeout <d>]
 dormeto aws workloads resume     <target>... | --tag k=v...
-dormeto aws workloads schedule show  <router>/<workload> [--json]
-dormeto aws workloads schedule set   <target>... | --tag k=v... --file <path or ->
-dormeto aws workloads schedule clear <target>... | --tag k=v...
 ```
 
 ```sh
 dormeto aws workloads keep-awake prod-eu/w-1 --for 2h --wait          # in CI: wake, then wait until awake
 dormeto aws workloads keep-awake --tag team=payments --until 18:30 --yes
 dormeto aws workloads resume prod-eu/w-1                              # at the end of the CI job
-dormeto aws workloads schedule set --tag team=payments --file schedule.json --yes
-dormeto aws workloads schedule show prod-eu/w-1
-dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads schedule set prod-eu/w-2 --file -
 ```
 
 - `keep-awake` posts a pause that leaves the workload awake (`keepAsleep: false`): it is woken when asleep and not put
@@ -973,31 +966,94 @@ dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads s
   `--timeout` (15m by default) names the workloads not awake (exit 1), Ctrl-C exits 130. In each case the pause stays:
   `workloads resume` ends it.
 - `resume` ends the pause, a keep-awake included.
-- `schedule set` sends the file as it is (`-` for standard input) and the router validates it, its refusal is printed as
-  it words it (exit 1). The file is the schedule's JSON: `timeZone` (an IANA name), `windows` (`kind` `awake` or `nap`,
-  `days` from `mon` to `sun`, `start` and `end` as `HH:MM` in steps of 5 minutes, an `end` not after the `start` ends
-  the next day, `wake` `never` or `header` for a nap), `exceptions` (local dates) and `maxNapDays` (1 to 60). It
-  prints the next events. It needs manager 0.16.0 and routers 0.31.0 (older ones answer "upgrade the router to 0.31.0
-  or later"). Beyond weekly days, see [Schedule recurrences](#schedule-recurrences).
-- `schedule show` prints the time zone, the windows (`awake mon–fri 08:30–19:00`, a recurrence in words), the
-  exceptions, the maximum nap and the next events in the schedule's time zone, every time labelled with its zone
-  (`Mon 26 Oct 08:00 CET`; UTC, with a note, when the zone is unknown to the CLI). From router 0.36.0 it also says how
-  windows join (see [Joined windows](#joined-windows)). `--json` prints `{schedule, next, maintenanceDue}`: `schedule`
-  is left out for a router before 0.31.0 (the text output then says "the router does not report schedules (upgrade
-  it to 0.31.0 or later)") and is `null` when none. `schedule set --file -` takes that shape back (or a bare
-  schedule) and sends its `schedule` member (`by` and `at` in it are accepted by the router); a file with no
-  schedule (`null`, `{"schedule": null}`, or the output of a router before 0.31.0) is refused with exit 2.
-- `schedule clear` removes the schedule.
+
+### Schedules
+
+The method `schedule` (`workloads schedule` until CLI 0.14, gone with no alias) is the dashboard's Schedules view: the
+workloads' calendars, their awake and nap windows (a maximum nap that wakes for maintenance), window by window or as a
+whole JSON file. The same commands, flags and words are under `dormeto gcp schedule` for a Google Cloud router's
+workloads ([Google Cloud schedules and pauses](#google-cloud-schedules-and-pauses)).
+
+```sh
+dormeto aws schedule list   [--all] [--router <r>] [--tag k=v]... [--state <s>] [--search <text>] [--cloud aws|gcp] [--json]
+dormeto aws schedule show   <router>/<workload> [--json]
+dormeto aws schedule set    <target>... | --tag k=v... --file <path or ->
+dormeto aws schedule clear  <target>... | --tag k=v...
+dormeto aws schedule add    <target>... | --tag k=v... --kind nap|awake [--days <d,…>] [--start HH:MM] [--end HH:MM]
+                            [--repeat daily|weekly|monthly|cron] [--interval <n>] [--day <n>] [--nth <n>] [--weekday <d>]
+                            [--cron <expr>] [--minutes <n>] [--from <date>] [--until <date>] [--wake never|header] [--time-zone <zone>]
+dormeto aws schedule remove <target> --window <n>
+dormeto aws schedule except <target> --date <YYYY-MM-DD>... [--window <n>] [--remove]
+dormeto aws schedule edit   <target>... | --tag k=v... [--time-zone <zone>] [--join-minutes <n>|inherit] [--max-nap-days <n>]
+```
+
+```sh
+dormeto aws schedule list --all
+dormeto aws schedule set --tag team=payments --file schedule.json --yes
+dormeto aws schedule show prod-eu/w-1
+dormeto aws schedule show prod-eu/w-1 --json | dormeto aws schedule set prod-eu/w-2 --file -
+dormeto aws schedule add prod-eu/w-1 --kind nap --days sat,sun --start 00:00 --end 00:00 --wake header
+dormeto aws schedule add prod-eu/w-1 --kind awake --repeat monthly --nth -1 --weekday fri --start 08:00 --end 18:00
+dormeto aws schedule remove prod-eu/w-1 --window 2
+dormeto aws schedule except prod-eu/w-1 --date 2026-12-24,2026-12-31
+dormeto aws schedule edit --tag team=payments --max-nap-days 14 --join-minutes inherit --yes
+```
+
+The writes take targets as the other workload writes (above): `set`, `clear`, `add` and `edit` several or `--tag`, `remove` and
+`except` one, since a window's number is one schedule's. Each has `--dry-run`, `--yes` and `--json`. A refused write is printed
+as the router words it, `<router>/<workload>: <refusal>` (exit 1), and the other workloads go on.
+
+- `list` is the calendar as a table: each workload with a schedule, its router, name, cloud and state, the schedule's time
+  zone, its number of windows and its next event in its zone (`Mon 16 Nov 08:00 CET awake window starts`), then `2 workloads
+  with a schedule`. `--all` adds the workloads without one (`—`) and says `3 workloads, 2 with a schedule`. The filters are
+  `workloads list`'s. The list is the manager's, every page of it; each workload with a schedule is then read for it, 8 at a
+  time, and one that cannot be read is said on stderr and left out (exit 1). `--json` prints `{workloads: [{router, workloadId,
+  name, cloud, state, schedule, next}]}`, each schedule as the router answers it.
+- `show` prints the time zone, the windows numbered from 1 (`1. awake mon–fri 08:30–19:00`, a recurrence in words), the
+  exceptions, the maximum nap and the next events in the schedule's time zone, every time labelled with its zone (`Mon 26 Oct
+  08:00 CET`; UTC, with a note, when the zone is unknown to the CLI). From router 0.36.0 it also says how windows join (see
+  [Joined windows](#joined-windows)). `--json` prints `{schedule, next, maintenanceDue}`: `schedule` is left out for a router
+  before 0.31.0 (the text output then says "the router does not report schedules (upgrade it to 0.31.0 or later)") and is
+  `null` when none. `set --file -` takes that shape back (or a bare schedule) and sends its `schedule` member (`by` and `at`
+  in it are accepted by the router); a file with no schedule (`null`, `{"schedule": null}`, or the output of a router before
+  0.31.0) is refused with exit 2.
+- `set` sends the file as it is (`-` for standard input) and the router validates it. The file is the schedule's JSON:
+  `timeZone` (an IANA name), `windows` (`kind` `awake` or `nap`, `days` from `mon` to `sun`, `start` and `end` as `HH:MM` in
+  steps of 5 minutes, an `end` not after the `start` ends the next day, `wake` `never` or `header` for a nap), `exceptions`
+  (local dates) and `maxNapDays` (1 to 60). It prints `<router>/<workload>: schedule set` and the next events. It needs
+  manager 0.16.0 and routers 0.31.0 (older ones answer "upgrade the router to 0.31.0 or later"). Beyond weekly days, see
+  [Schedule recurrences](#schedule-recurrences).
+- `clear` removes the schedule: the workload follows its idle rules alone.
+- `add`, `remove`, `except` and `edit` read the workload's schedule, change it and write it whole, as `set` does, every field
+  they do not touch kept as the router answered it: a change made meanwhile by someone else (the dashboard, another run) is
+  lost, as in the dashboard. They print what `set` prints, then the schedule as `show` does, without the next events again;
+  `--dry-run` reads the schedule and prints the `PUT` it would send with the resulting schedule, and writes nothing. The CLI
+  checks only a flag's form (a time `HH:MM`, a date `YYYY-MM-DD`, a whole number) and a window's number (exit 2, nothing
+  written: `--window: 3 is not a window of the schedule, which has 2 (schedule show numbers them)`); the router checks the
+  rest.
+- `add` appends a window, its flags named after the window's fields: `--kind` `nap` or `awake` (required); `--days` with
+  `--start` and `--end` for a weekly window; `--repeat` `daily`, `weekly`, `monthly` or `cron` for a recurrence, with
+  `--interval`, `--days` (weekly: the repeat's days), `--day` or `--nth` (1 to 4, -1 for the last) and `--weekday` (monthly),
+  `--cron` and `--minutes` (cron, without `--start` or `--end`); `--from` and `--until` for the range; `--wake header` for a
+  nap a request with the `x-dormeto-wake` header wakes. A workload without a schedule needs `--time-zone`; one with a schedule
+  in another zone is refused (`edit --time-zone` changes it).
+- `remove --window <n>` removes window `n` of `show`. A schedule left with no window and no maximum nap is refused by the
+  router, and the CLI adds `(that was its last window: schedule clear removes the schedule)`.
+- `except --date` adds dates without a window (comma-separated or repeated), the schedule's, or with `--window <n>` that
+  window's own; `--remove` takes them out.
+- `edit` sets the schedule's own fields: `--time-zone`, `--join-minutes` (`inherit` leaves it to the router's and the
+  organization's, see [Joined windows](#joined-windows)) and `--max-nap-days`. An empty value (`--max-nap-days ""`) removes
+  the field.
 
 ### Schedule recurrences
 
-From router 0.36.0, a window repeats on more than chosen weekdays, within a range of dates. There is no flag for it: write the
-JSON and send it as any schedule, to one workload or by `--tag`. A window without the new fields reads as before.
+From router 0.36.0, a window repeats on more than chosen weekdays, within a range of dates. `schedule add --repeat` adds one, or
+write the JSON and send it as any schedule, to one workload or by `--tag`. A window without the new fields reads as before.
 
 ```sh
-dormeto aws workloads schedule set prod-eu/w-1 --file schedule.json
-dormeto aws workloads schedule set --tag team=payments --file schedule.json --yes
-dormeto aws workloads schedule show prod-eu/w-1 --json | dormeto aws workloads schedule set prod-eu/w-2 --file -
+dormeto aws schedule set prod-eu/w-1 --file schedule.json
+dormeto aws schedule set --tag team=payments --file schedule.json --yes
+dormeto aws schedule add prod-eu/w-1 --kind nap --repeat weekly --interval 2 --days mon,thu --from 2027-01-04 --start 20:00 --end 07:00
 ```
 
 ```json
@@ -1053,7 +1109,7 @@ Each pattern, as a window of `windows`, and what `schedule show` prints for it (
 
 **It needs router 0.36.0.** The CLI checks none of this: the router does, and its refusal names the field
 (`windows[1].repeat.cron: ...`). A router before 0.36.0 refuses the new fields as `unknown field`, and `schedule set` adds that
-they need router 0.36.0. `dormeto gcp workloads schedule` takes the same JSON and prints the same words, and its `--file`
+they need router 0.36.0. `dormeto gcp schedule` takes the same JSON and prints the same words, and its `--file`
 is the file `schedule show --json` prints under `schedule`.
 
 ### Workload settings and types
@@ -1086,7 +1142,7 @@ workload module. A router before 0.37.0 answers that it must be upgraded.
 dormeto aws settings set --join-minutes 30
 dormeto aws routers settings prod-eu --join-minutes 0
 dormeto aws routers settings prod-eu --join-minutes inherit
-dormeto aws workloads schedule set prod-eu/w-1 --file schedule.json   # with "joinMinutes": 0 in the file
+dormeto aws schedule edit prod-eu/w-1 --join-minutes 0
 ```
 
 From router 0.36.0, two occurrences of one kind separated by a short gap count as one, so a workload is not woken or napped
@@ -1096,8 +1152,8 @@ starts, or a start an exception date or a range removes.
 
 The most specific level that sets it wins:
 
-- **The workload:** `joinMinutes` at the top of its schedule's JSON, beside `maxNapDays`, in the file of `schedule set`, with
-  `--tag` too. There is no flag and no `workloads settings`: leave it out of the file to inherit.
+- **The workload:** `joinMinutes` at the top of its schedule's JSON, beside `maxNapDays`: `schedule edit --join-minutes`
+  (`inherit` removes it), or the file of `schedule set`, with `--tag` too. There is no `workloads settings` for it.
 - **The router:** `routers settings --join-minutes <minutes>`, `inherit` to unset it (administrators; routers 0.36.0).
   `routers show` prints a `join windows` line.
 - **The organization:** `settings set --join-minutes <minutes>`, `inherit` to unset it (administrators; manager 0.21.0 or later).
@@ -1643,7 +1699,7 @@ until CLI 0.11.0, are gone, as are the flags named otherwise on AWS: it is `--da
 `--wake-timeout-seconds`. Every writing command takes `--yes` (accepted
 and ignored where it asks nothing) and `--dry-run` (says each request it would send, and sends nothing), as the
 manager's commands do, and prints AWS's lines, `<router>/<workload>: <what happened>`, the router named as the manager
-names it. A refused nap, wake, pause, resume or `schedule set|clear` prints the same head, `<router>/<workload>:
+names it. A refused nap, wake, pause, resume or schedule write prints the same head, `<router>/<workload>:
 <refusal>`, on stderr, exit 1. The router's two names each have their outputs: the manager's, `dmtr-<project>-<region>`,
 is in what both subtrees share (the lines `<router>/<workload>: …` and `<router>: …`, the keys of `--json`'s maps, its
 `targets` and a workload row's `router`); the project's, `dmtr-<region>` (its Cloud Run services' prefix), is in the
@@ -1942,7 +1998,7 @@ wake.
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
 | `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed). It is confirmed on a terminal, as AWS's (`Offboard 1 workload?`; without one, `--yes` is needed: exit 2, nothing changed; declined: `not confirmed: nothing sent`, exit 0); a rerun that only finishes the untag and the access cleanup, the controller no longer holding the workload, is confirmed too |
 | `workloads nap <id>`, `workloads wake <id> [--wait] [--timeout <d>]` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; `wake --wait` follows it until the workload is awake (`<router>/<id>: awake`; 15 minutes by default, `failed to wake` and `timeout` exit 1), or follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends). A nap of a workload asleep already says `not awake (ASLEEP)`, as AWS words its refusal, but exits 0, since the controller does not refuse it (AWS exits 1) |
-| `workloads schedule show`, `set` or `clear <id>` | its nap and awake windows ([schedules and pauses](#google-cloud-schedules-and-pauses)) |
+| `schedule list`, `show`, `set`, `clear`, `add`, `remove`, `except` or `edit` | the nap and awake windows of its workloads ([schedules and pauses](#google-cloud-schedules-and-pauses)) |
 | `workloads pause <id> --reason <text> [--for <duration> \| --until <time>]`, `workloads resume <id>` | hold its naps, then let them run again |
 | `workloads access show`, `grant` or `revoke` | a GKE workload's [Kubernetes access](#kubernetes-access-of-gke-workloads), alone |
 | `workloads settings <id>...`, `routers settings` | the [settings](#google-cloud-settings-and-their-levels) of a workload, and of the router's level |
@@ -2165,9 +2221,14 @@ Service Mesh) is still refused.
 ### Google Cloud schedules and pauses
 
 ```sh
-dormeto gcp workloads schedule show shop --project my-project --region europe-west1
-dormeto gcp workloads schedule set shop --project my-project --region europe-west1 --file schedule.json
-dormeto gcp workloads schedule clear shop --project my-project --region europe-west1
+dormeto gcp schedule list --project my-project --region europe-west1 --all
+dormeto gcp schedule show shop --project my-project --region europe-west1
+dormeto gcp schedule set shop --project my-project --region europe-west1 --file schedule.json
+dormeto gcp schedule clear shop --project my-project --region europe-west1
+dormeto gcp schedule add shop --project my-project --region europe-west1 --kind nap --days sat,sun --start 00:00 --end 00:00
+dormeto gcp schedule remove shop --project my-project --region europe-west1 --window 2
+dormeto gcp schedule except shop --project my-project --region europe-west1 --date 2026-12-24
+dormeto gcp schedule edit shop --project my-project --region europe-west1 --max-nap-days 14
 dormeto gcp workloads pause shop --project my-project --region europe-west1 \
   --reason "load test" --until 2026-12-01T08:00:00+01:00
 dormeto gcp workloads resume shop --project my-project --region europe-west1
@@ -2189,12 +2250,15 @@ dormeto gcp routers resume --project my-project --region europe-west1
   version is read after the dry run, and an older router, which drops them, is refused before any change with the
   install to run, as `Router <router> is <version>, older than 0.40.0, which reads --name. Install a newer router first:
   dormeto gcp routers install …` (exit 1).
+- `dormeto gcp schedule` has AWS's commands, flags and words ([Schedules](#schedules)), on one workload, the argument,
+  with `--project` and `--region` (the router's): `list` lists the router's workloads (`--all`, `--state`, `--search`,
+  `--tag`, `--json`), reading each one's schedule, 8 at a time; `add`, `remove`, `except` and `edit` read the schedule,
+  change it and put it whole, so a change made meanwhile by someone else is lost, `by` your gcloud account.
 - `schedule set --file` (`-` for the standard input; a `schedule show --json` output is read as well) takes the
-  schedule's JSON, the same as on AWS ([Keeping workloads awake and scheduling
-  them](#keeping-workloads-awake-and-scheduling-them), and [Schedule recurrences](#schedule-recurrences) from router
-  0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`. The controller checks it and a refused one prints what
+  schedule's JSON, the same as on AWS ([Schedules](#schedules), and [Schedule recurrences](#schedule-recurrences) from
+  router 0.36.0): `timeZone`, `windows`, `exceptions` and `maxNapDays`. The controller checks it and a refused one prints what
   is wrong, exit 1. `schedule show` prints AWS's words: the time zone, the windows (a recurrence in words), `except`,
-  `maximum nap`, the join and the next events in the schedule's zone; `--json` prints AWS's `{schedule, next,
+  `maximum nap`, the join and the next events in the schedule's zone, the windows numbered; `--json` prints AWS's `{schedule, next,
   joinMinutes, joinFrom, joinInherited}`, the file under `schedule` (with who set it and when, which the text, AWS's,
   does not say), without AWS's `maintenanceDue`, which the router's answer does not have. `schedule set` prints AWS's
   lines, `<target>: schedule set` and the next events; `set --json` and `clear --json` print each answer by target in

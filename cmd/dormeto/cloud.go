@@ -94,21 +94,21 @@ func bothCloudsSentence(covers string) string {
 }
 
 // sayBothClouds adds to the help of the manager's commands that cover both clouds a sentence saying so: the routers'
-// reads, every workloads command (a target is <router>/<workload> on either cloud), discovery's candidates and access,
+// reads, every workloads and schedule command (a target is <router>/<workload> on either cloud), discovery's candidates and access,
 // settings, types and savings. A command whose help already names Google Cloud is left as it is.
 func sayBothClouds(top *cobra.Command) {
 	covers := map[string]string{
 		"routers list": "this lists the routers of both clouds.", "routers show": "this shows an AWS or a Google Cloud router.",
 		"discovery candidates": "this lists the candidates of both clouds.", "discovery access": "this reports the accounts and projects of both clouds.",
 		"settings": "these defaults are for the workloads of both clouds.", "types": "these types are for the workloads of both clouds.",
-		"savings": "this estimates the savings of the workloads of both clouds.",
+		"savings": "this estimates the savings of the workloads of both clouds.", "schedule list": "this lists the schedules of the workloads of both clouds.",
 	}
 	var walk func(c *cobra.Command, path string)
 	walk = func(c *cobra.Command, path string) {
 		subs := c.Commands()
 		if len(subs) == 0 || path == "settings" || path == "types" || path == "savings" {
 			what := covers[path]
-			if what == "" && strings.HasPrefix(path, "workloads ") {
+			if what == "" && (strings.HasPrefix(path, "workloads ") || strings.HasPrefix(path, "schedule ")) {
 				what = "this acts on the workloads of both clouds, a target being <router>/<workload>."
 			}
 			if what != "" && !strings.Contains(c.Short+c.Long, "Google Cloud") {

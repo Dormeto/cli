@@ -1,6 +1,6 @@
 {
-  "command": "aws workloads schedule clear",
-  "line": "dormeto aws workloads schedule clear prod-eu/web",
+  "command": "aws schedule clear",
+  "line": "dormeto aws schedule clear prod-eu/web",
   "table": "prod-eu/web: schedule cleared\n",
   "json": "{\n  \"prod-eu/web\": {\n    \"cleared\": true\n  }\n}\n",
   "stderr": "prod-eu/web: schedule cleared\n"

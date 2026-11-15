@@ -1,6 +1,6 @@
 {
-  "command": "aws workloads schedule show",
-  "line": "dormeto aws workloads schedule show prod-eu/web",
-  "table": "prod-eu/web: time zone Europe/Paris\n  awake mon–fri 08:00–19:00\n  except 2026-12-25\n  maximum nap 7 days\n  next\n    Mon 16 Nov 08:00 CET awake window starts\n",
+  "command": "aws schedule show",
+  "line": "dormeto aws schedule show prod-eu/web",
+  "table": "prod-eu/web: time zone Europe/Paris\n  1. awake mon–fri 08:00–19:00\n  except 2026-12-25\n  maximum nap 7 days\n  next\n    Mon 16 Nov 08:00 CET awake window starts\n",
   "json": "{\n  \"schedule\": {\n    \"timeZone\": \"Europe/Paris\",\n    \"windows\": [\n      {\n        \"kind\": \"awake\",\n        \"days\": [\n          \"mon\",\n          \"tue\",\n          \"wed\",\n          \"thu\",\n          \"fri\"\n        ],\n        \"start\": \"08:00\",\n        \"end\": \"19:00\"\n      }\n    ],\n    \"exceptions\": [\n      \"2026-12-25\"\n    ],\n    \"maxNapDays\": 7,\n    \"by\": \"ops@example.com\",\n    \"at\": \"2026-11-02T14:00:00.000Z\"\n  },\n  \"next\": [\n    {\n      \"at\": \"2026-11-16T07:00:00.000Z\",\n      \"kind\": \"awake-start\",\n      \"window\": 0\n    }\n  ],\n  \"maintenanceDue\": null\n}\n"
 }

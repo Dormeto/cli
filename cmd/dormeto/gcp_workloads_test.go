@@ -155,35 +155,6 @@ func TestGcpWorkloadsOffboardHelpSaysForceDoesNotPassABusyWorkload(t *testing.T)
 	}
 }
 
-func TestGcpWorkloadsScheduleReadsTheRequest(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "s.json")
-	if err := os.WriteFile(file, []byte(`{"timeZone":"UTC"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, verb := range []string{"show", "set", "clear"} {
-		args := []string{"gcp", "workloads", "schedule", verb, "shop", "--project", "p", "--region", "europe-west1", "--json"}
-		want := gcponboard.Request{Project: "p", Region: "europe-west1", ID: "shop", JSON: true}
-		if verb == "set" {
-			args = append(args, "--file", file)
-			want.Schedule = json.RawMessage(`{"timeZone":"UTC"}`)
-		}
-		calls, errs, exit := gcpRan(t, 0, args...)
-		if exit != 0 || errs != "" || len(calls) != 1 || calls[0].run != "workloads schedule "+verb || !reflect.DeepEqual(calls[0].r, want) {
-			t.Fatalf("%s: %d %q %+v", verb, exit, errs, calls)
-		}
-	}
-	for _, args := range [][]string{
-		{"gcp", "workloads", "schedule", "set", "shop", "--project", "p", "--region", "europe-west1"},
-		{"gcp", "workloads", "schedule", "show", "--project", "p", "--region", "europe-west1"},
-		{"gcp", "workloads", "schedule", "show", "a", "b", "--project", "p", "--region", "europe-west1"},
-	} {
-		calls, errs, exit := gcpRan(t, 0, args...)
-		if exit != 2 || len(calls) != 0 || errs == "" {
-			t.Errorf("%v: exit %d calls %v stderr %q", args, exit, calls, errs)
-		}
-	}
-}
-
 func TestGcpWorkloadsPauseReadsTheRequest(t *testing.T) {
 	at(t, time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "pause", "shop", "--project", "p", "--region", "europe-west1", "--reason", "freeze",
@@ -218,7 +189,7 @@ func TestGcpWorkloadsPauseHelpSaysWhatEachKindDoes(t *testing.T) {
 		}
 	}
 	out, _, code = executed(t, build{}, "gcp", "workloads", "--help")
-	for _, verb := range []string{"schedule", "pause", "resume"} {
+	for _, verb := range []string{"pause", "resume"} {
 		if code != 0 || !strings.Contains(out, verb) {
 			t.Errorf("%d %s lacks %s", code, out, verb)
 		}

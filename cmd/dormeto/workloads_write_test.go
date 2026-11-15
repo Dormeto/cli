@@ -385,7 +385,12 @@ func TestWriteJSONOfEveryWorkloadWrite(t *testing.T) {
 		"schedule clear": {[]string{"schedule", "clear", "prod-eu/w-1"}, "cleared"},
 	} {
 		a := &wrAPI{}
-		r := runWR(t, a, nil, append(c.args, "--json")...)
+		var r fleetRan
+		if c.args[0] == "schedule" {
+			r = runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, append(c.args, "--json")...)
+		} else {
+			r = runWR(t, a, nil, append(c.args, "--json")...)
+		}
 		m := jsonOut(t, r.stdout)
 		if r.exit != 0 || len(m) != 1 || m["prod-eu/w-1"] == nil {
 			t.Errorf("%s: exit %d stdout %q stderr %q", name, r.exit, r.stdout, r.stderr)
@@ -405,7 +410,7 @@ func TestScheduleSetJSON(t *testing.T) {
 	if err := os.WriteFile(f, []byte(`{"maxNapDays":3}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := runWR(t, a, nil, "schedule", "set", "prod-eu/w-1", "--file", f, "--json")
+	r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "schedule", "set", "prod-eu/w-1", "--file", f, "--json")
 	if m := jsonOut(t, r.stdout); r.exit != 0 || m["prod-eu/w-1"] == nil || strings.Contains(r.stdout, "schedule set") {
 		t.Errorf("exit %d stdout %q stderr %q", r.exit, r.stdout, r.stderr)
 	}
@@ -432,7 +437,7 @@ func TestWorkloadWritesHelp(t *testing.T) {
 			t.Errorf("%s --help: %q", cmd, r.stdout)
 		}
 	}
-	r := runWR(t, &wrAPI{}, nil, "schedule", "show", "--help")
+	r := runFleetWith(t, &fakeAPI{custom: (&wrAPI{}).handler()}, "eu-west-1", nil, "schedule", "show", "--help")
 	if !strings.Contains(r.stdout, "      --json   print {schedule, next, maintenanceDue}") {
 		t.Errorf("schedule show --help: %q", r.stdout)
 	}

@@ -932,7 +932,7 @@ func TestWorkloadsScheduleShowIsAWSShapeAndText(t *testing.T) {
 	r.Schedule = nil
 	code, out = g.call(t, WorkloadsScheduleShow, r)
 	want := shopTarget + ": time zone Europe/Paris\n" +
-		"  nap mon,tue 22:00–06:00 (next day), wake: never\n" +
+		"  1. nap mon,tue 22:00–06:00 (next day), wake: never\n" +
 		"  maximum nap 14 days\n" +
 		"  join windows up to 15 min apart (router)\n" +
 		"  next\n" +

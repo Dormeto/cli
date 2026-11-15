@@ -1,11 +1,10 @@
 package main
 
-// `dormeto gcp workloads list|show|onboard|offboard|nap|wake|schedule|pause|resume|access`: the flags read into a gcponboard.Request, as the other gcp
+// `dormeto gcp workloads list|show|onboard|offboard|nap|wake|pause|resume|access`: the flags read into a gcponboard.Request, as the other gcp
 // commands. The workload's ID of show, offboard, nap and wake is their argument.
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -18,13 +17,16 @@ import (
 
 // gcpWorkloadRuns are the runs of the gcp workloads commands.
 type gcpWorkloadRuns struct {
-	list, show, onboard, offboard, nap, wake, scheduleShow, scheduleSet, scheduleClear, pause, resume, accessShow, accessGrant, accessRevoke, settings gcpRun
-	pageShow, pageSet, pageClear                                                                                                                       gcpRun
+	list, show, onboard, offboard, nap, wake, pause, resume, accessShow, accessGrant, accessRevoke, settings gcpRun
+	pageShow, pageSet, pageClear                                                                             gcpRun
+	// The schedule method's (gcp_schedule.go): a change is add's, remove's, except's or edit's.
+	scheduleList, scheduleShow, scheduleSet, scheduleClear, scheduleChange gcpRun
 }
 
 var theGcpWorkloadRuns = gcpWorkloadRuns{list: gcponboard.WorkloadsList, show: gcponboard.WorkloadsShow, onboard: gcponboard.WorkloadsOnboard,
 	offboard: gcponboard.WorkloadsOffboard, nap: gcponboard.WorkloadsNap, wake: gcponboard.WorkloadsWake,
 	scheduleShow: gcponboard.WorkloadsScheduleShow, scheduleSet: gcponboard.WorkloadsScheduleSet, scheduleClear: gcponboard.WorkloadsScheduleClear,
+	scheduleList: gcponboard.WorkloadsScheduleList, scheduleChange: gcponboard.WorkloadsScheduleChange,
 	pause: gcponboard.WorkloadsPause, resume: gcponboard.WorkloadsResume,
 	accessShow: gcponboard.WorkloadsAccessShow, accessGrant: gcponboard.WorkloadsAccessGrant, accessRevoke: gcponboard.WorkloadsAccessRevoke, settings: gcponboard.WorkloadsSettings,
 	pageShow: gcponboard.WorkloadsPageShow, pageSet: gcponboard.WorkloadsPageSet, pageClear: gcponboard.WorkloadsPageClear}
@@ -36,7 +38,7 @@ func (r gcpWorkloadRuns) pageRuns() gcpPageRuns {
 
 func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 	cmd := &cobra.Command{Use: "workloads", Short: "Workloads of a Dormeto router in Google Cloud", Args: noArgs, SilenceErrors: true,
-		Long: "List, show, onboard, offboard, nap, wake, schedule, pause, resume, settings and waiting-page the workloads of the router dmtr-<region>, through its controller\n" +
+		Long: "List, show, onboard, offboard, nap, wake, pause, resume, settings and waiting-page the workloads of the router dmtr-<region>, through its controller\n" +
 			"with your identity token (the Cloud Run invoker role on it). 'access' writes a GKE workload's Kubernetes RBAC, in the cluster."}
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
@@ -53,7 +55,6 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 				"terminal, as AWS's (--yes without one; --dry-run says what it would send and sends nothing).", runs.offboard, version, true),
 		newGcpWorkloadsWrite("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
 		newGcpWorkloadsWake(runs.wake, version),
-		newGcpWorkloadsSchedule(runs, version),
 		newGcpWorkloadsPause(runs.pause, version),
 		newGcpWorkloadsWrite("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false),
 		newGcpWorkloadsSettings(runs.settings, version),
@@ -277,42 +278,6 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	gcpRouterFlags(cmd, &f)
 	fl.BoolVar(&f.yes, "yes", false, yesAlways)
 	fl.BoolVar(&f.dryRun, "dry-run", false, "check the eligibility and change nothing")
-	return cmd
-}
-
-func newGcpWorkloadsSchedule(runs gcpWorkloadRuns, version string) *cobra.Command {
-	cmd := &cobra.Command{Use: "schedule", Short: "Show, set or clear a workload's schedule", Args: noArgs, SilenceErrors: true,
-		Long: "Show, set or clear the nap and awake windows of a workload, in its time zone, through the router's controller."}
-	show := newGcpWorkloadsOne("show", "Show a workload's schedule and its next events",
-		"Show the schedule of a workload, a recurrence in words, and its next events, each with its local time and zone.", runs.scheduleShow, version, false)
-	clear := newGcpWorkloadsWrite("clear", "Clear a workload's schedule", "Clear the schedule of a workload: it naps and wakes by its idle window alone.", runs.scheduleClear, version, false)
-
-	var f gcpFlags
-	var file string
-	var schedule json.RawMessage
-	set := newGcpWorkloadsOneWith("set", "Set a workload's schedule from a JSON file",
-		"Set the schedule of a workload from a JSON file (- for standard input): {\"timeZone\", \"windows\": [{\"kind\": \"nap\"|\"awake\",\n"+
-			"\"days\", \"start\", \"end\", \"wake\"}], \"exceptions\", \"maxNapDays\"}. The controller checks it and says what is wrong, if\n"+
-			"anything. It also takes what 'schedule show --json' prints, as AWS's schedule set does. From router 0.36.0, a window\n"+
-			"also takes \"repeat\" (in place of \"days\"), \"from\" and \"until\", and the schedule \"joinMinutes\"; the README has the JSON.",
-		func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.Schedule = schedule
-			return runs.scheduleSet(ctx, d, r)
-		}, version, &f, false)
-	set.Flags().StringVar(&file, "file", "", "the schedule's JSON file, - for standard input (required)")
-	gcpWriteFlags(set, &f)
-	prior := set.PreRunE
-	set.PreRunE = func(c *cobra.Command, args []string) error {
-		if err := prior(c, args); err != nil {
-			return err
-		}
-		var err error
-		if schedule, err = readScheduleFile(c, file); err != nil {
-			return finish(c, err)
-		}
-		return nil
-	}
-	cmd.AddCommand(show, set, clear)
 	return cmd
 }
 

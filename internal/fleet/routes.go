@@ -82,6 +82,10 @@ var Routes = map[string][]Route{
 		{"GET", "/routers/*/waiting-page"}, {"PUT", "/routers/*/waiting-page"}, {"DELETE", "/routers/*/waiting-page"},
 	},
 	"savings": {{"GET", "/savings"}, {"PUT", "/savings/settings"}},
+	// schedule's changes read a workload's schedule (its status) and write it whole.
+	"schedule": {
+		{"GET", "/workloads"}, {"GET", "/workloads/*/*"}, {"PUT", "/workloads/*/*/schedule"}, {"DELETE", "/workloads/*/*/schedule"},
+	},
 	"settings": {
 		{"GET", "/settings/workloads"}, {"PUT", "/settings/workloads"},
 		{"GET", "/settings/waiting-page"}, {"PUT", "/settings/waiting-page"}, {"DELETE", "/settings/waiting-page"},
@@ -101,7 +105,6 @@ var Routes = map[string][]Route{
 		{"PUT", "/workloads/*/*/settings"},
 		{"GET", "/workloads/*/*/description"}, {"PUT", "/workloads/*/*/description"}, {"DELETE", "/workloads/*/*/description"},
 		{"GET", "/workloads/*/*/waiting-page"}, {"PUT", "/workloads/*/*/waiting-page"}, {"DELETE", "/workloads/*/*/waiting-page"},
-		{"PUT", "/workloads/*/*/schedule"}, {"DELETE", "/workloads/*/*/schedule"},
 	},
 }
 

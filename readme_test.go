@@ -115,7 +115,7 @@ var managerCommands = []string{
 	"routers list", "routers show", "routers install", "routers uninstall", "routers upgrade", "routers pause", "routers resume", "routers settings", "routers description",
 	"workloads list", "workloads show", "workloads history", "workloads idle-window", "workloads wake", "workloads nap",
 	"workloads pause", "workloads keep-awake", "workloads resume", "workloads rename", "workloads tags",
-	"workloads schedule show", "workloads schedule set", "workloads schedule clear",
+	"schedule list", "schedule show", "schedule set", "schedule clear", "schedule add", "schedule remove", "schedule except", "schedule edit",
 	"workloads waiting-page show", "workloads waiting-page set", "workloads waiting-page clear",
 	"routers waiting-page show", "routers waiting-page set", "routers waiting-page clear",
 	"settings waiting-page show", "settings waiting-page set", "settings waiting-page clear",
@@ -262,7 +262,8 @@ func TestReadmeGoogleCloudCoversTheFeaturesTheirFlagsAndTheirLimits(t *testing.T
 		"--ip-list name=<n>,url=<u>[,refresh_hours=<hours>]", "--no-ip-lists", "`DMT_IP_LISTS`", "512 MiB",
 		"a listed address's `POST /_dormeto/wake` still wakes",
 		// schedules and pauses
-		"workloads schedule show", "workloads schedule set", "workloads schedule clear", "--reason", "--until", "at most 10 scheduled naps",
+		"dormeto gcp schedule list", "dormeto gcp schedule show", "dormeto gcp schedule set", "dormeto gcp schedule clear",
+		"dormeto gcp schedule add", "dormeto gcp schedule remove", "dormeto gcp schedule except", "dormeto gcp schedule edit", "--reason", "--until", "at most 10 scheduled naps",
 		"`--keep-asleep`", "a visitor still wakes it",
 		// the onboarding's flags
 		"--load-balancer global|regional|classic", "--wake-timeout", "60 to 1700", "--database <instance>", "--gke-cluster <location>/<name>",
@@ -368,7 +369,7 @@ func TestReadmeRecurrencesShowEachPatternInTheCLIsWords(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"router 0.36.0", "five fields", "multiple of 5", "`cron(...)`", "`from`", "`until`", "no end date", "last day",
-		"dormeto aws workloads schedule set", "--tag"} {
+		"dormeto aws schedule set", "dormeto aws schedule add", "--repeat", "--tag"} {
 		if !strings.Contains(sub, want) {
 			t.Errorf("the recurrences lack %q", want)
 		}
@@ -844,7 +845,7 @@ func TestDocsSayTheReviewsTreeFlagsAndShapes(t *testing.T) {
 		// gcp's own
 		"A nap of a workload asleep already says `not awake (ASLEEP)`, as AWS words its refusal, but exits 0, since the controller does not refuse it (AWS exits 1)",
 		"`workloads wake <id> [--wait] [--timeout <d>]`",
-		"A refused nap, wake, pause, resume or `schedule set|clear` prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
+		"A refused nap, wake, pause, resume or schedule write prints the same head, `<router>/<workload>: <refusal>`, on stderr, exit 1",
 		"in `gcp routers show --json`'s `router` (as 0.11.0 printed it)",
 		"`pause <id> --reason <text>` (required, 1 to 256 characters)",
 		"dormeto aws settings set --idle-minutes 30 --wake-mode inherit",

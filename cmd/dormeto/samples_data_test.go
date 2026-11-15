@@ -58,12 +58,19 @@ var samples = []sample{
 	{line: "dormeto aws workloads tags prod-eu/web --set owner=web-team", stderr: true},
 	{line: "dormeto aws workloads settings prod-eu/web --idle-minutes 20", stderr: true},
 	{line: "dormeto aws workloads description prod-eu/web --set \"The public site\"", stderr: true},
-	{line: "dormeto aws workloads schedule show prod-eu/web"},
-	{line: "dormeto aws workloads schedule set prod-eu/web --file schedule.json", stderr: true, files: map[string]string{"schedule.json": sampleSchedule}},
-	{line: "dormeto aws workloads schedule clear prod-eu/web", stderr: true},
 	{line: "dormeto aws workloads waiting-page show prod-eu/web"},
 	{line: "dormeto aws workloads waiting-page set prod-eu/web --title \"The shop wakes up\"", stderr: true},
 	{line: "dormeto aws workloads waiting-page clear prod-eu/web", stderr: true},
+
+	// schedule
+	{line: "dormeto aws schedule list"},
+	{line: "dormeto aws schedule show prod-eu/web"},
+	{line: "dormeto aws schedule set prod-eu/web --file schedule.json", stderr: true, files: map[string]string{"schedule.json": sampleSchedule}},
+	{line: "dormeto aws schedule clear prod-eu/web", stderr: true},
+	{line: "dormeto aws schedule add prod-eu/web --kind nap --days sat,sun --start 00:00 --end 00:00 --wake header", stderr: true},
+	{line: "dormeto aws schedule remove prod-eu/web --window 2", stderr: true},
+	{line: "dormeto aws schedule except prod-eu/web --date 2026-12-24", stderr: true},
+	{line: "dormeto aws schedule edit prod-eu/web --max-nap-days 14", stderr: true},
 
 	// discovery, exclusions
 	{line: "dormeto aws discovery status"},
@@ -138,15 +145,22 @@ var samples = []sample{
 	{line: "dormeto gcp workloads pause shop --project my-project --region europe-west1 --reason \"load test\" --for 4h", stderr: true},
 	{line: "dormeto gcp workloads resume shop --project my-project --region europe-west1", stderr: true},
 	{line: "dormeto gcp workloads settings shop --project my-project --region europe-west1 --idle-minutes 20", stderr: true},
-	{line: "dormeto gcp workloads schedule show shop --project my-project --region europe-west1", google: shopScheduled},
-	{line: "dormeto gcp workloads schedule set shop --project my-project --region europe-west1 --file schedule.json", stderr: true, files: map[string]string{"schedule.json": sampleSchedule}},
-	{line: "dormeto gcp workloads schedule clear shop --project my-project --region europe-west1", stderr: true},
 	{line: "dormeto gcp workloads waiting-page show shop --project my-project --region europe-west1", google: pageOf("shop", "The shop wakes up")},
 	{line: "dormeto gcp workloads waiting-page set shop --project my-project --region europe-west1 --title \"The shop wakes up\"", stderr: true},
 	{line: "dormeto gcp workloads waiting-page clear shop --project my-project --region europe-west1", stderr: true},
 	{line: "dormeto gcp workloads access show --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop", google: shopAccessGranted},
 	{line: "dormeto gcp workloads access grant --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop --yes", stderr: true},
 	{line: "dormeto gcp workloads access revoke --project my-project --region europe-west1 --gke-cluster europe-west1-b/shop-cluster --namespace shop --workload shop --yes", stderr: true, google: shopAccessGranted},
+
+	// gcp schedule
+	{line: "dormeto gcp schedule list --project my-project --region europe-west1", google: shopScheduled},
+	{line: "dormeto gcp schedule show shop --project my-project --region europe-west1", google: shopScheduled},
+	{line: "dormeto gcp schedule set shop --project my-project --region europe-west1 --file schedule.json", stderr: true, files: map[string]string{"schedule.json": sampleSchedule}},
+	{line: "dormeto gcp schedule clear shop --project my-project --region europe-west1", stderr: true},
+	{line: "dormeto gcp schedule add shop --project my-project --region europe-west1 --kind nap --days sat,sun --start 00:00 --end 00:00 --wake header", stderr: true, google: shopScheduled},
+	{line: "dormeto gcp schedule remove shop --project my-project --region europe-west1 --window 2", stderr: true, google: shopWeekend},
+	{line: "dormeto gcp schedule except shop --project my-project --region europe-west1 --date 2026-12-24", stderr: true, google: shopScheduled},
+	{line: "dormeto gcp schedule edit shop --project my-project --region europe-west1 --max-nap-days 14", stderr: true, google: shopScheduled},
 }
 
 // sampleSchedule is the schedule file of the schedule set samples: awake on weekdays' office hours.
@@ -235,6 +249,16 @@ func shopScheduled(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
 	g.Schedules["shop"] = map[string]any{"timeZone": "Europe/Paris", "windows": []any{map[string]any{"kind": "awake", "days": []any{"mon", "tue", "wed", "thu", "fri"}, "start": "08:00", "end": "19:00"}},
 		"by": "ops@example.com", "at": "2026-11-02T14:00:00.000Z"}
 	g.NextEvents = []any{map[string]any{"at": "2026-11-16T07:00:00.000Z", "kind": "awake-start", "window": 0}}
+}
+
+// shopWeekend is shopScheduled with the weekend's nap window that schedule add adds.
+func shopWeekend(t *testing.T, g *gcptest.Server, d gcponboard.Deps) {
+	t.Helper()
+	shopScheduled(t, g, d)
+	g.Lock()
+	defer g.Unlock()
+	s := g.Schedules["shop"]
+	s["windows"] = append(s["windows"].([]any), map[string]any{"kind": "nap", "days": []any{"sat", "sun"}, "start": "00:00", "end": "00:00", "wake": "header"})
 }
 
 // pageOf gives a level (router, or a workload's ID) a waiting page of its own with that title.

@@ -20,6 +20,7 @@ import (
 	"github.com/Dormeto/cli/internal/gcp/access"
 	"github.com/Dormeto/cli/internal/install"
 	"github.com/Dormeto/cli/internal/output"
+	"github.com/Dormeto/cli/internal/schedule"
 )
 
 // Deps are what the runs use: the Google client (its token source names the account), the person's terminal, the output,
@@ -87,7 +88,10 @@ type Request struct {
 	// reason, --keep-asleep and --until (RFC 3339: the command reads --for and HH:MM into it).
 	Schedule      json.RawMessage
 	Reason, Until string
-	KeepAsleep    bool
+	// ScheduleChange is the change of add, remove, except or edit, and All is schedule list's --all.
+	ScheduleChange *schedule.Change
+	All            bool
+	KeepAsleep     bool
 
 	// The wake's --wait: the workload followed until it is awake, at most Timeout.
 	Wait    bool

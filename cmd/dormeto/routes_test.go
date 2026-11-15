@@ -90,7 +90,10 @@ var routeRuns = map[string][][]string{
 		{"resume", "prod-eu", "--yes"}, {"settings", "prod-eu"}, {"settings", "prod-eu", "--hibernate", "true", "--yes"},
 		{"description", "prod-eu"}, {"description", "prod-eu", "--set", "x"}, {"description", "prod-eu", "--clear"},
 		{"waiting-page", "show", "prod-eu"}, {"waiting-page", "set", "prod-eu", "--title", "Back"}, {"waiting-page", "clear", "prod-eu"}},
-	"savings":  {{"show"}, {"discounts", "--compute", "20", "--databases", "10"}},
+	"savings": {{"show"}, {"discounts", "--compute", "20", "--databases", "10"}},
+	"schedule": {{"list"}, {"show", "prod-eu/w-1"}, {"set", "prod-eu/w-1", "--file", "-", "--yes"}, {"clear", "prod-eu/w-1", "--yes"},
+		{"add", "prod-eu/w-1", "--kind", "nap", "--days", "sat", "--start", "00:00", "--end", "00:00", "--time-zone", "UTC"},
+		{"edit", "--tag", "team=payments", "--max-nap-days", "3", "--yes"}},
 	"settings": {{"show"}, {"set", "--hibernate", "true"}, {"waiting-page", "show"}, {"waiting-page", "set", "--title", "Back"}, {"waiting-page", "clear"}},
 	"types":    {{"list"}, {"set", "api", "--idle-minutes", "20"}},
 	"users": {{"list"}, {"invite", "ann@x.io", "--role", "viewer"}, {"role", "ann@x.io", "admin", "--yes"}, {"groups", "ann@x.io", "payments"},
@@ -102,7 +105,6 @@ var routeRuns = map[string][][]string{
 		{"settings", "prod-eu/w-1", "--hibernate", "true", "--yes"},
 		{"description", "prod-eu/w-1"}, {"description", "prod-eu/w-1", "--set", "x"}, {"description", "prod-eu/w-1", "--clear"},
 		{"waiting-page", "show", "prod-eu/w-1"}, {"waiting-page", "set", "prod-eu/w-1", "--title", "Back"}, {"waiting-page", "clear", "prod-eu/w-1"},
-		{"schedule", "show", "prod-eu/w-1"}, {"schedule", "set", "prod-eu/w-1", "--file", "-", "--yes"}, {"schedule", "clear", "prod-eu/w-1", "--yes"},
 		{"onboard", dismissedARN, "--yes"}, {"offboard", "prod-eu/w-1", "--yes"}, {"exclude", "prod-eu/w-1", "--reason", "x", "--yes"}},
 }
 
@@ -123,7 +125,7 @@ func TestEveryRouteACommandSendsIsInItsMethodsRowAndEveryRowIsSent(t *testing.T)
 				a.inner = m.handler()
 			}
 			stdin := `{"rules":[]}`
-			if slices.Contains(args, "schedule") {
+			if method == "schedule" {
 				stdin = `{"windows":[{"days":["mon"],"from":"08:00","to":"18:00"}]}`
 			}
 			r := runCommands(t, &fakeAPI{custom: a.handler, stdin: stdin}, "eu-west-1", nil, withTypes, append([]string{method}, args...)...)
