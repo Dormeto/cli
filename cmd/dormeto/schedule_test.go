@@ -168,12 +168,6 @@ func TestScheduleAddToSeveralWorkloads(t *testing.T) {
 	window := `{"kind":"awake","days":["mon"],"start":"08:00","end":"18:00"}`
 	sameSchedule(t, strings.TrimPrefix(a.writes[0], "PUT /iam/workloads/prod-eu/w-1/schedule "), `{"timeZone":"UTC","windows":[`+window+`],"maxNapDays":3}`)
 	sameSchedule(t, strings.TrimPrefix(a.writes[1], "PUT /iam/workloads/prod-eu/w-2/schedule "), `{"timeZone":"UTC","windows":[`+window+`]}`)
-	// A workload without a schedule, and no --time-zone: refused before its write, the others written; exit 2.
-	a = &scAPI{schedules: map[string]string{"prod-eu/w-1": keptSchedule}}
-	r = runSC(t, a, "add", "prod-eu/w-1", "prod-eu/w-2", "--kind", "awake", "--days", "mon", "--start", "06:00", "--end", "07:00", "--yes")
-	if r.exit != 2 || len(a.writes) != 1 || !strings.Contains(r.stderr, "prod-eu/w-2: --time-zone: the workload has no schedule: a first one needs its time zone") {
-		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
-	}
 }
 
 func TestScheduleRemoveTakesTheNumberedWindow(t *testing.T) {
@@ -345,5 +339,67 @@ func TestWorkloadsScheduleIsGone(t *testing.T) {
 	r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, "workloads", "schedule", "clear", "prod-eu/w-1")
 	if len(a.writes) != 0 || len(a.reads) != 0 || strings.Contains(r.stdout, "cleared") {
 		t.Errorf("workloads schedule clear: exit %d, writes %q, stdout %q", r.exit, a.writes, r.stdout)
+	}
+}
+
+// A word that is no command of a group exits 2 with cobra's words, whatever group, and sends nothing; a bare group prints its help.
+func TestUnknownCommandsOfAGroupExit2AndSendNothing(t *testing.T) {
+	for _, args := range [][]string{{"workloads", "schedule", "clear", "a/b"}, {"schedule", "bogus"}, {"workloads", "schedule", "set", "a/b", "--file", "x"}} {
+		a := &scAPI{}
+		r := runFleetWith(t, &fakeAPI{custom: a.handler()}, "eu-west-1", nil, args...)
+		want := "unknown command \"" + args[1] + "\" for \"dormeto aws " + args[0] + "\"\n"
+		if r.exit != 2 || r.stderr != want || r.stdout != "" || len(a.writes)+len(a.reads) != 0 || len(r.api.requests) != 0 {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q (want %q), requests %d", args, r.exit, r.stdout, r.stderr, want, len(r.api.requests))
+		}
+	}
+	for _, args := range [][]string{
+		{"gcp", "workloads", "schedule", "show", "w", "--project", "p", "--region", "europe-west1"},
+		{"gcp", "schedule", "bogus", "--project", "p"},
+	} {
+		calls, errs, exit := gcpRan(t, 0, args...)
+		want := "unknown command \"" + args[2] + "\" for \"dormeto gcp " + args[1] + "\"\n"
+		if exit != 2 || errs != want || len(calls) != 0 {
+			t.Errorf("%v: exit %d, stderr %q (want %q), calls %v", args, exit, errs, want, calls)
+		}
+	}
+	for _, args := range [][]string{{"aws", "schedule"}, {"gcp", "schedule"}, {"aws", "workloads", "waiting-page"}, {"gcp", "workloads", "access"}, {"aws", "schedule", "--help"}} {
+		out, errs, code := executed(t, build{}, args...)
+		if code != 0 || errs != "" || !strings.Contains(out, "Available Commands:") {
+			t.Errorf("%v: exit %d, stderr %q, stdout %q", args, code, errs, out)
+		}
+	}
+	out, errs, code := executed(t, build{}, "aws", "schedule", "bogus")
+	if code != 2 || out != "" || errs != "unknown command \"bogus\" for \"dormeto aws schedule\"\n" {
+		t.Errorf("newRoot: exit %d, stdout %q, stderr %q", code, out, errs)
+	}
+}
+
+// With several targets, a target refused before its write exits 2 only when every target was; one written makes it 1.
+func TestScheduleChangeOfSeveralExits1WhenOneWasWritten(t *testing.T) {
+	a := &scAPI{schedules: map[string]string{"prod-eu/w-1": keptSchedule}}
+	r := runSC(t, a, "add", "prod-eu/w-1", "prod-eu/w-2", "--kind", "awake", "--days", "mon", "--start", "06:00", "--end", "07:00", "--yes")
+	if r.exit != 1 || len(a.writes) != 1 || !strings.Contains(a.writes[0], "/prod-eu/w-1/") ||
+		r.stderr != "prod-eu/w-2: --time-zone: the workload has no schedule: a first one needs its time zone\n" {
+		t.Errorf("one written: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &scAPI{}
+	r = runSC(t, a, "remove", "prod-eu/w-1", "--window", "1")
+	if r.exit != 2 || len(a.writes) != 0 {
+		t.Errorf("none written: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &scAPI{}
+	r = runSC(t, a, "add", "prod-eu/w-1", "prod-eu/w-2", "--kind", "awake", "--days", "mon", "--start", "06:00", "--end", "07:00", "--yes")
+	if r.exit != 2 || len(a.writes) != 0 || strings.Count(r.stderr, "--time-zone: the workload has no schedule") != 2 {
+		t.Errorf("all refused: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+// The last window's hint is added to the router's refusal of an empty schedule alone.
+func TestScheduleRemoveHintsAtClearOnlyForTheEmptyScheduleRefusal(t *testing.T) {
+	one := `{"timeZone":"UTC","windows":[{"kind":"awake","days":["mon"],"start":"08:00","end":"18:00"}]}`
+	a := &scAPI{schedules: map[string]string{"prod-eu/w-1": one}, refuse: "you may not change this workload"}
+	r := runSC(t, a, "remove", "prod-eu/w-1", "--window", "1")
+	if r.exit != 1 || r.stderr != "prod-eu/w-1: you may not change this workload\n" {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }

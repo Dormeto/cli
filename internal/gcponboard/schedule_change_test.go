@@ -6,6 +6,7 @@ package gcponboard
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,5 +166,42 @@ func TestScheduleListReadsEachWorkloadsSchedule(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil || len(got.Workloads) != 1 || got.Workloads[0].WorkloadID != "shop" ||
 		got.Workloads[0].Router != shopRouter || got.Workloads[0].Schedule["unknown"] != "kept" {
 		t.Fatalf("--json: exit %d, %v:\n%s", code, err, out)
+	}
+}
+
+// A router whose list marks the workloads with a schedule has only those read; --all shows the others unread. The identity token
+// is asked once for the whole list.
+func TestScheduleListReadsOnlyTheScheduledRowsOfARouterThatMarksThem(t *testing.T) {
+	g, r := changeRig(t)
+	g.s.Workloads["api"] = "ASLEEP"
+	g.s.ListScheduled = true
+	r.All = true
+	mark := len(g.s.Calls())
+	*g.audiences = nil
+	code, out := g.call(t, WorkloadsScheduleList, r)
+	if code != 0 || !strings.Contains(out, shopRouter+"  api       —     gcp    ASLEEP  —") || !strings.HasSuffix(out, "2 workloads, 1 with a schedule\n") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if calls := g.controllerCalls(mark); !slices.Equal(calls, []string{"GET /v1/workloads", "GET /v1/workloads/shop/schedule"}) {
+		t.Errorf("calls %q", calls)
+	}
+	if len(*g.audiences) != 1 {
+		t.Errorf("identity tokens asked %d times: %q", len(*g.audiences), *g.audiences)
+	}
+	// A router whose rows do not say: each one read, as before.
+	g.s.ListScheduled = false
+	mark = len(g.s.Calls())
+	if code, _ := g.call(t, WorkloadsScheduleList, r); code != 0 || len(g.controllerCalls(mark)) != 3 {
+		t.Errorf("unmarked: exit %d, calls %q", code, g.controllerCalls(mark))
+	}
+}
+
+// The last window's hint goes with the router's refusal of an empty schedule alone.
+func TestScheduleRemoveHintsAtClearOnlyForTheEmptyScheduleRefusal(t *testing.T) {
+	g, r := changeRig(t)
+	g.s.ScheduleProblem = "you may not change this workload"
+	r.ScheduleChange = &schedule.Change{Remove: 1}
+	if code, _, stderr := g.split(t, WorkloadsScheduleChange, r); code != 1 || stderr != shopTarget+": you may not change this workload\n" {
+		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
 }

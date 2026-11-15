@@ -173,7 +173,11 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 		slices.Sort(ids)
 		list := []map[string]any{}
 		for _, id := range ids {
-			list = append(list, s.workloadBody(id))
+			row := s.workloadBody(id)
+			if s.ListScheduled {
+				row["scheduled"] = s.Schedules[id] != nil
+			}
+			list = append(list, row)
 		}
 		Reply(w, list)
 	case id == "" && r.Method == http.MethodPost:

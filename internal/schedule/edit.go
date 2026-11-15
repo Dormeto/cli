@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -60,6 +61,12 @@ type Exceptions struct {
 // LastWindowHint is what a refused removal of a schedule's last window adds: the router may refuse a schedule left with
 // nothing, and clear removes it.
 const LastWindowHint = "that was its last window: schedule clear removes the schedule"
+
+// emptyRefused is the router's refusal of a schedule with no window and no maximum nap (lib/schedule.mjs, scheduleProblems).
+const emptyRefused = "schedule: windows or maxNapDays required"
+
+// RefusedAsEmpty says a router's refusal is of a schedule left with nothing: no window and no maximum nap.
+func RefusedAsEmpty(message string) bool { return strings.Contains(message, emptyRefused) }
 
 // ErrNoSchedule is a change that needs a schedule, of a workload that has none.
 var ErrNoSchedule = errors.New("no schedule: schedule add makes one")

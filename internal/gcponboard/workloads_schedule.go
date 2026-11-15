@@ -132,18 +132,22 @@ func (x *run) scheduleChange() error {
 	x.r.Schedule = changed
 	err = x.putSchedule(path, true)
 	var s *stop
-	if change.Remove != 0 && schedule.Windows(changed) == 0 && errors.As(err, &s) && s.code == 1 && x.ctx.Err() == nil {
+	if change.Remove != 0 && schedule.Windows(changed) == 0 && errors.As(err, &s) && s.code == 1 && schedule.RefusedAsEmpty(s.msg) && x.ctx.Err() == nil {
 		s.msg += " (" + schedule.LastWindowHint + ")"
 	}
 	return err
 }
 
-// scheduleList is the router's workloads that the list's filters keep, each with its schedule (one read each, fleet.ScheduleReads
-// at a time): with a schedule, or every one with r.All. A schedule that cannot be read is said on stderr, its row left out, exit 1.
+// scheduleList is the router's workloads that the list's filters keep, each with its schedule: with a schedule, or every one with
+// r.All. A row the router marks unscheduled (`scheduled: false`) is not read; the others are, one read each, fleet.ScheduleReads at a
+// time, the identity token asked once. A schedule that cannot be read is said on stderr, its row left out, exit 1.
 func (x *run) scheduleList() error {
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
+	google := *x.d.Google
+	google.Tokens = gcp.OncePerAudience(google.Tokens)
+	x.d.Google = &google
 	var raw json.RawMessage
 	if err := x.controller(http.MethodGet, "/v1/workloads", nil, &raw); err != nil {
 		return err
@@ -154,11 +158,16 @@ func (x *run) scheduleList() error {
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
 	rows := make([]fleet.ScheduleRow, len(kept))
+	unscheduled := map[string]bool{}
 	for i, w := range kept {
+		unscheduled[w.ID] = w.Scheduled != nil && !*w.Scheduled
 		rows[i] = fleet.ScheduleRow{Router: x.n.managed, WorkloadID: w.ID, Name: w.Name, Cloud: "gcp", State: w.State,
 			Schedule: json.RawMessage("null"), Next: []fleet.NextEvent{}}
 	}
 	failed := fleet.ReadSchedules(rows, func(row *fleet.ScheduleRow) error {
+		if unscheduled[row.WorkloadID] {
+			return nil
+		}
 		var answer struct {
 			Schedule   json.RawMessage   `json:"schedule"`
 			NextEvents []fleet.NextEvent `json:"nextEvents"`

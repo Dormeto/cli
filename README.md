@@ -1028,9 +1028,11 @@ as the router words it, `<router>/<workload>: <refusal>` (exit 1), and the other
   they do not touch kept as the router answered it: a change made meanwhile by someone else (the dashboard, another run) is
   lost, as in the dashboard. They print what `set` prints, then the schedule as `show` does, without the next events again;
   `--dry-run` reads the schedule and prints the `PUT` it would send with the resulting schedule, and writes nothing. The CLI
-  checks only a flag's form (a time `HH:MM`, a date `YYYY-MM-DD`, a whole number) and a window's number (exit 2, nothing
-  written: `--window: 3 is not a window of the schedule, which has 2 (schedule show numbers them)`); the router checks the
-  rest.
+  checks only a flag's form (a time `HH:MM`, a date `YYYY-MM-DD`, a whole number), before any call (exit 2), and what a
+  target's schedule allows: a window's number (`--window: 3 is not a window of the schedule, which has 2 (schedule show
+  numbers them)`), a schedule to change, a first schedule's `--time-zone`. Such a target is named on stderr and nothing is
+  written to it; the exit is 2 when every target was refused so, else 1, as when the router refuses a target. The router
+  checks the rest.
 - `add` appends a window, its flags named after the window's fields: `--kind` `nap` or `awake` (required); `--days` with
   `--start` and `--end` for a weekly window; `--repeat` `daily`, `weekly`, `monthly` or `cron` for a recurrence, with
   `--interval`, `--days` (weekly: the repeat's days), `--day` or `--nth` (1 to 4, -1 for the last) and `--weekday` (monthly),
@@ -2252,7 +2254,7 @@ dormeto gcp routers resume --project my-project --region europe-west1
   dormeto gcp routers install …` (exit 1).
 - `dormeto gcp schedule` has AWS's commands, flags and words ([Schedules](#schedules)), on one workload, the argument,
   with `--project` and `--region` (the router's): `list` lists the router's workloads (`--all`, `--state`, `--search`,
-  `--tag`, `--json`), reading each one's schedule, 8 at a time; `add`, `remove`, `except` and `edit` read the schedule,
+  `--tag`, `--json`), reading each one's schedule, 8 at a time (but those the router's list marks without one); `add`, `remove`, `except` and `edit` read the schedule,
   change it and put it whole, so a change made meanwhile by someone else is lost, `by` your gcloud account.
 - `schedule set --file` (`-` for the standard input; a `schedule show --json` output is read as well) takes the
   schedule's JSON, the same as on AWS ([Schedules](#schedules), and [Schedule recurrences](#schedule-recurrences) from

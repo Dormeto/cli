@@ -48,6 +48,7 @@ func newGcp(runs gcpRuns, fleet fleetDeps, version string) *cobra.Command {
 			"onboarding and schedules, and the manager's connection to a project. The manager's own commands (routers list, workloads list,\n" +
 			"savings, users...) serve AWS and Google Cloud and live under `dormeto aws`.\n\n" + regionRule}
 	refuseUnknownSubcommands(cmd)
+	defer refuseUnknownWords(cmd)
 	cmd.AddCommand(newGcpCheck(runs.check, version), newGcpWhoami(runs.whoami, version), newGcpWorkloads(runs.workloads, version), newGcpSchedule(runs.workloads, version), newGcpRouters(runs, version),
 		newGcpConnect(runs.connect, fleet, version), newGcpDisconnect(runs.disconnect, fleet, version))
 	return cmd

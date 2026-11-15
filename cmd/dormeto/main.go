@@ -63,6 +63,7 @@ func buildRoot(b build, fleet fleetDeps, installs installRuns, gcps gcpRuns) *co
 	refuseUnknownSubcommands(aws)
 	aws.AddCommand(awsCommands(b, fleet, installs, orDefault(v, "dev"))...)
 	types := newTypes(fleet)
+	refuseUnknownWords(types)
 	sayBothClouds(types)
 	aws.AddCommand(types)
 	root.AddCommand(aws)
@@ -79,6 +80,7 @@ func awsCommands(b build, fleet fleetDeps, installs installRuns, version string)
 func managerCommands(deps fleetDeps) []*cobra.Command {
 	cmds := []*cobra.Command{newRouters(deps), newWorkloads(deps), newSchedule(deps), newDiscovery(deps), newExclusions(deps), newUsers(deps), newGroups(deps), newOperations(deps), newOverview(deps), newAlerts(deps), newIPLists(deps), newSavings(deps), newAudit(deps), newManager(deps), newSettings(deps), newWhoami(deps), newAPI(deps)}
 	for _, c := range cmds {
+		refuseUnknownWords(c)
 		acceptYes(c)
 		acceptDryRun(c)
 		sayBothClouds(c)
@@ -193,6 +195,48 @@ func (b build) describe() string {
 	return fmt.Sprintf("dormeto %s\ncommit: %s\ndate: %s\nmanager: %s\nrouter: %s\n",
 		orDefault(v, "dev"), orDefault(c, "unknown"), orDefault(d, "unknown"),
 		orDefault(cases.Manager, "none"), orDefault(cases.Router, "none"))
+}
+
+// groupAnnotation marks a group whose unknown words refuseUnknownWords refuses.
+const groupAnnotation = "dormeto-group"
+
+// refusedAnnotation is set on the root when a group refused a word: execute exits 2.
+const refusedAnnotation = "dormeto-refused"
+
+// refuseUnknownWords makes every group under top (a command with subcommands and no run of its own, aws and gcp left to
+// refuseUnknownSubcommands) answer a word that is none of its commands, and the flags after it, as aws and gcp do: "unknown
+// command" on stderr, exit 2, nothing run. The groups stay groups (no run of their own, their help unchanged): the refusal is
+// made where cobra would print their help. A bare group still prints its help.
+func refuseUnknownWords(top *cobra.Command) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.HasSubCommands() && !c.Runnable() && c.Annotations[groupAnnotation] == "" {
+			if c.Annotations == nil {
+				c.Annotations = map[string]string{}
+			}
+			c.Annotations[groupAnnotation] = "true"
+			c.FParseErrWhitelist.UnknownFlags = true
+			group, help := c, c.HelpFunc()
+			c.SetHelpFunc(func(h *cobra.Command, args []string) {
+				if h == group {
+					if words := h.Flags().Args(); len(words) > 0 {
+						fmt.Fprintf(h.ErrOrStderr(), "unknown command %q for %q\n", words[0], h.CommandPath())
+						root := h.Root()
+						if root.Annotations == nil {
+							root.Annotations = map[string]string{}
+						}
+						root.Annotations[refusedAnnotation] = "true"
+						return
+					}
+				}
+				help(h, args)
+			})
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(top)
 }
 
 // refuseUnknownSubcommands makes a group command (aws, gcp) answer a word that is none of its commands, and the flags

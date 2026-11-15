@@ -124,8 +124,10 @@ type workload struct {
 		Reason string `json:"reason"`
 		At     string `json:"at"`
 	} `json:"napAborted"`
-	Paused *fleet.Pause  `json:"paused"`
-	Pauses []fleet.Pause `json:"pauses"`
+	// Scheduled says whether it has a schedule, when the router's list says it (nil: it does not).
+	Scheduled *bool         `json:"scheduled"`
+	Paused    *fleet.Pause  `json:"paused"`
+	Pauses    []fleet.Pause `json:"pauses"`
 	// Woken are the workloads a pause's answer says it woke, when the router answers them.
 	Woken []string `json:"woken"`
 	LB    *lbRef   `json:"lb"`

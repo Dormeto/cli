@@ -121,7 +121,9 @@ type Server struct {
 	// Schedules are the workloads' schedules, by ID; NextEvents the events GET .../schedule answers while one is set;
 	// ScheduleProblem, when set, makes PUT .../schedule refuse with a 400 saying it; ScheduleJoin, members its answers add
 	// (a router 0.36.0: joinMinutes, joinFrom, joinInherited).
-	Schedules       map[string]map[string]any
+	Schedules map[string]map[string]any
+	// ListScheduled makes the list's rows say whether each workload has a schedule (`scheduled`), as the manager's rows do.
+	ListScheduled   bool
 	NextEvents      []any
 	ScheduleProblem string
 	ScheduleJoin    map[string]any
@@ -524,9 +526,15 @@ type Tokens struct {
 }
 
 func (Tokens) AccessToken(context.Context) (string, error) { return "test-token", nil }
+
+// audiencesMu guards the Audiences of every Tokens: a command may ask its identity tokens from several goroutines.
+var audiencesMu sync.Mutex
+
 func (t Tokens) IdentityToken(_ context.Context, audience string) (string, error) {
 	if t.Audiences != nil {
+		audiencesMu.Lock()
 		*t.Audiences = append(*t.Audiences, audience)
+		audiencesMu.Unlock()
 	}
 	return "test-identity", nil
 }

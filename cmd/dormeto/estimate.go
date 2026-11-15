@@ -39,6 +39,10 @@ func execute(root *cobra.Command, args ...string) int {
 		root.SetArgs(args)
 	}
 	err := root.Execute()
+	if root.Annotations[refusedAnnotation] != "" { // a group refused a word, said
+		delete(root.Annotations, refusedAnnotation)
+		return 2
+	}
 	var code exitCode
 	switch {
 	case errors.As(err, &code):

@@ -419,7 +419,7 @@ func newScheduleChange(f *fleetFlags, deps fleetDeps, cc changeCommand) *cobra.C
 				return finish(c, err)
 			}
 			return w.run(c, args, cc.question, func(ctx context.Context, api *fleet.Client, targets []fleet.Target) error {
-				refused := false // a change that cannot be built: exit 2
+				refused := 0 // the targets refused before their write, a change that cannot be built
 				_, err := applyAnswers(ctx, c, targets, asJSON, func(t fleet.Target) (string, json.RawMessage, error) {
 					var st struct {
 						Schedule json.RawMessage `json:"schedule"`
@@ -432,7 +432,7 @@ func newScheduleChange(f *fleetFlags, deps fleetDeps, cc changeCommand) *cobra.C
 					}
 					raw, err := change.Apply(st.Schedule)
 					if err != nil {
-						refused = true
+						refused++
 						return "", nil, err
 					}
 					line, shown, answer, err := putSchedule(ctx, api, t, raw)
@@ -445,7 +445,8 @@ func newScheduleChange(f *fleetFlags, deps fleetDeps, cc changeCommand) *cobra.C
 					}
 					return line + more, answer, nil
 				})
-				if refused && ctx.Err() == nil {
+				// Exit 2 when every target was refused so, nothing written; one written or refused by the router makes it 1.
+				if refused == len(targets) && refused > 0 && ctx.Err() == nil {
 					return exitCode(2)
 				}
 				return err
@@ -462,10 +463,10 @@ func newScheduleChange(f *fleetFlags, deps fleetDeps, cc changeCommand) *cobra.C
 	return cmd
 }
 
-// lastWindow adds to a refusal of a removal that left no window what clear does.
+// lastWindow adds what clear does to the router's refusal of the empty schedule a removal of its last window left.
 func lastWindow(change schedule.Change, raw json.RawMessage, err error) error {
 	var ae *fleet.APIError
-	if change.Remove != 0 && schedule.Windows(raw) == 0 && errors.As(err, &ae) {
+	if change.Remove != 0 && schedule.Windows(raw) == 0 && errors.As(err, &ae) && schedule.RefusedAsEmpty(ae.Message) {
 		return fmt.Errorf("%w (%s)", err, schedule.LastWindowHint)
 	}
 	return err

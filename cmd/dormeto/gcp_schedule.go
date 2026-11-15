@@ -39,9 +39,9 @@ func newGcpScheduleList(run gcpRun, version string) *cobra.Command {
 	cmd := gcpCommand("list", "List the workloads' schedules: zone, windows and next event",
 		"List the router's workloads with a schedule: router, workload, name, cloud, state, the schedule's time zone, its number\n"+
 			"of windows and its next event in its zone, as AWS's list. --all adds the workloads without a schedule. --state, --search\n"+
-			"and --tag keep the workloads workloads list would keep. Each workload is read for its schedule, 8 at a time; one that\n"+
-			"cannot be read is said on stderr and left out (exit 1). --json prints {workloads: [{router, workloadId, name, cloud,\n"+
-			"state, schedule, next}]}.",
+			"and --tag keep the workloads workloads list would keep. Each workload is read for its schedule, 8 at a time, but one the\n"+
+			"router's list marks without a schedule; one that cannot be read is said on stderr and left out (exit 1). --json prints\n"+
+			"{workloads: [{router, workloadId, name, cloud, state, schedule, next}]}.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.States, r.Search, r.HasTags, r.All = upper(filters.states), filters.search, has, all
 			return run(ctx, d, r)
