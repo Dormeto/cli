@@ -3,6 +3,7 @@ package fleet
 // The workload settings of a level as the commands name and print them: AWS's and Google Cloud's share them.
 
 import (
+	"encoding/json"
 	"fmt"
 )
 
@@ -38,6 +39,22 @@ func LevelLines(d map[string]any) []string {
 		if list, ok := d[r.key].([]any); ok && len(list) > 0 {
 			lines = append(lines, fmt.Sprintf("%s %d", r.label, len(list)))
 		}
+	}
+	// A standalone workload's idle signals (an AWS level's; a Google Cloud level has none).
+	for _, r := range []struct{ key, label, unit string }{{"idleCpuPercent", "idle CPU", "%"}, {"idleNetworkBytes", "idle network", " bytes a minute"}} {
+		switch v := d[r.key].(type) {
+		case float64:
+			lines = append(lines, r.label+" "+num(v)+r.unit)
+		case string:
+			lines = append(lines, r.label+" "+v)
+		}
+	}
+	switch v := d["idleMetric"].(type) {
+	case string:
+		lines = append(lines, "idle metric "+v)
+	case map[string]any:
+		b, _ := json.Marshal(v)
+		lines = append(lines, "idle metric "+metricText(b))
 	}
 	return lines
 }

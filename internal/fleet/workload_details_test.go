@@ -143,3 +143,45 @@ func TestWorkloadDetailsScheduleSaysTheJoin(t *testing.T) {
 		t.Errorf("an older router: %s", got)
 	}
 }
+
+// A standalone workload: its kind and resource (missing, said), each idle signal with its threshold, level, value and
+// since when it is under, when it may nap; no URL, no waker's settings.
+func TestWorkloadDetailsTextOfAStandaloneWorkload(t *testing.T) {
+	var d WorkloadDetails
+	status := `{"workloadId":"5d2c8a1b9e4f7a3c","name":"build-agent","kind":"standalone","resourceArn":"arn:aws:ec2:eu-west-1:111111111111:instance/i-9",
+"resourceMissing":true,"state":"AWAKE","updatedAt":"2026-10-19T09:00:00Z",
+"idle":[{"signal":"cpu","below":5,"value":2.25,"underSince":"2026-10-19T10:20:00Z","applies":true,"from":"default"},
+ {"signal":"network","below":1000,"value":4200,"underSince":null,"applies":true,"from":"workload"},
+ {"signal":"metric","below":null,"value":null,"underSince":null,"applies":false,"reason":"off","from":"default"}],
+"nap":{"eligibleAt":"2026-10-19T12:20:00Z","latestAt":"2026-10-19T12:35:00Z","inSeconds":4800},
+"settings":{"idleMinutes":120,"wakeTimeoutSeconds":600,"idleCpuPercent":5,"idleNetworkBytes":1000,"idleMetric":"off"},
+"settingsFrom":{"idleMinutes":"default","wakeTimeoutSeconds":"default","idleCpuPercent":"default","idleNetworkBytes":"workload","idleMetric":"default"}}`
+	if err := json.Unmarshal([]byte(status), &d); err != nil {
+		t.Fatal(err)
+	}
+	got := d.Text("prod-eu", time.UTC)
+	for _, want := range []string{
+		"workload  prod-eu/5d2c8a1b9e4f7a3c",
+		"kind      standalone",
+		"resource  arn:aws:ec2:eu-west-1:111111111111:instance/i-9 (resource missing)",
+		"idle window   120 min (built-in)",
+		"wake timeout  10 min (built-in)",
+		"idle CPU      5% (built-in)",
+		"idle network  1000 bytes a minute (set on this workload)",
+		"idle metric   off (built-in)",
+		"idle signals\n",
+		"CPU      2.3, idle under 5, under since 2026-10-19 10:20 UTC (built-in)",
+		"network  4200, idle under 1000, not under (set on this workload)",
+		"metric   off (built-in)",
+		"nap      from 2026-10-19 12:20 UTC, at the latest 2026-10-19 12:35 UTC",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("text lacks %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"url", "hold", "drain", "held requests"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("text has %q:\n%s", absent, got)
+		}
+	}
+}

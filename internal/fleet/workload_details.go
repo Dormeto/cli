@@ -50,7 +50,18 @@ type WorkloadDetails struct {
 		WakeTimeoutSeconds *int `json:"wakeTimeoutSeconds"`
 		MaxHolders         *int `json:"maxHolders"`
 		FailedRetrySeconds *int `json:"failedRetrySeconds"` // routers 0.37.0 and later
+		// A standalone workload's idle signals: a threshold or "off" (idleMetric: a metric or "off").
+		IdleCPUPercent   json.RawMessage `json:"idleCpuPercent"`
+		IdleNetworkBytes json.RawMessage `json:"idleNetworkBytes"`
+		IdleMetric       json.RawMessage `json:"idleMetric"`
 	} `json:"settings"`
+	// A standalone workload: its kind ("standalone"), its resource, whether it is missing, its idle signals now and when
+	// it may nap.
+	Kind            string       `json:"kind"`
+	ResourceArn     string       `json:"resourceArn"`
+	ResourceMissing bool         `json:"resourceMissing"`
+	Idle            []IdleSignal `json:"idle"`
+	Nap             *NapEstimate `json:"nap"`
 	// Settings at scale (routers 0.37.0): the level each setting comes from, and the workload's type.
 	SettingsFrom map[string]string `json:"settingsFrom"`
 	Type         *WorkloadType     `json:"type"`
@@ -106,8 +117,30 @@ func (d WorkloadDetails) Text(router string, loc *time.Location) string {
 	return d.TextWith(router, loc, DetailsMore{})
 }
 
+// IdleSignal is one of a standalone workload's idle signals as its router reads it: its value under below since
+// underSince, or why it does not apply; From the level of its setting.
+type IdleSignal struct {
+	Signal     string   `json:"signal"`
+	Below      *float64 `json:"below"`
+	Value      *float64 `json:"value"`
+	UnderSince *string  `json:"underSince"`
+	Applies    bool     `json:"applies"`
+	Reason     string   `json:"reason"`
+	From       string   `json:"from"`
+}
+
+// NapEstimate is when a standalone workload may nap: from EligibleAt, at the latest LatestAt.
+type NapEstimate struct {
+	EligibleAt string `json:"eligibleAt"`
+	LatestAt   string `json:"latestAt"`
+	InSeconds  *int   `json:"inSeconds"`
+}
+
 // TextWith is Text with a cloud's own rows, more, among the shared ones.
 func (d WorkloadDetails) TextWith(router string, loc *time.Location, more DetailsMore) string {
+	if d.Kind == KindStandalone {
+		return d.standaloneText(router, loc)
+	}
 	state := d.State
 	if d.UpdatedAt != "" {
 		state += " since " + When(d.UpdatedAt, loc)
@@ -704,4 +737,157 @@ func block(lines string) string {
 		return ""
 	}
 	return indent(lines)
+}
+
+// standaloneText is a standalone workload: its resource (missing, when its router says so), no URL, no waker; its
+// settings with the idle signals, each signal now, when it may nap, then the pauses, schedule, last 7 days and costs.
+func (d WorkloadDetails) standaloneText(router string, loc *time.Location) string {
+	state := d.State
+	if d.UpdatedAt != "" {
+		state += " since " + When(d.UpdatedAt, loc)
+	}
+	var failure string
+	if f := d.Failure; f != nil && d.State == "FAILED" {
+		failure = fmt.Sprintf("%s failed (%s): %s", orElse(f.Step, "wake"), orElse(f.Kind, "unknown"), f.Message)
+	}
+	version := d.Router.Version
+	if version != "" && d.Router.Build != "" {
+		version += " (build " + d.Router.Build + ")"
+	}
+	var tags []string
+	for _, k := range sortedKeys(d.Tags) {
+		tags = append(tags, k+"="+d.Tags[k])
+	}
+	resource := d.ResourceArn
+	if d.ResourceMissing {
+		resource += " (resource missing)"
+	}
+	var b strings.Builder
+	b.WriteString(Labelled([][2]string{
+		{"workload", router + "/" + d.WorkloadID}, {"name", d.Name}, {"kind", KindStandalone}, {"resource", resource}, {"state", state}, {"failure", failure},
+		{"cloud", CloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"router version", version}, {"tags", strings.Join(tags, ", ")},
+	}))
+	b.WriteString(d.Description.block(loc))
+	section := func(title, text string) {
+		if text != "" {
+			b.WriteString("\n" + title + "\n" + text)
+		}
+	}
+	from := func(key, value string) string {
+		if value == "" || d.SettingsFrom[key] == "" {
+			return value
+		}
+		return value + " (" + d.sourceText(d.SettingsFrom[key]) + ")"
+	}
+	s := d.Settings
+	minutes := ""
+	if s.IdleMinutes != nil {
+		minutes = fmt.Sprintf("%d min", *s.IdleMinutes)
+	}
+	timeout := ""
+	if s.WakeTimeoutSeconds != nil {
+		timeout = Seconds(*s.WakeTimeoutSeconds)
+	}
+	section("settings", block(Labelled([][2]string{
+		{"type", d.typeText()},
+		{"idle window", from("idleMinutes", minutes)},
+		{"wake timeout", from("wakeTimeoutSeconds", timeout)},
+		{"idle CPU", from("idleCpuPercent", thresholdText(s.IdleCPUPercent, "%"))},
+		{"idle network", from("idleNetworkBytes", thresholdText(s.IdleNetworkBytes, " bytes a minute"))},
+		{"idle metric", from("idleMetric", metricText(s.IdleMetric))},
+	})))
+	var signals [][2]string
+	for _, sig := range d.Idle {
+		signals = append(signals, [2]string{signalName(sig.Signal), d.signalText(sig, loc)})
+	}
+	if n := d.Nap; n != nil {
+		nap := "from " + When(n.EligibleAt, loc)
+		if n.LatestAt != "" {
+			nap += ", at the latest " + When(n.LatestAt, loc)
+		}
+		signals = append(signals, [2]string{"nap", nap})
+	}
+	section("idle signals", block(Labelled(signals)))
+	var pauses []string
+	for _, p := range d.Pauses {
+		pauses = append(pauses, "  "+PauseText(p, loc)+"\n")
+	}
+	section("pauses", strings.Join(pauses, ""))
+	section("schedule", d.scheduleText())
+	section("last 7 days", d.weekText())
+	section("costs", d.costsText())
+	return b.String()
+}
+
+// signalName is a signal as the workload view names it.
+func signalName(signal string) string {
+	switch signal {
+	case "cpu":
+		return "CPU"
+	case "network":
+		return "network"
+	case "metric":
+		return "metric"
+	}
+	return signal
+}
+
+// signalText is a signal now: its value against its threshold and since when it is under, or why it does not apply;
+// then its setting's level.
+func (d WorkloadDetails) signalText(s IdleSignal, loc *time.Location) string {
+	var text string
+	switch {
+	case !s.Applies && s.Reason == "off":
+		text = "off"
+	case !s.Applies:
+		text = "not read: " + orElse(s.Reason, "unknown")
+	default:
+		value := "no value"
+		if s.Value != nil {
+			value = num(*s.Value)
+		}
+		below := "?"
+		if s.Below != nil {
+			below = num(*s.Below)
+		}
+		text = value + ", idle under " + below
+		if s.UnderSince != nil && *s.UnderSince != "" {
+			text += ", under since " + When(*s.UnderSince, loc)
+		} else {
+			text += ", not under"
+		}
+	}
+	if s.From != "" {
+		text += " (" + d.sourceText(s.From) + ")"
+	}
+	return text
+}
+
+// thresholdText is an idle signal's setting: its number and unit, or off; "" when not given.
+func thresholdText(raw json.RawMessage, unit string) string {
+	var v any
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil || v == nil {
+		return ""
+	}
+	if f, ok := v.(float64); ok {
+		return num(f) + unit
+	}
+	return fmt.Sprint(v)
+}
+
+// metricText is the custom idle metric: namespace/name statistic under below, or off; "" when not given.
+func metricText(raw json.RawMessage) string {
+	var v any
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil || v == nil {
+		return ""
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Sprint(v)
+	}
+	text := fmt.Sprintf("%v/%v %v", m["namespace"], m["name"], m["statistic"])
+	if below, ok := m["below"].(float64); ok {
+		text += " under " + num(below)
+	}
+	return text
 }

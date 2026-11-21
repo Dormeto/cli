@@ -107,6 +107,21 @@ type Workload struct {
 	StateAt    string            `json:"stateAt,omitempty"`
 	UpdatedAt  string            `json:"updatedAt,omitempty"`
 	Scheduled  bool              `json:"scheduled,omitempty"` // a schedule is set (manager 0.16.0)
+	// Kind is "standalone" for a standalone workload (its resource ResourceArn); absent for an HTTP one.
+	Kind            string `json:"kind,omitempty"`
+	ResourceArn     string `json:"resourceArn,omitempty"`
+	ResourceMissing bool   `json:"resourceMissing,omitempty"`
+}
+
+// KindStandalone is a standalone workload's or candidate's kind; an HTTP one has none (KindOf says http).
+const KindStandalone = "standalone"
+
+// KindOf is the KIND column's word: standalone, else http (an HTTP row has no kind).
+func KindOf(kind string) string {
+	if kind == "" {
+		return "http"
+	}
+	return kind
 }
 
 // RouterError is a router that did not answer the workloads' listing.

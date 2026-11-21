@@ -191,6 +191,7 @@ var gcpRegionName = regexp.MustCompile(`^(global|[a-z]+-[a-z]+\d{1,2})$`)
 func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		status, account, region string
+		kind                    string
 		cloud                   cloudFilter
 		limit                   int
 		asJSON                  bool
@@ -199,6 +200,8 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Use: "candidates", Short: "List the discovery candidates of a status, of both clouds", Args: noArgs, SilenceErrors: true,
 		Long: "List the candidates of one status (default pending-onboarding): target group or backend service, cloud, account\n" +
 			"or project, region, hosts, idle hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
+			"candidate has a KIND: http, or standalone for a resource no route uses (an instance, an Auto Scaling group, an ECS\n" +
+			"service, an RDS instance or cluster: its name in the first column); --kind keeps one. Every\n" +
 			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
 			"manager's). --cloud (aws or gcp) keeps one cloud's candidates: the list has AWS's target groups and Google Cloud's\n" +
 			"backend services. --json prints the manager's answer, {candidates}, every page in it.",
@@ -229,7 +232,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				if cloud != "" {
 					keep = func(cand fleet.Candidate) bool { return cloud.keeps(cand.Cloud) }
 				}
-				cs, err := fleet.ListCandidatesWhere(ctx, api, status, account, region, limit, keep)
+				cs, err := fleet.ListCandidatesOf(ctx, api, fleet.CandidateQuery{Status: status, Account: account, Region: region, Kind: kind, Limit: limit, Keep: keep})
 				if err != nil {
 					return err
 				}
@@ -246,6 +249,7 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&account, "account", "", "only the candidates of this AWS account (12 digits) or Google Cloud project")
 	fl.StringVar(&region, "candidate-region", "", "only the candidates in this region of --account (--region is the manager's)")
 	cloud.bind(cmd)
+	fl.StringVar(&kind, "kind", "", "only the candidates of this kind: http or standalone")
 	fl.IntVar(&limit, "limit", 0, "stop at this many candidates (0, the default: all)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answer, {candidates}, every page in it")
 	return cmd
@@ -263,7 +267,7 @@ func candidatesText(cs []fleet.Candidate, status string) string {
 	if len(cs) == 0 {
 		return "no candidates in " + status + "\n"
 	}
-	rows := [][]string{{"TARGET GROUP OR BACKEND SERVICE", "CLOUD", "ACCOUNT OR PROJECT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
+	rows := [][]string{{"TARGET GROUP OR BACKEND SERVICE", "KIND", "CLOUD", "ACCOUNT OR PROJECT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
 	for _, c := range cs {
 		hosts := strings.Join(c.Hosts, ",")
 		if hosts == "" {
@@ -276,7 +280,7 @@ func candidatesText(cs []fleet.Candidate, status string) string {
 		case c.Workload != nil:
 			workload = c.Workload.Router + "/" + c.Workload.Name
 		}
-		rows = append(rows, []string{c.Name(), fleet.CloudName(c.Cloud), c.Account, c.Region, hosts, figure(c.IdleHours7d, "h"), figure(c.Requests7d, ""), workload, c.StatusReason})
+		rows = append(rows, []string{c.Name(), fleet.KindOf(c.Kind), fleet.CloudName(c.Cloud), c.Account, c.Region, hosts, figure(c.IdleHours7d, "h"), figure(c.Requests7d, ""), workload, c.StatusReason})
 	}
 	return fleet.Table(rows)
 }
@@ -527,22 +531,47 @@ func newDiscoveryConfigShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 
 func newDiscoveryConfigSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		file   string
-		yes    bool
-		asJSON bool
+		file, standalone string
+		yes              bool
+		asJSON           bool
 	)
 	cmd := &cobra.Command{
-		Use: "set --file <path>|-", Short: "Replace the discovery configuration with a JSON file", Args: noArgs, SilenceErrors: true,
+		Use: "set (--file <path>|- | --standalone on|off)", Short: "Replace the discovery configuration with a JSON file, or turn its standalone scan on or off", Args: noArgs, SilenceErrors: true,
 		Long: "Replace the whole discovery configuration with the JSON file (- reads standard input): the output of `config\n" +
 			"show` (the configuration as it is), or the answer of `config show --json`, whose `config` member is sent. The\n" +
 			"manager checks it, and a refusal prints each of its errors on a line (exit 1). It is always confirmed on a\n" +
-			"terminal (--yes without one). --json prints the manager's answer. Needs an administrator.",
+			"terminal (--yes without one). --standalone on or off sets the perimeter's standalone scan (the resources no\n" +
+			"route uses: EC2 instances, Auto Scaling groups, ECS services, RDS instances and clusters; off by default): in the\n" +
+			"file given, or without --file in the configuration as it is, read first. --json prints the manager's answer. Needs\n" +
+			"an administrator.",
 		RunE: func(c *cobra.Command, _ []string) error {
-			data, err := readJSONFile(c, file)
+			setting := c.Flags().Changed("standalone")
+			var data []byte
+			var err error
+			if file != "" || !setting {
+				data, err = readJSONFile(c, file)
+			}
 			if err != nil {
 				return finish(c, err)
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
+				if data == nil { // --standalone alone: the configuration as it is
+					var now fleet.DiscoveryConfig
+					if err := api.Get(ctx, "/discovery/config", nil, &now); err != nil {
+						return err
+					}
+					data = now.Config
+				}
+				if setting { // the manager checks the value
+					var cfg map[string]json.RawMessage
+					if err := json.Unmarshal(data, &cfg); err != nil || cfg == nil {
+						return usagef("the configuration is not an object: --standalone cannot be set in it")
+					}
+					cfg["standalone"], _ = json.Marshal(standalone)
+					if data, err = json.Marshal(cfg); err != nil {
+						return err
+					}
+				}
 				if done, err := confirmNames(ctx, c, deps, api, []string{"discovery configuration"}, "configuration",
 					"Replace the discovery configuration?", true, false, yes); done || err != nil {
 					return err
@@ -566,6 +595,7 @@ func newDiscoveryConfigSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&file, "file", "", "the configuration, a JSON file (- for standard input)")
+	fl.StringVar(&standalone, "standalone", "", "the perimeter's standalone scan: on or off (off by default)")
 	fl.BoolVar(&yes, "yes", false, "do not ask for a confirmation (needed without a terminal)")
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answer")
 	return cmd

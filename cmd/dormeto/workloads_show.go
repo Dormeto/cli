@@ -36,7 +36,9 @@ func newWorkloadsShow(f *fleetFlags, deps fleetDeps) *cobra.Command {
 		Long: "Show one workload as the manager's workload view does: its state and since when, name, URL, account and\n" +
 			"region, router version and tags, the settings, the pauses (who, why, until when), the schedule with its next\n" +
 			"events (in the schedule's time zone), the share of the last 7 days in each state, the idle hours, and what the\n" +
-			"naps saved, with the energy not used. Other times are in the local time zone. --json prints the manager's answer.",
+			"naps saved, with the energy not used. A standalone workload shows its kind and resource (said missing when its\n" +
+			"router no longer finds it) instead of a URL, its idle signals with their thresholds, levels, last values and\n" +
+			"since when each is under, and when it may nap. Other times are in the local time zone. --json prints the manager's answer.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			t, err := oneTarget(args)

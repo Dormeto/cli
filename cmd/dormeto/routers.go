@@ -454,6 +454,7 @@ func newRoutersSettings(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.BoolVar(&yes, "yes", false, yesSeveralRouters)
 	fl.BoolVar(&asJSON, "json", false, "print the manager's answers, by router")
 	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
+	levels.bindIdleFlags(cmd)
 	return cmd
 }
 

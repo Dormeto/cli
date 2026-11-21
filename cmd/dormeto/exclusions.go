@@ -56,16 +56,16 @@ func newExclusionsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 
 func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
-		tg, lb, account, reason, dur, until string
-		dryRun, yes                         bool
-		wait                                waitFlags
-		asJSON                              bool
+		tg, lb, account, resource, reason, dur, until string
+		dryRun, yes                                   bool
+		wait                                          waitFlags
+		asJSON                                        bool
 	)
 	cmd := &cobra.Command{
-		Use: "add (--target-group <arn|path> | --load-balancer <arn|path> | --account <id>) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude a target group, a load balancer or an account from discovery",
+		Use: "add (--target-group <arn|path> | --load-balancer <arn|path> | --resource <arn> | --account <id>) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude a target group, a load balancer, a resource or an account from discovery",
 		Args: noArgs, SilenceErrors: true,
 		Long: "Exclude one target (an application target group or load balancer by ARN, a Google Cloud backend service or URL map\n" +
-			"by its path, or a whole account by its 12 digits or a project by its ID)\n" +
+			"by its path, a standalone resource by its ARN, or a whole account by its 12 digits or a project by its ID)\n" +
 			"from discovery: the manager pauses its managed workloads (an operation, followed). --reason is 1 to 246\n" +
 			"characters; --for is a duration up to 366 days (90m, 2h, 3d) and --until an RFC 3339 time or HH:MM today in the\n" +
 			"local time zone, within 366 days; without either the exclusion lasts until `dormeto aws exclusions lift`. It is\n" +
@@ -76,7 +76,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			var target map[string]any
 			var text string
 			given := 0
-			for _, s := range []string{tg, lb, account} {
+			for _, s := range []string{tg, lb, account, resource} {
 				if s != "" {
 					given++
 				}
@@ -84,7 +84,9 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			var err error
 			switch {
 			case given != 1:
-				err = usagef("give exactly one of --target-group, --load-balancer and %s", accountFlag(c))
+				err = usagef("give exactly one of --target-group, --load-balancer, --resource and %s", accountFlag(c))
+			case resource != "" && !strings.HasPrefix(resource, "arn:"):
+				err = usagef("--resource: %q is not an ARN (an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance or cluster)", resource)
 			case tg != "" && !fleet.IsTargetGroupARN(tg) && !fleet.IsBackendServicePath(tg):
 				err = usagef("--target-group: %q is neither the ARN of an application target group nor the path of a backend service (projects/<project>/global|regions/<region>/backendServices/<name>)", tg)
 			case lb != "" && !fleet.IsLoadBalancerARN(lb) && !fleet.IsURLMapPath(lb):
@@ -98,6 +100,8 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 				target, text = map[string]any{"kind": "target-group", "path": tg}, "backend service "+tg[strings.LastIndex(tg, "/")+1:]
 			case tg != "":
 				target, text = map[string]any{"kind": "target-group", "arn": tg}, "target group "+fleet.TargetGroupName(tg)
+			case resource != "":
+				target, text = map[string]any{"kind": "resource", "arn": resource}, "resource "+resource[strings.LastIndexAny(resource, ":/")+1:]
 			case lb != "" && fleet.IsURLMapPath(lb):
 				target, text = map[string]any{"kind": "load-balancer", "path": lb}, "URL map "+lb[strings.LastIndex(lb, "/")+1:]
 			case lb != "":
@@ -139,6 +143,7 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	fl.StringVar(&tg, "target-group", "", "the ARN of an application target group, or the path of a Google Cloud backend service")
 	fl.StringVar(&lb, "load-balancer", "", "the ARN of an application load balancer, or the path of a Google Cloud URL map")
 	fl.StringVar(&account, "account", "", "an AWS account (12 digits) or a Google Cloud project ID")
+	fl.StringVar(&resource, "resource", "", "the ARN of a standalone resource: an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance or cluster")
 	fl.StringVar(&reason, "reason", "", "why, 1 to 246 characters, shown in the manager (required)")
 	fl.StringVar(&dur, "for", "", "how long, a duration up to 366 days (90m, 2h, 3d); default until lifted")
 	fl.StringVar(&until, "until", "", "until this time: RFC 3339, or HH:MM today in the local time zone")

@@ -477,27 +477,41 @@ func TestRoutersListJSONPassesCloudThrough(t *testing.T) {
 }
 
 func TestWorkloadsListPrintsACloudColumnAndJSONKeepsCloud(t *testing.T) {
+	var asked []string
 	api := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Query().Get("kind"))
 		io.WriteString(w, `{"workloads":[
  {"workloadId":"w-1","name":"api","cloud":"aws","router":"prod-eu","account":"111111111111","region":"eu-west-1","state":"ASLEEP","stateAt":"2026-10-19T09:00:00Z"},
- {"workloadId":"w-2","name":"web","cloud":"gcp","router":"dmtr-dormeto-dev-europe-west2","account":"dormeto-dev","region":"europe-west2","state":"AWAKE","stateAt":"2026-10-19T09:00:00Z"}
-],"total":2,"cursor":null}`)
+ {"workloadId":"w-2","name":"web","cloud":"gcp","router":"dmtr-dormeto-dev-europe-west2","account":"dormeto-dev","region":"europe-west2","state":"AWAKE","stateAt":"2026-10-19T09:00:00Z"},
+ {"workloadId":"5d2c8a1b9e4f7a3c","name":"build-agent","cloud":"aws","router":"prod-eu","kind":"standalone","resourceArn":"arn:aws:ec2:eu-west-1:111111111111:instance/i-9","state":"AWAKE","stateAt":"2026-10-19T09:00:00Z"}
+],"total":3,"cursor":null}`)
 	}}
 	r := runFleet(t, api, "eu-west-1", "workloads", "list")
 	lines := strings.Split(r.stdout, "\n")
+	// The KIND column after the name: http for a row without a kind.
 	for i, want := range [][]string{
-		{"ROUTER", "WORKLOAD", "NAME", "CLOUD", "STATE", "TAGS", "CHANGED"},
-		{"prod-eu", "w-1", "api", "aws", "ASLEEP", "—", "3h"},
-		{"dmtr-dormeto-dev-europe-west2", "w-2", "web", "gcp", "AWAKE", "—", "3h"},
+		{"ROUTER", "WORKLOAD", "NAME", "KIND", "CLOUD", "STATE", "TAGS", "CHANGED"},
+		{"prod-eu", "w-1", "api", "http", "aws", "ASLEEP", "—", "3h"},
+		{"dmtr-dormeto-dev-europe-west2", "w-2", "web", "http", "gcp", "AWAKE", "—", "3h"},
+		{"prod-eu", "5d2c8a1b9e4f7a3c", "build-agent", "standalone", "aws", "AWAKE", "—", "3h"},
 	} {
 		if got := strings.Fields(lines[i]); !slices.Equal(got, want) {
 			t.Errorf("line %d: %q, want %q", i, got, want)
 		}
 	}
+	// --json: the API's keys as they are, no kind invented for an HTTP row.
 	r = runFleet(t, api, "eu-west-1", "workloads", "list", "--json")
-	var got struct{ Workloads []struct{ Cloud string } }
-	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Workloads) != 2 || got.Workloads[0].Cloud != "aws" || got.Workloads[1].Cloud != "gcp" {
+	var got struct{ Workloads []map[string]any }
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || len(got.Workloads) != 3 || got.Workloads[0]["cloud"] != "aws" || got.Workloads[1]["cloud"] != "gcp" {
 		t.Errorf("%v: %q", err, r.stdout)
+	}
+	if _, has := got.Workloads[0]["kind"]; has || got.Workloads[2]["kind"] != "standalone" {
+		t.Errorf("kinds: %q", r.stdout)
+	}
+	// --kind is the manager's filter, sent as it is.
+	runFleet(t, api, "eu-west-1", "workloads", "list", "--kind", "standalone")
+	if !slices.Equal(asked, []string{"", "", "standalone"}) {
+		t.Errorf("kind asked %q", asked)
 	}
 }
 

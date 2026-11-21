@@ -40,6 +40,79 @@ type levelFlags struct {
 	wakeRules string
 	// max overrides a numeric setting's upper end by its flag: Google Cloud's wake timeout stops at 1700.
 	max map[string]int
+	// A standalone workload's idle signals (AWS levels only: bindIdleFlags).
+	idle                             bool
+	idleCPU, idleNetwork, idleMetric string
+}
+
+// idleMetricExample is a custom idle metric in the router's shape, as the help shows it.
+const idleMetricExample = `{"namespace": "CI/Agents", "name": "QueuedJobs", "dimensions": {"Agent": "${resource}"}, "statistic": "Maximum", "below": 1}`
+
+// bindIdleFlags binds a level's idle signals of a standalone workload: --idle-cpu, --idle-network, --idle-metric. Their
+// ranges and shapes are the router's, checked by the manager, whose refusal is printed as it says it.
+func (l *levelFlags) bindIdleFlags(cmd *cobra.Command) {
+	l.idle = true
+	cmd.Flags().StringVar(&l.idleCPU, "idle-cpu", "", "a standalone workload's idle CPU, a percent from 0 to 100 (idle under it), off, or "+l.unset)
+	cmd.Flags().StringVar(&l.idleNetwork, "idle-network", "", "a standalone workload's idle network, bytes a minute in and out (idle under it), off, or "+l.unset)
+	cmd.Flags().StringVar(&l.idleMetric, "idle-metric", "", "a standalone workload's custom idle metric: a JSON file in the router's shape (a path, - for the standard input), off, or "+l.unset+"; for example "+idleMetricExample)
+}
+
+// idleBody adds the idle signals given to out: a number, off, the unset word (null), or for --idle-metric a JSON file.
+func (l *levelFlags) idleBody(c *cobra.Command, out map[string]any) error {
+	if !l.idle {
+		return nil
+	}
+	for _, s := range []struct{ flag, key, value string }{{"idle-cpu", "idleCpuPercent", l.idleCPU}, {"idle-network", "idleNetworkBytes", l.idleNetwork}} {
+		if !c.Flags().Changed(s.flag) {
+			continue
+		}
+		v := strings.TrimSpace(s.value)
+		switch n, err := strconv.ParseFloat(v, 64); {
+		case v == "off":
+			out[s.key] = "off"
+		case l.unsets(v):
+			out[s.key] = nil
+		case err == nil:
+			out[s.key] = n
+		default:
+			return usagef("--%s: give a number, off or %s", s.flag, l.unset)
+		}
+	}
+	if c.Flags().Changed("idle-metric") {
+		v := strings.TrimSpace(l.idleMetric)
+		switch {
+		case v == "off":
+			out["idleMetric"] = "off"
+		case l.unsets(v):
+			out["idleMetric"] = nil
+		default:
+			metric, err := readJSONValue(c, v)
+			if err != nil {
+				return usagef("--idle-metric: %v", err)
+			}
+			out["idleMetric"] = metric
+		}
+	}
+	return nil
+}
+
+// readJSONValue reads a JSON value from a file, or the standard input for -; the manager checks it.
+func readJSONValue(c *cobra.Command, path string) (any, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(c.InOrStdin())
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, fmt.Errorf("a JSON metric: %v", err)
+	}
+	return v, nil
 }
 
 // rangeOf is a numeric setting's range as this command takes it.
@@ -130,6 +203,9 @@ func (l *levelFlags) body(c *cobra.Command) (map[string]any, error) {
 			return nil, usagef("--%s: %v", r.flag, err)
 		}
 		out[r.key] = rules
+	}
+	if err := l.idleBody(c, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -322,6 +398,7 @@ func newTypesSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"databases) takes defaults only. The routers apply it at their next check, within 5 minutes. Needs an administrator.",
 	}
 	levels := bindLevelFlags(cmd, googleCloudBrings, "inherit")
+	levels.bindIdleFlags(cmd)
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		name := args[0]
 		builtIn := slices.Contains(builtInTypes, name)

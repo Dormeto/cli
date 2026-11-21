@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -692,7 +693,76 @@ func TestAProjectGivenNamesItsOwnFlagInAnError(t *testing.T) {
 	// exclusions add, given a project beside another target: the flags named as given.
 	r = runFleetWith(t, &fakeAPI{custom: (&disAPI{}).handler()}, "eu-west-1", nil, "exclusions", "add", "--project", "dormeto-dev",
 		"--target-group", "projects/dormeto-dev/global/backendServices/web", "--reason", "r")
-	if r.exit != 2 || !strings.Contains(r.stderr, "give exactly one of --target-group, --load-balancer and --project") || strings.Contains(r.stderr, "--account") {
+	if r.exit != 2 || !strings.Contains(r.stderr, "give exactly one of --target-group, --load-balancer, --resource and --project") || strings.Contains(r.stderr, "--account") {
 		t.Errorf("exclusions add: exit %d: %q", r.exit, r.stderr)
+	}
+}
+
+const agentARN = "arn:aws:ec2:eu-west-1:111111111111:instance/i-9"
+
+// standaloneRow is a standalone candidate as the manager lists it.
+func standaloneRow(status string) string {
+	return fmt.Sprintf(`{"kind":"standalone","id":%q,"resourceArn":%q,"account":"111111111111","region":"eu-west-1","name":"build-agent","backend":{"kind":"instance","id":"i-9","arn":%q},"tags":{},"eligibility":"eligible","idleHours7d":160,"status":%q}`, agentARN, agentARN, agentARN, status)
+}
+
+// The KIND column after the name, http for a row without a kind; a standalone candidate by its resource's name;
+// --kind is the manager's filter, sent as it is.
+func TestDiscoveryCandidatesHaveTheirKind(t *testing.T) {
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {row("111111111111", "api", "pending-onboarding"), standaloneRow("pending-onboarding")}}}
+	r := runDiscovery(t, a, nil, "", "candidates")
+	lines := strings.Split(r.stdout, "\n")
+	for i, want := range [][]string{
+		{"TARGET", "GROUP", "OR", "BACKEND", "SERVICE", "KIND", "CLOUD"},
+		{"api", "http", "aws", "111111111111", "eu-west-1", "api.example.com", "120h", "42"},
+		{"build-agent", "standalone", "aws", "111111111111", "eu-west-1", "—", "160h", "—"},
+	} {
+		if got := strings.Fields(lines[i]); len(got) < len(want) || !slices.Equal(got[:len(want)], want) {
+			t.Errorf("line %d: %q, want %q…", i, got, want)
+		}
+	}
+	runDiscovery(t, a, nil, "", "candidates", "--kind", "standalone")
+	if !strings.Contains(a.requests[len(a.requests)-1], "kind=standalone") {
+		t.Errorf("requests %q", a.requests)
+	}
+}
+
+// A standalone candidate is dismissed and restored by its resource ARN (sent as it is), or by its name.
+func TestDiscoveryDismissesAStandaloneCandidateByItsResource(t *testing.T) {
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {standaloneRow("pending-onboarding")}, "dismissed": {standaloneRow("dismissed")}}}
+	if r := runDiscovery(t, a, nil, "", "dismiss", agentARN); r.exit != 0 || !strings.Contains(a.writes[0], `"ids":["`+agentARN+`"]`) {
+		t.Fatalf("exit %d %q, writes %q", r.exit, r.stderr, a.writes)
+	}
+	if r := runDiscovery(t, a, nil, "", "restore", "build-agent"); r.exit != 0 || !strings.Contains(a.writes[1], `"ids":["`+agentARN+`"]`) {
+		t.Fatalf("exit %d %q, writes %q", r.exit, r.stderr, a.writes)
+	}
+}
+
+// --standalone sets the perimeter's standalone scan: in the configuration as it is (read first), or in the file given;
+// the value is the manager's to check.
+func TestDiscoveryConfigSetTurnsTheStandaloneScanOnOrOff(t *testing.T) {
+	a := &disAPI{config: `{"config":{"version":1,"mode":"account","filters":[]},"updatedAt":"2026-10-19T10:00:00Z","lint":[]}`}
+	r := runDiscovery(t, a, nil, "", "config", "set", "--standalone", "on", "--yes")
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != `PUT /iam/discovery/config {"filters":[],"mode":"account","standalone":"on","version":1}` {
+		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &disAPI{}
+	r = runDiscovery(t, a, nil, `{"version":1,"standalone":"on"}`, "config", "set", "--file", "-", "--standalone", "off", "--yes")
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != `PUT /iam/discovery/config {"standalone":"off","version":1}` {
+		t.Errorf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	a = &disAPI{putStatus: 400, putAnswer: `{"error":"bad_request","message":"invalid configuration","errors":["standalone: must be \"off\" or \"on\""]}`}
+	r = runDiscovery(t, a, nil, `{"version":1}`, "config", "set", "--file", "-", "--standalone", "yes", "--yes")
+	if r.exit != 1 || !strings.Contains(r.stderr, `standalone: must be "off" or "on"`) {
+		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
+// The run's problems, an account and region each: what its scan could not read.
+func TestDiscoveryStatusSaysWhatTheRunCouldNotRead(t *testing.T) {
+	run := `{"lastRun":{"startedAt":"2026-10-19T09:00:00Z","finishedAt":"2026-10-19T09:00:30Z","trigger":"schedule","status":"ok","targets":[{"account":"111111111111","region":"eu-west-1","status":"ok","problems":["RDS instances not listed: the discovery role may not call rds:DescribeDBInstances (apply the access module or the AWS CLI script of this release again)"]}],"counts":{},"lint":[]},"counts":{}}`
+	a := &disAPI{statuses: []string{run}}
+	r := runDiscovery(t, a, nil, "", "status")
+	if r.exit != 0 || !strings.Contains(r.stdout, "not read") || !strings.Contains(r.stdout, "111111111111 eu-west-1: RDS instances not listed: the discovery role may not call rds:DescribeDBInstances") {
+		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 }

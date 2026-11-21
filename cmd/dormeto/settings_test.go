@@ -7,8 +7,10 @@ package main
 import (
 	"io"
 	"net/http"
+	"os"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -581,5 +583,61 @@ func TestSettingsSetSendsHowLongAnEndedWindowStays(t *testing.T) {
 	}
 	if r := runFleetWith(t, &fakeAPI{custom: refuses}, "eu-west-1", nil, "settings", "set", "--ended-window-days", "90"); r.exit != 1 || !strings.Contains(r.stderr, "--ended-window-days needs manager 0.21.0 or later") {
 		t.Errorf("refused: exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
+// The idle signals at every level: a number, off, inherit (null), a metric from a JSON file; the ranges are the router's,
+// the manager's refusal printed as it says it (the gate's 409 with its routers).
+func TestTheIdleSignalsAtEveryLevel(t *testing.T) {
+	metric := t.TempDir() + "/metric.json"
+	if err := os.WriteFile(metric, []byte(`{"namespace":"CI/Agents","name":"QueuedJobs","dimensions":{"Agent":"${resource}"},"statistic":"Maximum","below":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sent = `"idleCpuPercent":7.5,"idleMetric":{"below":1,"dimensions":{"Agent":"${resource}"},"name":"QueuedJobs","namespace":"CI/Agents","statistic":"Maximum"},"idleNetworkBytes":"off"`
+	idle := []string{"--idle-cpu", "7.5", "--idle-network", "off", "--idle-metric", metric}
+
+	a := &globalAPI{}
+	if r := runSettings(t, a, append([]string{"set"}, idle...)...); r.exit != 0 || !reflect.DeepEqual(a.writes, []string{`{"defaults":{` + sent + `}}`}) {
+		t.Errorf("settings set: exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	w := &wrAPI{}
+	if r := runFleetWith(t, &fakeAPI{custom: w.handler()}, "eu-west-1", nil, append([]string{"routers", "settings", "r1"}, idle...)...); r.exit != 0 || !reflect.DeepEqual(w.writes, []string{`PUT /iam/routers/r1/settings {"defaults":{` + sent + `}}`}) {
+		t.Errorf("routers settings: exit %d, writes %q, stderr %q", r.exit, w.writes, r.stderr)
+	}
+	w = &wrAPI{}
+	if r := runWR(t, w, nil, "settings", "prod-eu/w-1", "--idle-cpu", "inherit", "--idle-metric", "off"); r.exit != 0 ||
+		!reflect.DeepEqual(w.writes, []string{`PUT /iam/workloads/prod-eu/w-1/settings {"idleCpuPercent":null,"idleMetric":"off"}`}) {
+		t.Errorf("workloads settings: exit %d, writes %q, stderr %q", r.exit, w.writes, r.stderr)
+	}
+	// Refused here only what is not a number, off or inherit, or a file that is not JSON.
+	for _, args := range [][]string{{"set", "--idle-cpu", "high"}, {"set", "--idle-network", ""}, {"set", "--idle-metric", t.TempDir() + "/none.json"}} {
+		a := &globalAPI{}
+		if r := runSettings(t, a, args...); r.exit != 2 || len(a.writes) != 0 {
+			t.Errorf("%q: exit %d, writes %q", args, r.exit, a.writes)
+		}
+	}
+	// The gate's 409, as the manager says it.
+	gate := "the organization's idle signals need every router at 0.42.0 or later and no Google Cloud router: 2 routers must be upgraded first: prod-eu (0.41.0), dmtr-dormeto-dev-europe-west2 (Google Cloud)"
+	refused := &fakeAPI{custom: func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(409)
+		io.WriteString(w, `{"error":"conflict","message":`+strconv.Quote(gate)+`}`)
+	}}
+	if r := runFleetWith(t, refused, "eu-west-1", nil, "settings", "set", "--idle-cpu", "5"); r.exit != 1 || !strings.Contains(r.stderr, gate) {
+		t.Errorf("the gate: exit %d, stderr %q", r.exit, r.stderr)
+	}
+}
+
+// The Google Cloud subtree's levels have no idle signals.
+func TestTheGoogleCloudLevelsHaveNoIdleSignals(t *testing.T) {
+	root := buildRoot(build{}, fleetDeps{}, installRuns{}, gcpRuns{})
+	for _, path := range [][]string{{"gcp", "routers", "settings"}, {"gcp", "workloads", "settings"}} {
+		cmd, _, err := root.Find(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Flags().Lookup("idle-cpu") != nil {
+			t.Errorf("%v has --idle-cpu", path)
+		}
 	}
 }

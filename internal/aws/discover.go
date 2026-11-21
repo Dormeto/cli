@@ -21,7 +21,7 @@ func (r *Region) Discover(where discover.Where, now func() time.Time) discover.R
 			return discover.ScanRegion(ctx, r.Scan(), where, now())
 		},
 		Standalone: func(ctx context.Context) (discover.ScanResult, error) {
-			return discover.ScanRegionWith(ctx, r.Scan(), where, now(), discover.ScanOptions{Standalone: true})
+			return discover.ScanRegionWith(ctx, r.Scan(), where, now(), discover.ScanOptions{Standalone: true, WithoutStandaloneIdle: true})
 		},
 		AutoScaling: r.autoscaling,
 		ELBv2:       r.elbv2,

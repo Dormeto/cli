@@ -22,6 +22,7 @@ type obAPI struct {
 	pending    []string          // the candidates' JSON rows
 	conflicts  map[string]string // workload id (or exclusion id) -> the conflicting operation's id
 	noTG       map[string]bool   // workloads without a target group
+	standalone map[string]string // standalone workloads -> their resource ARN
 	writes     []string          // "METHOD path body"
 	types      map[string]string // operation id -> type
 	reads      map[string]int
@@ -93,6 +94,10 @@ func (a *obAPI) handler(w http.ResponseWriter, r *http.Request) {
 		id := path[strings.LastIndex(path, "/")+1:]
 		if rowJSON, ok := gcpWorkloads[id]; ok { // a Google Cloud workload, as the router's row has it
 			io.WriteString(w, rowJSON)
+			return
+		}
+		if arn, ok := a.standalone[id]; ok {
+			fmt.Fprintf(w, `{"workloadId":%q,"state":"AWAKE","kind":"standalone","resourceArn":%q}`, id, arn)
 			return
 		}
 		if a.noTG[id] {
@@ -779,5 +784,39 @@ func TestBothOnboardsListTheSharedFlagsInTheSameOrderAndWords(t *testing.T) {
 	}
 	if got := all[1]["--wake-timeout-seconds"]; !strings.Contains(got, "60 to 3600") || !strings.Contains(got, "60 to 1700 on Google Cloud") {
 		t.Errorf("--wake-timeout-seconds: %q", got)
+	}
+}
+
+// A standalone candidate is onboarded by its resource ARN, or its resource's name: the ARN is the candidateId.
+func TestOnboardAStandaloneResourceByItsARN(t *testing.T) {
+	for _, ref := range []string{agentARN, "build-agent"} {
+		a := &obAPI{pending: []string{row("111111111111", tgAPI, "pending-onboarding"), standaloneRow("pending-onboarding")}}
+		r := runOB(t, a, nil, "workloads", "onboard", ref)
+		want := `POST /iam/operations {"candidateId":"` + agentARN + `","databases":[],"settings":{},"type":"onboard"}`
+		if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+			t.Fatalf("%s: exit %d, writes %q, stderr %q", ref, r.exit, a.writes, r.stderr)
+		}
+	}
+}
+
+// A standalone workload's exclusion is its resource's: no "no target group to exclude".
+func TestExcludeAStandaloneWorkloadSendsItsResource(t *testing.T) {
+	a := &obAPI{standalone: map[string]string{"w-9": agentARN}}
+	r := runOB(t, a, nil, "workloads", "exclude", "prod-eu/w-9", "--reason", "build", "--yes")
+	want := `POST /iam/exclusions {"reason":"build","target":{"arn":"` + agentARN + `","kind":"resource"},"workload":{"id":"w-9","router":"prod-eu"}}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+}
+
+func TestExclusionsAddAResource(t *testing.T) {
+	a := &obAPI{}
+	r := runOB(t, a, nil, "exclusions", "add", "--resource", agentARN, "--reason", "build", "--yes")
+	want := `POST /iam/exclusions {"reason":"build","target":{"arn":"` + agentARN + `","kind":"resource"}}`
+	if r.exit != 0 || len(a.writes) != 1 || a.writes[0] != want {
+		t.Fatalf("exit %d, writes %q, stderr %q", r.exit, a.writes, r.stderr)
+	}
+	if r := runOB(t, &obAPI{}, nil, "exclusions", "add", "--resource", "i-9", "--reason", "x", "--yes"); r.exit != 2 || !strings.Contains(r.stderr, "--resource:") {
+		t.Errorf("not an ARN: exit %d %q", r.exit, r.stderr)
 	}
 }

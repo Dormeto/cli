@@ -47,6 +47,11 @@ type Candidate struct {
 		At   string `json:"at"`
 		Note string `json:"note"`
 	} `json:"dismissed,omitempty"`
+	// A standalone candidate: its kind ("standalone"; none for an HTTP one), its resource (its id too) and the
+	// resource's name.
+	Kind         string `json:"kind,omitempty"`
+	ResourceArn  string `json:"resourceArn,omitempty"`
+	ResourceName string `json:"name,omitempty"`
 
 	raw json.RawMessage
 }
@@ -74,9 +79,11 @@ func (c Candidate) MarshalJSON() ([]byte, error) {
 // IsGoogle tells whether the candidate is Google Cloud's.
 func (c Candidate) IsGoogle() bool { return c.Cloud == "gcp" }
 
-// Name is the candidate's target group name, or its id when it has no target group.
+// Name is the candidate's target group name (a standalone candidate's resource name), or its id when it has none.
 func (c Candidate) Name() string {
 	switch {
+	case c.Kind == KindStandalone && c.ResourceName != "":
+		return c.ResourceName
 	case c.TargetGroupARN != "":
 		return TargetGroupName(c.TargetGroupARN)
 	case c.TargetGroup != "":
@@ -107,6 +114,20 @@ func ListCandidates(ctx context.Context, c *Client, status, account, region stri
 // them: with a limit, it reads on until that many are kept or the pages end. A page asks for the limit's rest without a
 // filter, and is a full one with it: the rows kept may be sparse.
 func ListCandidatesWhere(ctx context.Context, c *Client, status, account, region string, limit int, keep func(Candidate) bool) ([]Candidate, error) {
+	return ListCandidatesOf(ctx, c, CandidateQuery{Status: status, Account: account, Region: region, Limit: limit, Keep: keep})
+}
+
+// CandidateQuery is what ListCandidatesOf asks: ListCandidatesWhere's arguments, and Kind (http or standalone, sent as it
+// is for the manager to check; "": both).
+type CandidateQuery struct {
+	Status, Account, Region, Kind string
+	Limit                         int
+	Keep                          func(Candidate) bool
+}
+
+// ListCandidatesOf is ListCandidatesWhere with the query's kind.
+func ListCandidatesOf(ctx context.Context, c *Client, query CandidateQuery) ([]Candidate, error) {
+	status, account, region, limit, keep := query.Status, query.Account, query.Region, query.Limit, query.Keep
 	var out []Candidate
 	cursor := ""
 	for {
@@ -120,6 +141,9 @@ func ListCandidatesWhere(ctx context.Context, c *Client, status, account, region
 		}
 		if region != "" {
 			q.Set("region", region)
+		}
+		if query.Kind != "" {
+			q.Set("kind", query.Kind)
 		}
 		if cursor != "" {
 			q.Set("cursor", cursor)

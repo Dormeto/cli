@@ -30,6 +30,8 @@ type RunRecord struct {
 		Region  string `json:"region"`
 		Status  string `json:"status"`
 		Error   string `json:"error"`
+		// What the scan of an account and region that ran could not read (the standalone scan's lists, an idle share).
+		Problems []string `json:"problems"`
 	} `json:"targets"`
 	EmptyPairs int `json:"emptyPairs"`
 	Skipped    []struct {
@@ -94,8 +96,11 @@ func (d DiscoveryStatus) Text(loc *time.Location) string {
 	if r := d.LastRun; r != nil {
 		rows[0][1] = runText(*r, loc)
 		scanned, skipped := r.EmptyPairs, 0
-		var failed []string
+		var failed, problems []string
 		for _, t := range r.Targets {
+			for _, p := range t.Problems {
+				problems = append(problems, fmt.Sprintf("%s %s: %s", t.Account, t.Region, p))
+			}
 			switch t.Status {
 			case "ok":
 				scanned++
@@ -115,7 +120,7 @@ func (d DiscoveryStatus) Text(loc *time.Location) string {
 			}
 		}
 		rows = append(rows, [2]string{"scanned", fmt.Sprintf("%d account-regions, %d skipped, %d failed", scanned, skipped, len(failed))},
-			[2]string{"failed", strings.Join(failed, "\n")}, [2]string{"error", r.Error}, [2]string{"skipped because", r.SkippedReason})
+			[2]string{"failed", strings.Join(failed, "\n")}, [2]string{"not read", strings.Join(problems, "\n")}, [2]string{"error", r.Error}, [2]string{"skipped because", r.SkippedReason})
 		if r.Delegation == "missing" {
 			rows = append(rows, [2]string{"delegation", "missing: the organization's accounts could not be listed"})
 		}

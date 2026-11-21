@@ -50,6 +50,9 @@ type ScanResult struct {
 // scan on): the standalone candidates too; off, not one call more.
 type ScanOptions struct {
 	Standalone bool
+	// WithoutStandaloneIdle leaves the standalone candidates' idle share unread (their idleHours7d null): the estimate
+	// reads their signals over its own days (Go only; the manager's scan always reads it).
+	WithoutStandaloneIdle bool
 }
 
 // row is a rule of a listener of an application load balancer.
@@ -370,7 +373,7 @@ func ScanRegionWith(ctx context.Context, ports ScanPorts, where Where, now time.
 			read = append(read, c)
 		}
 	}
-	if len(read) > 0 && ports.CloudWatch != nil {
+	if len(read) > 0 && ports.CloudWatch != nil && !options.WithoutStandaloneIdle {
 		idle := StandaloneIdle(ctx, ports.CloudWatch, read, now)
 		for i := range found {
 			if share, ok := idle.Shares[found[i].ID]; ok && found[i].Eligibility != Ineligible {

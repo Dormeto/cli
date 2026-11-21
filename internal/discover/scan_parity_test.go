@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,5 +201,57 @@ func TestSharedCasesOfScanRegion(t *testing.T) {
 	}
 	if ran != 20 {
 		t.Fatalf("ran %d scanRegion cases, the corpus has 20", ran)
+	}
+}
+
+// noStandaloneIdle fails the test on the standalone idle share's read (5-minute points, oldest first).
+type noStandaloneIdle struct {
+	t *testing.T
+	CloudWatchPort
+}
+
+func (c noStandaloneIdle) GetMetricData(ctx context.Context, in GetMetricDataInput) (GetMetricDataOutput, error) {
+	if in.ScanBy != "" {
+		c.t.Errorf("the standalone idle share read: %+v", in.MetricDataQueries)
+	}
+	return c.CloudWatchPort.GetMetricData(ctx, in)
+}
+
+// Without the standalone idle share (the estimate's scan, which reads the signals over its own days): the shared case's
+// candidates all the same, their idleHours7d null, and no read of it.
+func TestTheStandaloneScanWithoutItsIdleShareReadsNoneAndGivesTheSameCandidates(t *testing.T) {
+	c := parity.Load(t, "scan").Cases[95]
+	var in struct {
+		Where   Where           `json:"where"`
+		Now     time.Time       `json:"now"`
+		Ports   []string        `json:"ports"`
+		Answers json.RawMessage `json:"answers"`
+	}
+	if err := json.Unmarshal(c.Input, &in); err != nil || !strings.HasPrefix(c.Name, "scanRegion: standalone: each kind") {
+		t.Fatalf("%s: %v", c.Name, err)
+	}
+	ports := recordedScanPorts(t, in.Ports, in.Answers, "")
+	ports.CloudWatch = noStandaloneIdle{t, ports.CloudWatch}
+	res, err := ScanRegionWith(context.Background(), ports, in.Where, in.Now, ScanOptions{Standalone: true, WithoutStandaloneIdle: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want struct {
+		Rules []json.RawMessage `json:"rules"`
+	}
+	if err := json.Unmarshal(c.Output, &want); err != nil {
+		t.Fatal(err)
+	}
+	standalone := want.Rules[len(res.Rules):]
+	if len(standalone) != len(res.Standalone.Rules) {
+		t.Fatalf("%d standalone candidates, the case's %d", len(res.Standalone.Rules), len(standalone))
+	}
+	for i, raw := range standalone {
+		var rule map[string]any
+		_ = json.Unmarshal(raw, &rule)
+		rule["idleHours7d"] = nil
+		w, _ := json.Marshal(rule)
+		g, _ := json.Marshal(res.Standalone.Rules[i])
+		parity.Equal(t, w, g)
 	}
 }

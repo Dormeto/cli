@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -264,5 +265,20 @@ func TestReportJSON(t *testing.T) {
 	b, _ = json.Marshal(o.ExcludeTags)
 	if want := `[{"team":["web"],"env":["dev","test"]},{"dormeto:ignore":[]}]`; string(b) != want {
 		t.Fatalf("excludeTags %s, want %s", b, want)
+	}
+}
+
+// --standalone-window's default is the router's built-in idle window of a standalone workload (a sibling checkout).
+func TestTheStandaloneWindowsDefaultIsTheRoutersBuiltIn(t *testing.T) {
+	b, err := os.ReadFile("../../../router/lambda/src/lib/settings-levels.mjs")
+	if err != nil {
+		t.Skipf("the router repository is absent: %v", err)
+	}
+	m := regexp.MustCompile(`STANDALONE_BUILT_IN = \{ idleMinutes: (\d+),`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("no STANDALONE_BUILT_IN.idleMinutes in the router's settings-levels.mjs")
+	}
+	if got := strconv.Itoa(standaloneWindowDefault); got != string(m[1]) {
+		t.Fatalf("--standalone-window defaults to %s, the router's built-in is %s", got, m[1])
 	}
 }

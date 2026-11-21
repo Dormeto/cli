@@ -109,8 +109,18 @@ func Plural(n int, word string) string {
 
 // WorkloadsTable is the workloads list: tags as k=v sorted by key, CHANGED the time since the state began (else the
 // last update), as 5m, 3h or 2d.
-func WorkloadsTable(ws []Workload, now time.Time) string {
-	rows := [][]string{{"ROUTER", "WORKLOAD", "NAME", "CLOUD", "STATE", "TAGS", "CHANGED"}}
+func WorkloadsTable(ws []Workload, now time.Time) string { return workloadsTable(ws, now, false) }
+
+// WorkloadsKindTable is WorkloadsTable with a KIND column after the name (http, standalone): the manager's list, whose
+// rows have a kind.
+func WorkloadsKindTable(ws []Workload, now time.Time) string { return workloadsTable(ws, now, true) }
+
+func workloadsTable(ws []Workload, now time.Time, kind bool) string {
+	head := []string{"ROUTER", "WORKLOAD", "NAME", "CLOUD", "STATE", "TAGS", "CHANGED"}
+	if kind {
+		head = slices.Insert(head, 3, "KIND")
+	}
+	rows := [][]string{head}
 	for _, w := range ws {
 		var tags []string
 		for _, k := range sortedKeys(w.Tags) {
@@ -120,7 +130,11 @@ func WorkloadsTable(ws []Workload, now time.Time) string {
 		if since == "" {
 			since = w.UpdatedAt
 		}
-		rows = append(rows, []string{w.Router, w.WorkloadID, orNone(w.Name), CloudName(w.Cloud), w.State, orNone(strings.Join(tags, ",")), Age(since, now)})
+		row := []string{w.Router, w.WorkloadID, orNone(w.Name), CloudName(w.Cloud), w.State, orNone(strings.Join(tags, ",")), Age(since, now)}
+		if kind {
+			row = slices.Insert(row, 3, KindOf(w.Kind))
+		}
+		rows = append(rows, row)
 	}
 	return Table(rows)
 }

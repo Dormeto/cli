@@ -372,12 +372,14 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var (
 		filters listFilters
 		router  string
+		kind    string
 		cloud   cloudFilter
 		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use: "list", Short: "List the workloads of both clouds, their state and tags", Args: noArgs, SilenceErrors: true,
-		Long: "List the manager's workloads: router, id, name, state, Dormeto tags (k=v) and the time since the last change.\n" +
+		Long: "List the manager's workloads: router, id, name, kind (http, or standalone: a resource napped on its idle\n" +
+			"signals), state, Dormeto tags (k=v) and the time since the last change; --kind keeps one kind.\n" +
 			"A router that does not answer is reported on stderr, the others are listed. The workloads of both clouds are\n" +
 			"listed, Google Cloud's and AWS's: --cloud aws or gcp keeps one cloud's rows and their total, of the page read when the\n" +
 			"manager lists only a page (its total then counts both clouds). --json's byState stays the manager's, which counts\n" +
@@ -401,6 +403,9 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			}
 			if filters.search != "" {
 				q.Set("q", filters.search)
+			}
+			if kind != "" {
+				q.Set("kind", kind) // the manager checks it
 			}
 			return f.run(c, deps, func(ctx context.Context, api *fleet.Client) error {
 				var raw json.RawMessage
@@ -437,7 +442,7 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return err
 				}
 				if len(w.Rows) > 0 {
-					fmt.Fprint(out, fleet.WorkloadsTable(w.Rows, deps.now()))
+					fmt.Fprint(out, fleet.WorkloadsKindTable(w.Rows, deps.now()))
 				}
 				fmt.Fprintln(out, fleet.WorkloadsSummary(w))
 				return nil
@@ -447,6 +452,7 @@ func newWorkloadsList(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	filters.bind(cmd)
 	fl := cmd.Flags()
 	fl.StringVar(&router, "router", "", "only the workloads of this router")
+	fl.StringVar(&kind, "kind", "", "only the workloads of this kind: http or standalone")
 	cloud.bind(cmd)
 	fl.BoolVar(&asJSON, "json", false, "print the API's answer")
 	return cmd

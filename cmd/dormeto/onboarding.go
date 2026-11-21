@@ -107,7 +107,8 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "onboard <candidate>", Short: "Onboard a discovery candidate: Dormeto starts managing its workload", SilenceErrors: true,
 		Long: "Start the manager's onboarding of a candidate pending onboarding, given by its id (an AWS target group's ARN,\n" +
-			"or a Google Cloud backend service's path) or the name of its target group or backend service (an unknown or\n" +
+			"a standalone resource's ARN: an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance or cluster,\n" +
+			"or a Google Cloud backend service's path) or the name of its target group, resource or backend service (an unknown or\n" +
 			"ambiguous name exits 2, its ids listed, nothing sent), and follow it; then print the workload as\n" +
 			"<router>/<workload id>. It sends what the dashboard's dialog sends: --name (the workload's display name, up to\n" +
 			"64 characters; empty, the target group's or backend service's name), --idle-minutes (5 to 1440) and --wake-mode\n" +
@@ -124,7 +125,8 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"router's or the manager's). --no-wait only\n" +
 			"starts it; Ctrl-C and --timeout stop following, the operation goes on in the manager:\n" +
 			"`dormeto aws operations watch <id>`. --dry-run says the candidate, its eligibility as discovery listed it and the\n" +
-			"body it would send, and sends nothing (the router's own preview runs as the onboarding's first step). Needs an operator.",
+			"body it would send, and sends nothing (the router's own preview runs as the onboarding's first step). A standalone\n" +
+			"resource has no waker: the manager refuses --wake-mode and the other HTTP settings for it, in its words. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
 			name = strings.TrimSpace(name)
 			var tags map[string]string
@@ -132,7 +134,7 @@ func newWorkloadsOnboard(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			switch {
 			case err != nil:
 			case len(args) != 1 || strings.TrimSpace(args[0]) == "":
-				err = usagef("name exactly one candidate (its id, or its target group's or backend service's name)")
+				err = usagef("name exactly one candidate (its id, or its target group's, resource's or backend service's name)")
 			case utf8.RuneCountInString(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }):
 				err = usagef("--name: at most 64 characters, no control characters")
 			case c.Flags().Changed("idle-minutes") && (idle < 5 || idle > 1440):
@@ -405,7 +407,7 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "exclude (<router>/<workload>... | --tag k=v...) --reason <text> [--for <duration> | --until <time>]", Short: "Exclude the target groups or backend services of workloads from discovery",
-		Long: "Exclude each workload's target group (a Google Cloud workload's backend service) from discovery, with a reason: the manager pauses its managed workloads\n" +
+		Long: "Exclude each workload's target group (a Google Cloud workload's backend service, a standalone workload's resource) from discovery, with a reason: the manager pauses its managed workloads\n" +
 			"(an operation, followed). --reason is 1 to 246 characters; --for is a duration up to 366 days (90m, 2h, 3d) and\n" +
 			"--until an RFC 3339 time or HH:MM today in the local time zone, within 366 days; without either the exclusion\n" +
 			"lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal (--yes without one; --dry-run says\n" +
@@ -439,6 +441,8 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 						Cloud          string `json:"cloud"`
 						Account        string `json:"account"`
 						Region         string `json:"region"`
+						Kind           string `json:"kind"`
+						ResourceArn    string `json:"resourceArn"`
 						TargetGroupARN string `json:"targetGroupArn"`
 						BackendService string `json:"backendService"`
 						LB             *struct {
@@ -454,6 +458,11 @@ func newWorkloadsExclude(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					}
 					target := map[string]any{"kind": "target-group", "arn": st.TargetGroupARN}
 					switch {
+					case st.Kind == fleet.KindStandalone: // its resource, not a target group
+						if st.ResourceArn == "" {
+							return fleet.Operation{}, notStarted{errors.New("the workload has no resource to exclude")}
+						}
+						target = map[string]any{"kind": "resource", "arn": st.ResourceArn}
 					case st.Cloud == "gcp": // the router answers the backend service's name: its path is built here
 						if st.BackendService == "" {
 							return fleet.Operation{}, notStarted{errors.New("the workload has no backend service to exclude")}
