@@ -780,6 +780,17 @@ func (d WorkloadDetails) standaloneText(router string, loc *time.Location) strin
 		return value + " (" + d.sourceText(d.SettingsFrom[key]) + ")"
 	}
 	s := d.Settings
+	// Its hibernation, as an HTTP workload's (an EC2 instance's only).
+	var hibernate, instances string
+	if h := d.Hibernation; h != nil {
+		hibernate, instances = h.Text(), h.Readiness()
+		if h.FreshBoot && !h.Unknown {
+			hibernate += "\n" + freshBootText
+		}
+		if !d.hasInstanceBackend() {
+			hibernate, instances = notApplyText, ""
+		}
+	}
 	minutes := ""
 	if s.IdleMinutes != nil {
 		minutes = fmt.Sprintf("%d min", *s.IdleMinutes)
@@ -795,6 +806,7 @@ func (d WorkloadDetails) standaloneText(router string, loc *time.Location) strin
 		{"idle CPU", from("idleCpuPercent", thresholdText(s.IdleCPUPercent, "%"))},
 		{"idle network", from("idleNetworkBytes", thresholdText(s.IdleNetworkBytes, " bytes a minute"))},
 		{"idle metric", from("idleMetric", metricText(s.IdleMetric))},
+		{"hibernate", hibernate}, {"hibernate readiness", instances},
 	})))
 	var signals [][2]string
 	for _, sig := range d.Idle {
