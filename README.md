@@ -187,16 +187,21 @@ line per account and region.
 
 **Standalone resources.** A standalone resource is an EC2 instance, an Auto Scaling group, an ECS service, an RDS
 instance or an RDS cluster that no route uses, found by discovery's rules: an HTTP workload's backend is not one, nor a
-database counted as an HTTP workload's companion, nor a Kubernetes node, and one the router would refuse (a Spot
+database an HTTP workload of its region reaches (its companion, whether the HTTP side attaches it, refuses it or
+leaves its workload out), nor a Kubernetes node, and one the router would refuse (a Spot
 instance, an instance store root volume, a member of a group or cluster, a read replica, Aurora Serverless v1, an ECS
 service of the daemon strategy) is listed as left out with the router's reason. Discovery describes what a nap of each
 would stop; phase 2 reads its default idle signals (its CPU, or a database's connections, under the router's built-in
 thresholds) over the days read, 5 minutes at a time. A point at or over its threshold is activity; the time without points is when the resource
 did not run (EC2, ECS and RDS publish nothing then), which saves nothing. The activity is replayed by the idle window
-advisor at `--standalone-window`, and what a nap stops is priced for the hours asleep while it ran. The report says the
+advisor at `--standalone-window`, and what a nap stops is priced for the hours asleep while it ran: at its size when
+discovered (a group's desired capacity, an ECS service's desired count, at least one task), an ECS service with
+`--ecs-uptime` at its tasks measured (its `LiveTaskCount`), as an HTTP service is; without `--ecs-uptime`, a service at 0
+tasks is left out. A standalone scan that fails, but for a refusal, leaves the region's HTTP workloads estimated: the
+report lists `standalone resources not read in <account> <region>: <error>`. The report says the
 estimate's assumption: **a stopped standalone resource is counted as started again when its history next shows
 activity, by a schedule or a person.** Left out, with why: a resource without a point in the days read (`no data:
-already stopped`), one whose metrics could not be read (`signals unreadable: …`, never priced), one whose description
+stopped, or its metric is not published`), one whose metrics could not be read (`signals unreadable: …`, never priced), one whose description
 failed or that stops nothing, one excluded by its tags (`--exclude-tags`), one saving less than `--min-saving`
 (`--max-wakes` is for visitors' wakes and does not apply). A list the profile may not make is said in the report, such
 as the databases without `rds:DescribeDBInstances` or `rds:DescribeDBClusters` (see [Permissions](#permissions)).
@@ -220,8 +225,9 @@ accounts, and Kubernetes `GET`s. It changes nothing.
 - `autoscaling:DescribeAutoScalingGroups`
 - `ecs:ListClusters`, `ListServices`, `DescribeServices`, `DescribeTaskDefinition`
 - `eks:ListClusters`, `DescribeCluster`
-- `rds:DescribeDBInstances`, `DescribeDBClusters`, `ListTagsForResource` (the companion databases, and the standalone
-  databases with their tags; without them, the report lists the databases as not read, with the reason)
+- `rds:DescribeDBInstances`, `DescribeDBClusters`, `ListTagsForResource` (the companion databases and the standalone
+  ones; RDS gives a database's tags in its describe answers only to a caller allowed to list them, so the third is to
+  read their tags; without the first two, the report lists the databases as not read, with the reason)
 - `cloudwatch:GetMetricData` (about $0.01 per 1,000 workloads)
 - `pricing:GetProducts`
 
@@ -1190,6 +1196,7 @@ A standalone workload's idle signals are settings of the same levels, on AWS (`s
 - `--idle-cpu <percent>|off|inherit`: idle while its CPU is under this percent (0 to 100);
 - `--idle-network <bytes a minute>|off|inherit`: idle while its network, in and out, is under this many bytes a minute
   (a whole number, 0 to 10000000000);
+- a value that is not a number of 0 or more (`nan`, `inf`, `-5`) is refused before any call (exit 2);
 - `--idle-metric <file>|off|inherit`: a custom CloudWatch metric, a JSON file in the router's shape (`-` for the standard
   input), such as `{"namespace": "CI/Agents", "name": "QueuedJobs", "dimensions": {"Agent": "${resource}"},
   "statistic": "Maximum", "below": 1}` (`${resource}` is the workload's own id; `dimensions` may be a list of objects).
@@ -1293,7 +1300,8 @@ workload itself (a hibernated instance cannot change type).
   there is one): the workloads are stopped, not hibernated, until it reads one.
 - `workloads show` prints the value and where it comes from (`on, from the router`) and, when the router lists the
   instances and hibernation is on, `2 of 3 instances were launched with hibernation; i-0abc is stopped instead`. A
-  workload with no standalone EC2 instance among its backends prints `does not apply (standalone EC2 instances only)`
+  workload with no EC2 instance outside an Auto Scaling group among its backends prints `does not apply (EC2 instances
+  outside an Auto Scaling group only)`
   instead. While the router has not read the manager's settings it prints `off for now: the router has not read the
   manager's settings yet (naps stop)`; after 59 days hibernated it adds `the next nap stops the instances (a fresh boot
   after 59 days hibernated)`. Nothing is printed for a router before 0.32.0.
@@ -1547,7 +1555,8 @@ manager's answer, every page in it.
   manager's answer, `{exclusions}`.
 - `exclusions add` excludes one target from discovery: an application target group (`--target-group <arn>`), an
   application load balancer (`--load-balancer <arn>`), a standalone resource (`--resource <arn>`: an EC2 instance, an
-  Auto Scaling group, an ECS service, an RDS instance or cluster) or a whole account (`--account <12 digits>`); on Google Cloud, a
+  Auto Scaling group, an ECS service, an RDS instance or cluster; a target group's or a load balancer's ARN is refused
+  with the flag that takes it) or a whole account (`--account <12 digits>`); on Google Cloud, a
   backend service (`--target-group <path>`, `projects/<project>/global|regions/<region>/backendServices/<name>`), a URL
   map (`--load-balancer <path>`, `…/urlMaps/<name>`) or a project (`--account <project ID>`). Each flag takes either
   cloud's value, and anything else exits 2 before any call. The manager pauses its managed workloads (an `exclude`
