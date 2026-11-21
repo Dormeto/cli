@@ -45,6 +45,8 @@ type RegionSignals struct {
 	// With --ecs-uptime: each ECS service's task-minutes over the window (its LiveTaskCount), as the HTTP services' are
 	// counted; none when CloudWatch has none.
 	Tasks map[string]float64 `json:"tasks,omitempty"`
+	// Counted: the tasks were asked (a read kept without them is read again by a run that counts them).
+	Counted bool `json:"counted,omitempty"`
 }
 
 // Of is a resource's points as the activity reads them.
@@ -105,12 +107,12 @@ func regionSignals(ctx context.Context, region discover.StandaloneRegion, o Stan
 			return RegionSignals{}, err
 		}
 		// Kept only while it covers the days asked and every resource discovery found.
-		if ok && signalsSpan(kept, days) && signalsCoverAll(region.Resources, kept) {
+		if ok && signalsSpan(kept, days) && signalsCoverAll(region.Resources, kept) && (!o.Tasks || kept.Counted) {
 			done(discover.FromCache, "")
 			return kept, nil
 		}
 	}
-	read := RegionSignals{Account: region.Account, Region: region.Region, Points: map[string]map[string][][2]float64{}, Unreadable: map[string]string{}}
+	read := RegionSignals{Account: region.Account, Region: region.Region, Points: map[string]map[string][][2]float64{}, Unreadable: map[string]string{}, Counted: o.Tasks}
 	cw, err := o.CloudWatchOf(ctx, region.Account, region.Region)
 	failed := ""
 	if err != nil {
