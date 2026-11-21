@@ -42,7 +42,10 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 			"with your identity token (the Cloud Run invoker role on it). 'access' writes a GKE workload's Kubernetes RBAC, in the cluster."}
 	cmd.AddCommand(
 		newGcpWorkloadsList(runs.list, version),
-		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends.", runs.show, version, false),
+		newGcpWorkloadsOne("show", "Show a workload", "Show a workload: its state, URL map, backend service, settings and backends. A standalone workload is shown as\n"+
+			"dormeto aws workloads show shows one, from its router's status: its kind and resource (said missing when it was deleted),\n"+
+			"its idle signals with their thresholds, levels, last values and since when each is under, when it may nap, and a failure\n"+
+			"kept with when it is retried; --json prints that status.", runs.show, version, false),
 		newGcpWorkloadsOnboard(runs.onboard, version),
 		newGcpWorkloadsWrite("offboard", "Offboard a workload and remove its tag bindings and Kubernetes access",
 			"Offboard a workload: the controller wakes it if needed and restores every reference, then the tag dormeto=managed is\n"+
@@ -73,14 +76,16 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 	var f gcpFlags
 	var filters listFilters
 	var has map[string]string
+	var kind string
 	cmd := gcpCommand("list", "List the workloads of a router",
-		"List the router's workloads and their states. --state, --search and --tag keep the workloads AWS's list would keep,\n"+
+		"List the router's workloads, their kind (http, or standalone: a resource napped on its idle signals) and their states.\n"+
+			"--kind keeps one kind. --state, --search and --tag keep the workloads AWS's list would keep,\n"+
 			"applied to the controller's list (--tag needs router 0.40.0 or later, which answers the tags); --json prints AWS's\n"+
 			"list object, {workloads, total, byState, cursor, errors}: the rows they keep as the manager's rows name theirs (router,\n"+
 			"account, region, cloud, workloadId, pauses, the backends' kinds instance, asg, k8s, cloudsql-instance), and the\n"+
 			"router's counts by state.",
 		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
-			r.States, r.Search, r.HasTags = upper(filters.states), filters.search, has
+			r.States, r.Search, r.HasTags, r.Kind = upper(filters.states), filters.search, has, kind
 			return run(ctx, d, r)
 		})
 	prior := cmd.PreRunE
@@ -99,6 +104,7 @@ func newGcpWorkloadsList(run gcpRun, version string) *cobra.Command {
 	}
 	gcpRouterFlags(cmd, &f)
 	filters.bind(cmd)
+	cmd.Flags().StringVar(&kind, "kind", "", "only the workloads of this kind: http or standalone")
 	return cmd
 }
 

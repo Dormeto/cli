@@ -418,6 +418,10 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 			s.routerSettings(w, r)
 			return
 		}
+		if r.URL.Path == "/v1/actions" && r.Method == http.MethodPost {
+			s.actions(w, r)
+			return
+		}
 		if r.URL.Path != "/v1/health" || r.Method != http.MethodGet {
 			noRoute(w, r)
 			return

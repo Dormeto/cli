@@ -115,6 +115,9 @@ type Server struct {
 	// WorkloadDocs the other fields of a workload as GET /v1/workloads/<id> answers it (urlMap, backends…).
 	Workloads    map[string]string
 	WorkloadDocs map[string]map[string]any
+	// Statuses are the standalone workloads' statuses the controller's POST /v1/actions {action: status} answers, by ID
+	// (AWS's status keys); a workload without one is a 404.
+	Statuses map[string]map[string]any
 	// Waking are the states a workload goes through after a wake, by ID: each GET /v1/workloads/<id> answers the next, the last
 	// one staying. None: the wake leaves it AWAKE at once.
 	Waking map[string][]string

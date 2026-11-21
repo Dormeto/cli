@@ -834,9 +834,10 @@ func TestWorkloadsListPrintsAWSTable(t *testing.T) {
 		"paused": map[string]any{"by": "me@example.com", "at": "2026-10-29T08:00:00Z", "reason": "audit", "until": nil, "keepAsleep": false}}
 	g.s.WorkloadDocs["blog"] = map[string]any{"name": "blog"}
 	code, out := g.call(t, WorkloadsList, workloadsEurope)
-	want := "ROUTER                         WORKLOAD  NAME      CLOUD  STATE   TAGS               CHANGED\n" +
-		"dmtr-dormeto-dev-europe-west1  blog      blog      gcp    ASLEEP  —                  —\n" +
-		"dmtr-dormeto-dev-europe-west1  shop      The shop  gcp    AWAKE   env=prod,team=web  3h\n" +
+	// AWS's KIND column too: http for a workload without a kind.
+	want := "ROUTER                         WORKLOAD  NAME      KIND  CLOUD  STATE   TAGS               CHANGED\n" +
+		"dmtr-dormeto-dev-europe-west1  blog      blog      http  gcp    ASLEEP  —                  —\n" +
+		"dmtr-dormeto-dev-europe-west1  shop      The shop  http  gcp    AWAKE   env=prod,team=web  3h\n" +
 		"2 workloads (1 ASLEEP, 1 AWAKE)\n"
 	if code != 0 || out != want {
 		t.Fatalf("exit %d:\n%s\nwant:\n%s", code, out, want)

@@ -102,6 +102,8 @@ type Request struct {
 	States  []string
 	Search  string
 	HasTags map[string]string
+	// Kind is the list's --kind: http or standalone ("": both), checked by the command.
+	Kind string
 
 	// The access and onboard commands: the cluster as <location>/<name> (--gke-cluster); access's: the workload's namespace,
 	// and ID is --workload.

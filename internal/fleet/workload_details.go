@@ -57,8 +57,11 @@ type WorkloadDetails struct {
 	} `json:"settings"`
 	// A standalone workload: its kind ("standalone"), its resource, whether it is missing, its idle signals now and when
 	// it may nap.
-	Kind            string       `json:"kind"`
-	ResourceArn     string       `json:"resourceArn"`
+	Kind        string `json:"kind"`
+	ResourceArn string `json:"resourceArn"`
+	Resource    string `json:"resource"` // Google Cloud's: the resource's path
+	// A failed standalone workload's retry: when the next wake is tried (empty: none coming).
+	NextAttemptAt   string       `json:"nextAttemptAt"`
 	ResourceMissing bool         `json:"resourceMissing"`
 	Idle            []IdleSignal `json:"idle"`
 	Nap             *NapEstimate `json:"nap"`
@@ -758,13 +761,24 @@ func (d WorkloadDetails) standaloneText(router string, loc *time.Location) strin
 	for _, k := range sortedKeys(d.Tags) {
 		tags = append(tags, k+"="+d.Tags[k])
 	}
+	// A failed one is retried until it succeeds or a person naps it (both clouds' routers).
+	var retry string
+	if d.State == "FAILED" {
+		retry = "none coming: held (a pause, a nap window, its resource missing), or a person's nap asked"
+		if d.NextAttemptAt != "" {
+			retry = "next attempt " + When(d.NextAttemptAt, loc) + ", until it succeeds or a person naps it"
+		}
+	}
 	resource := d.ResourceArn
+	if resource == "" {
+		resource = d.Resource
+	}
 	if d.ResourceMissing {
 		resource += " (resource missing)"
 	}
 	var b strings.Builder
 	b.WriteString(Labelled([][2]string{
-		{"workload", router + "/" + d.WorkloadID}, {"name", d.Name}, {"kind", KindStandalone}, {"resource", resource}, {"state", state}, {"failure", failure},
+		{"workload", router + "/" + d.WorkloadID}, {"name", d.Name}, {"kind", KindStandalone}, {"resource", resource}, {"state", state}, {"failure", failure}, {"retry", retry},
 		{"cloud", CloudName(d.Cloud)}, {accountLabel(d.Cloud), d.Account}, {"region", d.Region}, {"router version", version}, {"tags", strings.Join(tags, ", ")},
 	}))
 	b.WriteString(d.Description.block(loc))

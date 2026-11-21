@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Dormeto/cli/internal/fleet"
 	"github.com/Dormeto/cli/internal/gcp"
 )
 
@@ -130,6 +131,10 @@ func (x *run) matches(w workload) bool {
 		if got, ok := w.Tags[k]; !ok || got != v {
 			return false
 		}
+	}
+	// --kind: a row without a kind is an HTTP workload's.
+	if k := x.r.Kind; k != "" && (k == fleet.KindStandalone) != (w.Kind == fleet.KindStandalone) {
+		return false
 	}
 	return true
 }

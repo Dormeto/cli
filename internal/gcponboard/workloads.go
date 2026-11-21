@@ -102,6 +102,11 @@ func (b backend) String() string {
 
 // workload is the controller's Workload: from router 0.40.0 with workloadId and pauses beside id and paused (decodeWorkload).
 type workload struct {
+	// A standalone workload's kind ("standalone"; an HTTP one has none), its resource's path, and whether it is gone.
+	Kind            string `json:"kind"`
+	Resource        string `json:"resource"`
+	ResourceMissing bool   `json:"resourceMissing"`
+
 	ID                  string   `json:"id"`
 	WorkloadID          string   `json:"workloadId"`
 	State               string   `json:"state"`
@@ -427,6 +432,9 @@ func (x *run) print(raw json.RawMessage, text func(w workload)) error {
 }
 
 func (x *run) list() error {
+	if k := x.r.Kind; k != "" && k != "http" && k != fleet.KindStandalone {
+		return &stop{2, "--kind: give http or standalone"}
+	}
 	if err := x.require("workloads"); err != nil {
 		return err
 	}
@@ -446,13 +454,13 @@ func (x *run) list() error {
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	shown := make([]fleet.Workload, len(all))
 	for i, w := range all {
-		shown[i] = fleet.Workload{Router: x.n.managed, WorkloadID: w.ID, Name: w.Name, Cloud: "gcp", State: w.State, Tags: w.Tags}
+		shown[i] = fleet.Workload{Router: x.n.managed, WorkloadID: w.ID, Name: w.Name, Cloud: "gcp", State: w.State, Tags: w.Tags, Kind: w.Kind}
 		if w.State == "AWAKE" {
 			shown[i].StateAt = w.AwakeSince
 		}
 	}
 	if len(shown) > 0 {
-		fmt.Fprint(x.d.Out, fleet.WorkloadsTable(shown, x.d.Now()))
+		fmt.Fprint(x.d.Out, fleet.WorkloadsKindTable(shown, x.d.Now()))
 	}
 	fmt.Fprintln(x.d.Out, fleet.WorkloadsSummary(fleet.Workloads{Rows: shown, Total: len(shown)}))
 	return nil
@@ -469,6 +477,9 @@ func (x *run) show() error {
 	var raw json.RawMessage
 	if err := x.controller(http.MethodGet, path, nil, &raw); err != nil {
 		return err
+	}
+	if w, err := decodeWorkload(raw); err == nil && w.Kind == fleet.KindStandalone {
+		return x.showStandalone(w, raw)
 	}
 	return x.print(raw, func(w workload) {
 		loc := x.d.Now().Location()
@@ -1708,4 +1719,40 @@ func (x *run) unbind(t target, value string) (bool, error) {
 		removed = true
 	}
 	return removed, nil
+}
+
+// showStandalone prints a standalone workload as dormeto aws workloads show prints one: from the router's status (the
+// manager's route, POST /v1/actions status, AWS's keys with the resource's path), its kind, resource, idle signals, nap and
+// retry; under --json that status, by the shared names. A router that does not answer it (an older one) prints the
+// workload as the REST route answers it.
+func (x *run) showStandalone(w workload, raw json.RawMessage) error {
+	var status json.RawMessage
+	if err := x.controller(http.MethodPost, "/v1/actions", map[string]string{"action": "status", "workloadId": w.ID}, &status); err != nil {
+		if x.ctx.Err() != nil {
+			return err
+		}
+		status = nil
+	}
+	if x.r.JSON {
+		if status == nil {
+			status = raw
+		}
+		shared, err := x.sharedWorkload(status)
+		if err != nil {
+			return err
+		}
+		return output.JSON(x.d.Out, shared)
+	}
+	var d fleet.WorkloadDetails
+	if status != nil {
+		if err := json.Unmarshal(status, &d); err != nil {
+			return fmt.Errorf("the router's status is not understood: %w", err)
+		}
+	} else {
+		d = x.detailsOf(w)
+		d.Kind, d.Resource, d.ResourceMissing = w.Kind, w.Resource, w.ResourceMissing
+	}
+	d.Cloud, d.Account, d.Region = "gcp", x.n.project, x.n.region
+	fmt.Fprint(x.d.Out, d.Text(x.n.managed, x.d.Now().Location()))
+	return nil
 }

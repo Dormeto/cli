@@ -711,3 +711,22 @@ func (s *Server) routerPause(w http.ResponseWriter, r *http.Request) {
 	}
 	Reply(w, map[string]any{"pause": s.RouterPause, "woken": woken})
 }
+
+// actions answers the manager's route, POST /v1/actions: a standalone workload's status (Statuses), as the router's.
+func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Action     string `json:"action"`
+		WorkloadID string `json:"workloadId"`
+	}
+	body, _ := io.ReadAll(r.Body)
+	if json.Unmarshal(body, &in) != nil || in.Action != "status" {
+		Fail(w, 400, "INVALID_ARGUMENT", "unknown action")
+		return
+	}
+	status, ok := s.Statuses[in.WorkloadID]
+	if !ok {
+		controllerFail(w, 404, "not-found", "no workload "+in.WorkloadID)
+		return
+	}
+	Reply(w, status)
+}
