@@ -90,6 +90,13 @@ func (a *obAPI) handler(w http.ResponseWriter, r *http.Request) {
 			extra = `,"context":{"workloadId":"w-new","router":{"name":"prod-eu"}}`
 		}
 		fmt.Fprintf(w, `{"id":%q,"type":%q,"status":"succeeded","target":{"account":"111111111111","region":"eu-west-1"},"steps":[]%s}`, id, a.types[id], extra)
+	case r.Method == http.MethodGet && path == "/iam/workloads":
+		var rows []string
+		for id, arn := range a.standalone {
+			rows = append(rows, fmt.Sprintf(`{"workloadId":%q,"router":"prod-eu","kind":"standalone","resourceArn":%q,"state":"AWAKE"}`, id, arn))
+		}
+		rows = append(rows, `{"workloadId":"w-1","router":"prod-eu","state":"AWAKE"}`)
+		fmt.Fprintf(w, `{"workloads":[%s],"total":%d,"cursor":null}`, strings.Join(rows, ","), len(rows))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/iam/workloads/"):
 		id := path[strings.LastIndex(path, "/")+1:]
 		if rowJSON, ok := gcpWorkloads[id]; ok { // a Google Cloud workload, as the router's row has it
@@ -818,5 +825,31 @@ func TestExclusionsAddAResource(t *testing.T) {
 	}
 	if r := runOB(t, &obAPI{}, nil, "exclusions", "add", "--resource", "i-9", "--reason", "x", "--yes"); r.exit != 2 || !strings.Contains(r.stderr, "--resource:") {
 		t.Errorf("not an ARN: exit %d %q", r.exit, r.stderr)
+	}
+	// A target group's or a load balancer's ARN: the flag that takes it.
+	for arn, flag := range map[string]string{
+		tgARN("111111111111", "api"): "--target-group",
+		"arn:aws:elasticloadbalancing:eu-west-1:111111111111:loadbalancer/app/my-lb/0123456789abcdef": "--load-balancer",
+	} {
+		r := runOB(t, &obAPI{}, nil, "exclusions", "add", "--resource", arn, "--reason", "x", "--yes")
+		if r.exit != 2 || !strings.Contains(r.stderr, "give it to "+flag) {
+			t.Errorf("%s: exit %d %q", arn, r.exit, r.stderr)
+		}
+	}
+}
+
+// The exclusion's question names what it leaves out: a standalone workload's resource, else its target group.
+func TestTheExcludeQuestionNamesTheResourceOfAStandaloneWorkload(t *testing.T) {
+	for targets, want := range map[string]string{
+		"prod-eu/w-9":             "Exclude the resource of ",
+		"prod-eu/w-1":             "Exclude the target group of ",
+		"prod-eu/w-9 prod-eu/w-1": "Exclude the target group or resource of",
+	} {
+		var asked []string
+		a := &obAPI{standalone: map[string]string{"w-9": agentARN}}
+		r := runOB(t, a, withTerminal(false, &asked), append([]string{"workloads", "exclude", "--reason", "x"}, strings.Fields(targets)...)...)
+		if r.exit != 0 || len(asked) != 1 || !strings.HasPrefix(asked[0], want) {
+			t.Errorf("%s: exit %d, asked %q, stderr %q", targets, r.exit, asked, r.stderr)
+		}
 	}
 }

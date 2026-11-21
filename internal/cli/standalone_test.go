@@ -278,3 +278,26 @@ func TestAFailedStandaloneScanLeavesTheRegionsHTTPWorkloadsEstimated(t *testing.
 		t.Fatalf("second run: exit code %d, standalone scans %d", code, failed)
 	}
 }
+
+// The standalone part belongs to the scan it was made with: a run without it that scans a region again removes it, so
+// the next run with it scans again and never pairs two scans.
+func TestTheStandalonePartIsNeverPairedWithAnotherScan(t *testing.T) {
+	e, _, scans, _ := standaloneAWS()
+	r := newRun(t, e)
+	out := t.TempDir()
+	runs := func(args ...string) {
+		t.Helper()
+		if code := Main(append([]string{"--profile", "p", "--out", out}, args...), r.deps); code != 0 {
+			t.Fatalf("%q: exit code %d: %q", args, code, r.errors())
+		}
+	}
+	runs()
+	runs("--standalone", "off", "--refresh", "discovery")
+	if _, err := os.Stat(filepath.Join(r.cacheRoot, acctA, "standalone", acctA+"-"+regR+".json")); !os.IsNotExist(err) {
+		t.Fatalf("the standalone part of the earlier scan is kept: %v", err)
+	}
+	runs()
+	if *scans != 2 {
+		t.Fatalf("%d standalone scans, want 2", *scans)
+	}
+}

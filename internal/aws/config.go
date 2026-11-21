@@ -91,7 +91,7 @@ type Region struct {
 	ec2         ec2API
 	ecs         ecsAPI
 	cloudwatch  cloudWatchPort
-	rds         rdsPort
+	rds         *listedRDS
 	eks         eksPort
 	kubernetes  *kubernetes.Ports
 }
@@ -116,9 +116,9 @@ func NewRegion(cfg awssdk.Config, region, reader string) *Region {
 		cloudwatch: cloudWatchPort{cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) {
 			o.Region, o.Retryer, o.RetryMode, o.RetryMaxAttempts = region, standard(attempts), awssdk.RetryModeStandard, 0
 		})},
-		rds: rdsPort{rds.NewFromConfig(cfg, func(o *rds.Options) {
+		rds: newListedRDS(rdsPort{rds.NewFromConfig(cfg, func(o *rds.Options) {
 			o.Region, o.Retryer, o.RetryMode, o.RetryMaxAttempts = region, standard(attempts), awssdk.RetryModeStandard, 0
-		})},
+		})}),
 		eks: eksPort{eks.NewFromConfig(cfg, func(o *eks.Options) {
 			o.Region, o.Retryer, o.RetryMode, o.RetryMaxAttempts = region, standard(attempts), awssdk.RetryModeStandard, 0
 		})},

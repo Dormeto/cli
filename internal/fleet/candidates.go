@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -196,12 +197,22 @@ func ResolveCandidates(cs []Candidate, refs []string) ([]Candidate, error) {
 			return nil, fmt.Errorf("no candidate %s%s", ref, status)
 		case 1:
 		default:
-			what := "target groups" // the resources of the clouds named
-			if g := countGoogle(found); g == len(found) {
-				what = "backend services"
-			} else if g > 0 {
-				what = "target groups or backend services"
+			// What they are, by kind and cloud: target groups, backend services, resources.
+			var kinds []string
+			for _, c := range found {
+				kind := "target groups"
+				switch {
+				case c.Kind == KindStandalone:
+					kind = "resources"
+				case c.IsGoogle():
+					kind = "backend services"
+				}
+				if !slices.Contains(kinds, kind) {
+					kinds = append(kinds, kind)
+				}
 			}
+			slices.SortFunc(kinds, func(a, b string) int { return slices.Index(candidateNouns, a) - slices.Index(candidateNouns, b) })
+			what := strings.Join(kinds, " or ")
 			lines := []string{ref + " names several " + what + ":"}
 			for _, c := range found {
 				lines = append(lines, "  "+c.ID)
@@ -215,6 +226,9 @@ func ResolveCandidates(cs []Candidate, refs []string) ([]Candidate, error) {
 	}
 	return out, nil
 }
+
+// candidateNouns are the kinds of candidates in the order a refusal names them.
+var candidateNouns = []string{"target groups", "backend services", "resources"}
 
 // countGoogle is how many of cs are Google Cloud's.
 func countGoogle(cs []Candidate) int {

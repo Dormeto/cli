@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // globalAPI is a fake manager's /settings/workloads route.
@@ -442,7 +444,7 @@ func showWorkloadWith(t *testing.T, extra string) string {
 
 // The backends decide, not hibernation.instances: null instances is also a failed describe.
 func TestWorkloadsShowSaysHibernationDoesNotApplyWithoutAnInstanceBackend(t *testing.T) {
-	re := regexp.MustCompile(`(?m)^ +hibernate +does not apply \(standalone EC2 instances only\)$`)
+	re := regexp.MustCompile(`(?m)^ +hibernate +does not apply \(EC2 instances outside an Auto Scaling group only\)$`)
 	hib := `,"hibernation":{"hibernate":true,"from":"router","instances":[{"id":"i-0abc","configured":false}]}`
 	for name, backends := range map[string]string{
 		"asg":   `,"backends":[{"kind":"asg","id":"a"},{"kind":"rds-instance","id":"d"}]`,
@@ -610,7 +612,8 @@ func TestTheIdleSignalsAtEveryLevel(t *testing.T) {
 		t.Errorf("workloads settings: exit %d, writes %q, stderr %q", r.exit, w.writes, r.stderr)
 	}
 	// Refused here only what is not a number, off or inherit, or a file that is not JSON.
-	for _, args := range [][]string{{"set", "--idle-cpu", "high"}, {"set", "--idle-network", ""}, {"set", "--idle-metric", t.TempDir() + "/none.json"}} {
+	for _, args := range [][]string{{"set", "--idle-cpu", "high"}, {"set", "--idle-network", ""}, {"set", "--idle-metric", t.TempDir() + "/none.json"},
+		{"set", "--idle-cpu", "nan"}, {"set", "--idle-cpu", "inf"}, {"set", "--idle-network", "-Infinity"}, {"set", "--idle-cpu", "-5"}} {
 		a := &globalAPI{}
 		if r := runSettings(t, a, args...); r.exit != 2 || len(a.writes) != 0 {
 			t.Errorf("%q: exit %d, writes %q", args, r.exit, a.writes)
@@ -628,16 +631,53 @@ func TestTheIdleSignalsAtEveryLevel(t *testing.T) {
 	}
 }
 
-// The Google Cloud subtree's levels have no idle signals.
+// The Google Cloud subtree has no idle signal: none of its commands takes --idle-cpu, --idle-network or --idle-metric.
 func TestTheGoogleCloudLevelsHaveNoIdleSignals(t *testing.T) {
 	root := buildRoot(build{}, fleetDeps{}, installRuns{}, gcpRuns{})
-	for _, path := range [][]string{{"gcp", "routers", "settings"}, {"gcp", "workloads", "settings"}} {
-		cmd, _, err := root.Find(path)
-		if err != nil {
-			t.Fatal(err)
+	gcp, _, err := root.Find([]string{"gcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	walked := 0
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		walked++
+		for _, flag := range []string{"idle-cpu", "idle-network", "idle-metric"} {
+			if c.Flags().Lookup(flag) != nil || c.PersistentFlags().Lookup(flag) != nil {
+				t.Errorf("%s has --%s", c.CommandPath(), flag)
+			}
 		}
-		if cmd.Flags().Lookup("idle-cpu") != nil {
-			t.Errorf("%v has --idle-cpu", path)
+		for _, sub := range c.Commands() {
+			walk(sub)
 		}
+	}
+	walk(gcp)
+	if walked < 30 {
+		t.Fatalf("walked %d commands of the Google Cloud tree", walked)
+	}
+}
+
+// --idle-cpu's range in the help is the router's (a sibling checkout), as --standalone-window's default is.
+func TestTheIdleCPUsRangeInTheHelpIsTheRoutersRange(t *testing.T) {
+	b, err := os.ReadFile("../../../router/lambda/src/lib/settings-levels.mjs")
+	if err != nil {
+		t.Skipf("the router repository is absent: %v", err)
+	}
+	m := regexp.MustCompile(`idleCpuPercent: must be a number from (\d+) to (\d+), or off`).FindSubmatch(b)
+	n := regexp.MustCompile(`IDLE_NETWORK_BYTES_MAX = ([\d_]+);`).FindSubmatch(b)
+	if m == nil || n == nil {
+		t.Fatal("no idleCpuPercent range or IDLE_NETWORK_BYTES_MAX in the router's settings-levels.mjs")
+	}
+	root := buildRoot(build{}, fleetDeps{}, installRuns{}, gcpRuns{})
+	cmd, _, err := root.Find([]string{"aws", "settings", "set"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage := cmd.Flags().Lookup("idle-cpu").Usage; !strings.Contains(usage, "a percent from "+string(m[1])+" to "+string(m[2])) {
+		t.Errorf("--idle-cpu: %q, the router's range %s to %s", usage, m[1], m[2])
+	}
+	max := strings.ReplaceAll(string(n[1]), "_", "")
+	if usage := cmd.Flags().Lookup("idle-network").Usage; !strings.Contains(usage, "a whole number from 0 to "+max) {
+		t.Errorf("--idle-network: %q, the router's range 0 to %s", usage, max)
 	}
 }

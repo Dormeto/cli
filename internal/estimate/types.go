@@ -133,8 +133,9 @@ type Kinds struct {
 // manager too).
 type Totals struct {
 	Workloads int `json:"workloads"`
-	// The standalone resources estimated (--standalone on); their figures are in the sums below.
-	Standalone          int     `json:"standalone,omitempty"`
+	// The standalone resources estimated (--standalone on, 0 when none; nil when off); their figures are in the sums
+	// below.
+	Standalone          *int    `json:"standalone,omitempty"`
 	Kinds               Kinds   `json:"kinds"`
 	Excluded            int     `json:"excluded"`
 	Databases           int     `json:"databases"`

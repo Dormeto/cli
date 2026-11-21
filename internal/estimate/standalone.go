@@ -27,8 +27,9 @@ import (
 // with the standalone totals.
 const StandaloneAssumption = "A stopped standalone resource is counted as started again when its history next shows activity, by a schedule or a person."
 
-// NoData is the reason a resource without a point of its signals in the days read is left out: it did not run.
-const NoData = "no data: already stopped"
+// NoData is the reason a resource without a point of its signals in the days read is left out: it did not run, or
+// CloudWatch publishes its metric at no point of that dimension.
+const NoData = "no data: stopped, or its metric is not published"
 
 // ResourceRef names a standalone resource: its account and region, kind (instance, asg, ecs, rds-instance,
 // rds-cluster), backend id, ARN and name; Managed when Dormeto already naps it.
@@ -56,7 +57,15 @@ type ResourceEstimate struct {
 type ResourceLeftOut struct {
 	Resource ResourceRef `json:"resource"`
 	Reason   string      `json:"reason"`
+	// Code: tags or small, when --exclude-tags or --min-saving left it out (a managed one then leaves Dormeto's cost).
+	Code LeftOutCode `json:"code,omitempty"`
 }
+
+// The codes of a standalone resource left out by the filters.
+const (
+	CodeExcludedTags LeftOutCode = "tags"
+	CodeSmall        LeftOutCode = "small"
+)
 
 // StandaloneUnread is what the standalone scan of a region could not read (a list the profile may not make: the
 // databases without rds:Describe*), in its words.
@@ -130,7 +139,14 @@ func (s *state) standalone() error {
 				return err
 			}
 			if why != "" {
-				part.LeftOut = append(part.LeftOut, ResourceLeftOut{Resource: refOf(r), Reason: why})
+				l := ResourceLeftOut{Resource: refOf(r), Reason: why}
+				switch {
+				case strings.HasPrefix(why, "excluded by its tags"):
+					l.Code = CodeExcludedTags
+				case strings.HasPrefix(why, "it would save less than --min-saving"):
+					l.Code = CodeSmall
+				}
+				part.LeftOut = append(part.LeftOut, l)
 				continue
 			}
 			part.Resources = append(part.Resources, *x)

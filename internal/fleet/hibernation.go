@@ -191,8 +191,8 @@ const unknownText = "off for now: the router has not read the manager's settings
 // freshBootText is said when the instances have been hibernated for as long as a fresh boot is due.
 const freshBootText = "the next nap stops the instances (a fresh boot after 59 days hibernated)"
 
-// notApplyText is said for a workload with no standalone EC2 instance.
-const notApplyText = "does not apply (standalone EC2 instances only)"
+// notApplyText is said for a workload with no EC2 instance outside an Auto Scaling group.
+const notApplyText = "does not apply (EC2 instances outside an Auto Scaling group only)"
 
 // Text is the hibernation as "on, from the router" ("off: the workload has fallback instance types").
 func (h Hibernation) Text() string {

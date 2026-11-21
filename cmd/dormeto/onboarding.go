@@ -389,7 +389,31 @@ func excludeWording(ctx context.Context, api *fleet.Client, targets []fleet.Targ
 	noun := ""
 	switch {
 	case known && !gcp:
-		return question
+		// On AWS, a standalone workload's exclusion is its resource's: its kind is in the manager's list.
+		var ws fleet.Workloads
+		if api.Get(ctx, "/workloads", nil, &ws) != nil {
+			return question
+		}
+		kind := map[string]string{}
+		for _, w := range ws.Rows {
+			kind[w.Router+"/"+w.WorkloadID] = w.Kind
+		}
+		standalone, http := false, false
+		for _, t := range targets {
+			if kind[t.Router+"/"+t.ID] == fleet.KindStandalone {
+				standalone = true
+			} else {
+				http = true
+			}
+		}
+		switch {
+		case standalone && http:
+			noun = "target group or resource"
+		case standalone:
+			noun = "resource"
+		default:
+			return question
+		}
 	case known && !aws:
 		noun = "backend service"
 	default:

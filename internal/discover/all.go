@@ -236,6 +236,10 @@ func AllWith(ctx context.Context, o AllOptions) ([]RegionDiscovery, []Standalone
 				}
 				if err == nil && part != nil && !part.Failed {
 					err = o.Cache.Put(standalonePath, part)
+				} else if err == nil {
+					// Without the standalone part of this scan (off, or it failed), the one kept is another scan's: removed,
+					// so that a run with it scans the region again rather than pair the two.
+					err = o.Cache.Remove(standalonePath)
 				}
 				if err != nil {
 					if ctx.Err() != nil {

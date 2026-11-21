@@ -122,6 +122,14 @@ func (c *Cache) Put(path string, value any) error {
 	return writeAtomically(filepath.Join(c.dir, path), data)
 }
 
+// Remove removes what path holds: none is no error.
+func (c *Cache) Remove(path string) error {
+	if err := os.Remove(filepath.Join(c.dir, path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // marshal is json.Marshal without HTML escaping, as JSON.stringify.
 func marshal(v any) ([]byte, error) {
 	var b bytes.Buffer

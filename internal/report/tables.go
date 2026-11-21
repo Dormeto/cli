@@ -15,7 +15,7 @@ import (
 // With the standalone resources, their count after the databases.
 func counts(t estimate.Totals, standalone bool) []string {
 	if standalone {
-		return []string{num(t.Workloads), num(t.Kinds.ASG), num(t.Kinds.EC2), num(t.Kinds.ECS), num(t.Kinds.EKS), num(t.Databases), num(t.Standalone), num(t.Excluded)}
+		return []string{num(t.Workloads), num(t.Kinds.ASG), num(t.Kinds.EC2), num(t.Kinds.ECS), num(t.Kinds.EKS), num(t.Databases), num(standaloneCount(t)), num(t.Excluded)}
 	}
 	return []string{num(t.Workloads), num(t.Kinds.ASG), num(t.Kinds.EC2), num(t.Kinds.ECS), num(t.Kinds.EKS), num(t.Databases), num(t.Excluded)}
 }

@@ -270,7 +270,7 @@ func (t *WorkloadType) Text() string {
 	return *t.Name + " (" + from + ")" + lost
 }
 
-// hasInstanceBackend is whether the workload has a standalone EC2 instance, the only backend that hibernates. A router
+// hasInstanceBackend is whether the workload has an EC2 instance outside an Auto Scaling group, the only backend that hibernates. A router
 // that lists no backends is not known to have none.
 func (d WorkloadDetails) hasInstanceBackend() bool {
 	if d.Backends == nil {

@@ -94,11 +94,17 @@ func (s *state) estimate() Estimate {
 	// The standalone resources estimated (--standalone on): in the sums, a workload each in Dormeto's cost, and the
 	// managed ones left out staying in it.
 	var resources []ResourceEstimate
-	var staying []ResourceRef
+	var staying, leaving []ResourceRef // managed and left out: staying though not estimated, or left by a filter
+	leftBy := map[LeftOutCode]int{}
 	if s.standalonePart != nil {
 		resources = s.standalonePart.Resources
 		for _, l := range s.standalonePart.LeftOut {
-			if l.Resource.Managed {
+			switch {
+			case !l.Resource.Managed:
+			case l.Code == CodeExcludedTags || l.Code == CodeSmall: // as a managed HTTP workload the filters leave
+				leaving = append(leaving, l.Resource)
+				leftBy[l.Code]++
+			default:
 				staying = append(staying, l.Resource)
 			}
 		}
@@ -113,7 +119,7 @@ func (s *state) estimate() Estimate {
 			routed = append(routed, Where{Account: x.Resource.Account, Region: x.Resource.Region})
 		}
 		for _, t := range []*Totals{totals, byAccount.of(x.Resource.Account), byRegion.of(x.Resource.Region)} {
-			t.Standalone += 1
+			t.Standalone = counted(t.Standalone, 1)
 			t.ActualMonth += x.ActualMonth
 			t.USDMonthWindow += x.AtWindow.USDMonth
 			t.USDMonthRecommended += x.Recommended.USDMonth
@@ -171,6 +177,9 @@ func (s *state) estimate() Estimate {
 	}
 	for _, t := range append(append([]*Totals{totals}, byAccount.each()...), byRegion.each()...) {
 		t.WithDormetoMonth = t.ActualMonth - t.USDMonthWindow + t.DormetoMonth
+		if s.standalonePart != nil { // counted, 0 when none
+			t.Standalone = counted(t.Standalone, 0)
+		}
 	}
 	part := func(count int, unitMonth float64) CostPart {
 		return CostPart{Count: count, UnitMonth: unitMonth, USDMonth: float64(count) * unitMonth}
@@ -192,8 +201,8 @@ func (s *state) estimate() Estimate {
 			managedResources = append(managedResources, x.Resource)
 		}
 	}
-	managedResources = append(managedResources, staying...)
-	if len(installed.now) > 0 {
+	managedResources = append(append(managedResources, staying...), leaving...)
+	if len(installed.now) > 0 || len(managedResources) > 0 {
 		// The installation now, then the recommendation's change: the routers of the accounts and regions with workloads
 		// once it is applied (seen) against those with workloads onboarded now.
 		now := []Where{}
@@ -210,7 +219,7 @@ func (s *state) estimate() Estimate {
 				now = append(now, Where{Account: r.Account, Region: r.Region})
 			}
 		}
-		c := Change{Excluded: installed.excluded, Busy: installed.busy, Small: installed.small}
+		c := Change{Excluded: installed.excluded + leftBy[CodeExcludedTags], Busy: installed.busy, Small: installed.small + leftBy[CodeSmall]}
 		for _, x := range s.workloads {
 			if !x.Workload.Managed {
 				c.Onboard++
@@ -379,4 +388,13 @@ func (s *state) period() Period {
 		p.From, p.To = isoOf(to.Add(-time.Duration(p.Days)*24*time.Hour)), isoOf(to)
 	}
 	return p
+}
+
+// counted is n added to a count, a count started at 0 when none.
+func counted(count *int, n int) *int {
+	v := n
+	if count != nil {
+		v += *count
+	}
+	return &v
 }

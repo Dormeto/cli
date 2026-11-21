@@ -150,3 +150,19 @@ func TestListCandidatesWhereReadsFullPagesUnderAFilter(t *testing.T) {
 		}
 	}
 }
+
+// An ambiguous name among standalone candidates names resources.
+func TestAnAmbiguousNameAmongStandaloneCandidatesNamesResources(t *testing.T) {
+	worker := func(id string) Candidate {
+		return Candidate{ID: "arn:aws:ec2:eu-west-1:111122223333:instance/" + id, Kind: KindStandalone, ResourceName: "worker", Status: "pending-onboarding"}
+	}
+	_, err := ResolveCandidates([]Candidate{worker("i-1"), worker("i-2")}, []string{"worker"})
+	if err == nil || !strings.HasPrefix(err.Error(), "worker names several resources:\n") {
+		t.Errorf("%v", err)
+	}
+	tg := Candidate{ID: "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/worker/0123456789abcdef", TargetGroupARN: "arn:aws:elasticloadbalancing:eu-west-1:111122223333:targetgroup/worker/0123456789abcdef"}
+	_, err = ResolveCandidates([]Candidate{tg, worker("i-1")}, []string{"worker"})
+	if err == nil || !strings.HasPrefix(err.Error(), "worker names several target groups or resources:\n") {
+		t.Errorf("%v", err)
+	}
+}

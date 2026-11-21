@@ -48,3 +48,25 @@ func TestTheRDSAdapterMapsTheInstancesAndClusters(t *testing.T) {
 		t.Errorf("asked %+v", f.asked)
 	}
 }
+
+// A region's databases are listed once for the standalone scan and the companions: the pages of an unfiltered listing are
+// kept by the region, a describe by identifier or filter is asked each time.
+func TestARegionListsItsDatabasesOnceForBothParts(t *testing.T) {
+	f := &fakeRDS{}
+	r := &Region{rds: newListedRDS(rdsPort{f})}
+	ctx := context.Background()
+	for _, port := range []stopped.RDSPort{r.Scan().RDS, r.rds} { // the scan's, and Stopped()'s
+		if _, err := port.DescribeDBInstances(ctx, stopped.DescribeDBInstancesInput{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := port.DescribeDBClusters(ctx, stopped.DescribeDBClustersInput{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.asked) != 2 {
+		t.Fatalf("asked %d times, want once each", len(f.asked))
+	}
+	if _, err := r.rds.DescribeDBInstances(ctx, stopped.DescribeDBInstancesInput{DBInstanceIdentifier: "db-1"}); err != nil || len(f.asked) != 3 {
+		t.Fatalf("by identifier: %v, asked %d", err, len(f.asked))
+	}
+}

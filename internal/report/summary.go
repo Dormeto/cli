@@ -59,7 +59,7 @@ func Summary(e estimate.Estimate) []string {
 		lines = append(lines, "")
 		lines = append(lines, visual...)
 	}
-	if t.Workloads != 0 || t.Standalone != 0 || e.Dormeto.Change != nil {
+	if t.Workloads != 0 || standaloneCount(t) != 0 || e.Dormeto.Change != nil {
 		accounts, more := accountsTable(e, terminalAccounts)
 		lines = append(lines, "", "By account:")
 		lines = append(lines, textTable(accounts)...)

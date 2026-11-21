@@ -85,6 +85,10 @@ func newExclusionsAdd(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			switch {
 			case given != 1:
 				err = usagef("give exactly one of --target-group, --load-balancer, --resource and %s", accountFlag(c))
+			case resource != "" && fleet.IsTargetGroupARN(resource):
+				err = usagef("--resource: %q is a target group's ARN: give it to --target-group", resource)
+			case resource != "" && fleet.IsLoadBalancerARN(resource):
+				err = usagef("--resource: %q is a load balancer's ARN: give it to --load-balancer", resource)
 			case resource != "" && !strings.HasPrefix(resource, "arn:"):
 				err = usagef("--resource: %q is not an ARN (an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance or cluster)", resource)
 			case tg != "" && !fleet.IsTargetGroupARN(tg) && !fleet.IsBackendServicePath(tg):

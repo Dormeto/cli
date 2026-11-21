@@ -96,7 +96,7 @@ func TestEachKindOfStandaloneResourceIsPricedFromItsSignalsAtTheStandaloneWindow
 	closeTo(t, "the instance's saving", instance.AtWindow.USDMonth, 0.0456*instance.AtWindow.AsleepHours*30, 6)
 	// The totals for HTTP, standalone and both; the account's figures with them, a workload each in Dormeto's cost.
 	s := p.Totals
-	if s.Standalone.Count != 5 || s.Both.Count != s.HTTP.Count+5 || e.Totals.Standalone != 5 {
+	if s.Standalone.Count != 5 || s.Both.Count != s.HTTP.Count+5 || e.Totals.Standalone == nil || *e.Totals.Standalone != 5 {
 		t.Fatalf("totals %+v, %+v", s, e.Totals)
 	}
 	sum := 0.0
@@ -191,7 +191,7 @@ func TestWithoutTheStandaloneResourcesTheEstimateIsAsBefore(t *testing.T) {
 	e := run(t, func(in *Input) {
 		in.Standalone = []discover.StandaloneRegion{{Account: A, Region: "eu-west-1", Resources: []discover.StandaloneResource{resource("instance", "i-agent", T3)}}}
 	})
-	if e.Standalone != nil || e.Totals.Standalone != 0 {
+	if e.Standalone != nil || e.Totals.Standalone != nil {
 		t.Fatalf("standalone %+v", e.Standalone)
 	}
 	b, _ := json.Marshal(e)
@@ -287,5 +287,46 @@ func TestTheAssumptionsSayHowEachKindIsMeasured(t *testing.T) {
 	}
 	if off := run(t); strings.Contains(said(off.Assumptions), "HTTP workloads:") {
 		t.Errorf("--standalone off: %q", off.Assumptions)
+	}
+}
+
+// With --standalone on, the totals always say the standalone resources counted, 0 when none is found.
+func TestTheTotalsSayTheStandaloneResourcesWhenTheyAreEstimated(t *testing.T) {
+	e := run(t, func(in *Input) { in.Options.Standalone = &options.Standalone{Window: 120} })
+	b, _ := json.Marshal(e)
+	var got struct {
+		Totals    map[string]json.RawMessage            `json:"totals"`
+		ByAccount map[string]map[string]json.RawMessage `json:"byAccount"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Totals["standalone"]) != "0" || string(got.ByAccount[A]["standalone"]) != "0" {
+		t.Fatalf("totals %s, by account %s", got.Totals["standalone"], got.ByAccount[A]["standalone"])
+	}
+}
+
+// A managed standalone resource left out by --min-saving or --exclude-tags leaves Dormeto's cost, as a managed HTTP
+// workload left out by them does: the recommendation's change counts it.
+func TestAManagedStandaloneResourceLeftOutByTheFiltersLeavesDormetosCost(t *testing.T) {
+	e := run(t, standaloneWorld, func(in *Input) {
+		r := &in.Standalone[0].Resources
+		(*r)[0].Managed, (*r)[1].Managed = true, true
+		(*r)[1].Tags = map[string][]string{"env": {"dev"}}
+		in.Options.ExcludeTags = []discover.TagWants{{tag("env", "dev")}}
+		in.Options.MinSaving = f(1000) // nothing saves that much
+	})
+	c := e.Dormeto.Change
+	if c == nil || c.Small < 1 || c.Excluded < 1 {
+		t.Fatalf("change %+v", c)
+	}
+	if e.Dormeto.Workloads.Count != 2 {
+		t.Fatalf("the installation now: %+v", e.Dormeto.Workloads)
+	}
+}
+
+func TestAResourceWithoutAPointSaysItIsStoppedOrNotPublished(t *testing.T) {
+	if NoData != "no data: stopped, or its metric is not published" {
+		t.Fatalf("%q", NoData)
 	}
 }

@@ -7,6 +7,7 @@ package aws
 
 import (
 	"context"
+	"sync"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -76,4 +77,50 @@ func tagList(in []rdstypes.Tag) []stopped.Tag {
 		out = append(out, stopped.Tag{Key: awssdk.ToString(t.Key), Value: awssdk.ToString(t.Value)})
 	}
 	return out
+}
+
+// listedRDS is a region's RDS whose unfiltered listings (the pages of every database, by their marker) are asked once:
+// the standalone scan and the companions list the same databases in one region's discovery. A describe by identifier or
+// by filter is asked each time.
+type listedRDS struct {
+	port      rdsPort
+	mu        sync.Mutex
+	instances map[string]stopped.DescribeDBInstancesOutput
+	clusters  map[string]stopped.DescribeDBClustersOutput
+}
+
+func newListedRDS(port rdsPort) *listedRDS {
+	return &listedRDS{port: port, instances: map[string]stopped.DescribeDBInstancesOutput{}, clusters: map[string]stopped.DescribeDBClustersOutput{}}
+}
+
+func (l *listedRDS) DescribeDBInstances(ctx context.Context, in stopped.DescribeDBInstancesInput) (stopped.DescribeDBInstancesOutput, error) {
+	if in.DBInstanceIdentifier != "" || len(in.Filters) > 0 {
+		return l.port.DescribeDBInstances(ctx, in)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if out, ok := l.instances[in.Marker]; ok {
+		return out, nil
+	}
+	out, err := l.port.DescribeDBInstances(ctx, in)
+	if err == nil {
+		l.instances[in.Marker] = out
+	}
+	return out, err
+}
+
+func (l *listedRDS) DescribeDBClusters(ctx context.Context, in stopped.DescribeDBClustersInput) (stopped.DescribeDBClustersOutput, error) {
+	if in.DBClusterIdentifier != "" {
+		return l.port.DescribeDBClusters(ctx, in)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if out, ok := l.clusters[in.Marker]; ok {
+		return out, nil
+	}
+	out, err := l.port.DescribeDBClusters(ctx, in)
+	if err == nil {
+		l.clusters[in.Marker] = out
+	}
+	return out, err
 }

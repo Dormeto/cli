@@ -24,7 +24,15 @@ func estimatedWhat(e estimate.Estimate) string {
 	if e.Standalone == nil {
 		return n(e.Totals.Workloads, "workload")
 	}
-	return n(e.Totals.Workloads, "workload") + " and " + n(e.Totals.Standalone, "standalone resource")
+	return n(e.Totals.Workloads, "workload") + " and " + n(standaloneCount(e.Totals), "standalone resource")
+}
+
+// standaloneCount is the standalone resources counted in some totals, 0 when none.
+func standaloneCount(t estimate.Totals) int {
+	if t.Standalone == nil {
+		return 0
+	}
+	return *t.Standalone
 }
 
 // figuresAt is figuresWindow, with the standalone resources' window after it.

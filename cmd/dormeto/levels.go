@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"regexp"
 	"slices"
@@ -53,7 +54,7 @@ const idleMetricExample = `{"namespace": "CI/Agents", "name": "QueuedJobs", "dim
 func (l *levelFlags) bindIdleFlags(cmd *cobra.Command) {
 	l.idle = true
 	cmd.Flags().StringVar(&l.idleCPU, "idle-cpu", "", "a standalone workload's idle CPU, a percent from 0 to 100 (idle under it), off, or "+l.unset)
-	cmd.Flags().StringVar(&l.idleNetwork, "idle-network", "", "a standalone workload's idle network, bytes a minute in and out (idle under it), off, or "+l.unset)
+	cmd.Flags().StringVar(&l.idleNetwork, "idle-network", "", "a standalone workload's idle network, bytes a minute in and out, a whole number from 0 to 10000000000 (idle under it), off, or "+l.unset)
 	cmd.Flags().StringVar(&l.idleMetric, "idle-metric", "", "a standalone workload's custom idle metric: a JSON file in the router's shape (a path, - for the standard input), off, or "+l.unset+"; for example "+idleMetricExample)
 }
 
@@ -72,10 +73,10 @@ func (l *levelFlags) idleBody(c *cobra.Command, out map[string]any) error {
 			out[s.key] = "off"
 		case l.unsets(v):
 			out[s.key] = nil
-		case err == nil:
+		case err == nil && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0:
 			out[s.key] = n
 		default:
-			return usagef("--%s: give a number, off or %s", s.flag, l.unset)
+			return usagef("--%s: give a number (0 or more), off or %s", s.flag, l.unset)
 		}
 	}
 	if c.Flags().Changed("idle-metric") {

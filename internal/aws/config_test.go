@@ -212,7 +212,7 @@ func TestELBClientsRetryInAdaptiveModeTheOthersInTheStandardMode(t *testing.T) {
 	}
 	standard := map[string]any{
 		"autoscaling": r.autoscaling.client, "ec2": r.ec2, "ecs": r.ecs, "cloudwatch": r.cloudwatch.client,
-		"eks": r.eks.client, "rds": r.rds.client,
+		"eks": r.eks.client, "rds": r.rds.port.client,
 	}
 	for name, client := range standard {
 		retryer, mode, region := retryerOf(t, client)
