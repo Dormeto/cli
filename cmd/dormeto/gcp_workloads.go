@@ -56,7 +56,8 @@ func newGcpWorkloads(runs gcpWorkloadRuns, version string) *cobra.Command {
 				"the router's check fails it. With --force, a tag or an access it cannot remove does not stop the rest: it names each,\n"+
 				"exit 1, and it names what is left when the controller does not answer, removing nothing. It is always confirmed on a\n"+
 				"terminal, as AWS's (--yes without one; --dry-run says what it would send and sends nothing).", runs.offboard, version, true),
-		newGcpWorkloadsWrite("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window.", runs.nap, version, false),
+		newGcpWorkloadsWrite("nap", "Put a workload to sleep now", "Nap a workload now, without waiting for its idle window. A FAILED standalone workload is accepted: its nap\n"+
+			"ends the retries of its wake.", runs.nap, version, false),
 		newGcpWorkloadsWake(runs.wake, version),
 		newGcpWorkloadsPause(runs.pause, version),
 		newGcpWorkloadsWrite("resume", "Resume a paused workload", "Resume a workload: its pause ends and its naps run again. A pause of the whole router, if any, stays.", runs.resume, version, false),

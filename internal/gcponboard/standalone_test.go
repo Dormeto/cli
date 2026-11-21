@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
+	"github.com/Dormeto/cli/internal/schedule"
 	"slices"
 
 	"github.com/Dormeto/cli/internal/fleet"
@@ -435,4 +436,21 @@ func TestWorkloadsAndRouterSettingsSendTheIdleSignals(t *testing.T) {
 func withoutBy(m map[string]any) map[string]any {
 	delete(m, "by")
 	return m
+}
+
+// A nap window's wake on a standalone workload: the router's refusal, printed as it comes, exit 1, as dormeto aws schedule
+// add prints the manager's (the CLI does not judge the kind).
+func TestScheduleAddWakeOnAStandaloneWorkloadPrintsTheRoutersRefusal(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.standaloneAgent()
+	refusal := "windows[0].wake: a standalone workload has no waiting page: nothing arrives to wake it in a nap window"
+	g.s.ScheduleProblem = refusal
+	g.s.Schedules["build-agent"] = map[string]any{"timeZone": "Europe/Paris", "windows": []any{}}
+	r := workloadsEurope
+	r.ID = "build-agent"
+	r.ScheduleChange = &schedule.Change{Add: &schedule.NewWindow{Kind: "nap", Days: []string{"sat"}, Start: "00:00", End: "00:00", Wake: "header"}}
+	code, stdout, stderr := g.split(t, WorkloadsScheduleChange, r)
+	if code != 1 || stdout != "" || stderr != "dmtr-dormeto-dev-europe-west1/build-agent: "+refusal+"\n" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
 }

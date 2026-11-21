@@ -767,3 +767,41 @@ func TestDiscoveryStatusSaysWhatTheRunCouldNotRead(t *testing.T) {
 		t.Errorf("exit %d, stdout %q", r.exit, r.stdout)
 	}
 }
+
+// googleStandaloneRow is a Google Cloud standalone candidate as the manager lists it (plan 5's handover): its path as its id
+// and resource, the project as its account, no resourceArn.
+func googleStandaloneRow(status string) string {
+	const path = "projects/dormeto-dev/zones/europe-west1-b/instances/build-agent"
+	return fmt.Sprintf(`{"kind":"standalone","id":%q,"resource":%q,"cloud":"gcp","account":"dormeto-dev","region":"europe-west1","name":"build-agent","backend":{"kind":"instance","id":"build-agent","location":"europe-west1-b","resourceId":"333"},"tags":{},"eligibility":"eligible","idleHours7d":150,"status":%q}`, path, path, status)
+}
+
+// A Google Cloud standalone candidate is listed as AWS's is, by its name, with its kind, cloud and project; its path is its
+// id (in --json, and what dismiss takes as it is). The run's Cloud SQL problem is said as the manager says it.
+func TestDiscoveryOfAGoogleCloudStandaloneCandidate(t *testing.T) {
+	const path = "projects/dormeto-dev/zones/europe-west1-b/instances/build-agent"
+	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {standaloneRow("pending-onboarding"), googleStandaloneRow("pending-onboarding")}}}
+	r := runDiscovery(t, a, nil, "", "candidates")
+	lines := strings.Split(r.stdout, "\n")
+	for i, want := range [][]string{
+		{"CANDIDATE", "KIND", "CLOUD"},
+		{"build-agent", "standalone", "aws", "111111111111", "eu-west-1", "—", "160h", "—"},
+		{"build-agent", "standalone", "gcp", "dormeto-dev", "europe-west1", "—", "150h", "—"},
+	} {
+		if got := strings.Fields(lines[i]); len(got) < len(want) || !slices.Equal(got[:len(want)], want) {
+			t.Errorf("line %d: %q, want %q…", i, got, want)
+		}
+	}
+	r = runDiscovery(t, a, nil, "", "candidates", "--json")
+	if r.exit != 0 || !strings.Contains(r.stdout, `"resource": "`+path+`"`) || strings.Contains(r.stdout, `"resourceArn": "projects/`) {
+		t.Errorf("--json: exit %d, %s", r.exit, r.stdout)
+	}
+	if r := runDiscovery(t, a, nil, "", "dismiss", path); r.exit != 0 || !strings.Contains(a.writes[len(a.writes)-1], `"ids":["`+path+`"]`) {
+		t.Errorf("dismiss: exit %d %q, writes %q", r.exit, r.stderr, a.writes)
+	}
+	problem := "Cloud SQL instances not listed: the discovery account may not call cloudsql.instances.list (run dormeto gcp connect again: it gives the discovery account the permissions of this release)"
+	run := `{"lastRun":{"startedAt":"2026-11-14T09:00:00Z","finishedAt":"2026-11-14T09:00:30Z","trigger":"schedule","status":"ok","targets":[{"account":"dormeto-dev","cloud":"gcp","region":"europe-west1","status":"ok","problems":[` + strconv.Quote(problem) + `],"unread":["cloudsql-instance"]}],"counts":{},"lint":[]},"counts":{}}`
+	s := &disAPI{statuses: []string{run}}
+	if r := runDiscovery(t, s, nil, "", "status"); r.exit != 0 || !strings.Contains(r.stdout, "dormeto-dev europe-west1: "+problem) {
+		t.Errorf("status: exit %d, stdout %q", r.exit, r.stdout)
+	}
+}

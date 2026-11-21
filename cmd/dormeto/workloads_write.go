@@ -76,7 +76,8 @@ func newWorkloadsNap(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "nap (<router>/<workload>... | --tag k=v...)", Short: "Ask workloads to nap now",
 		Long: "Ask the routers to put the workloads to sleep now. A router refuses a workload that is paused or not awake: its\n" +
-			"reason is printed for that workload, the others go on (exit 1).",
+			"reason is printed for that workload, the others go on (exit 1). A FAILED standalone workload is accepted: its nap\n" +
+			"ends the retries of its wake.",
 		SilenceErrors: true,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := w.targets.check(args, false); err != nil {

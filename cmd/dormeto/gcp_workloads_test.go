@@ -685,3 +685,17 @@ func TestGcpSettingsTakeTheIdleSignals(t *testing.T) {
 		t.Fatalf("%v", calls[0].r.Levels)
 	}
 }
+
+// Both subtrees' nap help says the same of a FAILED standalone workload: the nap is accepted and ends its retries.
+func TestNapHelpSaysAFailedStandaloneWorkloadsNapEndsItsRetries(t *testing.T) {
+	const said = "A FAILED standalone workload is accepted: its nap ends the retries of its wake."
+	for _, args := range [][]string{{"aws", "workloads", "nap"}, {"gcp", "workloads", "nap"}} {
+		c, _, err := newRoot(build{}).Find(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(strings.ReplaceAll(c.Long, "\n", " "), said) {
+			t.Errorf("%v: %q", args, c.Long)
+		}
+	}
+}
