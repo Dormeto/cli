@@ -597,6 +597,8 @@ func (x *run) details(w workload) {
 	if w.LB != nil {
 		line("load balancer", w.LB.String())
 	}
+	line("kind", w.Kind)
+	line("resource", w.Resource)
 	line("name", w.Name)
 	var tags []string
 	for k, v := range w.Tags {
@@ -712,6 +714,9 @@ func (c gkeCluster) String() string { return c.Location + "/" + c.Name }
 // onboardingInput validates the flags, before any call: exit 2 for a bad one.
 func (x *run) onboardingInput() (onboardingIn, error) {
 	r := x.r
+	if err := x.oneForm(); err != nil {
+		return onboardingIn{}, err
+	}
 	switch {
 	case r.URLMap == "":
 		return onboardingIn{}, &stop{2, "--url-map: needed"}
@@ -823,6 +828,9 @@ func (x *run) workloadID() (string, error) {
 func (x *run) onboard() error {
 	if err := x.validate(); err != nil {
 		return err
+	}
+	if x.r.Resource != "" {
+		return x.onboardResource()
 	}
 	in, err := x.onboardingInput()
 	if err != nil {

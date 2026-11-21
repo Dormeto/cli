@@ -55,7 +55,8 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 	cmd := gcpCommand("settings <workload>...", "Set the settings of workloads",
 		"Set the settings of workloads of the router dmtr-<region>, through its controller, as AWS's workloads settings does: whether\n"+
 			"the VMs hibernate (--hibernate true, false or inherit, the router's), the workload's own settings (--idle-minutes,\n"+
-			"--wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files) and its --type (a name, or inherit),\n"+
+			"--wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files; a standalone workload's idle signals\n"+
+			"--idle-cpu, --idle-network and --idle-metric, Google Cloud's metric shape) and its --type (a name, or inherit),\n"+
 			"inherit giving each back to its router, then its type's. --wait-seconds, --max-holders and --drain-seconds are 0 on\n"+
 			"Google Cloud, so any value is refused; inherit is accepted. --wake-mode any is passed on: the router decides by the\n"+
 			"workload's load balancer. Several workloads are confirmed on a terminal (--yes without one; --dry-run says each request). A refusal is printed for that workload, the others go on (exit 1). A router without the settings levels says so, with the version to install.",
@@ -65,6 +66,8 @@ func newGcpWorkloadsSettings(run gcpRun, version string) *cobra.Command {
 		})
 	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	gcpLevelFlagsHelp(cmd, levels)
+	levels.metricShape = googleMetricShape
+	levels.bindIdleFlags(cmd)
 	cmd.Args = func(c *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprintln(c.ErrOrStderr(), "name at least one workload, as the argument")
@@ -132,7 +135,8 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 	cmd := gcpCommand("settings", "Show or set the settings of the router",
 		"Set the router's level, as AWS's routers settings does: --hibernate (true, false or inherit), --join-minutes (the largest gap\n"+
 			"that joins two schedule windows of one kind, 0 to 120, a multiple of 5, or inherit) and the workload settings that are\n"+
-			"its workloads' defaults (--idle-minutes, --wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files;\n"+
+			"its workloads' defaults (--idle-minutes, --wake-timeout-seconds, --failed-retry-seconds, --wake-mode and the rules files,\n"+
+			"and the standalone workloads' idle signals --idle-cpu, --idle-network and --idle-metric in Google Cloud's metric shape;\n"+
 			"inherit removes one). --wait-seconds, --max-holders and --drain-seconds are 0 on Google Cloud: any value is refused.\n"+
 			"What is not given stays as it was. With no flag, the router's level is shown. --dry-run says what would be set and sends\n"+
 			"nothing; --yes is accepted as AWS's, a single router asking nothing. --json prints, as AWS's, by router: the controller's\n"+
@@ -143,6 +147,8 @@ func newGcpRoutersSettings(run gcpRun, version string) *cobra.Command {
 		})
 	levels = bindLevelFlags(cmd, googleCloudRefuses, "inherit")
 	gcpLevelFlagsHelp(cmd, levels)
+	levels.metricShape = googleMetricShape
+	levels.bindIdleFlags(cmd)
 	prior := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if err := prior(c, args); err != nil {

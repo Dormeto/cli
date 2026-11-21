@@ -22,6 +22,12 @@ type Resource struct {
 	Kind, Location, Name, ID string
 }
 
+// StandaloneResource is a resource the onboarding by resource finds: a VM (Kind vm, Location its zone), a managed group
+// (Kind mig, Location its zone or region) or a Cloud SQL instance (Kind cloudsql), with its numeric ID (a VM's, a group's).
+type StandaloneResource struct {
+	Kind, Location, Name, ID string
+}
+
 // DryRun is the answer of the controller's onboarding dry run.
 type DryRun struct {
 	Reasons []string
@@ -141,6 +147,7 @@ func wakerOf(host, id string) string {
 }
 
 type workloadIn struct {
+	Resource       string         `json:"resource"`
 	URLMap         string         `json:"urlMap"`
 	BackendService string         `json:"backendService"`
 	ID             string         `json:"id"`
@@ -266,6 +273,10 @@ func (s *Server) workloads(w http.ResponseWriter, r *http.Request) {
 func (s *Server) onboard(w http.ResponseWriter, r *http.Request) {
 	var in workloadIn
 	body, _ := io.ReadAll(r.Body)
+	if json.Unmarshal(body, &in) == nil && in.Resource != "" {
+		s.onboardResource(w, r, in)
+		return
+	}
 	if json.Unmarshal(body, &in) != nil || in.URLMap == "" || in.BackendService == "" {
 		controllerFail(w, 400, "bad-request", "urlMap and backendService are needed")
 		return
@@ -729,4 +740,77 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	Reply(w, status)
+}
+
+// onboardResource is the onboarding by resource, as the router's (onboarding.mjs dryRunOfResource, onboardResource): the dry run
+// answers {eligible, reasons, backend, databases}; the onboarding needs the tag on the resource and its companions.
+func (s *Server) onboardResource(w http.ResponseWriter, r *http.Request, in workloadIn) {
+	res, found := s.Standalone[in.Resource]
+	id := in.ID
+	if id == "" {
+		id = res.Name
+	}
+	reasons := slices.Clone(s.StandaloneReasons[in.Resource])
+	if reasons == nil {
+		reasons = []string{}
+	}
+	if !found {
+		reasons = append(reasons, "VM not found")
+	}
+	if _, there := s.Workloads[id]; there {
+		reasons = append(reasons, "workload "+id+" is onboarded already")
+	}
+	databases := []map[string]any{}
+	for _, name := range in.CloudSQL {
+		if _, there := s.SQLInstances[name]; !there {
+			reasons = append(reasons, "Cloud SQL instance "+name+" not found: name an instance of this project")
+			continue
+		}
+		databases = append(databases, map[string]any{"name": name})
+	}
+	backend := map[string]any{"kind": res.Kind, "name": res.Name}
+	if res.Kind != "cloudsql" {
+		backend["location"], backend["id"] = res.Location, res.ID
+	}
+	if r.URL.Query().Get("dryRun") == "true" {
+		answer := map[string]any{"eligible": len(reasons) == 0, "reasons": reasons, "databases": databases}
+		if found {
+			answer["backend"] = backend
+		}
+		Reply(w, answer)
+		return
+	}
+	if len(reasons) > 0 {
+		controllerFail(w, 400, "not-eligible", "cannot onboard "+id+": "+strings.Join(reasons, "; "))
+		return
+	}
+	parent := s.databaseParent(res.Name)
+	switch res.Kind {
+	case "vm":
+		parent = s.parentOf(Resource{Location: res.Location, ID: res.ID}, true)
+	case "mig":
+		kind := "zonal"
+		if strings.Count(res.Location, "-") == 1 {
+			kind = "regional"
+		}
+		parent = s.parentOf(Resource{Kind: kind, Location: res.Location, ID: res.ID}, false)
+	}
+	if !s.tagged(parent) {
+		controllerFail(w, 400, "not-tagged", res.Name+" carries no dormeto tag")
+		return
+	}
+	backends := []any{backend}
+	for _, name := range in.CloudSQL {
+		if !s.tagged(s.databaseParent(name)) {
+			controllerFail(w, 400, "not-tagged", "Cloud SQL instance "+name+" carries no dormeto tag")
+			return
+		}
+		backends = append(backends, map[string]any{"kind": "cloudsql", "name": name})
+	}
+	s.Workloads[id] = "AWAKE"
+	s.WorkloadDocs[id] = map[string]any{"kind": "standalone", "resource": in.Resource, "backends": backends, "settings": in.Settings, "name": cmp.Or(in.Name, id)}
+	if len(in.Tags) > 0 {
+		s.WorkloadDocs[id]["tags"] = in.Tags
+	}
+	Reply(w, s.workloadBody(id))
 }

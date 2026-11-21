@@ -10,6 +10,8 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -631,20 +633,29 @@ func TestTheIdleSignalsAtEveryLevel(t *testing.T) {
 	}
 }
 
-// The Google Cloud subtree has no idle signal: none of its commands takes --idle-cpu, --idle-network or --idle-metric.
-func TestTheGoogleCloudLevelsHaveNoIdleSignals(t *testing.T) {
+// The Google Cloud subtree's idle signals are on its levels (plan 5): onboard's by resource, a workload's and a router's
+// settings, and nowhere else; each --idle-metric says Google Cloud's shape, not AWS's.
+func TestTheGoogleCloudIdleSignalsAreOnItsLevels(t *testing.T) {
 	root := buildRoot(build{}, fleetDeps{}, installRuns{}, gcpRuns{})
 	gcp, _, err := root.Find([]string{"gcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	walked := 0
+	var with []string
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		walked++
+		has := 0
 		for _, flag := range []string{"idle-cpu", "idle-network", "idle-metric"} {
 			if c.Flags().Lookup(flag) != nil || c.PersistentFlags().Lookup(flag) != nil {
-				t.Errorf("%s has --%s", c.CommandPath(), flag)
+				has++
+			}
+		}
+		if has > 0 {
+			with = append(with, c.CommandPath())
+			if usage := c.Flags().Lookup("idle-metric").Usage; has != 3 || !strings.Contains(usage, "Google Cloud's shape, {type, filter, aligner, below}") || strings.Contains(usage, "namespace") {
+				t.Errorf("%s: %d idle flags, --idle-metric %q", c.CommandPath(), has, usage)
 			}
 		}
 		for _, sub := range c.Commands() {
@@ -654,6 +665,10 @@ func TestTheGoogleCloudLevelsHaveNoIdleSignals(t *testing.T) {
 	walk(gcp)
 	if walked < 30 {
 		t.Fatalf("walked %d commands of the Google Cloud tree", walked)
+	}
+	sort.Strings(with)
+	if want := []string{"dormeto gcp routers settings", "dormeto gcp workloads onboard", "dormeto gcp workloads settings"}; !slices.Equal(with, want) {
+		t.Fatalf("the idle flags are on %v", with)
 	}
 }
 

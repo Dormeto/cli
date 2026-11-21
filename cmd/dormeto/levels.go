@@ -44,10 +44,17 @@ type levelFlags struct {
 	// A standalone workload's idle signals (AWS levels only: bindIdleFlags).
 	idle                             bool
 	idleCPU, idleNetwork, idleMetric string
+	// metricShape is the custom metric's shape the help says ("": AWS's, idleMetricExample).
+	metricShape string
 }
 
 // idleMetricExample is a custom idle metric in the router's shape, as the help shows it.
 const idleMetricExample = `{"namespace": "CI/Agents", "name": "QueuedJobs", "dimensions": {"Agent": "${resource}"}, "statistic": "Maximum", "below": 1}`
+
+// googleMetricShape is the custom idle metric on Google Cloud, Cloud Monitoring's (the router's idleMetric: type, an optional
+// filter in which ${resource} is the resource's ID, aligner ALIGN_MAX, ALIGN_MEAN or ALIGN_SUM, below a number), with an example.
+const googleMetricShape = `a JSON file in Google Cloud's shape, {type, filter, aligner, below} (a path, - for the standard input); for example ` +
+	`{"type": "custom.googleapis.com/ci/queued_jobs", "filter": "metric.labels.agent = \"${resource}\"", "aligner": "ALIGN_MAX", "below": 1}`
 
 // bindIdleFlags binds a level's idle signals of a standalone workload: --idle-cpu, --idle-network, --idle-metric. Their
 // ranges and shapes are the router's, checked by the manager, whose refusal is printed as it says it.
@@ -55,7 +62,11 @@ func (l *levelFlags) bindIdleFlags(cmd *cobra.Command) {
 	l.idle = true
 	cmd.Flags().StringVar(&l.idleCPU, "idle-cpu", "", "a standalone workload's idle CPU, a percent from 0 to 100 (idle under it), off, or "+l.unset)
 	cmd.Flags().StringVar(&l.idleNetwork, "idle-network", "", "a standalone workload's idle network, bytes a minute in and out, a whole number from 0 to 10000000000 (idle under it), off, or "+l.unset)
-	cmd.Flags().StringVar(&l.idleMetric, "idle-metric", "", "a standalone workload's custom idle metric: a JSON file in the router's shape (a path, - for the standard input), off, or "+l.unset+"; for example "+idleMetricExample)
+	usage := "a standalone workload's custom idle metric: a JSON file in the router's shape (a path, - for the standard input), off, or " + l.unset + "; for example " + idleMetricExample
+	if l.metricShape != "" {
+		usage = "a standalone workload's custom idle metric: off, " + l.unset + ", or " + l.metricShape
+	}
+	cmd.Flags().StringVar(&l.idleMetric, "idle-metric", "", usage)
 }
 
 // idleBody adds the idle signals given to out: a number, off, the unset word (null), or for --idle-metric a JSON file.

@@ -7,6 +7,7 @@ package gcptest
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -254,6 +255,9 @@ func (s *Server) compute(w http.ResponseWriter, r *http.Request, body []byte) {
 	if s.disabled(w, "compute.googleapis.com") {
 		return
 	}
+	if s.serviceUsers(w, r, rest) {
+		return
+	}
 	region, tail := "global", ""
 	if global, ok := strings.CutPrefix(rest, "global/"); ok {
 		tail = global
@@ -438,4 +442,114 @@ func (s *Server) controller(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	noRoute(w, r)
+}
+
+// serviceUsers answers what tells whether a VM or a group serves a load balancer: the aggregated lists of backend services,
+// target pools and target instances, an instance group's listInstances, a zonal NEG's listNetworkEndpoints and a managed
+// group's read (its targetPools). False: none of them.
+func (s *Server) serviceUsers(w http.ResponseWriter, r *http.Request, rest string) bool {
+	refused := func(listing string) bool {
+		if s.Refused[listing] {
+			Fail(w, 403, "PERMISSION_DENIED", "Required '"+listing+"' permission for 'projects/"+s.ProjectID+"'")
+			return true
+		}
+		return false
+	}
+	scopeOf := func(location string) string {
+		switch {
+		case location == "global":
+			return "global"
+		case strings.Count(location, "-") == 2:
+			return "zones/" + location
+		}
+		return "regions/" + location
+	}
+	answer := func(listing, field string, entries map[string]map[string]any) {
+		items := map[string]any{}
+		for _, key := range slices.Sorted(maps.Keys(entries)) {
+			location, _, _ := strings.Cut(key, "/")
+			scope := scopeOf(location)
+			list, _ := items[scope].(map[string]any)
+			if list == nil {
+				list = map[string]any{field: []any{}}
+				items[scope] = list
+			}
+			list[field] = append(list[field].([]any), entries[key])
+		}
+		out := map[string]any{"items": items}
+		if u := s.Unreachables[listing]; len(u) > 0 {
+			out["unreachables"] = u
+		}
+		Reply(w, out)
+	}
+	switch {
+	case rest == "aggregated/backendServices" && r.Method == http.MethodGet:
+		if refused("backendServices") {
+			return true
+		}
+		entries := map[string]map[string]any{}
+		for key, groups := range s.ServiceBackends {
+			var backends []map[string]any
+			for _, group := range groups {
+				backends = append(backends, map[string]any{"group": group})
+			}
+			entries[key] = map[string]any{"name": strings.SplitN(key, "/", 2)[1], "backends": backends}
+		}
+		answer("backendServices", "backendServices", entries)
+		return true
+	case rest == "aggregated/targetPools" && r.Method == http.MethodGet:
+		if refused("targetPools") {
+			return true
+		}
+		entries := map[string]map[string]any{}
+		for key, vms := range s.TargetPools {
+			entries[key] = map[string]any{"name": strings.SplitN(key, "/", 2)[1], "instances": vms}
+		}
+		answer("targetPools", "targetPools", entries)
+		return true
+	case rest == "aggregated/targetInstances" && r.Method == http.MethodGet:
+		if refused("targetInstances") {
+			return true
+		}
+		entries := map[string]map[string]any{}
+		for key, vm := range s.TargetInstances {
+			entries[key] = map[string]any{"name": strings.SplitN(key, "/", 2)[1], "instance": vm}
+		}
+		answer("targetInstances", "targetInstances", entries)
+		return true
+	case strings.HasSuffix(rest, "/listInstances") && r.Method == http.MethodPost:
+		if refused("listInstances") {
+			return true
+		}
+		key := strings.TrimSuffix(rest, "/listInstances")
+		parts := strings.Split(key, "/")
+		items := []any{}
+		for _, name := range s.GroupMembers[key] {
+			zone := parts[1]
+			if parts[0] == "regions" {
+				zone += "-b"
+			}
+			items = append(items, map[string]any{"instance": "https://www.googleapis.com/compute/v1/projects/" + s.ProjectID + "/zones/" + zone + "/instances/" + name})
+		}
+		Reply(w, map[string]any{"items": items})
+		return true
+	case strings.HasSuffix(rest, "/listNetworkEndpoints") && r.Method == http.MethodPost:
+		if refused("listNetworkEndpoints") {
+			return true
+		}
+		key := strings.TrimSuffix(rest, "/listNetworkEndpoints")
+		items := []any{}
+		for _, name := range s.NEGEndpoints[key] {
+			items = append(items, map[string]any{"networkEndpoint": map[string]any{"instance": name}})
+		}
+		Reply(w, map[string]any{"items": items})
+		return true
+	case strings.Contains(rest, "/instanceGroupManagers/") && r.Method == http.MethodGet && !strings.Contains(strings.SplitN(rest, "/instanceGroupManagers/", 2)[1], "/"):
+		if refused("instanceGroupManagers") {
+			return true
+		}
+		Reply(w, map[string]any{"name": rest[strings.LastIndex(rest, "/")+1:], "targetPools": s.GroupTargetPools[rest]})
+		return true
+	}
+	return false
 }

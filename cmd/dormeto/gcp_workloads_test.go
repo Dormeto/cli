@@ -627,3 +627,61 @@ func TestGcpWorkloadsOnboardTakesDatabaseAndNotCloudSQL(t *testing.T) {
 		t.Fatalf("%s", out)
 	}
 }
+
+// --resource, the idle signals and --unchecked read into the request; without the URL map and the backend service, the run
+// says which form to give (gcponboard's check).
+func TestGcpWorkloadsOnboardReadsTheResourceForm(t *testing.T) {
+	metric := filepath.Join(t.TempDir(), "metric.json")
+	if err := os.WriteFile(metric, []byte(`{"type": "custom.googleapis.com/ci/queued", "aligner": "ALIGN_MAX", "below": 1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1",
+		"--resource", "projects/p/zones/europe-west1-b/instances/build-agent", "--idle-cpu", "3", "--idle-network", "off", "--idle-metric", metric, "--unchecked")
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	r := calls[0].r
+	want := map[string]any{"idleCpuPercent": 3.0, "idleNetworkBytes": "off", "idleMetric": map[string]any{"type": "custom.googleapis.com/ci/queued", "aligner": "ALIGN_MAX", "below": 1.0}}
+	if r.Resource != "projects/p/zones/europe-west1-b/instances/build-agent" || !r.Unchecked || !reflect.DeepEqual(r.Idle, want) || r.URLMap != "" {
+		t.Fatalf("%+v", r)
+	}
+	// inherit: nil, not sent; not given: none.
+	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--resource", "projects/p/instances/db", "--idle-metric", "inherit")
+	if r := calls[0].r; !reflect.DeepEqual(r.Idle, map[string]any{"idleMetric": nil}) {
+		t.Fatalf("%+v", r.Idle)
+	}
+	calls, _, _ = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--resource", "projects/p/instances/db")
+	if r := calls[0].r; r.Idle != nil {
+		t.Fatalf("%+v", r.Idle)
+	}
+	if _, errs, exit = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1", "--resource", "projects/p/instances/db", "--idle-cpu", "x"); exit != 2 || !strings.Contains(errs, "--idle-cpu: give a number") {
+		t.Fatalf("%d %q", exit, errs)
+	}
+	// Neither form: the run's check, not cobra's required flags.
+	if calls, _, exit = gcpRan(t, 0, "gcp", "workloads", "onboard", "--project", "p", "--region", "europe-west1"); exit != 0 || len(calls) != 1 {
+		t.Fatalf("%d %v", exit, calls)
+	}
+}
+
+// The gcp settings levels take the idle signals, a workload's flat and a router's as its defaults, inherit as null.
+func TestGcpSettingsTakeTheIdleSignals(t *testing.T) {
+	metric := filepath.Join(t.TempDir(), "metric.json")
+	if err := os.WriteFile(metric, []byte(`{"type": "custom.googleapis.com/ci/queued", "aligner": "ALIGN_SUM", "below": 2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls, errs, exit := gcpRan(t, 0, "gcp", "workloads", "settings", "build-agent", "--project", "p", "--region", "europe-west1", "--idle-cpu", "4", "--idle-metric", metric)
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	want := map[string]any{"idleCpuPercent": 4.0, "idleMetric": map[string]any{"type": "custom.googleapis.com/ci/queued", "aligner": "ALIGN_SUM", "below": 2.0}}
+	if !reflect.DeepEqual(calls[0].r.Levels, want) {
+		t.Fatalf("%v", calls[0].r.Levels)
+	}
+	calls, errs, exit = gcpRan(t, 0, "gcp", "routers", "settings", "--project", "p", "--region", "europe-west1", "--idle-network", "inherit", "--idle-metric", "off")
+	if exit != 0 || errs != "" || len(calls) != 1 {
+		t.Fatalf("%d %q %v", exit, errs, calls)
+	}
+	if want := map[string]any{"defaults": map[string]any{"idleNetworkBytes": nil, "idleMetric": "off"}}; !reflect.DeepEqual(calls[0].r.Levels, want) {
+		t.Fatalf("%v", calls[0].r.Levels)
+	}
+}

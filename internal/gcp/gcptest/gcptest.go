@@ -118,6 +118,26 @@ type Server struct {
 	// Statuses are the standalone workloads' statuses the controller's POST /v1/actions {action: status} answers, by ID
 	// (AWS's status keys); a workload without one is a 404.
 	Statuses map[string]map[string]any
+	// Standalone are the resources the controller's onboarding by resource finds, by path; StandaloneReasons why one is not
+	// eligible, by path.
+	Standalone        map[string]StandaloneResource
+	StandaloneReasons map[string][]string
+	// What tells whether a VM or a group serves a load balancer. ServiceBackends are the project's backend services'
+	// backends (their groups' URLs), by "global/<name>" or "<region>/<name>", as aggregated/backendServices lists them;
+	// TargetPools a target pool's VMs (URLs) by "<region>/<name>"; TargetInstances a target instance's VM (URL) by
+	// "<zone>/<name>". GroupMembers are an instance group's VMs by "zones|regions/<location>/instanceGroups/<name>",
+	// NEGEndpoints a zonal NEG's VMs by "zones/<zone>/networkEndpointGroups/<name>", GroupTargetPools a managed group's
+	// targetPools (URLs) by "zones|regions/<location>/instanceGroupManagers/<name>". Refused refuses a listing (403) by its
+	// name (backendServices, targetPools, targetInstances, listInstances, listNetworkEndpoints, instanceGroupManagers);
+	// Unreachables are the scopes an aggregated listing answers as unreachable, by its name.
+	ServiceBackends  map[string][]string
+	TargetPools      map[string][]string
+	TargetInstances  map[string]string
+	GroupMembers     map[string][]string
+	NEGEndpoints     map[string][]string
+	GroupTargetPools map[string][]string
+	Refused          map[string]bool
+	Unreachables     map[string][]string
 	// Waking are the states a workload goes through after a wake, by ID: each GET /v1/workloads/<id> answers the next, the last
 	// one staying. None: the wake leaves it AWAKE at once.
 	Waking map[string][]string

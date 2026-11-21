@@ -190,8 +190,25 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	var name string
 	var tags []string
 	var tagged map[string]string
-	cmd := gcpCommand("onboard", "Onboard a backend service as a workload",
-		"Onboard a backend service of a global, regional or classic external Application Load Balancer as a workload. The\n"+
+	var resource string
+	var unchecked bool
+	idleLevels := levelFlags{unset: "inherit", metricShape: googleMetricShape}
+	var idleBody map[string]any
+	cmd := gcpCommand("onboard", "Onboard a backend service or a standalone resource as a workload",
+		"Onboard a backend service of a global, regional or classic external Application Load Balancer as a workload\n"+
+			"(--url-map and --backend-service), or a standalone resource (--resource: a VM outside a managed group, a managed group,\n"+
+			"or a Cloud SQL instance, by its path), napped on its idle signals, with no waiting page. One form or the other.\n"+
+			"A standalone resource: the controller checks it, then the CLI checks, as you, that it serves no load balancer, and refuses\n"+
+			"it naming what uses it: a backend service of any scheme, global or regional, through an instance group or a zonal network\n"+
+			"endpoint group holding it, a target pool (a group's targetPools, a pool listing the VM) or a target instance naming the VM.\n"+
+			"A listing you may not make, or one answered partial, is not checked: the onboarding stops, naming it, unless --unchecked\n"+
+			"(then a VM or a group that serves a load balancer would be stopped when its metrics are idle). --dry-run makes the same\n"+
+			"check. The tag dormeto=managed is bound to the\n"+
+			"resource and its --database companions, as you; --id defaults to the resource's name. --idle-cpu, --idle-network\n"+
+			"and --idle-metric (Google Cloud's shape) are its idle signals, as the settings levels take them; the router refuses\n"+
+			"an HTTP workload's settings (--wake-mode) for it, in its words. --load-balancer, --request-logs and --gke-cluster are\n"+
+			"an HTTP workload's. The rest of this help is the HTTP form's.\n"+
+			"The\n"+
 			"controller checks the eligibility first and names the VMs, managed groups and databases; the tag dormeto=managed is then\n"+
 			"bound to each of them as you (the router holds no permission to tag), and the workload is onboarded awake. --id defaults\n"+
 			"to the backend service's name when that is a valid ID (lowercase letters, digits and dashes, at most 40 characters), else\n"+
@@ -208,8 +225,9 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			"waker ignores (scanners, IP lists); else it counts every request, and the onboarding warns of that. --request-logs sets\n"+
 			"the backend service's logConfig to every request (enable, sample rate 1.0), as you, before the onboarding; the\n"+
 			"offboarding sets it back unless it changed since. Cloud Logging bills the logs past its free tier.",
-		&f, []string{"project", "region", "url-map", "backend-service"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
+		&f, []string{"project", "region"}, version, func(ctx context.Context, d gcponboard.Deps, r gcponboard.Request) int {
 			r.URLMap, r.BackendService, r.ID, r.Hibernate = urlMap, backendService, id, hibernating
+			r.Resource, r.Unchecked, r.Idle = resource, unchecked, idleBody
 			r.LoadBalancer, r.CloudSQL, r.GKECluster, r.RequestLogs = loadBalancer, databases, cluster, requestLogs
 			r.WakeMode, r.FallbackTypes = wakeMode, fallbackTypes
 			r.Name, r.Tags = strings.TrimSpace(name), tagged
@@ -227,6 +245,13 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 			return err
 		}
 		idleGiven, wakeGiven = c.Flags().Changed("idle-minutes"), c.Flags().Changed("wake-timeout-seconds")
+		idleBody = map[string]any{}
+		if err := idleLevels.idleBody(c, idleBody); err != nil {
+			return finish(c, err)
+		}
+		if len(idleBody) == 0 {
+			idleBody = nil
+		}
 		// Given empty, as a variable with no value: read as not given, it would onboard something else.
 		for _, name := range []string{"load-balancer", "gke-cluster", "wake-mode"} {
 			if v, _ := c.Flags().GetString(name); v == "" && c.Flags().Changed(name) {
@@ -275,9 +300,12 @@ func newGcpWorkloadsOnboard(run gcpRun, version string) *cobra.Command {
 	fl.StringVar(&hibernate, "hibernate", "", sharedOnboardHelp["hibernate"])
 	fl.StringArrayVar(&fallbackTypes, "fallback-type", nil, sharedOnboardHelp["fallback-type"])
 	fl.StringArrayVar(&databases, "database", nil, sharedOnboardHelp["database"])
-	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's name)")
-	fl.StringVar(&urlMap, "url-map", "", "the URL map of the load balancer (required)")
-	fl.StringVar(&backendService, "backend-service", "", "the application's backend service (required)")
+	fl.StringVar(&id, "id", "", "the workload's ID (default: the backend service's or the resource's name)")
+	fl.StringVar(&resource, "resource", "", "a standalone resource's path: projects/<p>/zones/<z>/instances/<name>, projects/<p>/zones|regions/<l>/instanceGroupManagers/<name> or projects/<p>/instances/<name>")
+	idleLevels.bindIdleFlags(cmd)
+	fl.BoolVar(&unchecked, "unchecked", false, "with --resource: go on when the load-balancer check cannot list what it reads (a VM or a group serving a load balancer would be stopped when its metrics are idle)")
+	fl.StringVar(&urlMap, "url-map", "", "the URL map of the load balancer (an HTTP workload's, with --backend-service)")
+	fl.StringVar(&backendService, "backend-service", "", "the application's backend service (an HTTP workload's, with --url-map)")
 	fl.StringVar(&loadBalancer, "load-balancer", "", "the load balancer's kind: global, regional, classic, internal (a regional map) or cross-region-internal (default: read from Google)")
 	fl.BoolVar(&requestLogs, "request-logs", false, "turn the backend service's request logs on, every request, for the idle check to read them (set back at the offboarding)")
 	fl.StringVar(&cluster, "gke-cluster", "", "the workload's pods are in this GKE cluster, as <location>/<name>: its Kubernetes RBAC is printed, asked and applied")

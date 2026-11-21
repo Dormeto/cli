@@ -56,6 +56,12 @@ type Request struct {
 	// The workloads commands: the workload's ID (an argument, or --id of onboard), the URL map and backend service to
 	// onboard, and the settings given (nil: not given).
 	ID, URLMap, BackendService string
+	// Resource is onboard's --resource: a standalone workload's resource, by its path, in place of the URL map and the backend
+	// service. Idle are its idle signals (idleCpuPercent, idleNetworkBytes, idleMetric: a value, "off", or nil to inherit), and
+	// Unchecked is --unchecked: a refused listing of the project's backend services does not stop the onboarding.
+	Resource  string
+	Idle      map[string]any
+	Unchecked bool
 	// Name is --name of onboard (the workload's name for people, trimmed; "": the router's, the ID) and Tags its --tag, Dormeto's
 	// labels (nil: none), both checked by the command.
 	Name        string
