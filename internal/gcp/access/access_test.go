@@ -124,7 +124,7 @@ func TestManagerSectionIsLoaded(t *testing.T) {
 		t.Fatalf("accounts %v", m.ServiceAccounts)
 	}
 	d, c := m.Roles["dormetoDiscovery"], m.Roles["dormetoCommand"]
-	if d.Title != "Dormeto manager discovery" || len(d.Permissions) != 32 ||
+	if d.Title != "Dormeto manager discovery" || len(d.Permissions) != 34 ||
 		!reflect.DeepEqual(d.OrganizationPermissions, []string{"resourcemanager.folders.get", "resourcemanager.folders.list", "resourcemanager.organizations.get"}) {
 		t.Fatalf("dormetoDiscovery %+v", d)
 	}

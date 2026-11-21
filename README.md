@@ -1894,7 +1894,9 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   - the service accounts `dmt-<env>-discovery` and `dmt-<env>-command`, each granting `roles/iam.workloadIdentityUser`
     to the principal set of the manager roles that act as it: discovery to `dmt-<env>-manager-discovery`, `-api` and
     `-savings`, command to `dmt-<env>-manager-operations`, `-api` and `-fleet`;
-  - at each scope, the custom role `dormetoDiscovery` for the discovery account (read only). It is defined in a project
+  - at each scope, the custom role `dormetoDiscovery` for the discovery account (read only: the load balancers, VMs,
+    groups, Cloud Run services, Cloud SQL instances (`cloudsql.instances.get|list`, for the standalone candidates) and
+    request counts of its scopes). It is defined in a project
     scope's project, and in the organization of a folder or organization scope, where it also holds
     `resourcemanager.folders.get|list` and `resourcemanager.organizations.get`;
   - for each router at the scopes (a Cloud Run service `dmtr-<region>-controller`), for the command account:

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto gcp connect`, run again, gives a connected project's discovery role (`dormetoDiscovery`) the two Cloud SQL reads `cloudsql.instances.get` and `cloudsql.instances.list` (the manager lists Cloud SQL instances as standalone candidates); nothing else changes. A first connect plans the role with 34 permissions in a project, 37 in an organization.
+
 **Breaking:** `dormeto aws discovery candidates`' first column is headed `CANDIDATE` (was `TARGET GROUP OR BACKEND SERVICE`): it holds a target group, a backend service or a standalone resource. `dormeto aws workloads list` and `discovery candidates` have a `KIND` column after the name (`http`, `standalone`); with no alias, a script that reads their columns by position reads one more.
 
 `dormeto aws` knows the standalone workloads, the second kind beside the HTTP ones: a resource no route uses (an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance or cluster), napped when its idle signals (its CPU, its network, a custom CloudWatch metric) stay under their thresholds, and woken by a schedule or a person. They need the manager and the router that know standalone workloads.
