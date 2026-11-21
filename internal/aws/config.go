@@ -133,10 +133,11 @@ func NewRegion(cfg awssdk.Config, region, reader string) *Region {
 func (r *Region) Metrics() metrics.CloudWatchPort { return metricsPort{r.cloudwatch} }
 
 // Scan is the ports of the region's scan (discover.ScanRegion): ELB, Auto
-// Scaling, EC2, ECS, CloudWatch and the EKS clusters.
+// Scaling, EC2, ECS, CloudWatch, RDS (read by the standalone scan only) and
+// the EKS clusters.
 func (r *Region) Scan() discover.ScanPorts {
 	return discover.ScanPorts{
-		ELBv2: r.elbv2, AutoScaling: r.autoscaling, EC2: scanEC2{r.ec2}, ECS: scanECS{r.ecs}, CloudWatch: r.cloudwatch, Kubernetes: r.kubernetes,
+		ELBv2: r.elbv2, AutoScaling: r.autoscaling, EC2: scanEC2{r.ec2}, ECS: scanECS{r.ecs}, CloudWatch: r.cloudwatch, RDS: r.rds, Kubernetes: r.kubernetes,
 	}
 }
 

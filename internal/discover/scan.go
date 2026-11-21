@@ -37,10 +37,19 @@ const (
 type Where struct{ Account, Region string }
 
 // ScanResult is a region's scan: its candidates in the scan's order and the
-// region's clusters as read (the estimate lists those it cannot read).
+// region's clusters as read (the estimate lists those it cannot read), and,
+// with the standalone scan, its standalone candidates and what it could not
+// read (nil without it).
 type ScanResult struct {
-	Rules    []ScannedRule        `json:"rules"`
-	Clusters []kubernetes.Cluster `json:"clusters"`
+	Rules      []ScannedRule        `json:"rules"`
+	Clusters   []kubernetes.Cluster `json:"clusters"`
+	Standalone *StandaloneScan      `json:"standalone,omitempty"`
+}
+
+// ScanOptions are a scan's options. Standalone (the perimeter's standalone
+// scan on): the standalone candidates too; off, not one call more.
+type ScanOptions struct {
+	Standalone bool
 }
 
 // row is a rule of a listener of an application load balancer.
@@ -110,6 +119,14 @@ var accessDenied = regexp.MustCompile(`(?i)AccessDenied|not authorized`)
 // (the hour before it). A call that fails fails the scan, except the clusters'
 // listing when the role lacks EKS rights (the region is scanned as before).
 func ScanRegion(ctx context.Context, ports ScanPorts, where Where, now time.Time) (ScanResult, error) {
+	return ScanRegionWith(ctx, ports, where, now, ScanOptions{})
+}
+
+// ScanRegionWith is ScanRegion with its options. With the standalone scan, a
+// list the discovery role may not read, the services' tags refused and the
+// standalone idle share CloudWatch fails for are said in the result's report,
+// not failures.
+func ScanRegionWith(ctx context.Context, ports ScanPorts, where Where, now time.Time, options ScanOptions) (ScanResult, error) {
 	elbv2 := ports.ELBv2
 	all, err := pages(func(m string) ([]LoadBalancer, string, error) {
 		out, err := elbv2.DescribeLoadBalancers(ctx, DescribeLoadBalancersInput{Marker: m})
@@ -179,7 +196,7 @@ func ScanRegion(ctx context.Context, ports ScanPorts, where Where, now time.Time
 			visible = append(visible, r)
 		}
 	}
-	own, err := backendOwners(ctx, ports)
+	own, err := backendOwners(ctx, ports, options.Standalone)
 	if err != nil {
 		return ScanResult{}, err
 	}
@@ -331,7 +348,45 @@ func ScanRegion(ctx context.Context, ports ScanPorts, where Where, now time.Time
 			}
 		}
 	}
-	return ScanResult{Rules: candidates, Clusters: clusters}, nil
+	if !options.Standalone {
+		return ScanResult{Rules: candidates, Clusters: clusters}, nil
+	}
+	// A resource behind a target group a rule forwards to is its HTTP candidate's.
+	routed := map[string]bool{}
+	for _, r := range rows {
+		for _, arn := range r.forward.all {
+			routed[arn] = true
+		}
+	}
+	found, report, err := standaloneRules(ctx, ports, where, standaloneRead{targetGroups: tgs, routed: routed, groups: own.asgs, services: own.described})
+	if err != nil {
+		return ScanResult{}, err
+	}
+	// Their idle share by the default signals of their type, the eligible and managed ones as for HTTP. A batch
+	// CloudWatch fails for leaves its candidates without a share, said in the report: never an idle share it did not read.
+	var read []StandaloneRule
+	for _, c := range found {
+		if c.Eligibility != Ineligible {
+			read = append(read, c)
+		}
+	}
+	if len(read) > 0 && ports.CloudWatch != nil {
+		idle := StandaloneIdle(ctx, ports.CloudWatch, read, now)
+		for i := range found {
+			if share, ok := idle.Shares[found[i].ID]; ok && found[i].Eligibility != Ineligible {
+				found[i].IdleHours7d = share
+			}
+		}
+		for _, f := range idle.Failed {
+			plural := "s"
+			if len(f.IDs) == 1 {
+				plural = ""
+			}
+			report.Problems = append(report.Problems, fmt.Sprintf("the idle share of %d standalone candidate%s could not be read: %s", len(f.IDs), plural, f.Error))
+		}
+	}
+	report.Problems = append(own.problems, report.Problems...)
+	return ScanResult{Rules: candidates, Clusters: clusters, Standalone: &StandaloneScan{Rules: found, Report: report}}, nil
 }
 
 type candidateContext struct {

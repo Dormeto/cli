@@ -55,7 +55,9 @@ type Hours struct {
 }
 
 // Input is idleWindowAdvice's argument. WakeMs, ActualFrom and Stopped are nil when Node's are null; Running nil is
-// a backend running all the time. Ctx defaults to context.Background().
+// a backend running all the time. Ctx defaults to context.Background(). Windows are those tried (nil: the nine
+// IdleWindows; a standalone workload's StandaloneWindows), Recommendable those the knee chooses from (nil: every
+// window tried).
 type Input struct {
 	Ctx              context.Context
 	Requests         RequestMinutes
@@ -72,6 +74,8 @@ type Input struct {
 	Estimated        bool
 	Now              time.Time
 	Running          []Period
+	Windows          []int
+	Recommendable    []int
 }
 
 // Advice is the advice of a workload.
@@ -86,7 +90,15 @@ func Advice(in Input) (Result, error) {
 		w := *in.WakeMs / 1000
 		wakeSeconds, wake = &w, w
 	}
-	replayed, err := Replay(ReplayInput{Requests: in.Requests, Windows: Windows(in.Current), CheckMinutes: in.CheckMinutes, WakeSeconds: wake, StartAsleep: in.StartAsleep})
+	tried := in.Windows
+	if tried == nil {
+		tried = IdleWindows
+	}
+	recommendable := in.Recommendable
+	if recommendable == nil {
+		recommendable = tried
+	}
+	replayed, err := Replay(ReplayInput{Requests: in.Requests, Windows: windowsFor(in.Current, tried), CheckMinutes: in.CheckMinutes, WakeSeconds: wake, StartAsleep: in.StartAsleep})
 	if err != nil {
 		return Result{}, err
 	}
@@ -172,7 +184,7 @@ func Advice(in Input) (Result, error) {
 	actual := float64(in.ActualWakes)
 	return Result{
 		ComputedAt: isoOf(in.Now.UnixMilli()), From: in.Requests.From, To: in.Requests.To, Current: in.Current,
-		Recommended: Recommend(wakeRows), CheckMinutes: in.CheckMinutes, WakeSeconds: wakeSeconds, Priced: priced, Windows: windows,
+		Recommended: recommendFrom(wakeRows, recommendable), CheckMinutes: in.CheckMinutes, WakeSeconds: wakeSeconds, Priced: priced, Windows: windows,
 		Actual: Actual{Wakes: in.ActualWakes, ReplayedWakes: replayedWakes,
 			Noisy: in.ActualFrom != nil && float64(replayedWakes) > 1.5*actual && float64(replayedWakes) >= actual+3},
 		WakerTargetGroup: in.WakerTargetGroup, Estimated: in.Estimated, Hours: requestHours(in.Requests.Minutes, fromMs, toMs),

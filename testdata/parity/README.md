@@ -1,6 +1,6 @@
 # Shared cases
 
-Manager 0.24.0, router 0.40.0, manager commit `d29d4ffd1e73fcfa2a672a56f57419790c8d3dba`.
+Manager 0.24.0, router 0.41.0, manager commit `a872fe7f6bfd3ba0fdac3fa377370d4412c41de9`.
 
 Written by the manager's `scripts/parity/export.mjs`: the product's Node functions run over the corpus of
 `scripts/parity/cases/`, each case's input and output as JSON. Do not edit these files: export them again in the
@@ -74,6 +74,11 @@ the function:
   with `now` an ISO date (Node takes milliseconds) and `prices` in place of the `hourly` callback: `[{item, usd}]`,
   the hourly price of each item it is asked (`usd` null: no price); an item is found by equal JSON (sorted keys), one
   missing is an error. Output: the `IdleWindowAdvice` (`computedAt` is `now`).
+- `standaloneAdvice` (a standalone resource's, the estimate's and the Activity history's): `{from, to, signals:
+  [{signal, below, applies}], values: [{signal, values}] (a value or null a 5-minute point from `from`), awake: [{from,
+  to}]}` give the busy points as the `standalone-idle` topic's `busyMinutes` does (its output is the advisor's
+  `requests`); the rest is `idleWindowAdvice`'s argument, with `windows` (the 15 from 5 minutes to 24 hours) and
+  `recommendable` (5 to 120: the knee is chosen among them). Output: the `IdleWindowAdvice`.
 - `replayIdle` (Go `replay.Replay`): `{requests, windows, checkMinutes, wakeSeconds, startAsleep}`. Output: one
   `{minutes, asleep: [{from, to}], wakes, wokeAt}` per window.
 - `recommendWindow` (Go `replay.Recommend`): `{rows: [{minutes, wakes}]}`. Output: the window, in minutes.
@@ -82,7 +87,7 @@ the function:
 
 No recorded answers.
 
-Cases (43):
+Cases (47):
 
 - replayIdle: one request a day, awake at the start, a wake of 60 s
 - replayIdle: a request every 10 minutes for an hour, at 5 and 15 minutes
@@ -127,6 +132,10 @@ Cases (43):
 - idleWindowAdvice: a current window of a day is shown, never recommended
 - idleWindowAdvice: Spot capacity and pods on nodes, in Paris business hours
 - idleWindowAdvice: as the estimate calls it: a 60-minute window, no history, a Fargate service on Fargate and Fargate Spot
+- standaloneAdvice: always busy, never asleep whatever the window
+- standaloneAdvice: always idle, asleep from the first window's end, no wake
+- standaloneAdvice: a daily job, an hour at 09:00 UTC: a stop a day below a day's window
+- standaloneAdvice: stopped for part of the window, 20:00 to 08:00 UTC the first night: no point then, nothing busy, nothing saved
 
 ## `prices`
 
@@ -186,6 +195,16 @@ Go `internal/discover`). `input.function` names the function:
   `list`); `router`: as for `clustersOf`; `reader` names who reads the clusters in the reason of one refused (`DmtDiscoveryRole` when absent). Output: `{rules, clusters}` — the `ScannedRule`s in the scan's order, and the
   region's clusters as read (`{name, reason}`, `reason` null for one read); `{error: {name, message}}` when the scan
   fails.
+  With `standalone: true` (the perimeter's standalone scan on; vision standalone workloads design §6) the scan also lists
+  the region's EC2 instances (`ec2.describeInstances` with no id, `NextToken` pages), its Auto Scaling groups, its ECS
+  services described with their tags (`include: ["TAGS"]`; refused: again without, said), its RDS instances and clusters
+  (`rds.describeDBInstances`, `describeDBClusters`, `Marker` pages, tags from `TagList`; one refused: that kind
+  unread, said) that no route uses: after the HTTP rules, a `StandaloneRule` each (`kind: "standalone"`, `id` and
+  `resourceArn` its ARN, `backend {kind, id, arn}`, `name`, `tags`, `eligibility`, `reason` (the router's texts,
+  joined by `; `), `workloadId` when managed, `idleHours7d` as the `standalone-idle` topic's `standaloneIdle` gives it
+  for the eligible and managed ones), instances, then groups, services, RDS instances, RDS clusters. Its output adds
+  `standalone: {problems, unread}`: what the scan could not read (sentences), and the kinds whose stored candidates stay.
+  `ports` then also lists `ec2` and `rds`.
 - `clustersOf`: `{where: {account, region}, reader?, router?}`; `router` (the name of the router of the account and region)
   is on a kubernetes port when one is there: a cluster whose private access is on and whose public endpoint is not open to
   `0.0.0.0/0` is read through its proxy (the recorded `kubernetes.of`), or, without `router`, not reached (`where` named in its
@@ -203,9 +222,9 @@ Go `internal/discover`). `input.function` names the function:
 - `loadInventory` (`org.ts`, the organization's inventory): `{tags}` and `organizations.*` answers. Output:
   `{accounts, ous}`.
 
-Recorded answers used: `autoscaling.describeAutoScalingGroups`, `cloudwatch.getMetricData`, `ec2.describeInstances`, `ecs.describeServices`, `ecs.listClusters`, `ecs.listServices`, `eks.describeCluster`, `eks.listClusters`, `elbv2.describeListeners`, `elbv2.describeLoadBalancers`, `elbv2.describeRules`, `elbv2.describeTags`, `elbv2.describeTargetGroups`, `elbv2.describeTargetHealth`, `kubernetes.get`, `kubernetes.list`, `kubernetes.of`, `organizations.listAccountsForParent`, `organizations.listOrganizationalUnitsForParent`, `organizations.listRoots`, `organizations.listTagsForResource`.
+Recorded answers used: `autoscaling.describeAutoScalingGroups`, `cloudwatch.getMetricData`, `ec2.describeInstances`, `ecs.describeServices`, `ecs.listClusters`, `ecs.listServices`, `eks.describeCluster`, `eks.listClusters`, `elbv2.describeListeners`, `elbv2.describeLoadBalancers`, `elbv2.describeRules`, `elbv2.describeTags`, `elbv2.describeTargetGroups`, `elbv2.describeTargetHealth`, `kubernetes.get`, `kubernetes.list`, `kubernetes.of`, `organizations.listAccountsForParent`, `organizations.listOrganizationalUnitsForParent`, `organizations.listRoots`, `organizations.listTagsForResource`, `rds.describeDBClusters`, `rds.describeDBInstances`.
 
-Cases (95):
+Cases (99):
 
 - scanRegion: the region of the router discovery cases: one candidate per application target group, one per rule forwarding to none
 - scanRegion: the idle hours of the last 7 days, for eligible and managed target groups only
@@ -302,6 +321,10 @@ Cases (95):
 - resourceTagsMatch: no criterion
 - loadInventory: the OU tree walked, pages followed, each active account with its OU path from the root
 - loadInventory: account tags read when asked
+- scanRegion: standalone: each kind of resource no route uses, eligible, ineligible in the router's words, managed, or left out
+- scanRegion: standalone: the discovery role without the RDS actions: the other kinds listed, each RDS list said
+- scanRegion: standalone: the ECS services' tags refused: described without them, said
+- scanRegion: standalone: CloudWatch failing for the idle share: no share, said
 
 ## `stopped`
 
@@ -349,6 +372,60 @@ Cases (29):
 - strategyCounts: an EC2 capacity provider and Fargate Spot
 - strategyCounts: three providers, weights 1, 1, 1 over 5
 - strategyCounts: a desired count of 0
+
+## `standalone-idle`
+
+A standalone resource's idle signals (`packages/discovery/src/standalone-idle.ts`, `activity-step.ts`,
+`packages/fleet/src/activity.ts`; Go `internal/metrics`, `internal/replay`). `input.function` names the function:
+
+- `defaultSignals`: `{backend: {kind, id, arn}}`. Output: `[{signal, below, metric: {namespace, name, dimensions:
+  [{Name, Value}], stat}}]`, the router's built-ins of a workload with no companion (CPU under 5 %, a database's
+  connections under 1); an ECS service's cluster from its ARN (`service/<cluster>/<name>`, `default` for `service/<name>`).
+- `standaloneIdle`: `{candidates, now}`. The week is the 168
+  hours to `now`'s last hour 10 minutes behind (`floor((now − 10 min) / 1 h)`); one `GetMetricData` call (and its
+  pages) a batch of at most 500 queries, `Period` 300, the queries' `Id` `s<n>` in the candidates' order. An hour is
+  idle when every signal has its 12 points and each is under its threshold; a candidate with no point all week has
+  `null`; a call that fails, or a result whose `StatusCode` is neither `Complete` nor `PartialData`, fails its batch.
+  Output: `{shares: {<candidate id>: hours|null}, failed: [{ids, error}]}` (`error`: `<name>: <message>`).
+- `activityPlan`: `{backends: [{kind, id, companion?}], settings: {idleCpuPercent, idleNetworkBytes, idleMetric}}`.
+  Output: `{signals: [{signal, below, applies, reason?, series: [{ids, scale}]}], queries: [{id, namespace, name,
+  dimensions, stat}]}`, the router's queries (its `activity.mjs`); `scale` is `same`, `ec2PerMinute` (÷ 5) or
+  `rdsPerMinute` (× 60).
+- `activityPoints`: `{queries, days, now}`. The window ends at `now`'s 5-minute boundary 10 minutes behind and starts
+  `days` days before; every page read. Output: `{from, to, points: {<id>: [[minute from `from`, value]]}}`, or
+  `{error: {message}}` for a result CloudWatch could not read.
+- `signalValues`: `{signals, read: {from, to, points}}`. Output: `[{signal, values}]` for each signal that applies, a
+  value a 5-minute point (each series the sum of its queries, scaled; the largest series; null when a query has no point).
+- `busyMinutes`: `{signals, values, from, to, awake: [{from, to}]}`. Output: `{from, to, minutes: [[minute, 1]]}`, the
+  five minutes of each busy point: a point inside an awake period with a signal at or over its threshold or null.
+
+Recorded answers used: `cloudwatch.getMetricData`.
+
+Cases (23):
+
+- defaultSignals: instance
+- defaultSignals: asg
+- defaultSignals: ecs
+- defaultSignals: an ECS service of the old ARN format (cluster default)
+- defaultSignals: rds-instance
+- defaultSignals: rds-cluster
+- standaloneIdle: an hour idle with its 12 points under; one over or missing, busy; no point all week, no share
+- standaloneIdle: CloudWatch's answer in pages (NextToken, PartialData)
+- standaloneIdle: a query CloudWatch could not read (Forbidden): the batch failed, never idle
+- standaloneIdle: CloudWatch failing: the batch failed
+- activityPlan: an instance: CPU, network in and out, the custom metric with its id
+- activityPlan: a group by its name
+- activityPlan: an ECS service: CPU, no network
+- activityPlan: a database: its throughput and connections
+- activityPlan: a server with companions: its own CPU, the companions' connections as a list
+- activityPlan: two backends: a series each
+- activityPlan: no backend: nothing to read, ${resource} not replaced
+- activityPlan: every signal off
+- activityPoints: a day of 5-minute points to 10 minutes ago, in pages
+- activityPoints: a query CloudWatch could not read: an error, never an idle day
+- signalValues: network in and out summed a minute (EC2 a 5-minute sum, RDS bytes a second), the largest series, a missing query
+- busyMinutes: a point at or over its threshold or missing while awake is busy, asleep says nothing
+- busyMinutes: nothing awake, nothing busy
 
 ## `estimate`
 

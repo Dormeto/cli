@@ -34,14 +34,33 @@ func nodeClusterOf(tags []Tag) string {
 type asgOwner struct{ name, arn, cluster string }
 
 // owners: target group → Auto Scaling group and ECS service ARN (the backends
-// that register targets in it).
+// that register targets in it); asgs and described, every group and service as
+// read (the standalone scan's); problems, what the standalone scan says the run
+// could not read (the services' tags).
 type owners struct {
-	groups   map[string]asgOwner
-	services map[string]string
+	groups    map[string]asgOwner
+	services  map[string]string
+	asgs      []AutoScalingGroup
+	described []Service
+	problems  []string
 }
 
-func backendOwners(ctx context.Context, ports ScanPorts) (owners, error) {
-	o := owners{groups: map[string]asgOwner{}, services: map[string]string{}}
+// backendOwners reads the groups and the services; standalone: the services with their tags, while that is allowed (a
+// refusal describes them without, and the run says so; it never fails the region).
+func backendOwners(ctx context.Context, ports ScanPorts, standalone bool) (owners, error) {
+	o := owners{groups: map[string]asgOwner{}, services: map[string]string{}, problems: []string{}}
+	tagged := standalone
+	describe := func(cluster string, batch []string) (DescribeServicesOutput, error) {
+		if tagged {
+			out, err := ports.ECS.DescribeServices(ctx, DescribeServicesInput{Cluster: cluster, Services: batch, Include: []string{"TAGS"}})
+			if err == nil || !refused(err) {
+				return out, err
+			}
+			tagged = false
+			o.problems = append(o.problems, ecsTagsUnread)
+		}
+		return ports.ECS.DescribeServices(ctx, DescribeServicesInput{Cluster: cluster, Services: batch})
+	}
 	if ports.AutoScaling != nil {
 		asgs, err := pages(func(token string) ([]AutoScalingGroup, string, error) {
 			out, err := ports.AutoScaling.DescribeAutoScalingGroups(ctx, DescribeAutoScalingGroupsInput{NextToken: token})
@@ -50,6 +69,7 @@ func backendOwners(ctx context.Context, ports ScanPorts) (owners, error) {
 		if err != nil {
 			return o, err
 		}
+		o.asgs = asgs
 		for _, g := range asgs {
 			cluster := nodeClusterOf(g.Tags)
 			for _, arn := range g.TargetGroupARNs {
@@ -74,10 +94,11 @@ func backendOwners(ctx context.Context, ports ScanPorts) (owners, error) {
 				return o, err
 			}
 			for _, batch := range chunks(arns, 10) {
-				out, err := ports.ECS.DescribeServices(ctx, DescribeServicesInput{Cluster: cluster, Services: batch})
+				out, err := describe(cluster, batch)
 				if err != nil {
 					return o, err
 				}
+				o.described = append(o.described, out.Services...)
 				for _, s := range out.Services {
 					for _, lb := range s.LoadBalancers {
 						if lb.TargetGroupArn != "" && s.ServiceArn != "" {

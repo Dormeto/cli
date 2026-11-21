@@ -150,6 +150,7 @@ type Tag struct {
 // DBInstance is the part of an RDS instance Describe reads.
 type DBInstance struct {
 	DBInstanceIdentifier string `json:"DBInstanceIdentifier,omitempty"`
+	DBInstanceArn        string `json:"DBInstanceArn,omitempty"`
 	DBInstanceClass      string `json:"DBInstanceClass,omitempty"`
 	Engine               string `json:"Engine,omitempty"`
 	MultiAZ              bool   `json:"MultiAZ,omitempty"`
@@ -183,6 +184,7 @@ type ServerlessV2Scaling struct {
 // DBCluster is the part of an Aurora cluster Describe reads.
 type DBCluster struct {
 	DBClusterIdentifier              string               `json:"DBClusterIdentifier,omitempty"`
+	DBClusterArn                     string               `json:"DBClusterArn,omitempty"`
 	Engine                           string               `json:"Engine,omitempty"`
 	ServerlessV2ScalingConfiguration *ServerlessV2Scaling `json:"ServerlessV2ScalingConfiguration,omitempty"`
 	// What discovery's databases read.

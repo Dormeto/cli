@@ -21,19 +21,23 @@ type ec2API interface {
 	DescribeSecurityGroups(context.Context, *ec2.DescribeSecurityGroupsInput, ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error)
 }
 
-// scanEC2 is discover.EC2Port: the instances with their tags.
+// scanEC2 is discover.EC2Port: the instances with their tags, by id or a page of the region's (the standalone scan:
+// their state, root device and lifecycle too).
 type scanEC2 struct{ client ec2API }
 
 func (p scanEC2) DescribeInstances(ctx context.Context, in discover.DescribeInstancesInput) (discover.DescribeInstancesOutput, error) {
-	out, err := p.client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: in.InstanceIds})
+	out, err := p.client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: in.InstanceIds, NextToken: optional(in.NextToken)})
 	if err != nil {
 		return discover.DescribeInstancesOutput{}, err
 	}
-	var res discover.DescribeInstancesOutput
+	res := discover.DescribeInstancesOutput{NextToken: awssdk.ToString(out.NextToken)}
 	for _, r := range out.Reservations {
 		var reservation discover.Reservation
 		for _, i := range r.Instances {
-			instance := discover.Instance{InstanceID: awssdk.ToString(i.InstanceId)}
+			instance := discover.Instance{InstanceID: awssdk.ToString(i.InstanceId), RootDeviceType: string(i.RootDeviceType), InstanceLifecycle: string(i.InstanceLifecycle)}
+			if i.State != nil {
+				instance.State = &discover.InstanceState{Name: string(i.State.Name)}
+			}
 			for _, t := range i.Tags {
 				instance.Tags = append(instance.Tags, discover.Tag{Key: awssdk.ToString(t.Key), Value: awssdk.ToString(t.Value)})
 			}

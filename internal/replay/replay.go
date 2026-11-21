@@ -58,8 +58,11 @@ const (
 )
 
 // Windows returns the windows tried: the nine, and the current one when it is not among them.
-func Windows(current int) []int {
-	out := append([]int{}, IdleWindows...)
+func Windows(current int) []int { return windowsFor(current, IdleWindows) }
+
+// windowsFor returns the windows tried: base, and the current one when it is not among them.
+func windowsFor(current int, base []int) []int {
+	out := append([]int{}, base...)
 	if !slices.Contains(out, current) {
 		out = append(out, current)
 	}
@@ -180,15 +183,18 @@ func Replay(in ReplayInput) ([]ReplayedWindow, error) {
 // Recommend returns the shortest of the nine windows whose wakes are at most wakes(longest) + 10% of what the
 // longest avoids against the shortest; the same wakes everywhere (no request, or no gap), the shortest, which saves
 // the most at no cost.
-func Recommend(rows []WakeRow) int {
+func Recommend(rows []WakeRow) int { return recommendFrom(rows, IdleWindows) }
+
+// recommendFrom is Recommend among the base windows.
+func recommendFrom(rows []WakeRow, base []int) int {
 	var candidates []WakeRow
-	for _, m := range IdleWindows {
+	for _, m := range base {
 		if i := slices.IndexFunc(rows, func(r WakeRow) bool { return r.Minutes == m }); i >= 0 {
 			candidates = append(candidates, rows[i])
 		}
 	}
 	if len(candidates) == 0 {
-		return IdleWindows[0]
+		return base[0]
 	}
 	shortest := candidates[0].Wakes
 	longest := candidates[len(candidates)-1].Wakes

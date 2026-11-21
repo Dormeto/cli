@@ -246,15 +246,25 @@ type AutoScalingPort interface {
 	DescribeAutoScalingGroups(ctx context.Context, in DescribeAutoScalingGroupsInput) (DescribeAutoScalingGroupsOutput, error)
 }
 
-// DescribeInstancesInput asks instances by id.
+// DescribeInstancesInput asks instances by id, or, without ids, a page of every instance of the region (the
+// standalone scan).
 type DescribeInstancesInput struct {
-	InstanceIds []string `json:"InstanceIds"`
+	InstanceIds []string `json:"InstanceIds,omitempty"`
+	NextToken   string   `json:"NextToken,omitempty"`
 }
 
-// Instance is an instance with its tags.
+// InstanceState is an instance's state.
+type InstanceState struct {
+	Name string `json:"Name,omitempty"`
+}
+
+// Instance is an instance with its tags, and what the standalone scan reads of it.
 type Instance struct {
-	InstanceID string `json:"InstanceId,omitempty"`
-	Tags       []Tag  `json:"Tags,omitempty"`
+	InstanceID        string         `json:"InstanceId,omitempty"`
+	State             *InstanceState `json:"State,omitempty"`
+	RootDeviceType    string         `json:"RootDeviceType,omitempty"`
+	InstanceLifecycle string         `json:"InstanceLifecycle,omitempty"`
+	Tags              []Tag          `json:"Tags,omitempty"`
 }
 
 // Reservation groups instances.
@@ -265,9 +275,10 @@ type Reservation struct {
 // DescribeInstancesOutput is its answer.
 type DescribeInstancesOutput struct {
 	Reservations []Reservation `json:"Reservations,omitempty"`
+	NextToken    string        `json:"NextToken,omitempty"`
 }
 
-// EC2Port is read only where the region has EKS clusters (their nodes).
+// EC2Port is read where the region has EKS clusters (their nodes), and by the standalone scan (every instance).
 type EC2Port interface {
 	DescribeInstances(ctx context.Context, in DescribeInstancesInput) (DescribeInstancesOutput, error)
 }
@@ -348,10 +359,12 @@ type ListServicesOutput struct {
 	NextToken   string   `json:"nextToken,omitempty"`
 }
 
-// DescribeServicesInput asks up to 10 services of a cluster.
+// DescribeServicesInput asks up to 10 services of a cluster; Include ["TAGS"] asks their tags too (the standalone
+// scan).
 type DescribeServicesInput struct {
 	Cluster  string   `json:"cluster"`
 	Services []string `json:"services"`
+	Include  []string `json:"include,omitempty"`
 }
 
 // ServiceLoadBalancer is a service's load balancer attachment.
@@ -359,10 +372,19 @@ type ServiceLoadBalancer struct {
 	TargetGroupArn string `json:"targetGroupArn,omitempty"`
 }
 
+// ServiceTag is an ECS tag (camelCase, as ECS answers).
+type ServiceTag struct {
+	Key   string `json:"key,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
 // Service is the part of an ECS service the scan reads.
 type Service struct {
-	ServiceArn    string                `json:"serviceArn,omitempty"`
-	LoadBalancers []ServiceLoadBalancer `json:"loadBalancers,omitempty"`
+	ServiceArn         string                `json:"serviceArn,omitempty"`
+	Status             string                `json:"status,omitempty"`
+	SchedulingStrategy string                `json:"schedulingStrategy,omitempty"`
+	LoadBalancers      []ServiceLoadBalancer `json:"loadBalancers,omitempty"`
+	Tags               []ServiceTag          `json:"tags,omitempty"`
 }
 
 // DescribeServicesOutput is its answer.
@@ -405,11 +427,13 @@ type MetricDataQuery struct {
 }
 
 // GetMetricDataInput is a GetMetricData call. Its times are written as Node's
-// toISOString does (2026-10-12T08:00:00.000Z).
+// toISOString does (2026-10-12T08:00:00.000Z). ScanBy "TimestampAscending":
+// the oldest values first (the standalone idle share's).
 type GetMetricDataInput struct {
 	StartTime         time.Time
 	EndTime           time.Time
 	MetricDataQueries []MetricDataQuery
+	ScanBy            string
 	NextToken         string
 }
 
@@ -421,14 +445,25 @@ func (in GetMetricDataInput) MarshalJSON() ([]byte, error) {
 		StartTime         string            `json:"StartTime"`
 		EndTime           string            `json:"EndTime"`
 		MetricDataQueries []MetricDataQuery `json:"MetricDataQueries"`
+		ScanBy            string            `json:"ScanBy,omitempty"`
 		NextToken         string            `json:"NextToken,omitempty"`
-	}{in.StartTime.UTC().Format(isoMillis), in.EndTime.UTC().Format(isoMillis), in.MetricDataQueries, in.NextToken})
+	}{in.StartTime.UTC().Format(isoMillis), in.EndTime.UTC().Format(isoMillis), in.MetricDataQueries, in.ScanBy, in.NextToken})
 }
 
-// MetricDataResult is the values of one query.
+// MetricMessage is a message of a result (why CloudWatch could not read a metric).
+type MetricMessage struct {
+	Code  string `json:"Code,omitempty"`
+	Value string `json:"Value,omitempty"`
+}
+
+// MetricDataResult is the values of one query, with their timestamps side by
+// side, and its status (a result CloudWatch could not read has no values).
 type MetricDataResult struct {
-	ID     string    `json:"Id,omitempty"`
-	Values []float64 `json:"Values,omitempty"`
+	ID         string          `json:"Id,omitempty"`
+	Timestamps []time.Time     `json:"Timestamps,omitempty"`
+	Values     []float64       `json:"Values,omitempty"`
+	StatusCode string          `json:"StatusCode,omitempty"`
+	Messages   []MetricMessage `json:"Messages,omitempty"`
 }
 
 // GetMetricDataOutput is its answer.
@@ -444,14 +479,16 @@ type CloudWatchPort interface {
 
 // ScanPorts are the read-only calls of a scan. ELBv2 is required; a port left
 // nil is one the scan does not read (no Auto Scaling groups, ECS services,
-// idle hours, nodes or clusters). Kubernetes is the region's EKS clusters and
-// their API.
+// idle hours, nodes or clusters; for the standalone scan, no instances or
+// databases). Kubernetes is the region's EKS clusters and their API. RDS is
+// read by the standalone scan only.
 type ScanPorts struct {
 	ELBv2       ELBv2Port
 	AutoScaling AutoScalingPort
 	EC2         EC2Port
 	ECS         ECSPort
 	CloudWatch  CloudWatchPort
+	RDS         stopped.RDSPort
 	Kubernetes  *kubernetes.Ports
 }
 

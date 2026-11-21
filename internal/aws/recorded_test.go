@@ -1,9 +1,9 @@
 package aws
 
-// Ruling P20: every AWS answer the shared cases recorded (testdata/parity estimate.json, scan.json, stopped.json and
-// prices.json) through its adapter, so the organization path (Organizations, AssumeRole, several accounts, Auto Scaling,
-// Fargate capacity providers, RDS clusters, EKS) runs through internal/aws as the live command runs it, where the
-// end-to-end case bypasses the adapters by design.
+// Ruling P20: every AWS answer the shared cases recorded (testdata/parity estimate.json, scan.json, stopped.json,
+// prices.json and standalone-idle.json) through its adapter, so the organization path (Organizations, AssumeRole,
+// several accounts, Auto Scaling, Fargate capacity providers, RDS clusters, EKS) and the standalone scan run through
+// internal/aws as the live command runs them, where the end-to-end case bypasses the adapters by design.
 //
 // The recorded output, decoded into the SDK's own output type (encoding/json maps the API's PascalCase names, and ECS's
 // and EKS's camelCase ones, to the SDK's fields; enums are strings, timestamps ISO strings; a recorded field the SDK type
@@ -176,7 +176,7 @@ type recordedCall struct {
 func recordedCalls(t *testing.T) []recordedCall {
 	t.Helper()
 	var calls []recordedCall
-	for _, topic := range []string{"estimate", "scan", "stopped", "prices"} {
+	for _, topic := range []string{"estimate", "scan", "stopped", "prices", "standalone-idle"} {
 		for n, c := range parity.Load(t, topic).Cases {
 			var in struct {
 				Answers map[string][]struct {
@@ -328,7 +328,22 @@ func scanBy(c recordedCall) bool {
 	return in.ScanBy != ""
 }
 
-func notScanBy(c recordedCall) bool { return !scanBy(c) }
+// byIDs says a DescribeInstances call asks instances by id (stopped.EC2Port's): not a page of the region's (the
+// standalone scan's, discover.EC2Port).
+func byIDs(c recordedCall) bool {
+	var in struct{ NextToken string }
+	_ = json.Unmarshal(c.input, &in)
+	return in.NextToken == ""
+}
+
+// withoutTags says a DescribeServices call asks no tags (stopped.ECSPort's): not the standalone scan's (include TAGS).
+func withoutTags(c recordedCall) bool {
+	var in struct {
+		Include []string `json:"include"`
+	}
+	_ = json.Unmarshal(c.input, &in)
+	return len(in.Include) == 0
+}
 
 // adapterViews are the adapters by recorded port method, each port that reads the method a view.
 var adapterViews = map[string][]adapterView{
@@ -366,7 +381,7 @@ var adapterViews = map[string][]adapterView{
 			func(ctx context.Context, r *replay, _ recordedCall, in discover.DescribeInstancesInput) (discover.DescribeInstancesOutput, error) {
 				return scanEC2{replayEC2{r}}.DescribeInstances(ctx, in)
 			}),
-		through[ec2.DescribeInstancesOutput]("stoppedEC2.DescribeInstances", nil,
+		through[ec2.DescribeInstancesOutput]("stoppedEC2.DescribeInstances", byIDs,
 			func(ctx context.Context, r *replay, _ recordedCall, in stopped.DescribeInstancesInput) (stopped.DescribeInstancesOutput, error) {
 				return stoppedEC2{replayEC2{r}}.DescribeInstances(ctx, in)
 			}),
@@ -403,7 +418,7 @@ var adapterViews = map[string][]adapterView{
 			func(ctx context.Context, r *replay, _ recordedCall, in discover.DescribeServicesInput) (discover.DescribeServicesOutput, error) {
 				return scanECS{replayECS{r}}.DescribeServices(ctx, in)
 			}),
-		through[ecs.DescribeServicesOutput]("stoppedECS.DescribeServices", nil,
+		through[ecs.DescribeServicesOutput]("stoppedECS.DescribeServices", withoutTags,
 			func(ctx context.Context, r *replay, _ recordedCall, in stopped.DescribeServicesInput) (stopped.DescribeServicesOutput, error) {
 				return stoppedECS{replayECS{r}}.DescribeServices(ctx, in)
 			}),
@@ -412,10 +427,10 @@ var adapterViews = map[string][]adapterView{
 		func(ctx context.Context, r *replay, _ recordedCall, in stopped.DescribeTaskDefinitionInput) (stopped.DescribeTaskDefinitionOutput, error) {
 			return stoppedECS{replayECS{r}}.DescribeTaskDefinition(ctx, in)
 		})},
-	// The scan's hourly requests (discover.CloudWatchPort) and the estimate's (metrics.CloudWatchPort): each output
-	// through both views, each call's input through the view that makes it.
+	// The scan's hourly requests and standalone idle share (discover.CloudWatchPort), and the estimate's
+	// (metrics.CloudWatchPort): each output through both views, each call's input through the views that make it.
 	"cloudwatch.getMetricData": {
-		through[cloudwatch.GetMetricDataOutput]("cloudWatchPort.GetMetricData", notScanBy,
+		through[cloudwatch.GetMetricDataOutput]("cloudWatchPort.GetMetricData", nil,
 			func(ctx context.Context, r *replay, _ recordedCall, in discover.GetMetricDataInput) (discover.GetMetricDataOutput, error) {
 				return cloudWatchPort{replayCW{r}}.GetMetricData(ctx, in)
 			}),

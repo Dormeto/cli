@@ -16,6 +16,7 @@ import (
 	"github.com/Dormeto/cli/internal/awserr"
 	"github.com/Dormeto/cli/internal/kubernetes/kubernetestest"
 	"github.com/Dormeto/cli/internal/parity"
+	"github.com/Dormeto/cli/internal/stopped"
 )
 
 type recordedELB struct{ a *parity.Answers }
@@ -100,6 +101,20 @@ func (r recordedCW) GetMetricData(_ context.Context, in GetMetricDataInput) (Get
 	return out, parity.AWSError(err)
 }
 
+type recordedRDS struct{ a *parity.Answers }
+
+func (r recordedRDS) DescribeDBInstances(_ context.Context, in stopped.DescribeDBInstancesInput) (stopped.DescribeDBInstancesOutput, error) {
+	var out stopped.DescribeDBInstancesOutput
+	err := r.a.Call("rds", "describeDBInstances", in, &out)
+	return out, parity.AWSError(err)
+}
+
+func (r recordedRDS) DescribeDBClusters(_ context.Context, in stopped.DescribeDBClustersInput) (stopped.DescribeDBClustersOutput, error) {
+	var out stopped.DescribeDBClustersOutput
+	err := r.a.Call("rds", "describeDBClusters", in, &out)
+	return out, parity.AWSError(err)
+}
+
 func recordedScanPorts(t *testing.T, names []string, answers json.RawMessage, reader string) ScanPorts {
 	a := parity.Recorded(t, answers)
 	ports := ScanPorts{ELBv2: recordedELB{a}}
@@ -113,6 +128,8 @@ func recordedScanPorts(t *testing.T, names []string, answers json.RawMessage, re
 			ports.CloudWatch = recordedCW{a}
 		case "ec2":
 			ports.EC2 = recordedEC2{a}
+		case "rds":
+			ports.RDS = recordedRDS{a}
 		case "kubernetes":
 			k := kubernetestest.RecordedPorts(t, a)
 			k.Reader = reader
@@ -126,12 +143,13 @@ func TestSharedCasesOfScanRegion(t *testing.T) {
 	ran := 0
 	for _, c := range parity.Load(t, "scan").Cases {
 		var in struct {
-			Function string          `json:"function"`
-			Where    Where           `json:"where"`
-			Now      string          `json:"now"`
-			Ports    []string        `json:"ports"`
-			Reader   string          `json:"reader"`
-			Answers  json.RawMessage `json:"answers"`
+			Function   string          `json:"function"`
+			Where      Where           `json:"where"`
+			Now        string          `json:"now"`
+			Ports      []string        `json:"ports"`
+			Reader     string          `json:"reader"`
+			Standalone bool            `json:"standalone"`
+			Answers    json.RawMessage `json:"answers"`
 		}
 		if err := json.Unmarshal(c.Input, &in); err != nil {
 			t.Fatalf("%s: %v", c.Name, err)
@@ -148,8 +166,24 @@ func TestSharedCasesOfScanRegion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, err := ScanRegion(context.Background(), recordedScanPorts(t, in.Ports, in.Answers, in.Reader), in.Where, now)
+			res, err := ScanRegionWith(context.Background(), recordedScanPorts(t, in.Ports, in.Answers, in.Reader), in.Where, now, ScanOptions{Standalone: in.Standalone})
 			var got any = res
+			if in.Standalone && err == nil {
+				// Node's output: the standalone candidates after the HTTP ones, and what the scan could not read.
+				if res.Standalone == nil {
+					t.Fatal("a standalone scan without its standalone part")
+				}
+				rules := []any{}
+				for _, r := range res.Rules {
+					rules = append(rules, r)
+				}
+				for _, r := range res.Standalone.Rules {
+					rules = append(rules, r)
+				}
+				got = map[string]any{"rules": rules, "clusters": res.Clusters, "standalone": res.Standalone.Report}
+			} else if res.Standalone != nil {
+				t.Fatal("a standalone part without the standalone scan")
+			}
 			if err != nil {
 				var api smithy.APIError
 				if !errors.As(err, &api) {
@@ -164,7 +198,7 @@ func TestSharedCasesOfScanRegion(t *testing.T) {
 			parity.Equal(t, c.Output, b)
 		})
 	}
-	if ran != 16 {
-		t.Fatalf("ran %d scanRegion cases, the corpus has 16", ran)
+	if ran != 20 {
+		t.Fatalf("ran %d scanRegion cases, the corpus has 20", ran)
 	}
 }

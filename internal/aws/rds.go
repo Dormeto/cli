@@ -1,7 +1,7 @@
 package aws
 
 // RDS: the instances and Aurora clusters a nap stops and the region's databases
-// discovery reads, paged by Marker (stopped.RDSPort). Ports
+// discovery reads (the standalone scan's too), paged by Marker (stopped.RDSPort). Ports
 // manager packages/estimate/src/bin.ts (portsOf's rds) and
 // packages/estimate/src/discover.ts (databasesOf's calls).
 
@@ -34,7 +34,7 @@ func (p rdsPort) DescribeDBInstances(ctx context.Context, in stopped.DescribeDBI
 	res := stopped.DescribeDBInstancesOutput{Marker: awssdk.ToString(out.Marker)}
 	for _, d := range out.DBInstances {
 		res.DBInstances = append(res.DBInstances, stopped.DBInstance{
-			DBInstanceIdentifier: awssdk.ToString(d.DBInstanceIdentifier), DBInstanceClass: awssdk.ToString(d.DBInstanceClass),
+			DBInstanceIdentifier: awssdk.ToString(d.DBInstanceIdentifier), DBInstanceArn: awssdk.ToString(d.DBInstanceArn), DBInstanceClass: awssdk.ToString(d.DBInstanceClass),
 			Engine: awssdk.ToString(d.Engine), MultiAZ: awssdk.ToBool(d.MultiAZ), DBClusterIdentifier: awssdk.ToString(d.DBClusterIdentifier),
 			DBInstanceStatus: awssdk.ToString(d.DBInstanceStatus), ReadReplicaSourceDBInstanceIdentifier: awssdk.ToString(d.ReadReplicaSourceDBInstanceIdentifier),
 			ReadReplicaDBInstanceIdentifiers: d.ReadReplicaDBInstanceIdentifiers, VpcSecurityGroups: groupsOf(d.VpcSecurityGroups), TagList: tagList(d.TagList),
@@ -51,7 +51,7 @@ func (p rdsPort) DescribeDBClusters(ctx context.Context, in stopped.DescribeDBCl
 	res := stopped.DescribeDBClustersOutput{Marker: awssdk.ToString(out.Marker)}
 	for _, c := range out.DBClusters {
 		cluster := stopped.DBCluster{
-			DBClusterIdentifier: awssdk.ToString(c.DBClusterIdentifier), Engine: awssdk.ToString(c.Engine), Status: awssdk.ToString(c.Status),
+			DBClusterIdentifier: awssdk.ToString(c.DBClusterIdentifier), DBClusterArn: awssdk.ToString(c.DBClusterArn), Engine: awssdk.ToString(c.Engine), Status: awssdk.ToString(c.Status),
 			EngineMode: awssdk.ToString(c.EngineMode), VpcSecurityGroups: groupsOf(c.VpcSecurityGroups), TagList: tagList(c.TagList),
 		}
 		if s := c.ServerlessV2ScalingConfiguration; s != nil {

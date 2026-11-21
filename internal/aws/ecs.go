@@ -10,6 +10,7 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/stopped"
@@ -22,7 +23,7 @@ type ecsAPI interface {
 	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
 
-// scanECS is discover.ECSPort.
+// scanECS is discover.ECSPort; the services with their tags when the scan asks (the standalone scan).
 type scanECS struct{ client ecsAPI }
 
 func (p scanECS) ListClusters(ctx context.Context, in discover.ListClustersInput) (discover.ListClustersOutput, error) {
@@ -42,15 +43,22 @@ func (p scanECS) ListServices(ctx context.Context, in discover.ListServicesInput
 }
 
 func (p scanECS) DescribeServices(ctx context.Context, in discover.DescribeServicesInput) (discover.DescribeServicesOutput, error) {
-	out, err := p.client.DescribeServices(ctx, &ecs.DescribeServicesInput{Cluster: optional(in.Cluster), Services: in.Services})
+	ask := &ecs.DescribeServicesInput{Cluster: optional(in.Cluster), Services: in.Services}
+	for _, field := range in.Include {
+		ask.Include = append(ask.Include, ecstypes.ServiceField(field))
+	}
+	out, err := p.client.DescribeServices(ctx, ask)
 	if err != nil {
 		return discover.DescribeServicesOutput{}, err
 	}
 	var res discover.DescribeServicesOutput
 	for _, s := range out.Services {
-		service := discover.Service{ServiceArn: awssdk.ToString(s.ServiceArn)}
+		service := discover.Service{ServiceArn: awssdk.ToString(s.ServiceArn), Status: awssdk.ToString(s.Status), SchedulingStrategy: string(s.SchedulingStrategy)}
 		for _, lb := range s.LoadBalancers {
 			service.LoadBalancers = append(service.LoadBalancers, discover.ServiceLoadBalancer{TargetGroupArn: awssdk.ToString(lb.TargetGroupArn)})
+		}
+		for _, t := range s.Tags {
+			service.Tags = append(service.Tags, discover.ServiceTag{Key: awssdk.ToString(t.Key), Value: awssdk.ToString(t.Value)})
 		}
 		res.Services = append(res.Services, service)
 	}

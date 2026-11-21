@@ -35,7 +35,8 @@ func TestTheEC2AdaptersGiveTheScansAndTheStoppedItemsShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eqJSON(t, "scan", scan, `{"Reservations":[{"Instances":[{"InstanceId":"i-1","Tags":[{"Key":"eks:cluster-name","Value":"demo"}]}]}]}`)
+	// The lifecycle: the standalone scan's (a Spot instance is not napped).
+	eqJSON(t, "scan", scan, `{"Reservations":[{"Instances":[{"InstanceId":"i-1","InstanceLifecycle":"spot","Tags":[{"Key":"eks:cluster-name","Value":"demo"}]}]}]}`)
 	items, err := stoppedEC2{f}.DescribeInstances(ctx, stopped.DescribeInstancesInput{InstanceIds: []string{"i-1"}})
 	if err != nil {
 		t.Fatal(err)

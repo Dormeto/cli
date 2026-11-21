@@ -2,7 +2,8 @@ package aws
 
 // CloudWatch: the one adapter over the SDK's GetMetricData, seen through the
 // two ports that read it: the scan's hourly requests per target group for their
-// idle hours (discover.CloudWatchPort) and the estimate's requests per minute
+// idle hours and its standalone candidates' 5-minute signals for their idle
+// share (discover.CloudWatchPort), and the estimate's requests per minute
 // and uptime (metrics.CloudWatchPort). Both ports are the API's own shapes, one
 // page a call (the callers follow NextToken); only the Go types differ, so each
 // view converts between its types and the SDK's and shares the call. Ports
@@ -56,13 +57,17 @@ func (p cloudWatchPort) get(ctx context.Context, start, end time.Time, queries [
 }
 
 func (p cloudWatchPort) GetMetricData(ctx context.Context, in discover.GetMetricDataInput) (discover.GetMetricDataOutput, error) {
-	out, err := p.get(ctx, in.StartTime, in.EndTime, in.MetricDataQueries, "", in.NextToken)
+	out, err := p.get(ctx, in.StartTime, in.EndTime, in.MetricDataQueries, in.ScanBy, in.NextToken)
 	if err != nil {
 		return discover.GetMetricDataOutput{}, err
 	}
 	res := discover.GetMetricDataOutput{NextToken: awssdk.ToString(out.NextToken)}
 	for _, r := range out.MetricDataResults {
-		res.MetricDataResults = append(res.MetricDataResults, discover.MetricDataResult{ID: awssdk.ToString(r.Id), Values: r.Values})
+		result := discover.MetricDataResult{ID: awssdk.ToString(r.Id), Timestamps: r.Timestamps, Values: r.Values, StatusCode: string(r.StatusCode)}
+		for _, m := range r.Messages {
+			result.Messages = append(result.Messages, discover.MetricMessage{Code: awssdk.ToString(m.Code), Value: awssdk.ToString(m.Value)})
+		}
+		res.MetricDataResults = append(res.MetricDataResults, result)
 	}
 	return res, nil
 }

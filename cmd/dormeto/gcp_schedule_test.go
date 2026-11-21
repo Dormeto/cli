@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	cli "github.com/Dormeto/cli"
 	"github.com/Dormeto/cli/internal/gcp/gcptest"
 	"github.com/Dormeto/cli/internal/gcponboard"
 	"github.com/Dormeto/cli/internal/schedule"
@@ -150,6 +151,10 @@ func TestScheduleFlagsAreTheSameInBothSubtrees(t *testing.T) {
 
 // For the same schedule and next events, both subtrees print the same words after their targets.
 func TestScheduleChangesPrintTheSameWordsInBothSubtrees(t *testing.T) {
+	// The router version the CLI embeds, whatever the release: the samples' fake Google has its image.
+	versions := cli.Versions
+	cli.Versions = []byte(sampleVersion)
+	t.Cleanup(func() { cli.Versions = versions })
 	answers := sampleAnswers(t) // before the lines run in directories of their own
 	stored := `{"timeZone":"Europe/Paris","windows":[{"kind":"awake","days":["mon","tue"],"start":"08:00","end":"19:00"}],"maxNapDays":7}`
 	var asMap map[string]any
