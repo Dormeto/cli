@@ -133,6 +133,18 @@ func TestWorkloadsShowOfAStandaloneWorkloadIsAWSs(t *testing.T) {
 	if strings.Contains(out, "url") {
 		t.Fatalf("a URL:\n%s", out)
 	}
+	// --json: the status in AWS's shape, as dormeto aws workloads show --json prints it (the router's version under router),
+	// with the project as its account, its region and cloud.
+	r.JSON = true
+	_, out = g.call(t, WorkloadsShow, r)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if !jsonEqual(got["router"], map[string]any{"version": "0.42.0", "build": "unknown"}) || got["account"] != "dormeto-dev" || got["region"] != "europe-west1" ||
+		got["cloud"] != "gcp" || got["resource"] != agentPath || got["workloadId"] != "build-agent" || got["idle"] == nil || got["nap"] == nil {
+		t.Fatalf("--json:\n%s", out)
+	}
 }
 
 const (

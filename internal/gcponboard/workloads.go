@@ -1743,13 +1743,19 @@ func (x *run) showStandalone(w workload, raw json.RawMessage) error {
 	}
 	if x.r.JSON {
 		if status == nil {
-			status = raw
+			shared, err := x.sharedWorkload(raw)
+			if err != nil {
+				return err
+			}
+			return output.JSON(x.d.Out, shared)
 		}
-		shared, err := x.sharedWorkload(status)
-		if err != nil {
-			return err
+		// AWS's status as dormeto aws workloads show --json prints it: the router's version under router, and the place.
+		var m map[string]any
+		if err := json.Unmarshal(status, &m); err != nil || m == nil {
+			return fmt.Errorf("the router's status is not understood: %s", status)
 		}
-		return output.JSON(x.d.Out, shared)
+		m["account"], m["region"], m["cloud"] = x.n.project, x.n.region, "gcp"
+		return output.JSON(x.d.Out, m)
 	}
 	var d fleet.WorkloadDetails
 	if status != nil {
