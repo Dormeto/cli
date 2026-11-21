@@ -50,6 +50,8 @@ type StandaloneRegion struct {
 	Ineligible []StandaloneIneligible `json:"ineligible"`
 	Problems   []string               `json:"problems"`
 	Unread     []string               `json:"unread"`
+	// Failed: the standalone part's scan failed (its error in Problems): never kept, scanned again next time.
+	Failed bool `json:"-"`
 }
 
 // standaloneBackend is what a nap of a standalone resource stops, as the router describes it: an instance (its state,

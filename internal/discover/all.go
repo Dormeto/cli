@@ -234,7 +234,7 @@ func AllWith(ctx context.Context, o AllOptions) ([]RegionDiscovery, []Standalone
 				if err == nil {
 					err = o.Cache.Put(path, result)
 				}
-				if err == nil && part != nil {
+				if err == nil && part != nil && !part.Failed {
 					err = o.Cache.Put(standalonePath, part)
 				}
 				if err != nil {

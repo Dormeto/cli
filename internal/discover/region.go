@@ -587,6 +587,13 @@ func RegionWith(ctx context.Context, ports RegionPorts, where Where, standalone 
 		scanOf = ports.Standalone
 	}
 	scan, err := scanOf(ctx)
+	var failure string
+	if err != nil && standalone && ports.Standalone != nil && ctx.Err() == nil {
+		// The standalone part failed (not a refusal: that is a problem the scan says itself): the HTTP scan's result
+		// stands, and the failure is the region's standalone problem. It costs a second scan only on a failure.
+		failure = fmt.Sprintf("standalone resources not read in %s %s: %s", where.Account, where.Region, awserr.Said(err))
+		scan, err = ports.Scan(ctx)
+	}
 	if err != nil {
 		return RegionDiscovery{}, nil, err
 	}
@@ -598,10 +605,14 @@ func RegionWith(ctx context.Context, ports RegionPorts, where Where, standalone 
 	if scan.Standalone != nil {
 		asked = *scan.Standalone
 	}
+	if failure != "" {
+		asked.Report.Problems = append(asked.Report.Problems, failure)
+	}
 	part, err := describeStandalone(ctx, ports, where, asked)
 	if err != nil {
 		return RegionDiscovery{}, nil, err
 	}
+	part.Failed = failure != ""
 	return found, &part, nil
 }
 

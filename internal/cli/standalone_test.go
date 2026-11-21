@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/smithy-go"
 
 	"github.com/Dormeto/cli/internal/discover"
 	"github.com/Dormeto/cli/internal/estimate"
@@ -243,5 +244,37 @@ func TestTheStandaloneResourcesAreKeptApartAndReadOnlyWhenAsked(t *testing.T) {
 	}
 	if _, ok := report["standalone"]; ok {
 		t.Fatal("off: a standalone part")
+	}
+}
+
+// A standalone scan that fails, but for a refusal, leaves the region's HTTP workloads estimated: its error is the
+// region's standalone problem.
+func TestAFailedStandaloneScanLeavesTheRegionsHTTPWorkloadsEstimated(t *testing.T) {
+	e, _, _, _ := standaloneAWS()
+	failed := 0
+	ports := e.PortsOf
+	e.PortsOf = func(ctx context.Context, account, region string, creds *aws.Credentials) (discover.RegionPorts, error) {
+		p, err := ports(ctx, account, region, creds)
+		p.Standalone = func(context.Context) (discover.ScanResult, error) {
+			failed++
+			return discover.ScanResult{}, &smithy.GenericAPIError{Code: "TargetGroupNotFound", Message: "One or more target groups not found"}
+		}
+		return p, err
+	}
+	r := newRun(t, e)
+	out := t.TempDir()
+	if code := Main([]string{"--profile", "p", "--out", out}, r.deps); code != 0 {
+		t.Fatalf("exit code %d: %q", code, r.errors())
+	}
+	report := written(t, out)
+	if at(t, report, "totals", "workloads") != 1.0 || len(at(t, report, "failedRegions").([]any)) != 0 {
+		t.Fatalf("totals %v, failed %v", at(t, report, "totals"), at(t, report, "failedRegions"))
+	}
+	if got := at(t, report, "standalone", "unread", 0, "reason"); got != "standalone resources not read in "+acctA+" "+regR+": TargetGroupNotFound: One or more target groups not found" {
+		t.Fatalf("unread %v", got)
+	}
+	// Not kept: the next run scans the region again, as a region that failed.
+	if code := Main([]string{"--profile", "p", "--out", out}, r.deps); code != 0 || failed != 2 {
+		t.Fatalf("second run: exit code %d, standalone scans %d", code, failed)
 	}
 }
