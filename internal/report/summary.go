@@ -47,6 +47,10 @@ func Summary(e estimate.Estimate) []string {
 	if dates := periodDates(e.Period); dates != "" {
 		period = fmt.Sprintf("From the requests of the last %d days: %s (--days).", daysOf(e), dates)
 	}
+	if e.Standalone != nil {
+		first = fmt.Sprintf("About %s a month at %s for %s in %s; Dormeto costs about %s a month: net about %s.",
+			usd(t.USDMonthWindow), figuresAt(e), estimatedWhat(e), accountsIn, usd(t.DormetoMonth), usd(net(t)))
+	}
 	lines := []string{first, period}
 	if e.Why != nil && *e.Why != "" {
 		lines = append(lines, *e.Why)
@@ -55,7 +59,7 @@ func Summary(e estimate.Estimate) []string {
 		lines = append(lines, "")
 		lines = append(lines, visual...)
 	}
-	if t.Workloads != 0 || e.Dormeto.Change != nil {
+	if t.Workloads != 0 || t.Standalone != 0 || e.Dormeto.Change != nil {
 		accounts, more := accountsTable(e, terminalAccounts)
 		lines = append(lines, "", "By account:")
 		lines = append(lines, textTable(accounts)...)
@@ -91,6 +95,7 @@ func Summary(e estimate.Estimate) []string {
 				padStart(usd(x.AtWindow.USDMonth), 10), host, w.LoadBalancer, w.Region, w.Account, quiet, recommended))
 		}
 	}
+	lines = append(lines, standaloneSummary(e)...)
 	if len(e.LeftOut) > 0 {
 		lines = append(lines, fmt.Sprintf("Left out: %s (see the report for why)", n(len(e.LeftOut), "workload")))
 	}
@@ -183,7 +188,7 @@ func costVisual(e estimate.Estimate) []string {
 		last = fmt.Sprintf("  Saved: %s a month, %s", usd(saving), share)
 	}
 	return []string{
-		fmt.Sprintf("Monthly cost of the %s estimated, at %s:", n(t.Workloads, "workload"), figuresWindow(e.Options)),
+		fmt.Sprintf("Monthly cost of the %s estimated, at %s:", estimatedWhat(e), figuresAt(e)),
 		fmt.Sprintf("  Actual cost   %s  %s  %s", barOf(t.ActualMonth), padStart(values[0], width), percent(t.ActualMonth)),
 		fmt.Sprintf("  With Dormeto  %s  %s  %s", barOf(t.WithDormetoMonth), padStart(values[1], width), percent(t.WithDormetoMonth)),
 		last,

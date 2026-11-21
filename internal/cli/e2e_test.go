@@ -309,7 +309,7 @@ func runCase(t *testing.T, in estimateCase, cacheRoot string) estimateOutput {
 	got := estimateOutput{Written: []string{}, Log: []string{}, Errors: []string{}}
 	written := map[string]string{}
 	local := func(l string) string { return strings.ReplaceAll(l, cacheRoot, "<cacheRoot>") }
-	got.ExitCode = Main(append([]string{"--window", "60"}, in.Argv...), Deps{
+	got.ExitCode = Main(append([]string{"--window", "60", "--standalone", "off"}, in.Argv...), Deps{
 		Now: func() time.Time { return in.Now }, CacheRoot: cacheRoot, AWS: w.aws, Version: "0.0.0-test",
 		Log:   func(l string) { mu.Lock(); got.Log = append(got.Log, local(l)); mu.Unlock() },
 		Error: func(l string) { mu.Lock(); got.Errors = append(got.Errors, local(l)); mu.Unlock() },
@@ -348,7 +348,8 @@ func runCase(t *testing.T, in estimateCase, cacheRoot string) estimateOutput {
 
 // Go's by design, set apart to compare with Node's (the user, 2026-10-14). Node's figures were at a 60-minute window
 // without --window (Go's at each workload's recommended one): runCase gives --window 60 first (a case's own, later,
-// wins). Go's own lines and fields are removed: what it reads before the estimate, the days of requests (--days, 14
+// wins). Node's estimate had no standalone resources, and the frozen world records none of their calls: runCase gives
+// --standalone off too, the report then as before them. Go's own lines and fields are removed: what it reads before the estimate, the days of requests (--days, 14
 // as Node's), the period and its dates; its usage names --days and --window without a default.
 var (
 	goOnlyLog  = regexp.MustCompile(`^(Reading the profile .*: its account and its organization|Profile .*; listing the organization's accounts|Listed \d+ active accounts? in \d+ organizational units? \(\d+:\d\d\)|From the requests of the last 14 days(: .* UTC \(--days\))?\.)$`)
@@ -365,7 +366,7 @@ func asNode(t *testing.T, got *estimateOutput) {
 	}
 	got.Log = log
 	for i, e := range got.Errors {
-		got.Errors[i] = strings.Replace(e, "[--days 14] [--window <minutes>]", "[--window 60]", 1)
+		got.Errors[i] = strings.Replace(strings.Replace(e, "[--days 14] [--window <minutes>]", "[--window 60]", 1), "\n  [--standalone on|off] [--standalone-window 120]", "", 1)
 	}
 	if got.Markdown != nil {
 		md := strings.Replace(goOnlyDate.ReplaceAllString(*got.Markdown, "$1."), "- Requests: the last 14 days (--days)\n", "", 1)

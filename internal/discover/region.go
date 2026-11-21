@@ -575,10 +575,38 @@ func describeRule(ctx context.Context, ports RegionPorts, rule ScannedRule, wher
 // companion databases. A scan that fails (or a rule whose waker cannot be read)
 // fails the region.
 func Region(ctx context.Context, ports RegionPorts, where Where) (RegionDiscovery, error) {
-	scan, err := ports.Scan(ctx)
-	if err != nil {
-		return RegionDiscovery{}, err
+	found, _, err := RegionWith(ctx, ports, where, false)
+	return found, err
+}
+
+// RegionWith is Region, with the standalone scan when standalone (ports.Standalone; nil: a scan without it): its part
+// is then the region's standalone resources described (nil when not standalone).
+func RegionWith(ctx context.Context, ports RegionPorts, where Where, standalone bool) (RegionDiscovery, *StandaloneRegion, error) {
+	scanOf := ports.Scan
+	if standalone && ports.Standalone != nil {
+		scanOf = ports.Standalone
 	}
+	scan, err := scanOf(ctx)
+	if err != nil {
+		return RegionDiscovery{}, nil, err
+	}
+	found, err := regionOf(ctx, ports, where, scan)
+	if err != nil || !standalone {
+		return found, nil, err
+	}
+	asked := StandaloneScan{Rules: []StandaloneRule{}, Report: StandaloneReport{Problems: []string{}, Unread: []string{}}}
+	if scan.Standalone != nil {
+		asked = *scan.Standalone
+	}
+	part, err := describeStandalone(ctx, ports, where, asked)
+	if err != nil {
+		return RegionDiscovery{}, nil, err
+	}
+	return found, &part, nil
+}
+
+// regionOf is the region's HTTP discovery from its scan.
+func regionOf(ctx context.Context, ports RegionPorts, where Where, scan ScanResult) (RegionDiscovery, error) {
 	all, err := limit.Map(ctx, scan.Rules, workloadsAtOnce, func(ctx context.Context, rule ScannedRule) (described, error) {
 		return describeRule(ctx, ports, rule, where)
 	})

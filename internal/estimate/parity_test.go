@@ -218,8 +218,10 @@ func TestTheWorldsEstimateAsNodes(t *testing.T) {
 // nodeArgv is a shared case's arguments as Node read them: its figures were at a 60-minute window by default (Go's,
 // without --window, at each workload's recommended window; the user, 2026-10-14). The case's own --window, later,
 // wins.
+// nodeArgv is a case's argv as the Go command runs it to give Node's figures: at a 60-minute window, and without the
+// standalone resources (Node's estimate had none; the frozen world records none of their calls).
 func nodeArgv(argv []string) []string {
-	return append([]string{"--window", "60"}, argv...)
+	return append([]string{"--window", "60", "--standalone", "off"}, argv...)
 }
 
 // withoutGoOnlyOptions is the report's options without Go's own: --days (the user, 2026-10-14; Node read 14 days).

@@ -101,6 +101,7 @@ Usage: dormeto aws estimate --profile <profile>[,<profile>...] [--accounts 11111
   [--baseline always|business-hours] [--timezone Europe/Paris] [--discount-compute 0-90] [--discount-databases 0-90]
   [--refresh discovery|metrics] [--days 14] [--window <minutes>] [--max-wakes 3|none]
   [--min-saving 1|none] [--max-wakes-rds 2|none] [--parallel 5] [--out <dir>]
+  [--standalone on|off] [--standalone-window 120]
 ```
 
 An option bad or missing prints its message and the usage, and exits with code 2. Credentials that do not work exit
@@ -167,10 +168,21 @@ with code 1 and AWS's message; an SSO session expired, invalid or never logged i
 - `--parallel <n>`: how many accounts (discovery) or regions (requests and uptime) are read at a time (5 by default, 1
   to 50). A region's workloads are described eight at a time.
 - `--out <dir>`: where the reports are written (the current directory by default).
+- `--standalone on|off`: estimate the standalone resources too (`on`, the default): the EC2 instances, Auto Scaling
+  groups, ECS services, RDS instances and clusters that no route uses, found by discovery's rules (an HTTP workload's
+  backend is not one, nor a database counted as its companion). Each one's default idle signals (CPU, or a database's
+  connections) are read over the days read, 5 minutes at a time; a point at or over its threshold is activity, and
+  the time without points is when the resource did not run, which saves nothing. The replay prices what a nap of the
+  resource stops for the hours asleep. A resource without a point in the days read is left out (`no data: already
+  stopped`), as is one whose metrics could not be read, with why. `off` leaves them out: the report is then as it was
+  before them.
+- `--standalone-window <minutes>`: the standalone resources' idle window, 5 to 1440 (120 by default), for their
+  figures; the report also gives each one's recommended window (5 to 120 minutes). Only with `--standalone on`.
 
 The estimate is conservative: every request counts as activity and as a wake (there is no waker yet to set scanners
-apart), a wake lasts 60 seconds, there is no visitor's wait, and databases not attached to a load balancer are not
-counted. It runs in three phases: discovery (what each eligible workload's backend would stop, as the router
+apart), a wake lasts 60 seconds, there is no visitor's wait, and, with `--standalone off`, databases not attached to a
+load balancer are not counted. A stopped standalone resource is counted as started again when its history next shows
+activity, by a schedule or a person. It runs in three phases: discovery (what each eligible workload's backend would stop, as the router
 describes it), requests (each workload's `RequestCount` per minute over the days read, `--days`, five metrics per
 `GetMetricData` call), and the estimate (Dormeto's replay priced with the product's price book, at each workload's
 recommended window, or at `--window`, net of Dormeto's cost). Before them, it says what it reads to reach the accounts:
@@ -197,7 +209,8 @@ accounts, and Kubernetes `GET`s. It changes nothing.
 - `autoscaling:DescribeAutoScalingGroups`
 - `ecs:ListClusters`, `ListServices`, `DescribeServices`, `DescribeTaskDefinition`
 - `eks:ListClusters`, `DescribeCluster`
-- `rds:DescribeDBInstances`, `DescribeDBClusters`
+- `rds:DescribeDBInstances`, `DescribeDBClusters`, `ListTagsForResource` (the companion databases, and the standalone
+  databases with their tags; without them, the report lists the databases as not read, with the reason)
 - `cloudwatch:GetMetricData` (about $0.01 per 1,000 workloads)
 - `pricing:GetProducts`
 
@@ -218,13 +231,19 @@ written in `--out`, named after the date of the run: `estimate-<date>.md`, the f
 the same figures for a program (its `tool` says `dormeto` and the version that wrote it). The table by account counts
 each account's excluded workloads, whatever the reason (tags, left out, too many wakes, too small a saving); the
 workloads table gives each one's uptime (measured, else 100% assumed), its recommended window, saving and wakes a day.
+With the standalone resources (`--standalone on`), the table by account counts them in a Standalone column, the totals
+are given for HTTP, standalone and both, the workloads tables give each one's kind (`http`, `standalone`), and the
+standalone resources left out are listed with the reason; the JSON's `standalone` holds the same.
 
 ## Cache
 
 `~/.cache/dormeto/estimate/<organization or account>/`, under `$XDG_CACHE_HOME` when it is set. It holds discovery and
-each account's regions for a day, the requests while their days (`--days`) end on the same UTC day, and the prices. An
+each account's regions for a day, the requests while their days (`--days`) end on the same UTC day, and the prices.
+The standalone resources have files of their own (`standalone/`, as discovery; `signals/`, as the requests), which
+`--standalone off` never reads. An
 interrupted run resumes where it stopped; a cache file that cannot be read is read again, never an error.
-`--refresh discovery` reads discovery and the requests again, `--refresh metrics` the requests only. To start over,
+`--refresh discovery` reads discovery and the requests again (and the standalone resources and their signals),
+`--refresh metrics` the requests only (and the signals). To start over,
 delete the directory.
 
 ## Privacy

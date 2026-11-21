@@ -47,6 +47,9 @@ type Input struct {
 	// With --ec2-uptime, --ecs-uptime or --rds-uptime: when the workloads and databases ran. Nil: not measured (Node's
 	// null); a slice, even empty: measured.
 	Uptime []metrics.RegionUptime
+	// With --standalone on (Options.Standalone): the regions' standalone resources and their signals.
+	Standalone []discover.StandaloneRegion
+	Signals    []metrics.RegionSignals
 }
 
 // state is an estimate being made: what each region adds.
@@ -58,6 +61,7 @@ type state struct {
 	busy             []Busy
 	small            []Small
 	databasesLeftOut []DatabaseLeftOut
+	standalonePart   *StandaloneEstimate // nil: --standalone off
 }
 
 // elected is a workload kept at its recommended window, its companion databases attached once every workload of its
@@ -85,6 +89,11 @@ func All(ctx context.Context, in Input) (Estimate, error) {
 	s := &state{ctx: ctx, in: in, workloads: []WorkloadEstimate{}, leftOut: []LeftOut{}, busy: []Busy{}, small: []Small{}, databasesLeftOut: []DatabaseLeftOut{}}
 	for _, region := range in.Regions {
 		if err := s.region(region); err != nil {
+			return Estimate{}, err
+		}
+	}
+	if in.Options.Standalone != nil {
+		if err := s.standalone(); err != nil {
 			return Estimate{}, err
 		}
 	}

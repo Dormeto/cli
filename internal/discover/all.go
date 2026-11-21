@@ -95,6 +95,9 @@ type AllOptions struct {
 	AccountProgress func(AccountEvent)
 	// Concurrency is the accounts discovered at once (--parallel; 5 when < 1).
 	Concurrency int
+	// Standalone: the standalone scan too (--standalone on), its part kept in a file of its own
+	// (standalone/<account>-<region>.json); off, nothing of it is read or written.
+	Standalone bool
 }
 
 // regionKept says a kept region is complete: kept before workloads had their
@@ -123,6 +126,12 @@ func regionKept(r RegionDiscovery) bool {
 // RegionDiscovery with its Error; an account that fails (not a refused role,
 // already listed apart) is one with region "*". The error is the context's.
 func All(ctx context.Context, o AllOptions) ([]RegionDiscovery, error) {
+	regions, _, err := AllWith(ctx, o)
+	return regions, err
+}
+
+// AllWith is All with the regions' standalone parts (o.Standalone), in the same order: a region that failed has none.
+func AllWith(ctx context.Context, o AllOptions) ([]RegionDiscovery, []StandaloneRegion, error) {
 	var say sync.Mutex
 	progress := func(e ProgressEvent) {
 		if o.Progress != nil {
@@ -143,8 +152,13 @@ func All(ctx context.Context, o AllOptions) ([]RegionDiscovery, error) {
 	if concurrency < 1 {
 		concurrency = 5
 	}
-	account := func(ctx context.Context, t Target) ([]RegionDiscovery, error) {
+	type accountFound struct {
+		regions    []RegionDiscovery
+		standalone []StandaloneRegion
+	}
+	account := func(ctx context.Context, t Target) (accountFound, error) {
 		found := []RegionDiscovery{}
+		standalone := []StandaloneRegion{}
 		credentials := func() (*aws.Credentials, error) {
 			if t.Credentials == nil {
 				return nil, nil
@@ -184,14 +198,26 @@ func All(ctx context.Context, o AllOptions) ([]RegionDiscovery, error) {
 			accountProgress(AccountEvent{Account: t.Account, State: AccountStarted, Regions: listed})
 			for _, region := range regions {
 				path := fmt.Sprintf("discovery/%s-%s.json", t.Account, region)
+				standalonePath := fmt.Sprintf("standalone/%s-%s.json", t.Account, region)
 				var kept RegionDiscovery
+				var keptStandalone StandaloneRegion
 				if !again {
 					ok, err := o.Cache.Get(path, cache.FreshDiscovery(o.Now()), &kept)
 					if err != nil {
 						return err
 					}
-					if ok && regionKept(kept) {
+					// With the standalone scan, its part kept too (else both are scanned again, in one scan).
+					okStandalone := !o.Standalone
+					if ok && o.Standalone {
+						if okStandalone, err = o.Cache.Get(standalonePath, cache.FreshDiscovery(o.Now()), &keptStandalone); err != nil {
+							return err
+						}
+					}
+					if ok && okStandalone && regionKept(kept) {
 						found = append(found, kept)
+						if o.Standalone {
+							standalone = append(standalone, keptStandalone)
+						}
 						progress(ProgressEvent{Phase: PhaseDiscovery, Account: t.Account, Region: region, From: FromCache, Workloads: len(kept.Workloads)})
 						continue
 					}
@@ -204,24 +230,30 @@ func All(ctx context.Context, o AllOptions) ([]RegionDiscovery, error) {
 				if err != nil {
 					return err
 				}
-				result, err := Region(ctx, ports, Where{Account: t.Account, Region: region})
+				result, part, err := RegionWith(ctx, ports, Where{Account: t.Account, Region: region}, o.Standalone)
 				if err == nil {
 					err = o.Cache.Put(path, result)
+				}
+				if err == nil && part != nil {
+					err = o.Cache.Put(standalonePath, part)
 				}
 				if err != nil {
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
-					result = RegionDiscovery{Account: t.Account, Region: region, Workloads: []Workload{}, Ineligible: []IneligibleRule{}, Error: awserr.Message(err)}
+					result, part = RegionDiscovery{Account: t.Account, Region: region, Workloads: []Workload{}, Ineligible: []IneligibleRule{}, Error: awserr.Message(err)}, nil
 				}
 				found = append(found, result)
+				if part != nil {
+					standalone = append(standalone, *part)
+				}
 				progress(ProgressEvent{Phase: PhaseDiscovery, Account: t.Account, Region: region, From: FromAWS, Workloads: len(result.Workloads), Error: result.Error})
 			}
 			return nil
 		}()
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return accountFound{}, ctx.Err()
 			}
 			// A refused role is already listed apart; any other failure of the
 			// account is said, never dropped.
@@ -230,18 +262,20 @@ func All(ctx context.Context, o AllOptions) ([]RegionDiscovery, error) {
 				found = append(found, RegionDiscovery{Account: t.Account, Region: "*", Workloads: []Workload{}, Ineligible: []IneligibleRule{}, Error: said})
 			}
 			accountProgress(AccountEvent{Account: t.Account, State: AccountDone, Regions: listed, Error: said})
-			return found, nil
+			return accountFound{found, standalone}, nil
 		}
 		accountProgress(AccountEvent{Account: t.Account, State: AccountDone, Regions: listed})
-		return found, nil
+		return accountFound{found, standalone}, nil
 	}
 	byAccount, err := limit.Map(ctx, o.Accounts, concurrency, account)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	regions := []RegionDiscovery{}
+	standalone := []StandaloneRegion{}
 	for _, found := range byAccount {
-		regions = append(regions, found...)
+		regions = append(regions, found.regions...)
+		standalone = append(standalone, found.standalone...)
 	}
-	return regions, nil
+	return regions, standalone, nil
 }

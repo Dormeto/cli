@@ -12,13 +12,16 @@ import (
 )
 
 // Discover is the ports of the region's discovery: the scan (ScanRegion with
-// the region's ports, at now()), the Auto Scaling groups, rules by ARN, EC2 and
+// the region's ports, at now(); with the standalone scan too), the Auto Scaling groups, rules by ARN, EC2 and
 // what a nap stops. Make one Region per account and region (its EKS clusters
 // are kept 15 minutes).
 func (r *Region) Discover(where discover.Where, now func() time.Time) discover.RegionPorts {
 	return discover.RegionPorts{
 		Scan: func(ctx context.Context) (discover.ScanResult, error) {
 			return discover.ScanRegion(ctx, r.Scan(), where, now())
+		},
+		Standalone: func(ctx context.Context) (discover.ScanResult, error) {
+			return discover.ScanRegionWith(ctx, r.Scan(), where, now(), discover.ScanOptions{Standalone: true})
 		},
 		AutoScaling: r.autoscaling,
 		ELBv2:       r.elbv2,

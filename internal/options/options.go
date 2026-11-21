@@ -47,6 +47,13 @@ type Options struct {
 	MinSaving   *float64 `json:"minSaving"`
 	Parallel    int      `json:"parallel"`
 	MaxWakesRds *float64 `json:"maxWakesRds"`
+	// The standalone resources (--standalone on, the default): nil when off, the report then as without them.
+	Standalone *Standalone `json:"standalone,omitempty"`
+}
+
+// Standalone is the standalone resources' options: their idle window, in minutes (--standalone-window).
+type Standalone struct {
+	Window int `json:"window"`
 }
 
 // ReplayWindow is the window the replay takes as the current one: --window, else the product's default (60 minutes).
@@ -81,7 +88,8 @@ const Usage = `Usage: dormeto aws estimate --profile <profile>[,<profile>...] [-
   [--regions eu-west-1,eu-west-3] [--exclude-tags 'env=dev|test,team=web' ...] [--uptime | --ec2-uptime | --ecs-uptime | --rds-uptime] [--role <name>]
   [--baseline always|business-hours] [--timezone Europe/Paris] [--discount-compute 0-90] [--discount-databases 0-90]
   [--refresh discovery|metrics] [--days 14] [--window <minutes>] [--max-wakes 3|none]
-  [--min-saving 1|none] [--max-wakes-rds 2|none] [--parallel 5] [--out <dir>]`
+  [--min-saving 1|none] [--max-wakes-rds 2|none] [--parallel 5] [--out <dir>]
+  [--standalone on|off] [--standalone-window 120]`
 
 // Accounts created by AWS Organizations have it; the role is supposed to be there.
 const defaultRole = "OrganizationAccountAccessRole"
@@ -94,10 +102,12 @@ var (
 
 // Options without a value; --uptime is every uptime option.
 var flagNames = []string{"uptime", "ec2-uptime", "ecs-uptime", "rds-uptime"}
-var valueNames = []string{"profile", "accounts", "regions", "exclude-tags", "role", "baseline", "timezone", "discount-compute", "discount-databases", "refresh", "out", "days", "window", "max-wakes", "min-saving", "parallel", "max-wakes-rds"}
+var valueNames = []string{"profile", "accounts", "regions", "exclude-tags", "role", "baseline", "timezone", "discount-compute", "discount-databases", "refresh", "out", "days", "window", "max-wakes", "min-saving", "parallel", "max-wakes-rds", "standalone", "standalone-window"}
 
 const (
-	windowMin, windowMax, windowDefault       = 5, 1440, 60
+	windowMin, windowMax, windowDefault = 5, 1440, 60
+	// A standalone workload's idle window: the router's range (5 minutes to 24 hours) and built-in (2 hours).
+	standaloneWindowDefault                   = 120
 	daysMin, daysMax, daysDefault             = 1, 15, 14
 	parallelMin, parallelMax, parallelDefault = 1, 50, 5
 )
@@ -337,9 +347,26 @@ func Parse(args []string) (Options, error) {
 	if excludeTags == nil {
 		excludeTags = []discover.TagWants{}
 	}
+	var standalone *Standalone
+	switch or("standalone", "on") {
+	case "on":
+		windowText := or("standalone-window", strconv.Itoa(standaloneWindowDefault))
+		w, _ := strconv.Atoi(windowText)
+		if !wholeRe.MatchString(windowText) || w < windowMin || w > windowMax {
+			return Options{}, usageErr("--standalone-window: whole minutes from " + strconv.Itoa(windowMin) + " to " + strconv.Itoa(windowMax))
+		}
+		standalone = &Standalone{Window: w}
+	case "off":
+		if has("standalone-window") {
+			return Options{}, usageErr("--standalone-window: only with --standalone on")
+		}
+	default:
+		return Options{}, usageErr("--standalone: on or off")
+	}
 	all := flags["uptime"]
 	return Options{
-		Profiles: profiles, Accounts: accounts, Regions: regions, ExcludeTags: excludeTags,
+		Standalone: standalone,
+		Profiles:   profiles, Accounts: accounts, Regions: regions, ExcludeTags: excludeTags,
 		Ec2Uptime: all || flags["ec2-uptime"], EcsUptime: all || flags["ecs-uptime"], RdsUptime: all || flags["rds-uptime"],
 		Role: or("role", defaultRole), Baseline: baseline, Discounts: prices.Discounts{Compute: compute, Databases: databases},
 		Refresh: refresh, Out: out, Window: window, Days: days, MaxWakes: maxWakes, MinSaving: minSaving, Parallel: parallel, MaxWakesRds: maxWakesRds,

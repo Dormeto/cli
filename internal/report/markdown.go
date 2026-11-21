@@ -108,7 +108,7 @@ func companionLines(e estimate.Estimate) []string {
 
 // Markdown is the Markdown report, readable as it is (to paste into a proposal).
 func Markdown(e estimate.Estimate) string {
-	t, o := e.Totals, e.Options
+	o := e.Options
 	generated := e.GeneratedAt
 	if len(generated) > 16 {
 		generated = generated[:16]
@@ -123,7 +123,7 @@ func Markdown(e estimate.Estimate) string {
 	}
 	out = append(out,
 		"## Totals", "",
-		headline(t, o), "",
+		headlineOf(e), "",
 	)
 	if visual := costVisual(e); len(visual) > 0 {
 		out = append(out, "```text")
@@ -133,10 +133,18 @@ func Markdown(e estimate.Estimate) string {
 	accounts, _ := accountsTable(e, -1)
 	out = append(out, "### By account", "")
 	out = append(out, markdownTable(accounts)...)
+	out = append(out, standaloneTotals(e)...)
 	out = append(out, "", "### Dormeto's cost", "")
 	out = append(out, markdownTable(costTable(e))...)
-	out = append(out, "", "## Workloads", "",
-		"| Account | Region | Load balancer | Hosts | Backend | Uptime | Recommended | Saving | Wakes a day |", "|---|---|---|---|---|---|---|---|---|")
+	out = append(out, "", "## Workloads", "")
+	// With the standalone resources, the workloads' kind first (the standalone ones have their own table).
+	kind := ""
+	if e.Standalone != nil {
+		kind = "| " + kindHTTP + " "
+		out = append(out, "| Kind | Account | Region | Load balancer | Hosts | Backend | Uptime | Recommended | Saving | Wakes a day |", "|---|---|---|---|---|---|---|---|---|---|")
+	} else {
+		out = append(out, "| Account | Region | Load balancer | Hosts | Backend | Uptime | Recommended | Saving | Wakes a day |", "|---|---|---|---|---|---|---|---|---|")
+	}
 	byRecommended := slices.Clone(e.Workloads)
 	slices.SortStableFunc(byRecommended, func(a, b estimate.WorkloadEstimate) int {
 		return cmp.Compare(b.Recommended.USDMonth, a.Recommended.USDMonth)
@@ -152,11 +160,17 @@ func Markdown(e estimate.Estimate) string {
 		for _, d := range x.Databases {
 			databases += " + " + d.Kind + " " + d.ID
 		}
-		out = append(out, fmt.Sprintf("| %s | %s | %s | %s | %s %s%s | %s | %d min | %s | %s |",
+		out = append(out, kind+fmt.Sprintf("| %s | %s | %s | %s | %s %s%s | %s | %d min | %s | %s |",
 			w.Account, w.Region, cell(w.LoadBalancer), cell(hosts), w.Backend.Kind, cell(lastSegment(w.Backend.ID)), cell(databases),
 			cell(uptimeCell(x.Uptime)), x.Recommended.Minutes, usd(x.Recommended.USDMonth), day(x.Recommended.WakesPerDay)))
 	}
-	out = append(out, "", "## Left out", "")
+	if e.Standalone != nil {
+		out = append(out, "")
+		out = append(out, standaloneLines(e)...)
+		out = append(out, "## Left out", "")
+	} else {
+		out = append(out, "", "## Left out", "")
+	}
 	if len(e.LeftOut) > 0 {
 		out = append(out, "| Account | Region | Load balancer | Target group | Why |", "|---|---|---|---|---|")
 		for _, l := range e.LeftOut {
@@ -244,6 +258,9 @@ func Markdown(e estimate.Estimate) string {
 	}
 	out = append(out, "", "## Options", "")
 	out = append(out, optionLines(o)...)
+	if e.Standalone != nil {
+		out = append(out, fmt.Sprintf("- Standalone resources: estimated (--standalone on), at a %s idle window (--standalone-window), idle by their default signals", windowAdjective(e.Standalone.Window)))
+	}
 	out = append(out, "", "## Assumptions", "")
 	for _, a := range e.Assumptions {
 		out = append(out, "- "+a)
@@ -319,6 +336,16 @@ func optionLines(o options.Options) []string {
 		"- Minimum saving: " + minSaving,
 		"- Companion databases: found by security group, " + rdsWakes,
 	}
+}
+
+// headlineOf is the Totals' sentence, with the standalone resources when they are estimated.
+func headlineOf(e estimate.Estimate) string {
+	t, o := e.Totals, e.Options
+	if e.Standalone == nil {
+		return headline(t, o)
+	}
+	return fmt.Sprintf("Dormeto would save about **%s a month** at %s, for %s. Dormeto itself costs about %s a month: **net about %s**.",
+		usd(t.USDMonthWindow), figuresAt(e), estimatedWhat(e), usd(t.DormetoMonth), usd(net(t)))
 }
 
 // headline is the Totals' sentence: the savings at the figures' window (--window, then the recommended windows' too),

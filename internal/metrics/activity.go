@@ -401,6 +401,11 @@ func ReadActivity(ctx context.Context, cw CloudWatchPort, queries []ActivityQuer
 	if len(queries) == 0 || len(queries) > 30 || days < 1 || days > activityMaxDays {
 		return ActivityPoints{}, errors.New("the activity of a workload needs its queries (1 to 30) and days (1 to 14)")
 	}
+	return readActivity(ctx, cw, queries, days, now)
+}
+
+// readActivity is ReadActivity without the API's limits (the estimate reads up to its --days, 15).
+func readActivity(ctx context.Context, cw CloudWatchPort, queries []ActivityQuery, days int, now time.Time) (ActivityPoints, error) {
 	periodMs := activityPeriod.Milliseconds()
 	toMs := int64(math.Floor(float64(now.UnixMilli()-activityLag.Milliseconds())/float64(periodMs))) * periodMs
 	fromMs := toMs - int64(days)*activityDay.Milliseconds()

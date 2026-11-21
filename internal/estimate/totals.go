@@ -91,6 +91,35 @@ func (s *state) estimate() Estimate {
 			t.DormetoMonth += router + cost.Workload
 		}
 	}
+	// The standalone resources estimated (--standalone on): in the sums, a workload each in Dormeto's cost, and the
+	// managed ones left out staying in it.
+	var resources []ResourceEstimate
+	var staying []ResourceRef
+	if s.standalonePart != nil {
+		resources = s.standalonePart.Resources
+		for _, l := range s.standalonePart.LeftOut {
+			if l.Resource.Managed {
+				staying = append(staying, l.Resource)
+			}
+		}
+	}
+	for _, x := range resources {
+		where := x.Resource.Account + "#" + x.Resource.Region
+		router := cost.Router
+		if seen[where] {
+			router = 0
+		} else {
+			seen[where] = true
+			routed = append(routed, Where{Account: x.Resource.Account, Region: x.Resource.Region})
+		}
+		for _, t := range []*Totals{totals, byAccount.of(x.Resource.Account), byRegion.of(x.Resource.Region)} {
+			t.Standalone += 1
+			t.ActualMonth += x.ActualMonth
+			t.USDMonthWindow += x.AtWindow.USDMonth
+			t.USDMonthRecommended += x.Recommended.USDMonth
+			t.DormetoMonth += router + cost.Workload
+		}
+	}
 	// Each account's (and region's) workloads not estimated, whatever the reason: an account whose all are is listed too.
 	var notEstimated []discover.Workload
 	for _, x := range s.in.Excluded {
@@ -125,7 +154,19 @@ func (s *state) estimate() Estimate {
 			t.DormetoMonth += router + cost.Workload
 		}
 	}
-	if len(s.workloads) > 0 || len(installed.staying) > 0 {
+	for _, r := range staying {
+		where := r.Account + "#" + r.Region
+		router := cost.Router
+		if seen[where] {
+			router = 0
+		} else {
+			seen[where] = true
+		}
+		for _, t := range []*Totals{totals, byAccount.of(r.Account), byRegion.of(r.Region)} {
+			t.DormetoMonth += router + cost.Workload
+		}
+	}
+	if len(s.workloads) > 0 || len(installed.staying) > 0 || len(resources) > 0 || len(staying) > 0 {
 		totals.DormetoMonth += cost.Manager
 	}
 	for _, t := range append(append([]*Totals{totals}, byAccount.each()...), byRegion.each()...) {
@@ -135,15 +176,23 @@ func (s *state) estimate() Estimate {
 		return CostPart{Count: count, UnitMonth: unitMonth, USDMonth: float64(count) * unitMonth}
 	}
 	managers := 0
-	if len(s.workloads) > 0 {
+	if len(s.workloads) > 0 || len(resources) > 0 {
 		managers = 1
 	}
 	dormeto := DormetoCost{
 		Manager:   part(managers, cost.Manager),
 		Routers:   Routers{CostPart: part(len(routed), cost.Router), Where: routed},
-		Workloads: part(len(s.workloads), cost.Workload),
+		Workloads: part(len(s.workloads)+len(resources), cost.Workload),
 		USDMonth:  totals.DormetoMonth,
 	}
+	// The standalone resources Dormeto manages now: estimated, or staying though left out.
+	var managedResources []ResourceRef
+	for _, x := range resources {
+		if x.Resource.Managed {
+			managedResources = append(managedResources, x.Resource)
+		}
+	}
+	managedResources = append(managedResources, staying...)
 	if len(installed.now) > 0 {
 		// The installation now, then the recommendation's change: the routers of the accounts and regions with workloads
 		// once it is applied (seen) against those with workloads onboarded now.
@@ -155,9 +204,20 @@ func (s *state) estimate() Estimate {
 				now = append(now, Where{Account: w.Account, Region: w.Region})
 			}
 		}
+		for _, r := range managedResources {
+			if where := r.Account + "#" + r.Region; !onboardedIn[where] {
+				onboardedIn[where] = true
+				now = append(now, Where{Account: r.Account, Region: r.Region})
+			}
+		}
 		c := Change{Excluded: installed.excluded, Busy: installed.busy, Small: installed.small}
 		for _, x := range s.workloads {
 			if !x.Workload.Managed {
+				c.Onboard++
+			}
+		}
+		for _, x := range resources {
+			if !x.Resource.Managed {
 				c.Onboard++
 			}
 		}
@@ -171,14 +231,14 @@ func (s *state) estimate() Estimate {
 				c.RoutersRemoved++
 			}
 		}
-		c.ManagerRemoved = len(s.workloads) == 0 && len(installed.staying) == 0
+		c.ManagerRemoved = len(s.workloads) == 0 && len(installed.staying) == 0 && len(resources) == 0 && len(staying) == 0
 		c.USDMonth = float64(c.Onboard-c.Excluded-c.Busy-c.Small)*cost.Workload + float64(c.RoutersAdded-c.RoutersRemoved)*cost.Router
 		if c.ManagerRemoved {
 			c.USDMonth -= cost.Manager
 		}
 		dormeto.Manager = part(1, cost.Manager)
 		dormeto.Routers = Routers{CostPart: part(len(now), cost.Router), Where: now}
-		dormeto.Workloads = part(len(installed.now), cost.Workload)
+		dormeto.Workloads = part(len(installed.now)+len(managedResources), cost.Workload)
 		dormeto.Change = &c
 	}
 	return s.result(*totals, dormeto, byAccount.ordered(), byRegion.ordered())
@@ -277,6 +337,28 @@ func (s *state) result(totals Totals, dormeto DormetoCost, byAccount, byRegion O
 		}
 	}
 	e.Assumptions = assumptionsOf(s.in.Baseline, s.in.Options, kubernetes)
+	if p := s.standalonePart; p != nil {
+		var split SplitTotals
+		for _, x := range s.workloads {
+			split.HTTP.Count++
+			split.HTTP.ActualMonth += x.ActualMonth
+			split.HTTP.USDMonthWindow += x.AtWindow.USDMonth
+			split.HTTP.USDMonthRecommended += x.Recommended.USDMonth
+		}
+		for _, x := range p.Resources {
+			split.Standalone.Count++
+			split.Standalone.ActualMonth += x.ActualMonth
+			split.Standalone.USDMonthWindow += x.AtWindow.USDMonth
+			split.Standalone.USDMonthRecommended += x.Recommended.USDMonth
+		}
+		split.Both = SplitTotal{
+			Count: split.HTTP.Count + split.Standalone.Count, ActualMonth: split.HTTP.ActualMonth + split.Standalone.ActualMonth,
+			USDMonthWindow:      split.HTTP.USDMonthWindow + split.Standalone.USDMonthWindow,
+			USDMonthRecommended: split.HTTP.USDMonthRecommended + split.Standalone.USDMonthRecommended,
+		}
+		p.Totals = split
+		e.Standalone = p
+	}
 	return e
 }
 

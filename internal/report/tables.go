@@ -9,11 +9,14 @@ import (
 	"strings"
 
 	"github.com/Dormeto/cli/internal/estimate"
-	"github.com/Dormeto/cli/internal/options"
 )
 
 // The workloads, then by backend: Auto Scaling groups, EC2 instances, ECS services, Kubernetes owners on EKS.
-func counts(t estimate.Totals) []string {
+// With the standalone resources, their count after the databases.
+func counts(t estimate.Totals, standalone bool) []string {
+	if standalone {
+		return []string{num(t.Workloads), num(t.Kinds.ASG), num(t.Kinds.EC2), num(t.Kinds.ECS), num(t.Kinds.EKS), num(t.Databases), num(t.Standalone), num(t.Excluded)}
+	}
 	return []string{num(t.Workloads), num(t.Kinds.ASG), num(t.Kinds.EC2), num(t.Kinds.ECS), num(t.Kinds.EKS), num(t.Databases), num(t.Excluded)}
 }
 
@@ -37,6 +40,7 @@ func accountsTable(e estimate.Estimate, limit int) (t table, more int) {
 		}
 		return ""
 	}
+	standalone := e.Standalone != nil
 	keys := e.ByAccount.Keys()
 	shown := keys
 	if limit >= 0 && limit < len(keys) {
@@ -55,16 +59,22 @@ func accountsTable(e estimate.Estimate, limit int) (t table, more int) {
 	var rows []row
 	for _, account := range shown {
 		a, _ := e.ByAccount.Get(account)
-		rows = append(rows, row{cells: slices.Concat([]string{account, name(account)}, counts(a), []string{usd(a.ActualMonth), usd(a.WithDormetoMonth), saved(a)})})
+		rows = append(rows, row{cells: slices.Concat([]string{account, name(account)}, counts(a, standalone), []string{usd(a.ActualMonth), usd(a.WithDormetoMonth), saved(a)})})
 	}
 	tot := e.Totals
-	note := fmt.Sprintf("Cost with Dormeto enabled: at %s, Dormeto's cost included%s.", figuresWindow(e.Options), manager)
+	note := fmt.Sprintf("Cost with Dormeto enabled: at %s, Dormeto's cost included%s.", figuresAt(e), manager)
+	head := []string{"Account", "Name", "Workloads", "ASG", "EC2", "ECS", "EKS", "RDS", "Excluded", "Actual monthly cost", "Cost with Dormeto enabled", "Savings"}
+	figures := []bool{false, false, true, true, true, true, true, true, true, true, true, true}
+	if standalone {
+		head = slices.Insert(head, 8, "Standalone")
+		figures = append(figures, true)
+	}
 	return table{
-		head:    []string{"Account", "Name", "Workloads", "ASG", "EC2", "ECS", "EKS", "RDS", "Excluded", "Actual monthly cost", "Cost with Dormeto enabled", "Savings"},
-		figures: []bool{false, false, true, true, true, true, true, true, true, true, true, true},
+		head:    head,
+		figures: figures,
 		groups: [][]row{
 			rows,
-			{{cells: slices.Concat([]string{"Total", ""}, counts(tot), []string{usd(tot.ActualMonth), usd(tot.WithDormetoMonth), saved(tot)}), strong: true}},
+			{{cells: slices.Concat([]string{"Total", ""}, counts(tot, standalone), []string{usd(tot.ActualMonth), usd(tot.WithDormetoMonth), saved(tot)}), strong: true}},
 		},
 		note: &note,
 	}, len(keys) - len(shown)
@@ -122,8 +132,8 @@ func costTable(e estimate.Estimate) table {
 			parts,
 			{{cells: []string{"Dormeto's cost", "", usd(e.Dormeto.USDMonth)}, strong: true}},
 			{
-				{cells: []string{"Actual cost", fmt.Sprintf("what naps would stop in the %s, running %s", n(t.Workloads, "workload"), running), usd(t.ActualMonth)}},
-				{cells: []string{"Savings", savingsAt(e.Options), usd(-t.USDMonthWindow)}},
+				{cells: []string{"Actual cost", fmt.Sprintf("what naps would stop in the %s, running %s", estimatedWhat(e), running), usd(t.ActualMonth)}},
+				{cells: []string{"Savings", savingsAt(e), usd(-t.USDMonthWindow)}},
 			},
 			{{cells: []string{"Cost with Dormeto applied", fmt.Sprintf("%s - %s + %s", usd(t.ActualMonth), usd(t.USDMonthWindow), usd(t.DormetoMonth)), usd(t.WithDormetoMonth)}, strong: true}},
 		},
@@ -168,10 +178,15 @@ func signed(v float64) string {
 	return usd(v)
 }
 
-// savingsAt is the Savings row's computation: at --window, else at the recommended windows.
-func savingsAt(o options.Options) string {
-	if o.Window == nil {
-		return "at the recommended idle windows"
+// savingsAt is the Savings row's computation: at --window, else at the recommended windows; the standalone resources'
+// window after it.
+func savingsAt(e estimate.Estimate) string {
+	at := "at the recommended idle windows"
+	if o := e.Options; o.Window != nil {
+		at = "at a " + windowAdjective(*o.Window) + " idle window"
 	}
-	return "at a " + windowAdjective(*o.Window) + " idle window"
+	if e.Standalone != nil {
+		at += " (standalone resources: a " + windowAdjective(e.Standalone.Window) + " idle window)"
+	}
+	return at
 }

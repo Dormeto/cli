@@ -1,0 +1,204 @@
+// The standalone resources (vision standalone workloads design §7): each kind priced from its default signals replayed
+// at --standalone-window, never counted twice, never priced from a failed read, left out without a point.
+package estimate
+
+import (
+	"encoding/json"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/Dormeto/cli/internal/discover"
+	"github.com/Dormeto/cli/internal/metrics"
+	"github.com/Dormeto/cli/internal/options"
+	"github.com/Dormeto/cli/internal/stopped"
+)
+
+var RDS = stopped.Item{Kind: "rds", Class: "db.t3.medium", Engine: "mysql"}
+
+func resource(kind, id string, items ...stopped.Item) discover.StandaloneResource {
+	arn := "arn:" + kind + ":" + id
+	if items == nil {
+		items = []stopped.Item{}
+	}
+	return discover.StandaloneResource{Account: A, Region: "eu-west-1", Kind: kind, ID: id, ARN: arn, Name: id, Tags: map[string][]string{}, Stopped: items}
+}
+
+// job is a resource's 5-minute points over the 14 days: busy (90) an hour a day from 09:00 UTC, idle (0) otherwise;
+// none where gone says.
+func job(gone func(p int) bool) [][2]float64 {
+	out := [][2]float64{}
+	for p := 0; p < 14*288; p++ {
+		if gone != nil && gone(p) {
+			continue
+		}
+		v := 0.0
+		// FROM is 12:00 UTC: 09:00 is the point 21 hours in.
+		if at := p % 288; at >= 252 && at < 264 {
+			v = 90
+		}
+		out = append(out, [2]float64{float64(p * 5), v})
+	}
+	return out
+}
+
+func signalsOf(points map[string][][2]float64) []metrics.RegionSignals {
+	read := metrics.RegionSignals{Account: A, Region: "eu-west-1", From: FROM, To: TO, Points: map[string]map[string][][2]float64{}, Unreadable: map[string]string{}}
+	for arn, list := range points {
+		id := "cpu_0"
+		if strings.HasPrefix(arn, "arn:rds") {
+			id = "metric_0"
+		}
+		read.Points[arn] = map[string][][2]float64{id: list}
+	}
+	return []metrics.RegionSignals{read}
+}
+
+// standaloneWorld: one HTTP workload (shop) and a resource of each kind, each running a daily job.
+func standaloneWorld(in *Input) {
+	in.Options.Standalone = &options.Standalone{Window: 120}
+	resources := []discover.StandaloneResource{
+		resource("instance", "i-agent", T3), resource("asg", "workers", T3), resource("ecs", "arn:aws:ecs:eu-west-1:111111111111:service/jobs/worker", FARGATE),
+		resource("rds-instance", "reports", RDS), resource("rds-cluster", "aurora", RDS, RDS),
+	}
+	in.Standalone = []discover.StandaloneRegion{{Account: A, Region: "eu-west-1", Resources: resources, Ineligible: []discover.StandaloneIneligible{}, Problems: []string{}, Unread: []string{}}}
+	points := map[string][][2]float64{}
+	for _, r := range resources {
+		points[r.ARN] = job(nil)
+	}
+	in.Signals = signalsOf(points)
+}
+
+func TestEachKindOfStandaloneResourceIsPricedFromItsSignalsAtTheStandaloneWindow(t *testing.T) {
+	e := run(t, standaloneWorld)
+	p := e.Standalone
+	if p == nil || p.Window != 120 || p.Assumption != StandaloneAssumption {
+		t.Fatalf("standalone %+v", p)
+	}
+	var kinds []string
+	for _, x := range p.Resources {
+		kinds = append(kinds, x.Resource.Kind)
+		// Busy an hour a day: asleep the rest beyond the 2 hours after it, a start a day.
+		if x.AtWindow.USDMonth <= 0 || x.AtWindow.AsleepHours < 20 || x.AtWindow.AsleepHours > 22 || x.AtWindow.WakesPerDay < 0.9 || x.AtWindow.WakesPerDay > 1.1 {
+			t.Errorf("%s: %+v", x.Resource.ID, x.AtWindow)
+		}
+		closeTo(t, x.Resource.ID+" ran", x.RanHoursPerDay, 24, 6)
+		if x.Recommended.Minutes < 5 || x.Recommended.Minutes > 120 {
+			t.Errorf("%s: recommended %d", x.Resource.ID, x.Recommended.Minutes)
+		}
+	}
+	if !slices.Equal(kinds, []string{"instance", "asg", "ecs", "rds-instance", "rds-cluster"}) || len(p.LeftOut) != 0 {
+		t.Fatalf("kinds %q, left out %+v", kinds, p.LeftOut)
+	}
+	// The instance's saving: T3 ($0.0456 an hour, the fake price book's) for the hours asleep.
+	instance := p.Resources[0]
+	closeTo(t, "the instance's actual cost", instance.ActualMonth, 0.0456*24*30, 6)
+	closeTo(t, "the instance's saving", instance.AtWindow.USDMonth, 0.0456*instance.AtWindow.AsleepHours*30, 6)
+	// The totals for HTTP, standalone and both; the account's figures with them, a workload each in Dormeto's cost.
+	s := p.Totals
+	if s.Standalone.Count != 5 || s.Both.Count != s.HTTP.Count+5 || e.Totals.Standalone != 5 {
+		t.Fatalf("totals %+v, %+v", s, e.Totals)
+	}
+	sum := 0.0
+	for _, x := range p.Resources {
+		sum += x.AtWindow.USDMonth
+	}
+	closeTo(t, "standalone savings", s.Standalone.USDMonthWindow, sum, 6)
+	closeTo(t, "both", s.Both.USDMonthWindow, s.HTTP.USDMonthWindow+sum, 6)
+	closeTo(t, "the totals' savings", e.Totals.USDMonthWindow, s.Both.USDMonthWindow, 6)
+	if e.Dormeto.Workloads.Count != s.HTTP.Count+5 {
+		t.Fatalf("Dormeto's workloads %+v", e.Dormeto.Workloads)
+	}
+	// The databases sentence no longer holds: they are counted.
+	if strings.Contains(said(e.Assumptions), "Databases are not attached") {
+		t.Fatal(e.Assumptions)
+	}
+}
+
+func TestAStandaloneResourceIsLeftOutWithWhyNeverPricedFromAFailedReadOrWithoutAPoint(t *testing.T) {
+	e := run(t, standaloneWorld, func(in *Input) {
+		r := &in.Standalone[0]
+		r.Resources = append(r.Resources, resource("instance", "i-stopped", T3), resource("instance", "i-unread", T3), resource("instance", "i-nothing"),
+			resource("instance", "i-dev", T3))
+		r.Resources[len(r.Resources)-1].Tags = map[string][]string{"env": {"dev"}}
+		r.Ineligible = []discover.StandaloneIneligible{{Kind: "instance", ID: "i-spot", ARN: "arn:instance:i-spot", Name: "i-spot", Reason: "instance i-spot is a Spot instance: Dormeto stops On-Demand instances only"}}
+		r.Problems = []string{"RDS instances not listed: the discovery role may not call rds:DescribeDBInstances (apply the access module or the AWS CLI script of this release again)"}
+		in.Signals[0].Points["arn:instance:i-stopped"] = map[string][][2]float64{"cpu_0": {}}
+		in.Signals[0].Unreadable["arn:instance:i-unread"] = "CloudWatch could not read the metrics (Forbidden)"
+		in.Options.ExcludeTags = []discover.TagWants{{tag("env", "dev")}}
+	})
+	p := e.Standalone
+	why := map[string]string{}
+	for _, l := range p.LeftOut {
+		why[l.Resource.ID] = l.Reason
+	}
+	want := map[string]string{
+		"i-spot":    "instance i-spot is a Spot instance: Dormeto stops On-Demand instances only",
+		"i-stopped": NoData,
+		"i-unread":  "signals unreadable: CloudWatch could not read the metrics (Forbidden)",
+		"i-nothing": nothing,
+		"i-dev":     "excluded by its tags (env=dev)",
+	}
+	for id, reason := range want {
+		if why[id] != reason {
+			t.Errorf("%s: %q, want %q", id, why[id], reason)
+		}
+	}
+	if len(p.Resources) != 5 || len(p.Unread) != 1 || !strings.HasPrefix(p.Unread[0].Reason, "RDS instances not listed") {
+		t.Fatalf("resources %d, unread %+v", len(p.Resources), p.Unread)
+	}
+}
+
+// Stopped every night (no point from 20:00 to 08:00 UTC): asleep then is no saving, its actual cost its hours running.
+func TestAResourceStoppedAtNightSavesNothingWhileStopped(t *testing.T) {
+	// FROM is 12:00 UTC: 20:00 to 08:00 is the points 96 to 240 of each day.
+	e := run(t, standaloneWorld, func(in *Input) {
+		in.Signals[0].Points["arn:instance:i-agent"]["cpu_0"] = job(func(p int) bool { return (p%288) >= 96 && (p%288) < 240 })
+	})
+	x := e.Standalone.Resources[0]
+	closeTo(t, "ran", x.RanHoursPerDay, 12, 6)
+	closeTo(t, "actual", x.ActualMonth, 0.0456*12*30, 6)
+	all := run(t, standaloneWorld).Standalone.Resources[0]
+	if x.AtWindow.USDMonth >= all.AtWindow.USDMonth {
+		t.Fatalf("stopped at night %v, running %v", x.AtWindow.USDMonth, all.AtWindow.USDMonth)
+	}
+}
+
+// A database counted as an HTTP workload's companion is not counted again as a standalone resource.
+func TestADatabaseCountedAsACompanionIsNotCountedAgainAsStandalone(t *testing.T) {
+	e := run(t, companions, standaloneWorld, func(in *Input) {
+		shop := resource("rds-instance", "shop-db", RDS)
+		in.Standalone[0].Resources = append(in.Standalone[0].Resources, shop)
+		in.Signals[0].Points[shop.ARN] = map[string][][2]float64{"metric_0": job(nil)}
+	})
+	x := find(t, e.Workloads, "shop")
+	if refs := databaseRefs(x.Databases); !slices.Equal(refs, [][2]string{{"rds-instance", "shop-db"}}) {
+		t.Fatalf("shop's databases %q", refs)
+	}
+	for _, r := range e.Standalone.Resources {
+		if r.Resource.ID == "shop-db" {
+			t.Fatal("shop-db counted twice")
+		}
+	}
+	i := slices.IndexFunc(e.Standalone.LeftOut, func(l ResourceLeftOut) bool { return l.Resource.ID == "shop-db" })
+	if i < 0 || e.Standalone.LeftOut[i].Reason != "the companion database of the HTTP workload shop.example.com: counted with it" {
+		t.Fatalf("left out %+v", e.Standalone.LeftOut)
+	}
+}
+
+// --standalone off: no standalone part, the report's JSON without its keys.
+func TestWithoutTheStandaloneResourcesTheEstimateIsAsBefore(t *testing.T) {
+	e := run(t, func(in *Input) {
+		in.Standalone = []discover.StandaloneRegion{{Account: A, Region: "eu-west-1", Resources: []discover.StandaloneResource{resource("instance", "i-agent", T3)}}}
+	})
+	if e.Standalone != nil || e.Totals.Standalone != 0 {
+		t.Fatalf("standalone %+v", e.Standalone)
+	}
+	b, _ := json.Marshal(e)
+	if strings.Contains(string(b), `"standalone"`) {
+		t.Fatalf("%s", b)
+	}
+	if !strings.Contains(said(e.Assumptions), "Databases are not attached") {
+		t.Fatal(e.Assumptions)
+	}
+}

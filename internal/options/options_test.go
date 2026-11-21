@@ -31,7 +31,7 @@ func TestProfileAlone(t *testing.T) {
 	cwd, _ := os.Getwd()
 	want := Options{
 		Profiles: []string{"prospect"}, ExcludeTags: []discover.TagWants{}, Role: "OrganizationAccountAccessRole",
-		Baseline: prices.Baseline{Kind: "always"}, Out: cwd, Window: nil, Days: 14, MaxWakes: f(3), MinSaving: f(1), Parallel: 5, MaxWakesRds: f(2),
+		Baseline: prices.Baseline{Kind: "always"}, Out: cwd, Window: nil, Days: 14, MaxWakes: f(3), MinSaving: f(1), Parallel: 5, MaxWakesRds: f(2), Standalone: &Standalone{Window: 120},
 	}
 	if got := must(t, "--profile", "prospect"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -48,7 +48,7 @@ func TestEveryOptionGiven(t *testing.T) {
 		ExcludeTags: []discover.TagWants{{{Key: "env", Values: []string{"dev", "test"}}, {Key: "team", Values: []string{"web"}}}, {{Key: "dormeto:ignore", Values: []string{}}}},
 		Ec2Uptime:   true, Role: "ReadOnlyAudit", Baseline: prices.Baseline{Kind: "business-hours", TimeZone: "Europe/Paris"},
 		Discounts: prices.Discounts{Compute: 20, Databases: 30}, Refresh: s("metrics"), Out: "/tmp/reports", Window: i(30), Days: 7,
-		MaxWakes: f(5), MinSaving: f(2.5), Parallel: 2, MaxWakesRds: f(1.5),
+		MaxWakes: f(5), MinSaving: f(2.5), Parallel: 2, MaxWakesRds: f(1.5), Standalone: &Standalone{Window: 120},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -176,6 +176,11 @@ func TestRefuses(t *testing.T) {
 		{[]string{"--profile", "p", "--days", "16"}, "--days: whole days from 1 to 15 (CloudWatch keeps the requests by the minute 15 days)"},
 		{[]string{"--profile", "p", "--days", "7.5"}, "--days: whole days from 1 to 15 (CloudWatch keeps the requests by the minute 15 days)"},
 		{[]string{"--profile", "p", "--verbose"}, "unknown option: --verbose"},
+		{[]string{"--profile", "p", "--standalone", "yes"}, "--standalone: on or off"},
+		{[]string{"--profile", "p", "--standalone-window", "4"}, "--standalone-window: whole minutes from 5 to 1440"},
+		{[]string{"--profile", "p", "--standalone-window", "1441"}, "--standalone-window: whole minutes from 5 to 1440"},
+		{[]string{"--profile", "p", "--standalone-window", "90.5"}, "--standalone-window: whole minutes from 5 to 1440"},
+		{[]string{"--profile", "p", "--standalone", "off", "--standalone-window", "60"}, "--standalone-window: only with --standalone on"},
 	}
 	for _, r := range refused {
 		_, err := Parse(r.args)
@@ -202,6 +207,25 @@ func TestWindowOfTheFiguresAndOfTheReplay(t *testing.T) {
 	}
 }
 
+// The standalone resources are estimated by default, at the router's built-in 2 hours; --standalone off leaves them out
+// (Standalone nil, the report then as without them).
+func TestStandaloneResources(t *testing.T) {
+	if o := must(t, "--profile", "p"); o.Standalone == nil || o.Standalone.Window != 120 {
+		t.Fatalf("standalone %+v", o.Standalone)
+	}
+	for _, w := range []string{"5", "45", "1440"} {
+		if o := must(t, "--profile", "p", "--standalone", "on", "--standalone-window", w); o.Standalone == nil || strconv.Itoa(o.Standalone.Window) != w {
+			t.Errorf("--standalone-window %s: %+v", w, o.Standalone)
+		}
+	}
+	if o := must(t, "--profile", "p", "--standalone", "off"); o.Standalone != nil {
+		t.Fatalf("standalone %+v", o.Standalone)
+	}
+	if !strings.Contains(Usage, "[--standalone on|off] [--standalone-window 120]") {
+		t.Fatal(Usage)
+	}
+}
+
 func TestDays(t *testing.T) {
 	for _, d := range []string{"1", "7", "15"} {
 		if got := must(t, "--profile", "p", "--days", d).Days; strconv.Itoa(got) != d {
@@ -222,11 +246,16 @@ func TestHelp(t *testing.T) {
 }
 
 func TestReportJSON(t *testing.T) {
-	o := must(t, "--profile", "p")
+	// --standalone off: the options as before the standalone resources.
+	o := must(t, "--profile", "p", "--standalone", "off")
 	b, _ := json.Marshal(o)
 	want := `{"accounts":null,"regions":null,"excludeTags":[],"ec2Uptime":false,"ecsUptime":false,"rdsUptime":false,"role":"OrganizationAccountAccessRole",` +
 		`"baseline":{"kind":"always"},"discounts":{"compute":0,"databases":0},"refresh":null,"window":null,"days":14,"maxWakes":3,"minSaving":1,"parallel":5,"maxWakesRds":2}`
 	if string(b) != want {
+		t.Fatalf("got %s", b)
+	}
+	b, _ = json.Marshal(must(t, "--profile", "p"))
+	if want := strings.TrimSuffix(want, "}") + `,"standalone":{"window":120}}`; string(b) != want {
 		t.Fatalf("got %s", b)
 	}
 	// --exclude-tags: each criterion an object {"key": [values]}, its keys in the order given (Node's insertion order,

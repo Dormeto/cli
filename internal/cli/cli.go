@@ -238,7 +238,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 		targets[i] = discover.Target{Account: a.Account, Credentials: a.Credentials}
 	}
 	view := progress.DiscoveryView(len(reached.Accounts), views)
-	discovered, err := discover.All(ctx, discover.AllOptions{
+	discovered, standalone, err := discover.AllWith(ctx, discover.AllOptions{
 		Accounts: targets, Unreachable: func(account string) bool { return unreachable(reached, account) }, Regions: o.Regions,
 		RegionsOf: func(ctx context.Context, account string, creds *aws.Credentials) ([]string, error) {
 			return awsOf(account).RegionsOf(ctx, account, creds)
@@ -247,6 +247,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 			return awsOf(account).PortsOf(ctx, account, region, creds)
 		},
 		Cache: c, Refresh: refresh, Now: deps.Now, Progress: view.Region, AccountProgress: view.Account, Concurrency: o.Parallel,
+		Standalone: o.Standalone != nil,
 	})
 	view.End()
 	if err != nil {
@@ -295,6 +296,20 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 		}
 	}
 
+	// The standalone resources' signals (--standalone on), over the same days.
+	var signals []metrics.RegionSignals
+	if o.Standalone != nil {
+		reading := progress.RegionsView("Standalone", views)
+		signals, err = metrics.StandaloneAll(ctx, metrics.StandaloneOptions{
+			Regions: standalone, CloudWatchOf: cloudwatchOf, Cache: c, Refresh: refresh, Now: deps.Now, Concurrency: o.Parallel,
+			Progress: reading.Done, OnPlan: reading.Plan, OnStart: reading.Start, Days: o.DaysRead(),
+		})
+		reading.End()
+		if err != nil {
+			return err
+		}
+	}
+
 	deps.Log("Phase 3: estimate")
 	// The prices are public: any profile reads them.
 	book := awsByProfile[o.Profiles[0]].Prices(c.Prices())
@@ -304,6 +319,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 			return book.Hourly(ctx, region, item, o.Discounts)
 		},
 		PriceFailure: book.Failure, Baseline: o.Baseline, Options: o, Now: deps.Now(), Excluded: excluded, Uptime: uptime,
+		Standalone: standalone, Signals: signals,
 	})
 	if err != nil {
 		return err

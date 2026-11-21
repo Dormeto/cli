@@ -312,7 +312,8 @@ func TestWritesBothReportsAndPrintsTheSummaryTheDiscountsReachThePricesASecondRu
 	e, c := fakeAWS(fakeOptions{})
 	r := newRun(t, e)
 	out := t.TempDir()
-	if code := Main([]string{"--profile", "p", "--discount-compute", "20", "--out", out}, r.deps); code != 0 {
+	// The HTTP workloads alone (standalone_test.go has the standalone resources).
+	if code := Main([]string{"--profile", "p", "--discount-compute", "20", "--standalone", "off", "--out", out}, r.deps); code != 0 {
 		t.Fatalf("exit code %d: %q", code, r.errors())
 	}
 	entries, _ := os.ReadDir(out)
@@ -342,7 +343,7 @@ func TestWritesBothReportsAndPrintsTheSummaryTheDiscountsReachThePricesASecondRu
 		t.Fatalf("cache %v", entries)
 	}
 	before := c.counts()
-	if code := Main([]string{"--profile", "p", "--out", out}, r.deps); code != 0 {
+	if code := Main([]string{"--profile", "p", "--standalone", "off", "--out", out}, r.deps); code != 0 {
 		t.Fatalf("second run: exit code %d: %q", code, r.errors())
 	}
 	if after := c.counts(); after != before {

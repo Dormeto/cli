@@ -329,7 +329,9 @@ type RulesPort interface {
 type RegionPorts struct {
 	// Scan is discovery's scan of the region (ScanRegion with the region's
 	// ports); its clusters the profile could not read are listed by Region.
-	Scan        func(ctx context.Context) (ScanResult, error)
+	Scan func(ctx context.Context) (ScanResult, error)
+	// Standalone is the same scan with the standalone one (ScanRegionWith, Standalone on); nil: none.
+	Standalone  func(ctx context.Context) (ScanResult, error)
 	AutoScaling AutoScalingPort
 	ELBv2       RulesPort
 	EC2         RegionEC2Port

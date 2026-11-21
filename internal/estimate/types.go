@@ -127,12 +127,14 @@ type Kinds struct {
 	EKS int `json:"eks"`
 }
 
-// Totals are the figures of some workloads (all, an account's, a region's). Excluded: the workloads not estimated,
+// Totals are the figures of some workloads (all, an account's, a region's), the standalone resources' with them. Excluded: the workloads not estimated,
 // whatever the reason (tags, left out, too many wakes, too small a saving). WithDormetoMonth: the actual cost less the
 // savings at the report's window (--window, else each workload's recommended one), plus Dormeto's cost (an account's: its routers and workloads; the total's: the
 // manager too).
 type Totals struct {
-	Workloads           int     `json:"workloads"`
+	Workloads int `json:"workloads"`
+	// The standalone resources estimated (--standalone on); their figures are in the sums below.
+	Standalone          int     `json:"standalone,omitempty"`
 	Kinds               Kinds   `json:"kinds"`
 	Excluded            int     `json:"excluded"`
 	Databases           int     `json:"databases"`
@@ -260,4 +262,6 @@ type Estimate struct {
 	// The EKS clusters the profile cannot read (R10.5): their workloads are not estimated.
 	UnreadableClusters []UnreadableCluster `json:"unreadableClusters"`
 	Assumptions        []string            `json:"assumptions"`
+	// The standalone resources (--standalone on; absent when off).
+	Standalone *StandaloneEstimate `json:"standalone,omitempty"`
 }
