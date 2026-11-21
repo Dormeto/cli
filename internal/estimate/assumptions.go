@@ -25,6 +25,10 @@ func assumptionsOf(baseline prices.Baseline, o options.Options, kubernetes bool)
 	if o.EcsUptime {
 		ecs = "ECS services: their uptime measured over the " + days + " (CloudWatch CPUUtilization of the service, published every minute while it has a task); their actual cost counts the hours they had a task, their savings only the hours Dormeto would nap them then, and how many tasks they had (CloudWatch LiveTaskCount, every minute), the count they are priced at; a service without it, at its desired count when discovered (one task for a service found at 0). Services Dormeto already manages are assumed to run all the time."
 	}
+	// With the standalone resources, the EC2 and ECS lines are the HTTP workloads': the standalone ones have theirs.
+	if o.Standalone != nil {
+		ec2, ecs = "HTTP workloads: "+ec2, "HTTP workloads: "+ecs
+	}
 	out := []string{
 		"Every request counts as activity and as a wake: no waker is installed yet to set scanners and other filtered requests apart, so the workloads stay awake longer here than they would (smaller savings).",
 		"A wake lasts 60 seconds in the replay; the visitors' wait is not estimated before install.",
@@ -40,9 +44,15 @@ func assumptionsOf(baseline prices.Baseline, o options.Options, kubernetes bool)
 		ecs,
 		"Companion databases are found by security group (a database whose security group lets a workload's in), RDS instances and Aurora provisioned clusters, not yet Aurora Serverless; one another workload reaches, a read replica or one with replicas is left out; with --rds-uptime their CPUUtilization says when they were available (one stopped when discovered, started by a schedule, included), else they are assumed available all the time and one stopped is left out; their storage keeps billing, and a database takes minutes to start (its workload's wakes are held that long, not counted here).",
 	)
+	if o.Standalone != nil {
+		out = append(out, StandaloneMeasure)
+	}
 	if kubernetes {
 		out = append(out, "Kubernetes pods: their share of their nodes (the larger of CPU and memory over the node's allocatable) at the node's price, saved only where a node autoscaler removes the nodes they free; the EKS control plane and the nodes' DaemonSets keep running.")
 	}
 	cost := prices.DormetoCost
 	return append(out, "Dormeto's cost: about $"+JSNumber(cost.Manager)+" a month for the manager, $"+JSNumber(cost.Router)+" per account and region with workloads, $"+JSNumber(cost.Workload)+" per workload.")
 }
+
+// StandaloneMeasure is how the standalone resources are measured and priced, said beside the HTTP workloads' lines.
+const StandaloneMeasure = "Standalone resources: they ran when their signal has 5-minute points (an EC2 instance, an RDS database, an Auto Scaling group or an ECS service publishes none while stopped or at 0); priced for those hours at their size when discovered (a group's desired capacity, an ECS service's desired count, at least 1 task), an ECS service with --ecs-uptime at its tasks measured (CloudWatch LiveTaskCount); a service at 0 tasks is left out without --ecs-uptime."

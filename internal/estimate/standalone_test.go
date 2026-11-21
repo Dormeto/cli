@@ -243,3 +243,49 @@ func TestADatabaseAnHTTPWorkloadReachesIsNeverAStandaloneResource(t *testing.T) 
 		}
 	}
 }
+
+// A standalone ECS service is priced as an HTTP one is: with --ecs-uptime at its tasks measured over the period (its
+// LiveTaskCount), not at its count when discovered; without it, one at 0 tasks is left out.
+func TestAStandaloneServiceIsPricedAtItsMeasuredTasks(t *testing.T) {
+	ten := FARGATE
+	ten.Count = 10
+	service := "arn:ecs:arn:aws:ecs:eu-west-1:111111111111:service/jobs/worker"
+	measured := run(t, standaloneWorld, func(in *Input) {
+		in.Options.EcsUptime, in.Options.MinSaving = true, nil // a tenth of its price: under $1 a month
+		in.Standalone[0].Resources[2].Stopped = []stopped.Item{ten}
+		in.Signals[0].Tasks = map[string]float64{service: 14 * 1440} // one task every minute of the 14 days
+	})
+	x := measured.Standalone.Resources[2]
+	if x.Resource.Kind != "ecs" {
+		t.Fatalf("resource %+v", x.Resource)
+	}
+	closeTo(t, "a service measured at 1 task of the 10 discovered", x.ActualMonth, 0.0099*24*30/10, 6)
+	assumed := run(t, standaloneWorld, func(in *Input) { in.Standalone[0].Resources[2].Stopped = []stopped.Item{ten} })
+	closeTo(t, "without --ecs-uptime, its count when discovered", assumed.Standalone.Resources[2].ActualMonth, 0.0099*24*30, 6)
+
+	zero := 0
+	idle := run(t, standaloneWorld, func(in *Input) { in.Standalone[0].Resources[2].EcsDesired = &zero })
+	i := slices.IndexFunc(idle.Standalone.LeftOut, func(l ResourceLeftOut) bool { return l.Resource.Kind == "ecs" })
+	if i < 0 || idle.Standalone.LeftOut[i].Reason != "an ECS service at 0 tasks: nothing running to stop (--ecs-uptime estimates it as one task from the hours it ran)" {
+		t.Fatalf("left out %+v", idle.Standalone.LeftOut)
+	}
+}
+
+// The assumptions say what is done for both kinds: the EC2 and ECS lines are the HTTP workloads', and one line says how
+// the standalone resources are measured and priced.
+func TestTheAssumptionsSayHowEachKindIsMeasured(t *testing.T) {
+	e := run(t, standaloneWorld)
+	text := said(e.Assumptions)
+	for _, want := range []string{
+		"HTTP workloads: EC2 instances without an Auto Scaling group are assumed to run 24/7",
+		"HTTP workloads: ECS services are assumed to run all the time",
+		"Standalone resources: they ran when their signal has 5-minute points (an EC2 instance, an RDS database, an Auto Scaling group or an ECS service publishes none while stopped or at 0); priced for those hours at their size when discovered (a group's desired capacity, an ECS service's desired count, at least 1 task), an ECS service with --ecs-uptime at its tasks measured (CloudWatch LiveTaskCount); a service at 0 tasks is left out without --ecs-uptime.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the assumptions lack %q:\n%s", want, text)
+		}
+	}
+	if off := run(t); strings.Contains(said(off.Assumptions), "HTTP workloads:") {
+		t.Errorf("--standalone off: %q", off.Assumptions)
+	}
+}

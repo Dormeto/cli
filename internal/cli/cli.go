@@ -302,7 +302,7 @@ func estimateRun(ctx context.Context, o options.Options, deps Deps) error {
 		reading := progress.RegionsView("Standalone", views)
 		signals, err = metrics.StandaloneAll(ctx, metrics.StandaloneOptions{
 			Regions: standalone, CloudWatchOf: cloudwatchOf, Cache: c, Refresh: refresh, Now: deps.Now, Concurrency: o.Parallel,
-			Progress: reading.Done, OnPlan: reading.Plan, OnStart: reading.Start, Days: o.DaysRead(),
+			Progress: reading.Done, OnPlan: reading.Plan, OnStart: reading.Start, Days: o.DaysRead(), Tasks: o.EcsUptime,
 		})
 		reading.End()
 		if err != nil {

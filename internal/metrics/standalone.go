@@ -42,6 +42,9 @@ type RegionSignals struct {
 	To         string                             `json:"to"`
 	Points     map[string]map[string][][2]float64 `json:"points"`
 	Unreadable map[string]string                  `json:"unreadable"`
+	// With --ecs-uptime: each ECS service's task-minutes over the window (its LiveTaskCount), as the HTTP services' are
+	// counted; none when CloudWatch has none.
+	Tasks map[string]float64 `json:"tasks,omitempty"`
 }
 
 // Of is a resource's points as the activity reads them.
@@ -61,6 +64,8 @@ type StandaloneOptions struct {
 	OnPlan       func(count int)
 	OnStart      func(account, region string)
 	Days         int
+	// Tasks (--ecs-uptime): each ECS service's tasks are counted too (its LiveTaskCount), as an HTTP service's are.
+	Tasks bool
 }
 
 // StandaloneAll reads the signals of every region with standalone resources, --parallel regions at a time, in the
@@ -136,6 +141,21 @@ func regionSignals(ctx context.Context, region discover.StandaloneRegion, o Stan
 			continue
 		}
 		read.Points[r.ARN] = points.Points
+		if o.Tasks && r.Kind == discover.KindECS {
+			from, _ := time.Parse(time.RFC3339Nano, read.From)
+			to, _ := time.Parse(time.RFC3339Nano, read.To)
+			// As an HTTP service's: without them (an error, none published), it is priced at its count when discovered.
+			if tasks, err := taskMinutes(ctx, cw, []string{r.ARN}, from, to); err == nil {
+				if n, ok := tasks[r.ARN]; ok {
+					if read.Tasks == nil {
+						read.Tasks = map[string]float64{}
+					}
+					read.Tasks[r.ARN] = n
+				}
+			} else if ctx.Err() != nil {
+				return RegionSignals{}, ctx.Err()
+			}
+		}
 	}
 	if read.From == "" {
 		read.From, read.To = activityWindow(days, now)

@@ -170,6 +170,10 @@ func (s *state) resource(r discover.StandaloneResource, read *metrics.RegionSign
 	if len(r.Stopped) == 0 {
 		return nil, nothing, nil
 	}
+	// As an HTTP service: one at 0 tasks stops nothing, unless its tasks are measured.
+	if r.Kind == discover.KindECS && r.EcsDesired != nil && *r.EcsDesired == 0 && !o.EcsUptime {
+		return nil, "an ECS service at 0 tasks: nothing running to stop (--ecs-uptime estimates it as one task from the hours it ran)", nil
+	}
 	if read == nil {
 		return nil, "signals unreadable: not read", nil
 	}
@@ -190,10 +194,16 @@ func (s *state) resource(r discover.StandaloneResource, read *metrics.RegionSign
 	if len(ran) == 0 {
 		return nil, NoData, nil
 	}
+	// An ECS service's tasks counted (--ecs-uptime): its price scaled to its average tasks while it ran, as an HTTP
+	// service's is; else its count when discovered.
+	scale := 1.0
+	if tasks, counted := read.Tasks[r.ARN]; counted && o.EcsUptime && r.Kind == discover.KindECS {
+		scale, _ = tasksScale(tasks, ranMinutes(ran, from.UnixMilli()), r.Stopped)
+	}
 	wake := float64(wakeMs)
 	advice, err := replay.Advice(replay.Input{
 		Ctx: s.ctx, Requests: replay.BusyMinutes(plan.Signals, values, read.From, read.To, ran), Current: o.Standalone.Window, CheckMinutes: 5,
-		WakeMs: &wake, Stopped: r.Stopped, Hourly: s.priceOf(r.Region, 1), Baseline: s.in.Baseline, Now: s.in.Now, Running: ran,
+		WakeMs: &wake, Stopped: r.Stopped, Hourly: s.priceOf(r.Region, scale), Baseline: s.in.Baseline, Now: s.in.Now, Running: ran,
 		Windows: replay.StandaloneWindows, Recommendable: replay.StandaloneRecommendable,
 	})
 	if err != nil {
@@ -220,7 +230,7 @@ func (s *state) resource(r discover.StandaloneResource, read *metrics.RegionSign
 	if o.MinSaving != nil && usdOf(best) < *o.MinSaving {
 		return nil, fmt.Sprintf("it would save less than --min-saving (%s) a month at its recommended window, %d min", JSNumber(*o.MinSaving), advice.Recommended), nil
 	}
-	actual, err := s.cost(r.Region, ran, r.Stopped, 1)
+	actual, err := s.cost(r.Region, ran, r.Stopped, scale)
 	if err != nil {
 		return nil, "", err
 	}
@@ -258,6 +268,17 @@ func (s *state) reachedDatabases() map[string][]discover.Workload {
 				}
 			}
 		}
+	}
+	return out
+}
+
+// ranMinutes are the periods it ran in minutes from fromMs ([start, end)), as the measured uptime has them.
+func ranMinutes(ran []replay.Period, fromMs int64) [][2]int {
+	out := make([][2]int, 0, len(ran))
+	for _, p := range ran {
+		a, _ := parseISO(p.From)
+		b, _ := parseISO(p.To)
+		out = append(out, [2]int{int((a.UnixMilli() - fromMs) / 60_000), int((b.UnixMilli() - fromMs) / 60_000)})
 	}
 	return out
 }

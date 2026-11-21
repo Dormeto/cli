@@ -28,6 +28,8 @@ type StandaloneResource struct {
 	Stopped    []stopped.Item      `json:"stopped"`
 	// An instance's state when discovered (not one Dormeto manages).
 	InstanceState string `json:"instanceState,omitempty"`
+	// An ECS service's desired count when discovered (not one Dormeto manages): it is priced at it, at least one task.
+	EcsDesired *int `json:"ecsDesired,omitempty"`
 }
 
 // StandaloneIneligible is a standalone candidate the router would refuse, with the scan's reason.
@@ -88,7 +90,7 @@ func describeStandalone(ctx context.Context, ports RegionPorts, where Where, sca
 			if err != nil {
 				return err
 			}
-			r.InstanceState = now.instanceState
+			r.InstanceState, r.EcsDesired = now.instanceState, now.ecsDesired
 			if now.running != nil {
 				items, err = stopped.Describe(ctx, ports.Stopped, []stopped.Backend{*now.running})
 			}
