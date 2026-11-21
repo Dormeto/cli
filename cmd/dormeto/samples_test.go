@@ -46,6 +46,7 @@ var updateSamples = flag.Bool("update", false, "rewrite docs/samples from what t
 // what it said there without it (left out when nothing).
 type sampleFile struct {
 	Command string  `json:"command"`
+	Variant string  `json:"variant,omitempty"`
 	Line    string  `json:"line"`
 	Table   string  `json:"table"`
 	JSON    *string `json:"json"`
@@ -56,10 +57,13 @@ type sampleFile struct {
 // working directory) and whether stderr is kept (what a write or a dry run says there). The manager's answers are in
 // testdata/samples/manager.json.
 type sample struct {
-	line   string
-	google func(t *testing.T, g *gcptest.Server, d gcponboard.Deps)
-	files  map[string]string
-	stderr bool
+	line string
+	// variant names a second sample of a command, in <command>-<variant>.json (a standalone workload's beside an HTTP
+	// one's); its own answers are "<command> <variant> | <METHOD> <path>", before the command's.
+	variant string
+	google  func(t *testing.T, g *gcptest.Server, d gcponboard.Deps)
+	files   map[string]string
+	stderr  bool
 }
 
 // The fictional fleet's fixed points.
@@ -80,6 +84,14 @@ func absolute(path string) string {
 
 // sampleFileName is a command's file: its path with hyphens, aws-routers-waiting-page-set.json.
 func sampleFileName(command string) string { return strings.ReplaceAll(command, " ", "-") + ".json" }
+
+// variantFileName is a variant's file: aws-workloads-show-standalone.json; the command's own without a variant.
+func variantFileName(command, variant string) string {
+	if variant == "" {
+		return sampleFileName(command)
+	}
+	return strings.ReplaceAll(command, " ", "-") + "-" + variant + ".json"
+}
 
 // externalSamples are the commands whose samples another package's test writes, with its fakes: the install's
 // (internal/install) and the estimate's (internal/cli).
@@ -162,6 +174,12 @@ func TestSamplesEveryCommandHasItsFile(t *testing.T) {
 			t.Errorf("%s has no sample: docs/samples/%s (go test ./cmd/dormeto -run Samples -update)", c, sampleFileName(c))
 		}
 	}
+	for _, s := range samples {
+		if s.variant != "" {
+			c, _ := commandOf(t, splitLine(s.line)[1:])
+			want[variantFileName(c, s.variant)] = true
+		}
+	}
 	entries, err := os.ReadDir(samplesDir)
 	if err != nil {
 		t.Fatal(err)
@@ -171,10 +189,13 @@ func TestSamplesEveryCommandHasItsFile(t *testing.T) {
 			t.Errorf("docs/samples/%s is no command's", e.Name())
 		}
 	}
-	// Each command is sampled here or by its package's test, once.
+	// Each command is sampled here or by its package's test, once; a variant is a second sample, in its own file.
 	sampled := map[string]int{}
 	for _, s := range samples {
 		c, _ := commandOf(t, splitLine(s.line)[1:])
+		if s.variant != "" {
+			continue
+		}
 		sampled[c]++
 	}
 	for _, c := range externalSamples {
@@ -260,8 +281,8 @@ func TestSamples(t *testing.T) {
 			t.Fatalf("%q is no dormeto line", s.line)
 		}
 		command, c := commandOf(t, args[1:])
-		t.Run(command, func(t *testing.T) {
-			got := sampleFile{Command: command, Line: s.line}
+		t.Run(strings.TrimSpace(command+" "+s.variant), func(t *testing.T) {
+			got := sampleFile{Command: command, Variant: s.variant, Line: s.line}
 			stdout, stderr, exit, missing := runSample(t, s, command, answers, args[1:])
 			if exit != 0 || len(missing) > 0 {
 				t.Fatalf("exit %d, routes the fake manager lacks %v\nstdout:\n%s\nstderr:\n%s", exit, missing, stdout, stderr)
@@ -287,7 +308,7 @@ func TestSamples(t *testing.T) {
 				t.Errorf("the output holds %q, a real or local id", bad)
 			}
 			b := sampleBytes(t, got)
-			path := filepath.Join(samplesDir, sampleFileName(command))
+			path := filepath.Join(samplesDir, variantFileName(command, s.variant))
 			if *updateSamples {
 				if err := os.WriteFile(path, b, 0o644); err != nil {
 					t.Fatal(err)
@@ -296,7 +317,7 @@ func TestSamples(t *testing.T) {
 			}
 			was, err := os.ReadFile(path)
 			if err != nil || !bytes.Equal(was, b) {
-				t.Errorf("docs/samples/%s differs from what %q prints now; update it: go test ./cmd/dormeto -run Samples -update\nnow:\n%s", sampleFileName(command), s.line, b)
+				t.Errorf("docs/samples/%s differs from what %q prints now; update it: go test ./cmd/dormeto -run Samples -update\nnow:\n%s", variantFileName(command, s.variant), s.line, b)
 			}
 		})
 	}
@@ -344,6 +365,7 @@ type sampleManager struct {
 	mu      sync.Mutex
 	answers map[string]json.RawMessage
 	command string
+	variant string
 	reads   map[string]int
 	missing []string
 }
@@ -357,7 +379,11 @@ func (m *sampleManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		keys = []string{r.Method + " " + r.URL.Path + "?" + q, keys[0]}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	for _, k := range append([]string{m.command + " | " + keys[0], m.command + " | " + keys[len(keys)-1]}, keys...) {
+	first := []string{m.command + " | " + keys[0], m.command + " | " + keys[len(keys)-1]}
+	if m.variant != "" {
+		first = append([]string{m.command + " " + m.variant + " | " + keys[0], m.command + " " + m.variant + " | " + keys[len(keys)-1]}, first...)
+	}
+	for _, k := range append(first, keys...) {
 		answer, ok := m.answers[k]
 		if !ok {
 			continue
@@ -400,7 +426,7 @@ func runSample(t *testing.T, s sample, command string, answers map[string]json.R
 	}
 	t.Chdir(dir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-	m := &sampleManager{answers: answers, command: command, reads: map[string]int{}}
+	m := &sampleManager{answers: answers, command: command, variant: s.variant, reads: map[string]int{}}
 	srv := httptest.NewServer(m)
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)

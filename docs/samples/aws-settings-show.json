@@ -1,6 +1,6 @@
 {
   "command": "aws settings show",
   "line": "dormeto aws settings show",
-  "table": "Hibernate: on (changed by ops@example.com at 2026-11-13 17:05 UTC)\nJoin windows: up to 15 min apart\nEnded windows: not set (removed 365 days after their last occurrence by default)\nWorkload settings: idle window 30 min, hold 20 s\n",
-  "json": "{\n  \"hibernate\": true,\n  \"joinMinutes\": 15,\n  \"endedWindowDays\": null,\n  \"defaults\": {\n    \"idleMinutes\": 30,\n    \"waitSeconds\": 20\n  },\n  \"updatedAt\": \"2026-11-13T17:05:44.000Z\",\n  \"updatedBy\": \"ops@example.com\"\n}\n"
+  "table": "Hibernate: on (changed by ops@example.com at 2026-11-13 17:05 UTC)\nJoin windows: up to 15 min apart\nEnded windows: not set (removed 365 days after their last occurrence by default)\nWorkload settings: idle window 30 min, hold 20 s, idle CPU 3%, idle network 100000 bytes a minute\n",
+  "json": "{\n  \"hibernate\": true,\n  \"joinMinutes\": 15,\n  \"endedWindowDays\": null,\n  \"defaults\": {\n    \"idleMinutes\": 30,\n    \"waitSeconds\": 20,\n    \"idleCpuPercent\": 3,\n    \"idleNetworkBytes\": 100000\n  },\n  \"updatedAt\": \"2026-11-13T17:05:44.000Z\",\n  \"updatedBy\": \"ops@example.com\"\n}\n"
 }

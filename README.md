@@ -16,8 +16,9 @@
 
 `dormeto` is the Dormeto command line. `dormeto aws estimate` reads an AWS account or a whole organization with read-only
 access and estimates what Dormeto would save on the web workloads behind your Application Load Balancers (EC2, Auto
-Scaling, ECS, EKS, and the RDS databases that nap with them): the workloads that could nap, how long each would sleep and
-wake, and the monthly saving net of Dormeto's own cost. It gives a summary in the terminal and a Markdown and a JSON
+Scaling, ECS, EKS, and the RDS databases that nap with them) and on the standalone resources no route uses (EC2
+instances, Auto Scaling groups, ECS services, RDS instances and clusters, napped on their idle signals): the workloads
+that could nap, how long each would sleep and wake, and the monthly saving net of Dormeto's own cost. It gives a summary in the terminal and a Markdown and a JSON
 report. It installs nothing in your accounts and sends nothing anywhere but to AWS.
 
 `dormeto aws install` then installs the Dormeto manager in your AWS account with CodeBuild, after its checks and your
@@ -168,27 +169,37 @@ with code 1 and AWS's message; an SSO session expired, invalid or never logged i
 - `--parallel <n>`: how many accounts (discovery) or regions (requests and uptime) are read at a time (5 by default, 1
   to 50). A region's workloads are described eight at a time.
 - `--out <dir>`: where the reports are written (the current directory by default).
-- `--standalone on|off`: estimate the standalone resources too (`on`, the default): the EC2 instances, Auto Scaling
-  groups, ECS services, RDS instances and clusters that no route uses, found by discovery's rules (an HTTP workload's
-  backend is not one, nor a database counted as its companion). Each one's default idle signals (CPU, or a database's
-  connections) are read over the days read, 5 minutes at a time; a point at or over its threshold is activity, and
-  the time without points is when the resource did not run, which saves nothing. The replay prices what a nap of the
-  resource stops for the hours asleep. A resource without a point in the days read is left out (`no data: already
-  stopped`), as is one whose metrics could not be read, with why. `off` leaves them out: the report is then as it was
-  before them.
-- `--standalone-window <minutes>`: the standalone resources' idle window, 5 to 1440 (120 by default), for their
-  figures; the report also gives each one's recommended window (5 to 120 minutes). Only with `--standalone on`.
+- `--standalone on|off`: estimate the standalone resources too (`on`, the default; see below). `off` leaves them out:
+  the report and the AWS calls are then those of an estimate without them.
+- `--standalone-window <minutes>`: the standalone resources' idle window for their figures, 5 to 1440 minutes (120 by
+  default, the router's built-in); the report also gives each one's recommended window (5 to 120 minutes). Only with
+  `--standalone on`.
 
 The estimate is conservative: every request counts as activity and as a wake (there is no waker yet to set scanners
 apart), a wake lasts 60 seconds, there is no visitor's wait, and, with `--standalone off`, databases not attached to a
-load balancer are not counted. A stopped standalone resource is counted as started again when its history next shows
-activity, by a schedule or a person. It runs in three phases: discovery (what each eligible workload's backend would stop, as the router
+load balancer are not counted. It runs in three phases: discovery (what each eligible workload's backend would stop, as the router
 describes it), requests (each workload's `RequestCount` per minute over the days read, `--days`, five metrics per
 `GetMetricData` call), and the estimate (Dormeto's replay priced with the product's price book, at each workload's
 recommended window, or at `--window`, net of Dormeto's cost). Before them, it says what it reads to reach the accounts:
 the profile's account and organization, then the organization's accounts, listed one organizational unit at a time (a
 large organization takes a while). In a terminal, each phase shows one progress line; piped or redirected, it prints a
 line per account and region.
+
+**Standalone resources.** A standalone resource is an EC2 instance, an Auto Scaling group, an ECS service, an RDS
+instance or an RDS cluster that no route uses, found by discovery's rules: an HTTP workload's backend is not one, nor a
+database counted as an HTTP workload's companion, nor a Kubernetes node, and one the router would refuse (a Spot
+instance, an instance store root volume, a member of a group or cluster, a read replica, Aurora Serverless v1, an ECS
+service of the daemon strategy) is listed as left out with the router's reason. Discovery describes what a nap of each
+would stop; phase 2 reads its default idle signals (its CPU, or a database's connections, under the router's built-in
+thresholds) over the days read, 5 minutes at a time. A point at or over its threshold is activity; the time without points is when the resource
+did not run (EC2, ECS and RDS publish nothing then), which saves nothing. The activity is replayed by the idle window
+advisor at `--standalone-window`, and what a nap stops is priced for the hours asleep while it ran. The report says the
+estimate's assumption: **a stopped standalone resource is counted as started again when its history next shows
+activity, by a schedule or a person.** Left out, with why: a resource without a point in the days read (`no data:
+already stopped`), one whose metrics could not be read (`signals unreadable: …`, never priced), one whose description
+failed or that stops nothing, one excluded by its tags (`--exclude-tags`), one saving less than `--min-saving`
+(`--max-wakes` is for visitors' wakes and does not apply). A list the profile may not make is said in the report, such
+as the databases without `rds:DescribeDBInstances` or `rds:DescribeDBClusters` (see [Permissions](#permissions)).
 
 Where Dormeto is already installed, the estimate finds the workloads it manages (marked "managed by Dormeto"), asleep
 ones included. Dormeto's cost then starts from the installation as it is now (the manager, a router per account and
@@ -565,13 +576,20 @@ Account 111122223333 (prod), manager dmt-prod-manager-api 0.24.0, checked as arn
 
 ### What every manager command shares
 
+- **Kinds.** A workload is of one of two kinds: `http`, the web workload behind a load balancer's target group (an AWS
+  target group, a Google Cloud backend service), napped when no request comes and woken by its next visitor; or
+  `standalone` (AWS), a resource no route uses (an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance
+  or cluster), napped when its idle signals (its CPU, its network, a custom CloudWatch metric) stay under their
+  thresholds, and woken by a schedule or a person (it has no visitor, no waiting page and no waker). They need the
+  manager and the router that know standalone workloads. The lists say each one's `KIND`, `--kind http|standalone`
+  keeps one, and `--json` passes the API's keys as they are: an HTTP row has no `kind`.
 - **Targets.** A router is its name. A workload is `<router>/<workload id>`; the workload writes take several, or
   `--tag key=value` (repeatable; every workload that carries all the tags, all pages of the listing), never both, and a
   `--tag` that matches nothing exits 2. When a router does not answer (or the listing cannot be completed), the
   workloads resolved are acted on, then the command names what could not be resolved and exits 1 (`--wait` still
-  waits for the resolved ones). A discovery candidate is its id (the target group's ARN) or the name of its target
-  group when it is unique among the candidates of the status the command works on; an ambiguous name exits 2 and lists
-  the matching ARNs. A user is an email, a group a name, an operation and an exclusion their id.
+  waits for the resolved ones). A discovery candidate is its id (the target group's ARN, a standalone resource's ARN, a
+  backend service's path) or the name of its target group, resource or backend service when it is unique among the
+  candidates of the status the command works on; an ambiguous name exits 2 and lists the matching ids. A user is an email, a group a name, an operation and an exclusion their id.
 - **Regions.** On the manager's commands, `--region` is the manager's region, where its API is. A router's region is
   `--router-region` (`routers list`, `upgrade`, `install`), a candidate's `--candidate-region` (`discovery candidates`).
   On a router's commands, `dormeto gcp routers` and `dormeto gcp workloads`, `--region` is the router's, a Google Cloud
@@ -882,14 +900,16 @@ dormeto aws routers resume prod-eu
 ### workloads list
 
 ```sh
-dormeto aws workloads list [--state <state>]... [--router <name>] [--tag k=v]... [--search <text>] [--json]
+dormeto aws workloads list [--state <state>]... [--router <name>] [--kind http|standalone] [--tag k=v]... [--search <text>] [--json]
 ```
 
-Lists each workload's router, id, name, state, Dormeto tags (`key=value`, sorted by key) and the time since its last
-change, then a last line with the total. A router that does not answer is reported on stderr, the others are listed.
+Lists each workload's router, id, name, kind (`KIND`: `http`, or `standalone`), cloud, state, Dormeto tags (`key=value`,
+sorted by key) and the time since its last change, then a last line with the total. A router that does not answer is
+reported on stderr, the others are listed.
 
 - `--state <state>`: only the workloads in these states (repeatable or comma-separated; case-insensitive).
 - `--router <name>`: only the workloads of this router.
+- `--kind http|standalone`: only the workloads of this kind (the manager's filter: it refuses any other value).
 - `--tag key=value`: only the workloads with this Dormeto tag (repeatable: all must match).
 - `--search <text>`: only the workloads whose name or id contains the text.
 - `--json`: the API's answer.
@@ -905,7 +925,12 @@ dormeto aws workloads idle-window <router>/<workload> [--json]
 - `show`: one workload as the manager's workload view shows it: its state and since when, name, URL, account and region,
   router version and tags, its settings, its pauses (who, why, until when), its schedule with the next events (in the
   schedule's time zone), the share of the last 7 days in each state, its idle hours, and what its naps saved, with the
-  energy not used. A Google Cloud workload's savings are priced at Google's list prices when the manager has them.
+  energy not used. A Google Cloud workload's savings are priced at Google's list prices when the manager has them. A
+  standalone workload shows its `kind` and `resource` (its ARN, `(resource missing)` when its router no longer finds
+  it) instead of a URL, its idle window, wake timeout and idle signals' settings with the level each comes from, then
+  `idle signals`: each signal's last value against its threshold and since when it is under (`not under`, `off`, or
+  `not read: <why>`), and `nap`, when it may nap (from, at the latest). It has no hold, drain, held requests or wake
+  mode.
 - `history`: from the manager's store, never the router: the time in each state over `--days` (1 to 31, 7 by default),
   the wakes (how many, the median and the longest, the failed ones) and the savings estimate, then the latest 50
   changes, newest first, with what started each and how long a wake took. `--json` has every change.
@@ -1142,6 +1167,8 @@ dormeto aws types set api --tag kind=api --description "Public APIs" --wake-mode
 dormeto aws types set databases --idle-minutes 45
 dormeto aws workloads settings prod-eu/w-1 --idle-minutes 10 --type inherit
 dormeto aws workloads show prod-eu/w-1        # each value says where it comes from
+dormeto aws types set ci --tag team=ci --idle-cpu 3 --idle-metric agents.json
+dormeto aws workloads settings prod-eu/e1b7eeff74af033b --idle-network off --idle-cpu inherit
 ```
 
 From router 0.37.0, a workload's idle window, hold, drain, wake timeout, held requests, retry after a failed wake and
@@ -1156,6 +1183,24 @@ drain (they are 0; `inherit` is accepted); the organization's and the types' tak
 takes 0, and at most 1700 for the wake timeout, whatever they set. The CLI refuses a value out of its range before any
 call; a rules file is a JSON list, `-` for the standard input. A workload written by Terraform is refused: set it in its
 workload module. A router before 0.37.0 answers that it must be upgraded.
+
+A standalone workload's idle signals are settings of the same levels, on AWS (`settings set`, `routers settings`,
+`workloads settings`, `types set`; the Google Cloud commands have none):
+
+- `--idle-cpu <percent>|off|inherit`: idle while its CPU is under this percent (0 to 100);
+- `--idle-network <bytes a minute>|off|inherit`: idle while its network, in and out, is under this many bytes a minute
+  (a whole number, 0 to 10000000000);
+- `--idle-metric <file>|off|inherit`: a custom CloudWatch metric, a JSON file in the router's shape (`-` for the standard
+  input), such as `{"namespace": "CI/Agents", "name": "QueuedJobs", "dimensions": {"Agent": "${resource}"},
+  "statistic": "Maximum", "below": 1}` (`${resource}` is the workload's own id; `dimensions` may be a list of objects).
+
+It naps when every signal that applies has stayed under its threshold for its idle window. The CLI checks only that a
+value is a number, `off` or `inherit`, or that a file is JSON; the ranges and the metric's shape are the router's, and
+the manager's refusal is printed as it says it. An idle signal set at the organization (`settings set`, `types set`)
+needs every router at the version that knows standalone workloads and no Google Cloud router: the manager refuses it
+with the routers to upgrade first (`the organization's idle signals need every router at … : <n> router(s) must be
+upgraded first: <name> (<version>), …`, exit 1). On an HTTP workload, the manager refuses the idle signals, and on a
+standalone one the waker's settings (`--wake-mode`, the hold, the drain, the rules), in its words.
 
 ### Joined windows
 
@@ -1342,7 +1387,7 @@ exit 1) and a manager of 0.20.0 or later.
 ### Onboarding, offboarding and excluding workloads
 
 ```sh
-dormeto aws workloads onboard <candidate> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
+dormeto aws workloads onboard <candidate | resource ARN> [--name <name>] [--idle-minutes <5..1440>] [--wake-mode any|browser]
                           [--wake-timeout-seconds <60..3600>]
                           [--database <id>|cluster:<id>|<Cloud SQL name>]... [--fallback-type <type>]... [--set-tag k=v]...
                           [--router <router>] [--hibernate true|false]
@@ -1357,12 +1402,13 @@ eligibility as discovery listed it, and the request it would send.
 ```sh
 dormeto aws discovery candidates
 dormeto aws workloads onboard shop-staging --idle-minutes 30 --database cluster:shop-aurora --set-tag team=shop
+dormeto aws workloads onboard arn:aws:rds:eu-west-1:111122223333:db:reports
 dormeto aws workloads offboard prod-eu/w-1 --yes
 dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d --yes
 ```
 
-- `onboard` starts the onboarding of a candidate pending onboarding, given by its id (the target group's ARN) or the
-  name of its target group, follows it, then prints the new workload as `onboarded <router>/<workload id>`. An unknown
+- `onboard` starts the onboarding of a candidate pending onboarding, given by its id (the target group's ARN, a
+  standalone resource's ARN) or the name of its target group or resource, follows it, then prints the new workload as `onboarded <router>/<workload id>`. An unknown
   or ambiguous name exits 2 (its ARNs listed) and sends nothing. It sends what the dashboard's Onboard dialog sends:
   - `--name`: the workload's display name, up to 64 characters (the target group's name by default, or when empty);
   - `--idle-minutes`: the idle window, 5 to 1440 minutes. Not given, none is sent and the levels decide (the type's, the
@@ -1380,6 +1426,12 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
     targets everywhere else;
   - `--hibernate true|false`: hibernation of its EC2 instances (see [Hibernation](#hibernation)); without it the
     workload inherits its router's setting, then the manager's. `inherit` is not a value here: leave the flag out.
+- **A standalone candidate** is its resource (an EC2 instance, an Auto Scaling group, an ECS service, an RDS instance or
+  cluster), given by its ARN or its name. It is onboarded with the levels' settings (`--idle-minutes` and
+  `--wake-timeout-seconds` may be given; set its idle signals with `workloads settings` after), and `--database` names
+  its companion databases, as for an HTTP workload; the manager refuses `--wake-mode` and the waker's settings for it.
+  The router onboards it by tagging its resource; an older router fails the preview step with the version to upgrade it
+  to.
 - **A Google Cloud candidate** is a backend service named in a URL map, given by its id (the backend service's path,
   `projects/<project>/global/backendServices/<name>` or `projects/<project>/regions/<region>/backendServices/<name>`) or
   the name of its backend service, resolved as a target group's name is. It needs manager 0.24.0 and router 0.40.0. Three flags take the cloud's own values, checked
@@ -1399,7 +1451,8 @@ dormeto aws workloads exclude prod-eu/w-2 --reason "under migration" --for 14d -
   A Google Cloud workload is offboarded the same way, by `<router>/<workload id>`; the manager refuses, before any
   change, a GKE workload and one whose onboarding turned request logs on, with the command that offboards it,
   `dormeto gcp workloads offboard <id> --project <p> --region <r>`.
-- `exclude` excludes each workload's target group (a Google Cloud workload's backend service) from discovery, with a reason: the manager pauses its managed
+- `exclude` excludes each workload's target group (a Google Cloud workload's backend service, a standalone workload's
+  resource) from discovery, with a reason: the manager pauses its managed
   workloads (an `exclude` operation). `--reason` is 1 to 246 characters; `--for` is up to 366 days, `--until` within
   366 days; without either, the exclusion lasts until `dormeto aws exclusions lift`. It is always confirmed on a terminal.
   For a Google Cloud workload it excludes its backend service, by the path the command builds from the workload's row
@@ -1438,7 +1491,8 @@ dormeto aws exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 
 ### discovery status and run
 
-- `status` shows the last run (when, by whom, how many account-regions it scanned, skipped and failed), a Run now
+- `status` shows the last run (when, by whom, how many account-regions it scanned, skipped and failed, and `not read`:
+  what the scan of each account and region could not read, such as the RDS lists or an idle share), a Run now
   refused since, the candidates per status, the roles the manager uses and what the lint found. Times are in the local
   time zone.
 - `run` asks the manager for a run now; it runs on its own. With `--wait`, the last run is read every 5 seconds until a
@@ -1450,14 +1504,16 @@ dormeto aws exclusions lift 5f0c2b7e-1d4a-4e8b-9c3f-7a2d6e1b8c40
 ### discovery candidates, dismiss and restore
 
 - `candidates` lists the candidates of one `--status` (`pending-onboarding` by default; `pending-offboarding`,
-  `managed`, `ineligible`, `dismissed`, `excluded`, `out-of-scope`, `gone`): target group or backend service, `CLOUD`
-  (`aws` or `gcp`), `ACCOUNT OR PROJECT`, region (`global` for a global backend service), hosts, idle
+  `managed`, `ineligible`, `dismissed`, `excluded`, `out-of-scope`, `gone`): `CANDIDATE` (a target group, a backend service,
+  or a standalone resource by its name), `KIND` (`http`, `standalone`), `CLOUD` (`aws` or `gcp`), `ACCOUNT OR PROJECT`, region (`global` for a global backend service), hosts, idle
   hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every page
   is read unless `--limit` stops at that many (0, the default, reads all). `--account` keeps one AWS account or Google Cloud project,
-  `--candidate-region` one region of it (`europe-west1` or `global` on Google Cloud) (it needs `--account`; `--region` is the manager's). `--json` prints the
+  `--candidate-region` one region of it (`europe-west1` or `global` on Google Cloud) (it needs `--account`; `--region` is the manager's), `--kind
+  http|standalone` one kind (the manager's filter). `--json` prints the
   manager's answer, `{candidates}`, every page in it.
-- `dismiss` takes candidates out of the pending onboarding, each given by its id (a target group's ARN or a backend
-  service's path), sent as it is whatever the candidate's status, or the name of its target group, resolved among the candidates pending onboarding before anything
+- `dismiss` takes candidates out of the pending onboarding, each given by its id (a target group's ARN, a standalone
+  resource's ARN or a backend service's path), sent as it is whatever the candidate's status, or the name of its target
+  group or resource, resolved among the candidates pending onboarding before anything
   is sent: an unknown name, or one that names the target groups of several accounts or regions (their ARNs are listed),
   exits 2 and nothing is dismissed. `--note` says why (cut at 256 characters).
 - `restore` brings dismissed candidates back, each id or name resolved among the dismissed ones in the same way.
@@ -1480,6 +1536,9 @@ manager's answer, every page in it.
 - `config set --file <path>` replaces the whole configuration with the file (`-` reads standard input): the output of
   `config show`, or the answer of `config show --json`, whose `config` member is sent. It is always confirmed on a
   terminal. The manager checks it, and a refusal prints each of its errors on a line (exit 1).
+- `config set --standalone on|off` sets the perimeter's standalone scan (off by default): with `--file`, in the file's
+  configuration; alone, in the configuration as it is, read first. On, each run also lists the region's resources no
+  route uses as standalone candidates; off, they are out of scope. The manager checks the value.
 
 ### exclusions
 
@@ -1487,7 +1546,8 @@ manager's answer, every page in it.
   workloads it paused by name, and its state (`active`, `expired`, or `lifting` while a lift runs). `--json` prints the
   manager's answer, `{exclusions}`.
 - `exclusions add` excludes one target from discovery: an application target group (`--target-group <arn>`), an
-  application load balancer (`--load-balancer <arn>`) or a whole account (`--account <12 digits>`); on Google Cloud, a
+  application load balancer (`--load-balancer <arn>`), a standalone resource (`--resource <arn>`: an EC2 instance, an
+  Auto Scaling group, an ECS service, an RDS instance or cluster) or a whole account (`--account <12 digits>`); on Google Cloud, a
   backend service (`--target-group <path>`, `projects/<project>/global|regions/<region>/backendServices/<name>`), a URL
   map (`--load-balancer <path>`, `…/urlMaps/<name>`) or a project (`--account <project ID>`). Each flag takes either
   cloud's value, and anything else exits 2 before any call. The manager pauses its managed workloads (an `exclude`
@@ -2454,8 +2514,11 @@ make brew-linux                                     # the Homebrew cask on Linux
 
 `docs/samples/` holds, for every command of `dormeto aws` and `dormeto gcp`, one sample line and what it prints: a JSON
 file per command, named by its path (`aws-routers-waiting-page-set.json`), with `command`, `line`, `table` (stdout),
-`json` (stdout with `--json`, `null` without the flag) and `stderr` when a write says something there. The website shows
-them on its CLI pages, from a copy. Tests write them, nothing is typed: each line runs against the fake manager
+`json` (stdout with `--json`, `null` without the flag) and `stderr` when a write says something there. A command may
+have a second sample, a `variant` in `<path>-<variant>.json` (`aws-workloads-show-standalone.json`, a standalone
+workload beside the HTTP one), its answers `"<command> <variant> | <METHOD> <path>"` in the fake manager's file. The
+estimate's `json` and `markdown` are the two reports its run writes. The website shows them on its CLI pages, from a
+copy. Tests write them, nothing is typed: each line runs against the fake manager
 (`cmd/dormeto/testdata/samples/manager.json`, the manager's answers), the fake Google and a fixed clock, with one
 fictional fleet (account 111122223333, project `my-project`, `ops@example.com`); the install's and the estimate's run
 with the fakes of `internal/install` and `internal/cli`. A command without its file, a file that differs from what its

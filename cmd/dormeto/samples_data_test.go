@@ -44,6 +44,7 @@ var samples = []sample{
 	// workloads
 	{line: "dormeto aws workloads list"},
 	{line: "dormeto aws workloads show prod-eu/web"},
+	{line: "dormeto aws workloads show prod-eu/e1b7eeff74af033b", variant: "standalone"},
 	{line: "dormeto aws workloads history prod-eu/web --days 7"},
 	{line: "dormeto aws workloads idle-window prod-eu/web"},
 	{line: "dormeto aws workloads wake prod-eu/web --wait", stderr: true},
@@ -53,6 +54,7 @@ var samples = []sample{
 	{line: "dormeto aws workloads resume prod-eu/web", stderr: true},
 	{line: "dormeto aws workloads exclude prod-eu/web --reason \"always on\" --for 30d --yes", stderr: true},
 	{line: "dormeto aws workloads onboard api-tg", stderr: true},
+	{line: "dormeto aws workloads onboard reports", variant: "standalone", stderr: true},
 	{line: "dormeto aws workloads offboard prod-eu/web --yes", stderr: true},
 	{line: "dormeto aws workloads rename prod-eu/web \"Web shop\"", stderr: true},
 	{line: "dormeto aws workloads tags prod-eu/web --set owner=web-team", stderr: true},

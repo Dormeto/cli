@@ -24,23 +24,21 @@ import (
 	"github.com/Dormeto/cli/internal/stopped"
 )
 
-const (
-	agentArn   = "arn:aws:ec2:" + regR + ":" + acctA + ":instance/i-9"
-	reportsArn = "arn:aws:rds:" + regR + ":" + acctA + ":db:reports"
-	spotArn    = "arn:aws:ec2:" + regR + ":" + acctA + ":instance/i-spot"
-)
-
-// standaloneScan is the fake region's standalone scan: the instance i-9 (build-agent) and the database reports,
-// eligible; a Spot instance, ineligible; the RDS clusters refused.
-func standaloneScan() *discover.StandaloneScan {
+// standaloneScan is the fake region's standalone scan in an account: the instance i-9 (build-agent) and the database
+// reports, eligible; a Spot instance, ineligible; the RDS clusters refused.
+func standaloneScan(account string) *discover.StandaloneScan {
+	arn := func(service, resource string) string {
+		return "arn:aws:" + service + ":" + regR + ":" + account + ":" + resource
+	}
 	candidate := func(kind, id, arn, name string) discover.StandaloneRule {
-		return discover.StandaloneRule{Kind: discover.KindStandalone, ID: arn, Account: acctA, Region: regR, ResourceArn: arn, Name: name,
+		return discover.StandaloneRule{Kind: discover.KindStandalone, ID: arn, Account: account, Region: regR, ResourceArn: arn, Name: name,
 			Backend: discover.Backend{Kind: kind, ID: id, ARN: arn}, Tags: map[string][]string{}, Eligibility: discover.Eligible}
 	}
-	spot := candidate(discover.KindInstance, "i-spot", spotArn, "i-spot")
+	spot := candidate(discover.KindInstance, "i-spot", arn("ec2", "instance/i-spot"), "i-spot")
 	spot.Eligibility, spot.Reason = discover.Ineligible, "instance i-spot is a Spot instance: Dormeto stops On-Demand instances only"
 	return &discover.StandaloneScan{
-		Rules: []discover.StandaloneRule{candidate(discover.KindInstance, "i-9", agentArn, "build-agent"), spot, candidate(discover.KindRDSInstance, "reports", reportsArn, "reports")},
+		Rules: []discover.StandaloneRule{candidate(discover.KindInstance, "i-9", arn("ec2", "instance/i-9"), "build-agent"), spot,
+			candidate(discover.KindRDSInstance, "reports", arn("rds", "db:reports"), "reports")},
 		Report: discover.StandaloneReport{Problems: []string{"RDS clusters not listed: the discovery role may not call rds:DescribeDBClusters (apply the access module or the AWS CLI script of this release again)"},
 			Unread: []string{discover.KindRDSCluster}},
 	}
@@ -88,8 +86,11 @@ func (f signalsCloudWatch) GetMetricData(ctx context.Context, in metrics.GetMetr
 
 // standaloneAWS is fakeAWS with the standalone scan, the database, its price and the signals; scans counts the
 // standalone scans.
-func standaloneAWS() (*EstimateAWS, *calls, *int, *int) {
-	e, c := fakeAWS(fakeOptions{})
+func standaloneAWS() (*EstimateAWS, *calls, *int, *int) { return standaloneAWSOf(fakeOptions{}) }
+
+// standaloneAWSOf is standaloneAWS with fakeAWS's options: its standalone scan in the account the scan is asked for.
+func standaloneAWSOf(o fakeOptions) (*EstimateAWS, *calls, *int, *int) {
+	e, c := fakeAWS(o)
 	var mu sync.Mutex
 	scans, signals := new(int), new(int)
 	ports := e.PortsOf
@@ -100,7 +101,7 @@ func standaloneAWS() (*EstimateAWS, *calls, *int, *int) {
 			*scans++
 			mu.Unlock()
 			res, err := p.Scan(ctx)
-			res.Standalone = standaloneScan()
+			res.Standalone = standaloneScan(account)
 			return res, err
 		}
 		p.Stopped.RDS = fakeRDS{}

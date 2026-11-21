@@ -760,7 +760,7 @@ func TestDocsSayOnboardOffboardExcludeAndCandidatesOnGoogleCloud(t *testing.T) {
 		"[--router <router>]",
 		"<Cloud SQL name>",
 		"keeping its pause apart from an operator's on both clouds",
-		"each given by its id (a target group's ARN or a backend service's path)",
+		"each given by its id (a target group's ARN, a standalone resource's ARN or a backend service's path)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("README.md lacks %q", want)

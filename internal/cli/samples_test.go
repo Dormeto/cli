@@ -3,7 +3,7 @@ package cli
 // The estimate's sample (the CLI pages design §4; cmd/dormeto/samples_test.go writes the others): `dormeto aws estimate`,
 // run through Main against the fake AWS of these tests (fakeAWS: one account, one region, one workload), as account
 // 111122223333, its reports written in a directory of the working one, and kept in docs/samples/aws-estimate.json. It has no --json:
-// its JSON is the report it writes. A file that differs from what the run prints now fails the test; rewrite it with
+// its json is the JSON report it writes, and its markdown the Markdown report. A file that differs from what the run prints now fails the test; rewrite it with
 // go test ./internal/cli -run Samples -update.
 
 import (
@@ -32,18 +32,29 @@ func TestSamples(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(t.TempDir()) // the reports are written in the working directory
-	e, _ := fakeAWS(fakeOptions{whoami: func(context.Context) (string, error) { return "111122223333", nil }})
+	// Its region holds standalone resources too (standalone_test.go): an instance and a database estimated, a Spot
+	// instance left out, the RDS clusters not read.
+	e, _, _, _ := standaloneAWSOf(fakeOptions{whoami: func(context.Context) (string, error) { return "111122223333", nil }})
 	ports := e.PortsOf
 	e.PortsOf = func(ctx context.Context, account, region string, creds *aws.Credentials) (discover.RegionPorts, error) {
 		p, err := ports(ctx, account, region, creds)
-		scan := p.Scan
-		p.Scan = func(ctx context.Context) (discover.ScanResult, error) { // the rule of the profile's account
-			r, err := scan(ctx)
-			for i := range r.Rules {
-				r.Rules[i].Account = account
+		// The rule of the profile's account, its ARNs too.
+		inAccount := func(scan func(context.Context) (discover.ScanResult, error)) func(context.Context) (discover.ScanResult, error) {
+			return func(ctx context.Context) (discover.ScanResult, error) {
+				r, err := scan(ctx)
+				for i := range r.Rules {
+					x := &r.Rules[i]
+					x.Account = account
+					x.ID, x.LoadBalancerArn = strings.ReplaceAll(x.ID, acctA, account), strings.ReplaceAll(x.LoadBalancerArn, acctA, account)
+					if x.TargetGroupArn != nil {
+						tg := strings.ReplaceAll(*x.TargetGroupArn, acctA, account)
+						x.TargetGroupArn = &tg
+					}
+				}
+				return r, err
 			}
-			return r, err
 		}
+		p.Scan, p.Standalone = inAccount(p.Scan), inAccount(p.Standalone)
 		return p, err
 	}
 	r := newRun(t, e)
@@ -56,12 +67,24 @@ func TestSamples(t *testing.T) {
 	if code := Main(strings.Fields(line)[3:], r.deps); code != 0 {
 		t.Fatalf("exit %d: %q", code, r.errors())
 	}
+	// Its JSON is the report it writes (the time it was written left as it is: the clock is fixed), and its Markdown
+	// the other report.
+	report, err := os.ReadFile(filepath.Join("reports", "estimate-2026-11-14.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdown, err := os.ReadFile(filepath.Join("reports", "estimate-2026-11-14.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(report)
 	f := struct {
-		Command string  `json:"command"`
-		Line    string  `json:"line"`
-		Table   string  `json:"table"`
-		JSON    *string `json:"json"`
-	}{Command: "aws estimate", Line: line, Table: strings.Join(r.logged(), "\n") + "\n"}
+		Command  string  `json:"command"`
+		Line     string  `json:"line"`
+		Table    string  `json:"table"`
+		JSON     *string `json:"json"`
+		Markdown string  `json:"markdown"`
+	}{Command: "aws estimate", Line: line, Table: strings.Join(r.logged(), "\n") + "\n", JSON: &text, Markdown: string(markdown)}
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)

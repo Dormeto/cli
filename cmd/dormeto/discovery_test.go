@@ -231,7 +231,7 @@ func TestDiscoveryRunTimeoutMustBePositive(t *testing.T) {
 func TestDiscoveryCandidatesTable(t *testing.T) {
 	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {row("111111111111", "api", "pending-onboarding")}}}
 	r := runDiscovery(t, a, nil, "", "candidates", "--account", "111111111111", "--candidate-region", "eu-west-1", "--limit", "10")
-	if r.exit != 0 || !strings.Contains(r.stdout, "TARGET GROUP") || !strings.Contains(r.stdout, "api") || !strings.Contains(r.stdout, "api.example.com") || !strings.Contains(r.stdout, "120h") {
+	if r.exit != 0 || !strings.Contains(r.stdout, "CANDIDATE") || !strings.Contains(r.stdout, "api") || !strings.Contains(r.stdout, "api.example.com") || !strings.Contains(r.stdout, "120h") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
 	q := a.requests[0]
@@ -567,7 +567,7 @@ func TestDiscoveryCandidatesPrintsACloudColumnAndTakesAProject(t *testing.T) {
 	if r.exit != 0 || len(lines) != 3 {
 		t.Fatalf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
 	}
-	for _, h := range []string{"TARGET GROUP OR BACKEND SERVICE", "ACCOUNT OR PROJECT"} {
+	for _, h := range []string{"CANDIDATE", "ACCOUNT OR PROJECT"} {
 		if !strings.Contains(lines[0], h) {
 			t.Errorf("header %q lacks %q", lines[0], h)
 		}
@@ -705,14 +705,15 @@ func standaloneRow(status string) string {
 	return fmt.Sprintf(`{"kind":"standalone","id":%q,"resourceArn":%q,"account":"111111111111","region":"eu-west-1","name":"build-agent","backend":{"kind":"instance","id":"i-9","arn":%q},"tags":{},"eligibility":"eligible","idleHours7d":160,"status":%q}`, agentARN, agentARN, agentARN, status)
 }
 
-// The KIND column after the name, http for a row without a kind; a standalone candidate by its resource's name;
+// The CANDIDATE column (a target group, a backend service or a resource), then KIND, http for a row without a kind; a
+// standalone candidate by its resource's name;
 // --kind is the manager's filter, sent as it is.
 func TestDiscoveryCandidatesHaveTheirKind(t *testing.T) {
 	a := &disAPI{candidates: map[string][]string{"pending-onboarding": {row("111111111111", "api", "pending-onboarding"), standaloneRow("pending-onboarding")}}}
 	r := runDiscovery(t, a, nil, "", "candidates")
 	lines := strings.Split(r.stdout, "\n")
 	for i, want := range [][]string{
-		{"TARGET", "GROUP", "OR", "BACKEND", "SERVICE", "KIND", "CLOUD"},
+		{"CANDIDATE", "KIND", "CLOUD"},
 		{"api", "http", "aws", "111111111111", "eu-west-1", "api.example.com", "120h", "42"},
 		{"build-agent", "standalone", "aws", "111111111111", "eu-west-1", "—", "160h", "—"},
 	} {

@@ -403,3 +403,14 @@ func TestScheduleRemoveHintsAtClearOnlyForTheEmptyScheduleRefusal(t *testing.T) 
 		t.Errorf("exit %d, stderr %q", r.exit, r.stderr)
 	}
 }
+
+// A nap window's wake on a standalone workload: the router's refusal, printed as it comes, exit 1 (the CLI does not
+// know the workload's kind before its write).
+func TestScheduleAddWakeOnAStandaloneWorkloadPrintsTheRoutersRefusal(t *testing.T) {
+	refusal := "windows[2].wake: a standalone workload has no waiting page: nothing arrives to wake it in a nap window"
+	a := &scAPI{schedules: map[string]string{"prod-eu/w-1": keptSchedule}, refuse: refusal}
+	r := runSC(t, a, "add", "prod-eu/w-1", "--kind", "nap", "--days", "sat", "--start", "00:00", "--end", "00:00", "--wake", "header")
+	if r.exit != 1 || r.stderr != "prod-eu/w-1: "+refusal+"\n" || r.stdout != "" {
+		t.Errorf("exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+}

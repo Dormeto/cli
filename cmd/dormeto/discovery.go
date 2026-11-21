@@ -198,13 +198,13 @@ func newDiscoveryCandidates(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "candidates", Short: "List the discovery candidates of a status, of both clouds", Args: noArgs, SilenceErrors: true,
-		Long: "List the candidates of one status (default pending-onboarding): target group or backend service, cloud, account\n" +
-			"or project, region, hosts, idle hours and requests over 7 days, the workload or the operation running on it, and why it has that status. Every\n" +
-			"candidate has a KIND: http, or standalone for a resource no route uses (an instance, an Auto Scaling group, an ECS\n" +
-			"service, an RDS instance or cluster: its name in the first column); --kind keeps one. Every\n" +
+		Long: "List the candidates of one status (default pending-onboarding): the candidate (a target group, a backend service or\n" +
+			"a resource), kind, cloud, account or project, region, hosts, idle hours and requests over 7 days, the workload or the\n" +
+			"operation running on it, and why it has that status. KIND is http, or standalone for a resource no route uses (an\n" +
+			"instance, an Auto Scaling group, an ECS service, an RDS instance or cluster, by its name); --kind keeps one. Every\n" +
 			"page is read unless --limit stops at that many (0: all). --candidate-region needs --account (--region is the\n" +
-			"manager's). --cloud (aws or gcp) keeps one cloud's candidates: the list has AWS's target groups and Google Cloud's\n" +
-			"backend services. --json prints the manager's answer, {candidates}, every page in it.",
+			"manager's). --cloud (aws or gcp) keeps one cloud's candidates: the list has AWS's target groups and resources and\n" +
+			"Google Cloud's backend services. --json prints the manager's answer, {candidates}, every page in it.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			var err error
 			switch {
@@ -267,7 +267,7 @@ func candidatesText(cs []fleet.Candidate, status string) string {
 	if len(cs) == 0 {
 		return "no candidates in " + status + "\n"
 	}
-	rows := [][]string{{"TARGET GROUP OR BACKEND SERVICE", "KIND", "CLOUD", "ACCOUNT OR PROJECT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
+	rows := [][]string{{"CANDIDATE", "KIND", "CLOUD", "ACCOUNT OR PROJECT", "REGION", "HOSTS", "IDLE 7D", "REQUESTS 7D", "WORKLOAD", "REASON"}}
 	for _, c := range cs {
 		hosts := strings.Join(c.Hosts, ",")
 		if hosts == "" {
@@ -300,8 +300,8 @@ func newDiscoveryDismiss(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use: "dismiss <candidate>...", Short: "Dismiss candidates: they leave the pending onboarding", SilenceErrors: true,
-		Long: "Dismiss candidates, each given by its id (a target group's ARN or a backend service's path, sent as it is: a\n" +
-			"candidate of any status) or the name of its target group or backend service, among those pending onboarding. Every name is resolved before anything is sent: an\n" +
+		Long: "Dismiss candidates, each given by its id (a target group's ARN, a resource's ARN or a backend service's path, sent\n" +
+			"as it is: a candidate of any status) or the name of its target group, resource or backend service, among those pending onboarding. Every name is resolved before anything is sent: an\n" +
 			"unknown one, or one that names the target groups of several accounts or regions (their ARNs are listed), exits 2\n" +
 			"and nothing is dismissed. --note says why (cut at 256 characters). `discovery restore` brings them back. --json\n" +
 			"prints the manager's candidates. Needs an operator.",
@@ -318,7 +318,7 @@ func newDiscoveryRestore(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "restore <candidate>...", Short: "Restore dismissed candidates", SilenceErrors: true,
-		Long: "Restore dismissed candidates, each given by its id (the target group's ARN) or the name of its target group,\n" +
+		Long: "Restore dismissed candidates, each given by its id (a target group's or a resource's ARN) or its name,\n" +
 			"resolved among the dismissed ones before anything is sent as `discovery dismiss` does. --json prints the\n" +
 			"manager's candidates. Needs an operator.",
 		RunE: func(c *cobra.Command, args []string) error {
