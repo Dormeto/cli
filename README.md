@@ -1194,8 +1194,9 @@ takes 0, and at most 1700 for the wake timeout, whatever they set. The CLI refus
 call; a rules file is a JSON list, `-` for the standard input. A workload written by Terraform is refused: set it in its
 workload module. A router before 0.37.0 answers that it must be upgraded.
 
-A standalone workload's idle signals are settings of the same levels, on AWS (`settings set`, `routers settings`,
-`workloads settings`, `types set`; the Google Cloud commands have none):
+A standalone workload's idle signals are settings of the same levels, through the manager (`settings set`, `routers settings`,
+`workloads settings`, `types set`) and on Google Cloud's own levels (`gcp workloads settings`, `gcp routers settings`,
+[below](#google-cloud-standalone-workloads)):
 
 - `--idle-cpu <percent>|off|inherit`: idle while its CPU is under this percent (0 to 100);
 - `--idle-network <bytes a minute>|off|inherit`: idle while its network, in and out, is under this many bytes a minute
@@ -1204,11 +1205,16 @@ A standalone workload's idle signals are settings of the same levels, on AWS (`s
 - `--idle-metric <file>|off|inherit`: a custom CloudWatch metric, a JSON file in the router's shape (`-` for the standard
   input), such as `{"namespace": "CI/Agents", "name": "QueuedJobs", "dimensions": {"Agent": "${resource}"},
   "statistic": "Maximum", "below": 1}` (`${resource}` is the workload's own id; `dimensions` may be a list of objects).
+  A Google Cloud workload's or router's takes Google Cloud's shape, `{type, filter, aligner, below}`. At the
+  organization's level (`settings set`, `types set`) either shape is accepted, and the manager answers which cloud's
+  standalone workloads read it: `settings set` prints `Idle metric: Google Cloud's shape, read on the Google Cloud
+  standalone workloads` (or AWS's), from its `idleMetricCloud`, and `types set` a line by type, `type ci's idle metric:
+  …`, from its `idleMetricClouds`.
 
 It naps when every signal that applies has stayed under its threshold for its idle window. The CLI checks only that a
 value is a number, `off` or `inherit`, or that a file is JSON; the ranges and the metric's shape are the router's, and
 the manager's refusal is printed as it says it. An idle signal set at the organization (`settings set`, `types set`)
-needs every router at the version that knows standalone workloads and no Google Cloud router: the manager refuses it
+needs every router, of either cloud, at the version that knows them on its cloud: the manager refuses it
 with the routers to upgrade first (`the organization's idle signals need every router at … : <n> router(s) must be
 upgraded first: <name> (<version>), …`, exit 1). On an HTTP workload, the manager refuses the idle signals, and on a
 standalone one the waker's settings (`--wake-mode`, the hold, the drain, the rules), in its words.
@@ -2089,9 +2095,10 @@ wake.
 
 | Command | What it does |
 |---|---|
-| `workloads list` | the router's workloads and their states, AWS's table (`ROUTER`, `WORKLOAD`, `NAME`, `CLOUD`, `STATE`, `TAGS`, `CHANGED`) and its count (`2 workloads (1 ASLEEP, 1 AWAKE)`); `--state`, `--search` and `--tag` filter them as AWS's (`--tag` needs router 0.40.0, which answers the tags), `--json` prints AWS's list object `{workloads, total, byState, cursor, errors}` |
-| `workloads show <id>` | one workload, as AWS's `workloads show` lays it out: state, name, tags, then Google Cloud's own rows (load balancer, URL map, backend service, waker backend service, hosts, backends: VMs, groups, Cloud SQL instances, pods; the last wake, what the idle check reads, why the last nap was given up, `nap given up  <reason>, <time>`, until a nap succeeds, and a Cloud SQL instance that no longer exists), its settings and its pauses, in the local time |
+| `workloads list` | the router's workloads, their kinds and states, AWS's table (`ROUTER`, `WORKLOAD`, `NAME`, `KIND`, `CLOUD`, `STATE`, `TAGS`, `CHANGED`) and its count (`2 workloads (1 ASLEEP, 1 AWAKE)`); `--kind http\|standalone`, `--state`, `--search` and `--tag` filter them as AWS's (`--tag` needs router 0.40.0, which answers the tags), `--json` prints AWS's list object `{workloads, total, byState, cursor, errors}` |
+| `workloads show <id>` | one workload, as AWS's `workloads show` lays it out: state, name, tags, then Google Cloud's own rows (load balancer, URL map, backend service, waker backend service, hosts, backends: VMs, groups, Cloud SQL instances, pods; the last wake, what the idle check reads, why the last nap was given up, `nap given up  <reason>, <time>`, until a nap succeeds, and a Cloud SQL instance that no longer exists), its settings and its pauses, in the local time; a [standalone workload](#google-cloud-standalone-workloads) as AWS's `workloads show` shows one, from its router's status |
 | `workloads onboard --url-map <m> --backend-service <b>` | check the eligibility, tag the VMs, groups and databases, write a GKE workload's Kubernetes access, onboard the workload awake |
+| `workloads onboard --resource <path>` | onboard a VM, a managed group or a Cloud SQL instance as a [standalone workload](#google-cloud-standalone-workloads), after checking it serves no load balancer |
 | `workloads offboard <id> [--force]` | the controller wakes it if needed and restores every reference, then the tag bindings and the Kubernetes access are removed; a workload that cannot wake is refused, and `--force` offboards it anyway, leaving its backends down (listed). It is confirmed on a terminal, as AWS's (`Offboard 1 workload?`; without one, `--yes` is needed: exit 2, nothing changed; declined: `not confirmed: nothing sent`, exit 0); a rerun that only finishes the untag and the access cleanup, the controller no longer holding the workload, is confirmed too |
 | `workloads nap <id>`, `workloads wake <id> [--wait] [--timeout <d>]` | ask for a nap or a wake now: the controller answers at once and runs it through Cloud Tasks, so the state printed is the current one; `wake --wait` follows it until the workload is awake (`<router>/<id>: awake`; 15 minutes by default, `failed to wake` and `timeout` exit 1), or follow it with `workloads show` (a wake asked during a nap is kept and runs once the nap ends). A nap of a workload asleep already says `not awake (ASLEEP)`, as AWS words its refusal, but exits 0, since the controller does not refuse it (AWS exits 1) |
 | `schedule list`, `show`, `set`, `clear`, `add`, `remove`, `except` or `edit` | the nap and awake windows of its workloads ([schedules and pauses](#google-cloud-schedules-and-pauses)) |
@@ -2156,6 +2163,67 @@ workload is offboarded and no rerun reaches it. A GKE workload asleep keeps its 
 names a paused `ScaledObject` and the annotation to remove. When the controller does not answer, it names what is left and
 removes nothing.
 
+### Google Cloud standalone workloads
+
+```sh
+dormeto gcp workloads onboard --project my-project --region europe-west1 \
+  --resource projects/my-project/zones/europe-west1-b/instances/build-agent --idle-cpu 5 --dry-run
+dormeto gcp workloads list --project my-project --region europe-west1 --kind standalone
+dormeto gcp workloads show build-agent --project my-project --region europe-west1
+dormeto gcp workloads settings build-agent --project my-project --region europe-west1 --idle-metric metric.json
+```
+
+A standalone workload is a resource no load balancer uses, napped when its idle signals stay under their thresholds, and
+woken by a schedule or a person (it has no waiting page). `--resource` names it by its path, one of:
+
+- a Compute Engine VM outside a managed group, `projects/<p>/zones/<z>/instances/<n>`;
+- a managed instance group, `projects/<p>/zones|regions/<l>/instanceGroupManagers/<n>`;
+- a Cloud SQL instance, `projects/<p>/instances/<n>`.
+
+`--resource` takes the place of `--url-map` and `--backend-service`: one form or the other, and neither or both exits 2
+before any call. `--load-balancer`, `--request-logs` and `--gke-cluster` are an HTTP workload's, and `--idle-cpu`,
+`--idle-network`, `--idle-metric` and `--unchecked` a standalone workload's (exit 2). `--id` defaults to the resource's
+name when it is a valid ID. The onboarding:
+
+1. asks the router for a dry run: `Resource <path> is not eligible:` and its reasons, exit 1 (a VM in a managed group, a
+   GKE node, a GPU or a local SSD, a stateful group, a regional group whose VMs Google cannot stop one by one, a Cloud
+   SQL replica, a resource or companion of another workload);
+2. checks, as you, that a VM or a group serves no load balancer, and refuses it naming what uses it (exit 1): a backend
+   service of any scheme, global or regional, internal passthrough included, that uses it through an instance group
+   (managed or not) or a zonal network endpoint group holding it (`… backs backend service <s> (<scope>), through
+   instance group <g>: it belongs to an HTTP workload: onboard its backend service.`); a managed group's target pools
+   (`… feeds target pool <p>: it serves a load balancer that uses no backend service, which Dormeto does not onboard.`);
+   a target pool listing the VM or a target instance naming it. Your permissions decide what it reads:
+   `compute.backendServices.list`, `compute.regionBackendServices.list`, `compute.instanceGroups.list`,
+   `compute.networkEndpointGroups.list`, `compute.targetPools.list`, `compute.targetInstances.list` and
+   `compute.instanceGroupManagers.get` (`roles/compute.viewer` has them all). A listing refused, or answered partial
+   (`unreachables`), is not checked: the onboarding stops and names each (`Whether VM … serves a load balancer is not
+   checked: these listings were not made:`), unless `--unchecked`, which says them (`! Not checked (--unchecked): …`)
+   and goes on: a VM or a group that serves a load balancer would then be stopped when its metrics are idle;
+3. binds the tag `dormeto=managed` to the resource and its `--database` companions, as you, then onboards it, and prints
+   `<router>/<workload>: onboarded (AWAKE)` with `kind: standalone`, `resource: <path>` and a `tagged:` line each. A
+   refusal removes the tags it made.
+
+`--dry-run` makes the dry run and the check, says what would be tagged, and changes nothing. `--name`, `--set-tag`,
+`--idle-minutes`, `--wake-timeout-seconds`, `--hibernate` and `--fallback-type` are as for an HTTP workload; the router
+refuses the waker's settings (`--wake-mode`) in its words.
+
+The idle signals (`--idle-cpu <percent>|off|inherit`, `--idle-network <bytes a minute>|off|inherit`, `--idle-metric
+<file>|off|inherit`) are on `onboard` and on the settings levels, `gcp workloads settings` and `gcp routers settings`. The
+metric is a Cloud Monitoring one, in Google Cloud's shape: `{"type": "custom.googleapis.com/ci/queued_jobs", "filter":
+"metric.labels.agent = \"${resource}\"", "aligner": "ALIGN_MAX", "below": 1}` (`filter` optional, `${resource}` the
+resource's id; `aligner` one of `ALIGN_MAX`, `ALIGN_MEAN`, `ALIGN_SUM`). The CLI checks a value's form; the router checks
+the rest, and its refusal is printed as it says it (`idleMetric: aligner must be ALIGN_MAX, ALIGN_MEAN or ALIGN_SUM`).
+
+`workloads list` says its `KIND`, `standalone` (`--json`: `kind`, `resource` and `resourceMissing`, an HTTP row without a
+`kind`). `workloads show` reads the router's status and prints it as `dormeto aws workloads show` does, `project` for
+`account` and the path for the ARN: its kind, resource (`(resource missing)` once Google no longer has it), settings with
+their levels, `idle signals` (each one's last value, threshold, since when it is under and its level), `nap` (when it may
+nap), and a kept failure with its `retry` (`next attempt <time>, until it succeeds or a person naps it`, or why none is
+coming); no URL. `--json` prints that status. `nap` of a FAILED standalone workload is accepted and ends the retries of
+its wake. `schedule add --wake` on one prints the router's refusal, `windows[<i>].wake: a standalone workload has no
+waiting page: nothing arrives to wake it in a nap window`, exit 1.
+
 ### Google Cloud settings and their levels
 
 ```sh
@@ -2184,6 +2252,9 @@ levels: dormeto gcp routers install --version <this CLI's>`.
 | hibernation | `--hibernate` | `true` or `false` | off with fallback machine types, else the router's, else on |
 | no-wake and wake rules | `--no-wake-rules-file`, `--wake-rules-file` | a JSON list each, at most 20 rules per list and level | none |
 | type | `--type` | a name | from the backends |
+| idle CPU (a standalone workload's) | `--idle-cpu` | a percent, 0 to 100, or `off` | 5 (a Cloud SQL instance: `off`, and its connections under 1) |
+| idle network (a standalone workload's) | `--idle-network` | bytes a minute in and out, or `off` | `off` |
+| idle metric (a standalone workload's) | `--idle-metric` | a JSON file `{type, filter, aligner, below}`, or `off` | `off` |
 
 `--join-minutes` is the router command's alone; `--dry-run` and `--yes` are on both, as on AWS. Under `--json`, a dry run prints
 `{"dryRun":true,"targets":[…]}` and a declined question `{"confirmed":false,"targets":[…]}` on stdout, and the words on stderr, as on

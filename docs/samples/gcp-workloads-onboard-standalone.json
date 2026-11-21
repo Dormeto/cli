@@ -1,0 +1,8 @@
+{
+  "command": "gcp workloads onboard",
+  "variant": "standalone",
+  "line": "dormeto gcp workloads onboard --project my-project --region europe-west1 --resource projects/my-project/zones/europe-west1-b/instances/build-agent --idle-cpu 5 --yes",
+  "table": "dmtr-my-project-europe-west1/build-agent: onboarded (AWAKE)\n  kind: standalone\n  resource: projects/my-project/zones/europe-west1-b/instances/build-agent\n  name: build-agent\n  settings: idleCpuPercent 5\n  backend: instance build-agent (europe-west1-b)\n  tagged: instance build-agent (europe-west1-b)\n",
+  "json": "{\n  \"dmtr-my-project-europe-west1/build-agent\": {\n    \"account\": \"my-project\",\n    \"backends\": [\n      {\n        \"id\": \"8841029384756102938\",\n        \"kind\": \"instance\",\n        \"location\": \"europe-west1-b\",\n        \"name\": \"build-agent\"\n      }\n    ],\n    \"cloud\": \"gcp\",\n    \"kind\": \"standalone\",\n    \"name\": \"build-agent\",\n    \"pauses\": [],\n    \"region\": \"europe-west1\",\n    \"resource\": \"projects/my-project/zones/europe-west1-b/instances/build-agent\",\n    \"router\": \"dmtr-my-project-europe-west1\",\n    \"settings\": {\n      \"idleCpuPercent\": 5\n    },\n    \"state\": \"AWAKE\",\n    \"workloadId\": \"build-agent\"\n  }\n}\n",
+  "stderr": "dmtr-my-project-europe-west1/build-agent: onboarded (AWAKE)\n  kind: standalone\n  resource: projects/my-project/zones/europe-west1-b/instances/build-agent\n  name: build-agent\n  settings: idleCpuPercent 5\n  backend: instance build-agent (europe-west1-b)\n  tagged: instance build-agent (europe-west1-b)\n"
+}

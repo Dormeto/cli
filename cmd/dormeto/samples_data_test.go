@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -138,9 +139,12 @@ var samples = []sample{
 	{line: "dormeto gcp routers uninstall --project my-project --region europe-west1 --yes", stderr: true, google: noWorkloads},
 
 	// gcp workloads
-	{line: "dormeto gcp workloads list --project my-project --region europe-west1"},
+	{line: "dormeto gcp workloads list --project my-project --region europe-west1", google: agentStandalone},
 	{line: "dormeto gcp workloads show shop --project my-project --region europe-west1"},
+	{line: "dormeto gcp workloads show build-agent --project my-project --region europe-west1", variant: "standalone", google: agentStandalone},
 	{line: "dormeto gcp workloads onboard --project my-project --region europe-west1 --url-map checkout-lb --backend-service checkout --yes", stderr: true},
+	{line: "dormeto gcp workloads onboard --project my-project --region europe-west1 --resource projects/my-project/zones/europe-west1-b/instances/build-agent --idle-cpu 5 --yes",
+		variant: "standalone", stderr: true, google: agentFound},
 	{line: "dormeto gcp workloads offboard shop --project my-project --region europe-west1 --yes", stderr: true},
 	{line: "dormeto gcp workloads wake shop --project my-project --region europe-west1 --wait", stderr: true, google: shopWaking},
 	{line: "dormeto gcp workloads nap blog --project my-project --region europe-west1", stderr: true},
@@ -163,6 +167,40 @@ var samples = []sample{
 	{line: "dormeto gcp schedule remove shop --project my-project --region europe-west1 --window 2", stderr: true, google: shopWeekend},
 	{line: "dormeto gcp schedule except shop --project my-project --region europe-west1 --date 2026-12-24", stderr: true, google: shopScheduled},
 	{line: "dormeto gcp schedule edit shop --project my-project --region europe-west1 --max-nap-days 14", stderr: true, google: shopScheduled},
+}
+
+// agentPath is the samples' Google Cloud standalone workload: the VM build-agent.
+const agentPath = "projects/my-project/zones/europe-west1-b/instances/build-agent"
+
+// agentStandalone onboards the VM build-agent as a standalone workload, asleep, with the router's status of it.
+func agentStandalone(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	g.Workloads["build-agent"] = "ASLEEP"
+	g.WorkloadDocs["build-agent"] = map[string]any{"kind": "standalone", "resource": agentPath, "name": "build-agent", "tags": map[string]any{"team": "ci"},
+		"stateAt": "2026-11-14T08:40:00.000Z", "backends": []any{map[string]any{"kind": "vm", "location": "europe-west1-b", "name": "build-agent", "id": "8841029384756102938"}}}
+	var status map[string]any
+	if err := json.Unmarshal([]byte(`{"workloadId":"build-agent","name":"build-agent","kind":"standalone","resource":"`+agentPath+`","router":{"version":"0.42.0","build":"unknown"},
+"source":"cli","tags":{"team":"ci"},"state":"ASLEEP","stateAt":"2026-11-14T08:40:00.000Z","updatedAt":"2026-11-14T08:40:00.000Z","failure":null,"consecutiveFailures":0,
+"nextAttemptAt":null,"pauses":[],"backends":[{"kind":"instance","id":"build-agent","status":"TERMINATED","location":"europe-west1-b","resourceId":"8841029384756102938"}],
+"idle":[{"signal":"cpu","below":5,"value":0.8,"underSince":"2026-11-14T06:35:00.000Z","applies":true,"from":"default"},
+ {"signal":"network","below":null,"value":null,"underSince":null,"applies":false,"reason":"off","from":"default"},
+ {"signal":"metric","below":1,"value":0,"underSince":"2026-11-14T06:35:00.000Z","applies":true,"from":"type"}],
+"settings":{"idleMinutes":120,"wakeTimeoutSeconds":600,"idleCpuPercent":5,"idleNetworkBytes":"off","idleMetric":{"type":"custom.googleapis.com/ci/queued_jobs","aligner":"ALIGN_MAX","below":1}},
+"settingsFrom":{"idleMinutes":"default","wakeTimeoutSeconds":"default","idleCpuPercent":"default","idleNetworkBytes":"default","idleMetric":"type"},
+"type":{"name":"ci","from":"tags","missing":""},"schedule":null}`), &status); err != nil {
+		t.Fatal(err)
+	}
+	g.Statuses = map[string]map[string]any{"build-agent": status}
+}
+
+// agentFound makes the onboarding by resource find the VM build-agent, behind no load balancer.
+func agentFound(t *testing.T, g *gcptest.Server, _ gcponboard.Deps) {
+	t.Helper()
+	g.Lock()
+	defer g.Unlock()
+	g.Standalone = map[string]gcptest.StandaloneResource{agentPath: {Kind: "vm", Location: "europe-west1-b", Name: "build-agent", ID: "8841029384756102938"}}
 }
 
 // sampleSchedule is the schedule file of the schedule set samples: awake on weekdays' office hours.
