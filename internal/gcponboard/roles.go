@@ -55,14 +55,18 @@ const maxRoleDescription = 256
 
 // roleDescription is a custom role's description as Dormeto writes it, "Dormeto <version>: <the manifest's description>", with
 // the version's core (X.Y.Z) when a longer one, a dev build's such as 0.14.1-0.20261109143000-d3ca66f12345+dirty, would pass
-// Google's limit: the manifest's longest, dormetoCommand's, is 232 characters.
+// Google's limit, and the manifest's alone when even that would (dormetoDiscovery's is 248 characters).
 func roleDescription(version, description string) string {
 	if d := "Dormeto " + version + ": " + description; len(d) <= maxRoleDescription {
 		return d
 	}
 	core, _, _ := strings.Cut(version, "-")
 	core, _, _ = strings.Cut(core, "+")
-	return "Dormeto " + core + ": " + description
+	if d := "Dormeto " + core + ": " + description; len(d) <= maxRoleDescription {
+		return d
+	}
+	// The manifest's own (the router's test holds it to 256): no room for the version.
+	return description
 }
 
 func (x *run) planRoles() (*step, error) {

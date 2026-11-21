@@ -139,6 +139,8 @@ type CommandReport struct {
 	Command string   `json:"command"`
 	Held    []string `json:"held"`
 	Missing []string `json:"missing"`
+	// Optional is a line that does not fail the check: onboard --resource's, the load-balancer check's reads.
+	Optional bool `json:"optional,omitempty"`
 }
 
 // OK tells that the caller holds every permission of the command.
@@ -179,7 +181,7 @@ const apisRefused = "APIs: not checked (serviceusage.services.list refused)"
 // OK tells that every command is allowed and that the project is not known to lack billing.
 func (r Report) OK() bool {
 	for _, c := range r.Commands {
-		if !c.OK() {
+		if !c.OK() && !c.Optional {
 			return false
 		}
 	}
@@ -298,7 +300,7 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 	}
 	// It takes no onboarding flag: it tests the whole onboard list, --request-logs's too.
 	r.RequestLogs = true
-	rep, err := check(ctx, d, r, access.Commands())
+	rep, err := check(ctx, d, r, append(access.Commands(), resourceCheckCommand))
 	if err == nil && warning != "" {
 		rep.Warnings = append(rep.Warnings, warning)
 	}
@@ -312,9 +314,12 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 func check(ctx context.Context, d Deps, r Request, commands []string) (Report, error) {
 	ownImage := r.Image != ""
 	needs := func(command string) []string {
+		if command == resourceCheckCommand {
+			return access.StepNeeds("onboard", resourceCheckStep)
+		}
 		// connect's and disconnect's folder and organization bindings: Google refuses to test them on a project, and the
-		// commands test them at those scopes.
-		skip := []string{"folderBindings", "organizationBindings"}
+		// commands test them at those scopes. The load-balancer check's reads are a line of their own, resourceCheckCommand.
+		skip := []string{"folderBindings", "organizationBindings", resourceCheckStep}
 		if !ownImage {
 			skip = append(skip, imageStep)
 		}
@@ -369,7 +374,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 		held = nil
 	}
 	for _, c := range commands {
-		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}}
+		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}, Optional: c == resourceCheckCommand}
 		for _, perm := range needs(c) {
 			if rep.Visible && slices.Contains(held, perm) {
 				cr.Held = append(cr.Held, perm)
@@ -487,9 +492,14 @@ func PrintText(w io.Writer, r Report) error {
 		fmt.Fprintf(&b, "Project %s (%s), %s, checked as %s\n", r.Project.ID, r.Project.Number, where, r.Account)
 	}
 	for _, c := range r.Commands {
-		if c.OK() {
+		switch {
+		case c.Optional && c.OK():
+			fmt.Fprintf(&b, "  ✓ %s: every permission held (needed to onboard a standalone resource)\n", c.Command)
+		case c.Optional:
+			fmt.Fprintf(&b, "  ✗ %s: missing %s (needed to onboard a standalone resource: without them it stops, unless --unchecked)\n", c.Command, strings.Join(c.Missing, ", "))
+		case c.OK():
 			fmt.Fprintf(&b, "  ✓ %s: every permission held\n", c.Command)
-		} else {
+		default:
 			fmt.Fprintf(&b, "  ✗ %s: missing %s\n", c.Command, strings.Join(c.Missing, ", "))
 		}
 	}

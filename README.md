@@ -1822,7 +1822,9 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
   it` and exits 1. It reads the project as `gcp check` does and needs nothing more; it does not list the routers.
   `--json` prints `{account, configuration, project: {id, number, parent}}`.
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
-  otherwise, then the project's parent, the APIs already on and the warnings (the Compute Engine default service
+  otherwise (`onboard` is the HTTP onboarding's; the seven reads of a standalone resource's load-balancer check are a line
+  of their own, `onboard --resource … (needed to onboard a standalone resource)`, which does not make the check fail;
+  `--json`: its entry has `"optional": true`), then the project's parent, the APIs already on and the warnings (the Compute Engine default service
   account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:
   Google refuses to turn APIs on otherwise. `--image <image>` also tests what a router image of your own needs (see
   [the router's image](#the-routers-image)). `--with <features>` also tests the [optional access](#optional-access-cloud-sql-and-gke) of
@@ -1900,9 +1902,10 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   - the service accounts `dmt-<env>-discovery` and `dmt-<env>-command`, each granting `roles/iam.workloadIdentityUser`
     to the principal set of the manager roles that act as it: discovery to `dmt-<env>-manager-discovery`, `-api` and
     `-savings`, command to `dmt-<env>-manager-operations`, `-api` and `-fleet`;
-  - at each scope, the custom role `dormetoDiscovery` for the discovery account (read only: the load balancers, VMs,
-    groups, Cloud Run services, Cloud SQL instances (`cloudsql.instances.get|list`, for the standalone candidates) and
-    request counts of its scopes). It is defined in a project
+  - at each scope, the custom role `dormetoDiscovery` for the discovery account (read only: the load balancers, target
+    pools and target instances (`compute.targetPools.list`, `compute.targetInstances.list`: a VM a target-pool load
+    balancer or protocol forwarding uses is no standalone candidate), VMs, groups, Cloud Run services, Cloud SQL instances
+    (`cloudsql.instances.get|list`, for the standalone candidates) and request counts of its scopes: 36 permissions). It is defined in a project
     scope's project, and in the organization of a folder or organization scope, where it also holds
     `resourcemanager.folders.get|list` and `resourcemanager.organizations.get`;
   - for each router at the scopes (a Cloud Run service `dmtr-<region>-controller`), for the command account:
@@ -2193,7 +2196,10 @@ name when it is a valid ID. The onboarding:
    (managed or not) or a zonal network endpoint group holding it (`… backs backend service <s> (<scope>), through
    instance group <g>: it belongs to an HTTP workload: onboard its backend service.`); a managed group's target pools
    (`… feeds target pool <p>: it serves a load balancer that uses no backend service, which Dormeto does not onboard.`);
-   a target pool listing the VM or a target instance naming it. Your permissions decide what it reads:
+   a target pool listing the VM or a target instance naming it. It reads with your permissions, the onboard step
+   `resourceCheck` of the access manifest, which the onboarding's preflight tests first (`✗ onboard --resource: missing
+   <permission> (<what it lists>)`, exit 1; `--unchecked` skips that test, `! --unchecked: the load-balancer check's
+   permissions are not tested`):
    `compute.backendServices.list`, `compute.regionBackendServices.list`, `compute.instanceGroups.list`,
    `compute.networkEndpointGroups.list`, `compute.targetPools.list`, `compute.targetInstances.list` and
    `compute.instanceGroupManagers.get` (`roles/compute.viewer` has them all). A listing refused, or answered partial

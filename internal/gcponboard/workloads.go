@@ -321,18 +321,25 @@ func (x *run) workloadsEnd(err error) int {
 // require validates the project and region and asks the permissions of one command, with those of the features named, the
 // missing ones named and nothing done.
 func (x *run) require(command string, features ...string) error {
+	return x.requireAll([]string{command}, features...)
+}
+
+// requireAll is require for several commands' lists (onboard and onboard --resource's).
+func (x *run) requireAll(commands []string, features ...string) error {
 	if err := x.validate(); err != nil {
 		return err
 	}
 	r := x.r
 	r.With = featureSet(r.With, features)
-	rep, err := check(x.ctx, x.d, r, []string{command})
+	rep, err := check(x.ctx, x.d, r, commands)
 	if err != nil {
 		return err
 	}
 	var refused []string
 	for _, c := range rep.Commands {
-		if !c.OK() {
+		if !c.OK() && c.Command == resourceCheckCommand {
+			refused = append(refused, resourceCheckRefusal(c.Missing))
+		} else if !c.OK() {
 			refused = append(refused, fmt.Sprintf("  ✗ %s: missing %s", c.Command, strings.Join(c.Missing, ", ")))
 		}
 	}

@@ -43,7 +43,8 @@ func TestOwnerHoldsEveryCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.OK() || len(r.Commands) != 9 {
+	// The nine commands, and the load-balancer check's reads on a line of their own (onboard --resource).
+	if !r.OK() || len(r.Commands) != 10 {
 		t.Fatalf("%+v", r)
 	}
 	if err := PrintText(out, r); err != nil {
@@ -193,7 +194,11 @@ func TestNoRoleInTheProject(t *testing.T) {
 	for _, c := range r.Commands {
 		// install-router's image step is for an image of --image only (none here); connect's and disconnect's folder and
 		// organization bindings are tested at those scopes by connect and disconnect themselves.
-		if !slices.Equal(c.Missing, access.NeedsWithout(c.Command, nil, "image", "folderBindings", "organizationBindings")) || len(c.Held) != 0 {
+		want := access.NeedsWithout(c.Command, nil, "image", "folderBindings", "organizationBindings", "resourceCheck")
+		if c.Command == "onboard --resource" {
+			want = access.StepNeeds("onboard", "resourceCheck")
+		}
+		if !slices.Equal(c.Missing, want) || len(c.Held) != 0 {
 			t.Fatalf("%+v", c)
 		}
 	}
@@ -316,7 +321,7 @@ func TestJSONShape(t *testing.T) {
 		t.Fatal(err, out)
 	}
 	if got.Project["id"] != "dormeto-dev" || got.Project["number"] != "1034397096264" || got.Project["parent"] != "folders/7" ||
-		got.Account != "me@example.com" || len(got.Commands) != 9 || got.Commands[0].Command != "check" ||
+		got.Account != "me@example.com" || len(got.Commands) != 10 || got.Commands[0].Command != "check" ||
 		len(got.APIs.Enabled) != 1 || len(got.APIs.Missing) != 8 {
 		t.Fatalf("%s", out)
 	}
@@ -368,7 +373,7 @@ func TestServicesListingDeniedStillReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	note := "APIs: not checked (serviceusage.services.list refused)"
-	if r.OK() || len(r.Commands) != 9 || !slices.Contains(r.Warnings, note) || len(r.APIs.Enabled) != 0 || len(r.APIs.Missing) != 0 {
+	if r.OK() || len(r.Commands) != 10 || !slices.Contains(r.Warnings, note) || len(r.APIs.Enabled) != 0 || len(r.APIs.Missing) != 0 {
 		t.Fatalf("%+v", r)
 	}
 	if !slices.Contains(command(t, r, "check").Missing, "serviceusage.services.list") {

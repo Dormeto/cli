@@ -27,6 +27,33 @@ var (
 	backendGroup = regexp.MustCompile(`^https://(?:www|compute)\.googleapis\.com/compute/v1/projects/([^/]+)/(zones|regions)/([a-z0-9-]+)/(instanceGroups|networkEndpointGroups)/([a-z]([-a-z0-9]{0,61}[a-z0-9])?)$`)
 )
 
+// The onboard step of the load-balancer check's reads (router/gcp/access.json), and the line of check that tests them.
+const (
+	resourceCheckStep    = "resourceCheck"
+	resourceCheckCommand = "onboard --resource"
+)
+
+// resourceCheckListings are what each read of the load-balancer check serves.
+var resourceCheckListings = map[string]string{
+	"compute.backendServices.list":       "backend services",
+	"compute.regionBackendServices.list": "backend services",
+	"compute.targetPools.list":           "target pools",
+	"compute.targetInstances.list":       "target instances",
+	"compute.instanceGroups.list":        "the instance groups' VMs",
+	"compute.networkEndpointGroups.list": "the network endpoint groups' VMs",
+	"compute.instanceGroupManagers.get":  "a managed group's target pools",
+}
+
+// resourceCheckRefusal is the preflight's line for the load-balancer check's reads missing, each with the listing it serves.
+func resourceCheckRefusal(missing []string) string {
+	var named []string
+	for _, p := range missing {
+		named = append(named, p+" ("+resourceCheckListings[p]+")")
+	}
+	return "  ✗ " + resourceCheckCommand + ": missing " + strings.Join(named, ", ") +
+		"\nThe load-balancer check needs them to tell whether the resource serves a load balancer; --unchecked onboards without them."
+}
+
 // resourcePaths is what --resource takes, as the router says it.
 const resourcePaths = "the path of a Compute Engine VM (projects/<project>/zones/<zone>/instances/<name>), a managed instance group " +
 	"(projects/<project>/zones|regions/<location>/instanceGroupManagers/<name>) or a Cloud SQL instance (projects/<project>/instances/<name>)"
@@ -175,7 +202,12 @@ func (x *run) onboardResource() error {
 	if own.Kind == kindDatabase && !containsString(features, "cloud-sql") {
 		features = append(features, "cloud-sql")
 	}
-	if err := x.require("onboard", features...); err != nil {
+	commands := []string{"onboard", resourceCheckCommand}
+	if x.r.Unchecked {
+		commands = commands[:1]
+		fmt.Fprintln(x.textOut(), "  ! --unchecked: the load-balancer check's permissions are not tested")
+	}
+	if err := x.requireAll(commands, features...); err != nil {
 		return err
 	}
 	if err := x.needFeatures(features); err != nil {

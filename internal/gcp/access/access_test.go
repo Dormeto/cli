@@ -28,7 +28,7 @@ func TestStepsFollowRuling1(t *testing.T) {
 		"install-router": {"image", "cloudRun", "neg", "job"},
 		"uninstall":      {"read", "job", "neg", "cloudRun", "logView", "queue", "database", "projectBindings", "tag", "serviceAccount", "roles"},
 		"workloads":      {"invoke"},
-		"onboard":        {"invoke", "tag", "requestLogs"},
+		"onboard":        {"invoke", "tag", "requestLogs", "resourceCheck"},
 		"offboard":       {"invoke", "tag", "requestLogs"},
 		"connect": {"read", "apis", "federation", "serviceAccounts", "roles", "projectBindings", "folderBindings", "organizationBindings",
 			"controller", "tag"},
@@ -124,7 +124,7 @@ func TestManagerSectionIsLoaded(t *testing.T) {
 		t.Fatalf("accounts %v", m.ServiceAccounts)
 	}
 	d, c := m.Roles["dormetoDiscovery"], m.Roles["dormetoCommand"]
-	if d.Title != "Dormeto manager discovery" || len(d.Permissions) != 34 ||
+	if d.Title != "Dormeto manager discovery" || len(d.Permissions) != 36 ||
 		!reflect.DeepEqual(d.OrganizationPermissions, []string{"resourcemanager.folders.get", "resourcemanager.folders.list", "resourcemanager.organizations.get"}) {
 		t.Fatalf("dormetoDiscovery %+v", d)
 	}

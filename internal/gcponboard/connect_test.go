@@ -164,7 +164,7 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 		"  + API iamcredentials.googleapis.com",
 		"  + API sts.googleapis.com",
 		"  + API cloudbilling.googleapis.com",
-		`  + role dormetoDiscovery "Dormeto manager discovery" (34 permissions) in project dormeto-dev`,
+		`  + role dormetoDiscovery "Dormeto manager discovery" (36 permissions) in project dormeto-dev`,
 		`  + role dormetoCommand "Dormeto manager command" (10 permissions) in project dormeto-dev`,
 		"  + workload identity pool dmt-dev",
 		"  + provider aws-121014831971 of pool dmt-dev: AWS account 121014831971, condition assertion.arn.startsWith('arn:aws:sts::121014831971:assumed-role/dmt-dev-manager-'), mapping google.subject=assertion.arn, attribute.aws_role=assertion.arn.extract('assumed-role/{role}/')",
@@ -207,7 +207,7 @@ func TestConnectPlansAndSetsUpTheFederationTheAccountsTheRolesAndTheGrants(t *te
 	if s.ServiceAccounts[discoveryEmail] == nil || s.ServiceAccounts[commandEmail] == nil {
 		t.Fatalf("accounts %v", s.ServiceAccounts)
 	}
-	if r := s.Roles["dormetoDiscovery"]; r == nil || r.Description != "Dormeto 0.14.0: "+access.Load().Manager.Roles["dormetoDiscovery"].Description ||
+	if r := s.Roles["dormetoDiscovery"]; r == nil || r.Description != withVersion("0.14.0", access.Load().Manager.Roles["dormetoDiscovery"].Description) ||
 		!slices.Equal(r.Permissions, access.Load().Manager.Roles["dormetoDiscovery"].Permissions) || r.Stage != "GA" {
 		t.Fatalf("dormetoDiscovery %+v", r)
 	}
@@ -577,7 +577,7 @@ func TestConnectAtAFolderDefinesTheRoleInItsOrganization(t *testing.T) {
 	}
 	for _, w := range []string{
 		"Checked: me@example.com holds every permission dormeto gcp connect needs in project dormeto-dev (host), folder 7, organization 42.",
-		`  + role dormetoDiscovery "Dormeto manager discovery" (37 permissions) in organization 42`,
+		`  + role dormetoDiscovery "Dormeto manager discovery" (39 permissions) in organization 42`,
 		"  + grant organizations/42/roles/dormetoDiscovery to serviceAccount:" + discoveryEmail + " on folder 7",
 		"  + record of the connection in manager dev: 1 router (dormeto-dev/europe-west1), 1 scope (folders/7)",
 	} {
@@ -585,7 +585,7 @@ func TestConnectAtAFolderDefinesTheRoleInItsOrganization(t *testing.T) {
 			t.Errorf("no line %q in\n%s", w, out)
 		}
 	}
-	if r := s.OrgRoles["42/dormetoDiscovery"]; r == nil || len(r.Permissions) != 37 || !slices.Contains(r.Permissions, "resourcemanager.folders.list") {
+	if r := s.OrgRoles["42/dormetoDiscovery"]; r == nil || len(r.Permissions) != 39 || !slices.Contains(r.Permissions, "resourcemanager.folders.list") {
 		t.Fatalf("organization role %+v", r)
 	}
 	if got := rolesOf(s.Policies["folders/7"], "serviceAccount:"+discoveryEmail); !slices.Equal(got, []string{"organizations/42/roles/dormetoDiscovery"}) {
@@ -921,11 +921,21 @@ func withinLimit(description string) string {
 	if whole := "Dormeto " + devVersion + ": " + description; len(whole) <= 256 {
 		return whole
 	}
-	return "Dormeto 0.14.1: " + description
+	return withVersion("0.14.1", description)
+}
+
+// withVersion is "Dormeto <version>: <description>" within Google's 256 characters, else the description alone (no room for
+// the version: dormetoDiscovery's is 248 characters).
+func withVersion(version, description string) string {
+	if d := "Dormeto " + version + ": " + description; len(d) <= 256 {
+		return d
+	}
+	return description
 }
 
 // Google takes a custom role's description of at most 256 characters, and dormetoCommand's own text is 232: a dev build's
-// long version is cut to its core there (a release's, such as 0.14.0, is written whole).
+// long version is cut to its core there (a release's, such as 0.14.0, is written whole); dormetoDiscovery's, 248, has no room
+// for a version.
 func TestConnectsRoleDescriptionsStayWithinGooglesLimitWithADevBuildsVersion(t *testing.T) {
 	s := connectServer(t)
 	d, out, _ := connectDeps(s)
