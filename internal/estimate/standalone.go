@@ -2,8 +2,8 @@
 // read, a 5-minute point busy when a signal is at or over its threshold (fleet busyMinutes), the busy points replayed by
 // the idle window advisor at --standalone-window (the windows of a standalone workload, 5 minutes to 24 hours, the knee
 // from 5 to 120), what a nap of the resource stops priced for the hours asleep. A resource never counts twice: an HTTP
-// workload's backend is not a standalone candidate (the scan leaves it out) and a database counted as an HTTP workload's
-// companion is left out here. A failed read prices nothing.
+// workload's backend is not a standalone candidate (the scan leaves it out) and a database an HTTP workload reaches (its
+// companion, attached or not) is left out here. A failed read prices nothing.
 //
 // When the resource ran is told by its signal's points: EC2, ECS and RDS publish them only while it runs (an instance
 // started, a service with a task, a database available), as the measured uptime reads them. A point is then busy or
@@ -14,6 +14,7 @@ package estimate
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Dormeto/cli/internal/discover"
@@ -108,6 +109,7 @@ func (s *state) standalone() error {
 			companions[x.Workload.Account+"#"+x.Workload.Region+"#"+d.Kind+"#"+d.ID] = x.Workload
 		}
 	}
+	reached := s.reachedDatabases()
 	for _, region := range s.in.Standalone {
 		if err := s.ctx.Err(); err != nil {
 			return err
@@ -123,7 +125,7 @@ func (s *state) standalone() error {
 			read = &s.in.Signals[i]
 		}
 		for _, r := range region.Resources {
-			x, why, err := s.resource(r, read, companions)
+			x, why, err := s.resource(r, read, companions, reached)
 			if err != nil {
 				return err
 			}
@@ -139,10 +141,21 @@ func (s *state) standalone() error {
 }
 
 // resource estimates one standalone resource, or says why it is left out.
-func (s *state) resource(r discover.StandaloneResource, read *metrics.RegionSignals, companions map[string]discover.Workload) (*ResourceEstimate, string, error) {
+func (s *state) resource(r discover.StandaloneResource, read *metrics.RegionSignals, companions map[string]discover.Workload, reached map[string][]discover.Workload) (*ResourceEstimate, string, error) {
 	o := s.in.Options
-	if w, ok := companions[r.Account+"#"+r.Region+"#"+r.Kind+"#"+r.ID]; ok {
+	key := r.Account + "#" + r.Region + "#" + r.Kind + "#" + r.ID
+	if w, ok := companions[key]; ok {
 		return nil, "the companion database of the HTTP workload " + hostsOrTargetGroup(w) + ": counted with it", nil
+	}
+	if users := reached[key]; len(users) > 0 {
+		names := make([]string, len(users))
+		for i, w := range users {
+			names[i] = hostsOrTargetGroup(w)
+		}
+		if len(users) == 1 {
+			return nil, "reached by the HTTP workload " + names[0] + ": its companion, never a standalone resource", nil
+		}
+		return nil, "reached by the HTTP workloads " + strings.Join(names, ", ") + ": their companion, never a standalone resource", nil
 	}
 	if matched, excluded := matching(o.ExcludeTags, r.Tags); excluded {
 		return nil, "excluded by its tags (" + DescribeTags(matched) + ")", nil
@@ -223,6 +236,30 @@ func (s *state) resource(r discover.StandaloneResource, read *metrics.RegionSign
 		AtWindow:    AtWindow{USDMonth: usdOf(at), WakesPerDay: at.WakesPerDay, AsleepHours: at.AsleepHours},
 		Recommended: Recommended{Minutes: advice.Recommended, USDMonth: usdOf(best), WakesPerDay: best.WakesPerDay},
 	}, "", nil
+}
+
+// reachedDatabases are the databases each HTTP workload of their region reaches (a database whose security group lets
+// a workload's in, as attach finds its companions), whatever the HTTP side did with the workload or the database: the
+// workloads excluded by their tags included. Keyed account#region#kind#id.
+func (s *state) reachedDatabases() map[string][]discover.Workload {
+	out := map[string][]discover.Workload{}
+	for _, region := range s.in.Regions {
+		workloads := slices.Clone(region.Workloads)
+		for _, x := range s.in.Excluded {
+			if x.Workload.Account == region.Account && x.Workload.Region == region.Region {
+				workloads = append(workloads, x.Workload)
+			}
+		}
+		for _, d := range region.Databases {
+			key := region.Account + "#" + region.Region + "#" + d.Kind + "#" + d.ID
+			for _, w := range workloads {
+				if slices.ContainsFunc(d.AllowedFrom, func(g string) bool { return slices.Contains(w.SecurityGroups, g) }) {
+					out[key] = append(out[key], w)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // ranPeriods are the periods a resource ran: its 5-minute points where every signal has a value, joined.

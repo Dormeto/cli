@@ -202,3 +202,44 @@ func TestWithoutTheStandaloneResourcesTheEstimateIsAsBefore(t *testing.T) {
 		t.Fatal(e.Assumptions)
 	}
 }
+
+// A database any HTTP workload of its region reaches is never a standalone resource, whatever the HTTP side did with it:
+// attached, refused as a companion (reached by two workloads, its workload waking too often, stopped, excluded by its
+// tags, a read replica), or the database of a workload busy or left out.
+func TestADatabaseAnHTTPWorkloadReachesIsNeverAStandaloneResource(t *testing.T) {
+	lost := withGroup(w(A, "eu-west-1", "lost", T3), "sg-lost")
+	e := run(t, companions, standaloneWorld, func(in *Input) {
+		in.Regions[0].Workloads = append(in.Regions[0].Workloads, lost) // its requests unreadable: left out
+		in.Requests[0].Unreadable["arn:tg/lost"] = "CloudWatch could not read the requests (Forbidden)"
+		in.Regions[0].Databases = append(in.Regions[0].Databases, database("lost-db", []string{"sg-lost"}),
+			database("sleepy-db", []string{"sg-shop"}, func(d *discover.Database) { d.Status = "stopped" }))
+		for _, id := range []string{"shop-db", "blog-db", "prd-db", "calm-db", "shared-db", "replica", "lost-db", "sleepy-db"} {
+			db := resource("rds-instance", id, RDS)
+			in.Standalone[0].Resources = append(in.Standalone[0].Resources, db)
+			in.Signals[0].Points[db.ARN] = map[string][][2]float64{"metric_0": job(nil)}
+		}
+	})
+	why := map[string]string{}
+	for _, l := range e.Standalone.LeftOut {
+		why[l.Resource.ID] = l.Reason
+	}
+	for _, r := range e.Standalone.Resources {
+		if r.Resource.Kind == "rds-instance" && r.Resource.ID != "reports" {
+			t.Errorf("%s priced as a standalone resource", r.Resource.ID)
+		}
+	}
+	for id, want := range map[string]string{
+		"shop-db":   "the companion database of the HTTP workload shop.example.com: counted with it",
+		"blog-db":   "reached by the HTTP workload blog.example.com: its companion, never a standalone resource",
+		"prd-db":    "reached by the HTTP workload shop.example.com: its companion, never a standalone resource",
+		"calm-db":   "reached by the HTTP workload calm.example.com: its companion, never a standalone resource",
+		"shared-db": "reached by the HTTP workloads shop.example.com, calm.example.com: their companion, never a standalone resource",
+		"replica":   "reached by the HTTP workload shop.example.com: its companion, never a standalone resource",
+		"lost-db":   "reached by the HTTP workload lost.example.com: its companion, never a standalone resource",
+		"sleepy-db": "reached by the HTTP workload shop.example.com: its companion, never a standalone resource",
+	} {
+		if why[id] != want {
+			t.Errorf("%s: %q, want %q", id, why[id], want)
+		}
+	}
+}
