@@ -245,6 +245,32 @@ func readRules(c *cobra.Command, path string) ([]any, error) {
 func levelLines(d map[string]any) []string { return fleet.LevelLines(d) }
 
 // defaultsLine is the organization's workload settings in `settings show|set`.
+// orgMetricShape is the organization's custom idle metric, of either cloud's shape: the manager says which cloud it is for.
+const orgMetricShape = `a JSON file in AWS's shape {namespace, name, dimensions, statistic, below} or Google Cloud's {type, filter, aligner, below} ` +
+	`(a path, - for the standard input; the manager answers which cloud's standalone workloads read it); for example ` + idleMetricExample
+
+// cloudOfMetric says which cloud's standalone workloads read a metric of the organization, by the manager's word (aws, gcp).
+func cloudOfMetric(cloud string) string {
+	switch cloud {
+	case "gcp":
+		return "Google Cloud's shape, read on the Google Cloud standalone workloads"
+	case "aws":
+		return "AWS's shape, read on the AWS standalone workloads"
+	}
+	return ""
+}
+
+// metricCloudLine is the defaults' idleMetricCloud as a line ("" when the manager answers none).
+func metricCloudLine(raw json.RawMessage) string {
+	var a struct {
+		IdleMetricCloud string `json:"idleMetricCloud"`
+	}
+	if json.Unmarshal(raw, &a) != nil || cloudOfMetric(a.IdleMetricCloud) == "" {
+		return ""
+	}
+	return "Idle metric: " + cloudOfMetric(a.IdleMetricCloud) + "\n"
+}
+
 func defaultsLine(raw json.RawMessage) string {
 	var a struct {
 		Defaults *map[string]any `json:"defaults"`
@@ -274,6 +300,8 @@ type typesAnswer struct {
 	Types   []map[string]any `json:"types"`
 	BuiltIn []string         `json:"builtIn"`
 	Note    string           `json:"note"`
+	// IdleMetricClouds says, by type, which cloud's standalone workloads read its idle metric (aws, gcp).
+	IdleMetricClouds map[string]string `json:"idleMetricClouds,omitempty"`
 }
 
 func readTypes(ctx context.Context, api *fleet.Client) (typesAnswer, error) {
@@ -410,6 +438,7 @@ func newTypesSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 			"databases) takes defaults only. The routers apply it at their next check, within 5 minutes. Needs an administrator.",
 	}
 	levels := bindLevelFlags(cmd, googleCloudBrings, "inherit")
+	levels.metricShape = orgMetricShape
 	levels.bindIdleFlags(cmd)
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		name := args[0]
@@ -530,6 +559,11 @@ func putTypes(ctx context.Context, c *cobra.Command, api *fleet.Client, list []m
 	var a typesAnswer
 	_ = json.Unmarshal(raw, &a)
 	fmt.Fprintf(textOut(c), "%s: %s\n", done, a.Note)
+	for _, name := range slices.Sorted(maps.Keys(a.IdleMetricClouds)) {
+		if line := cloudOfMetric(a.IdleMetricClouds[name]); line != "" {
+			fmt.Fprintf(textOut(c), "type %s's idle metric: %s\n", name, line)
+		}
+	}
 	if jsonFlag(c) {
 		return output.JSON(c.OutOrStdout(), orRaw(raw))
 	}

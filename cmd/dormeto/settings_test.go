@@ -696,3 +696,51 @@ func TestTheIdleCPUsRangeInTheHelpIsTheRoutersRange(t *testing.T) {
 		t.Errorf("--idle-network: %q, the router's range 0 to %s", usage, max)
 	}
 }
+
+// The organization's level takes a metric of either cloud's shape and says, from the manager's answer, which cloud it is for:
+// idleMetricCloud for the defaults, idleMetricClouds by type. Its help names both shapes.
+func TestTheOrganizationsIdleMetricOfEitherCloud(t *testing.T) {
+	metric := t.TempDir() + "/metric.json"
+	if err := os.WriteFile(metric, []byte(`{"type":"custom.googleapis.com/ci/queued_jobs","aligner":"ALIGN_MAX","below":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var sent string
+	answer := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/iam/settings/workloads":
+			sent = string(body)
+			io.WriteString(w, `{"hibernate":false,"updatedAt":"2026-11-14T10:00:00.000Z","updatedBy":"ann@x.io","defaults":{"idleMetric":{"type":"custom.googleapis.com/ci/queued_jobs","aligner":"ALIGN_MAX","below":1}},"idleMetricCloud":"gcp","note":"routers apply it at their next check, within 5 minutes"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/iam/settings/types":
+			io.WriteString(w, `{"types":[{"name":"ci","tags":{"team":"ci"},"settings":{}}],"builtIn":["instance","asg","ecs","k8s","databases"]}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/iam/settings/types":
+			sent = string(body)
+			io.WriteString(w, `{"types":[],"builtIn":[],"idleMetricClouds":{"ci":"gcp","batch":"aws"},"note":"routers apply it at their next check, within 5 minutes"}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}
+	r := runFleetWith(t, &fakeAPI{custom: answer}, "eu-west-1", nil, "settings", "set", "--idle-metric", metric)
+	if r.exit != 0 || sent != `{"defaults":{"idleMetric":{"aligner":"ALIGN_MAX","below":1,"type":"custom.googleapis.com/ci/queued_jobs"}}}` ||
+		!strings.Contains(r.stdout, "idle metric custom.googleapis.com/ci/queued_jobs ALIGN_MAX under 1") ||
+		!strings.Contains(r.stdout, "Idle metric: Google Cloud's shape, read on the Google Cloud standalone workloads\n") {
+		t.Errorf("settings set: exit %d, sent %s, stdout %q, stderr %q", r.exit, sent, r.stdout, r.stderr)
+	}
+	types := func(d fleetDeps) []*cobra.Command { return []*cobra.Command{newTypes(d)} }
+	r = runCommands(t, &fakeAPI{custom: answer}, "eu-west-1", nil, types, "types", "set", "ci", "--idle-metric", metric)
+	if r.exit != 0 || !strings.Contains(r.stdout+r.stderr, "type batch's idle metric: AWS's shape, read on the AWS standalone workloads\n") ||
+		!strings.Contains(r.stdout+r.stderr, "type ci's idle metric: Google Cloud's shape, read on the Google Cloud standalone workloads\n") {
+		t.Errorf("types set: exit %d, stdout %q, stderr %q", r.exit, r.stdout, r.stderr)
+	}
+	for _, args := range [][]string{{"aws", "settings", "set"}, {"aws", "types", "set"}} {
+		root := newRoot(build{})
+		c, _, err := root.Find(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if usage := c.Flags().Lookup("idle-metric").Usage; !strings.Contains(usage, "AWS's shape {namespace, name, dimensions, statistic, below} or Google Cloud's {type, filter, aligner, below}") {
+			t.Errorf("%v: %q", args, usage)
+		}
+	}
+}

@@ -911,7 +911,11 @@ func metricText(raw json.RawMessage) string {
 	if !ok {
 		return fmt.Sprint(v)
 	}
+	// Google Cloud's: Cloud Monitoring's metric type and aligner; AWS's: CloudWatch's namespace, name and statistic.
 	text := fmt.Sprintf("%v/%v %v", m["namespace"], m["name"], m["statistic"])
+	if kind, ok := m["type"].(string); ok {
+		text = fmt.Sprintf("%s %v", kind, m["aligner"])
+	}
 	if below, ok := m["below"].(float64); ok {
 		text += " under " + num(below)
 	}

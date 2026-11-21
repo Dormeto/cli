@@ -250,7 +250,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 					return settingsRefusal(err)
 				}
 				err := printRead(c, raw, asJSON, func(g globalSettings) string {
-					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.endedLine() + defaultsLine(raw) + g.Note + "\n"
+					return g.line(deps.now().Location()) + "\n" + g.joinLine() + g.endedLine() + defaultsLine(raw) + metricCloudLine(raw) + g.Note + "\n"
 				})
 				var g globalSettings
 				if err != nil || json.Unmarshal(raw, &g) != nil {
@@ -273,6 +273,7 @@ func newSettingsSet(f *fleetFlags, deps fleetDeps) *cobra.Command {
 	cmd.Flags().StringVar(&ended, "ended-window-days", "", "days after its last occurrence a window stays, 30 to 3650, 0 keeps them; inherit unsets it (365)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the manager's answer")
 	levels = bindLevelFlags(cmd, googleCloudBrings, "inherit")
+	levels.metricShape = orgMetricShape
 	levels.bindIdleFlags(cmd)
 	return cmd
 }
