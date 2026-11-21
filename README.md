@@ -225,14 +225,18 @@ accounts, and Kubernetes `GET`s. It changes nothing.
 - `autoscaling:DescribeAutoScalingGroups`
 - `ecs:ListClusters`, `ListServices`, `DescribeServices`, `DescribeTaskDefinition`
 - `eks:ListClusters`, `DescribeCluster`
-- `rds:DescribeDBInstances`, `DescribeDBClusters`, `ListTagsForResource` (the companion databases and the standalone
-  ones; RDS gives a database's tags in its describe answers only to a caller allowed to list them, so the third is to
-  read their tags; without the first two, the report lists the databases as not read, with the reason)
+- `rds:DescribeDBInstances`, `DescribeDBClusters` (to list the databases, the companion ones and the standalone ones;
+  without one, the standalone resources of its kind are left out with the reason, and a region whose companion
+  databases cannot be listed is said with the reason)
 - `cloudwatch:GetMetricData` (about $0.01 per 1,000 workloads)
 - `pricing:GetProducts`
 
 The `ReadOnlyAccess` AWS managed policy covers them all: attach it to the profile's role, and to the role of each
 member account.
+
+The manager's discovery role carries a third RDS action, `rds:ListTagsForResource`, for the databases' tags. The
+estimate reads the tags from the describe answers and calls nothing that needs it, so it is not in this list and
+`dormeto aws check` does not test it.
 
 An EKS cluster's workloads are read through its Kubernetes API, which needs the profile's own EKS access entry on the
 cluster (the `AmazonEKSViewPolicy` access policy is enough). A cluster it cannot read is listed with the reason. A
