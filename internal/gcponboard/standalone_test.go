@@ -5,6 +5,7 @@ package gcponboard
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -288,51 +289,106 @@ func TestWorkloadsOnboardByResourceDryRun(t *testing.T) {
 	}
 	contains(t, out, "Resource "+agentPath+" is eligible as standalone workload build-agent; onboarding would bind the tag dormeto=managed to:\n  instance build-agent (europe-west1-b)\n  cloudsql-instance agent-db\n")
 	g.s.GroupMembers["zones/europe-west1-b/instanceGroups/web"] = []string{"web-1", "build-agent"}
-	if code, out = g.call(t, WorkloadsOnboard, r); code != 1 || !strings.Contains(out, "backend service shop (global)") {
+	if code, out = g.call(t, WorkloadsOnboard, r); code != 1 || !strings.Contains(out, "VM build-agent backs backend service shop (global)") {
 		t.Fatalf("the dry run's check: exit %d:\n%s", code, out)
 	}
 }
 
-// The load-balancer check (the plan's ruling, as wide as the manager's): a VM or a group a backend service uses (through an
-// instance group, managed or not, or a zonal NEG holding it), a group with target pools, a VM in a target pool or behind a
-// target instance, is refused by name. Each is a case.
+// The manager's words for a resource a load balancer uses (manager/packages/discovery/src/gcp-backing.ts), one text per shared
+// refusal; the CLI adds the scope in parentheses after the name.
+const (
+	wantHTTPWorkload = ": it belongs to an HTTP workload"
+	wantLoadBalancer = ": it belongs to a load balancer"
+)
+
+// The texts are the manager's: read in its sibling checkout when there.
+func TestTheLoadBalancerRefusalsAreTheManagersWords(t *testing.T) {
+	b, err := os.ReadFile("../../../manager/packages/discovery/src/gcp-backing.ts")
+	if err != nil {
+		t.Skipf("the manager repository is absent: %v", err)
+	}
+	for _, w := range []string{"backs backend service ${s}" + wantHTTPWorkload, "serves target pool ${item.name}" + wantLoadBalancer,
+		"serves target instance ${item.name}" + wantLoadBalancer, "is in target pool ${nameOf(pool)}" + wantLoadBalancer} {
+		if !strings.Contains(string(b), w) {
+			t.Errorf("the manager's gcp-backing.ts has no %q", w)
+		}
+	}
+}
+
+const computeURL = "https://www.googleapis.com/compute/v1/projects/dormeto-dev/"
+
+// batchMembers makes the regional group batch hold VMs in two zones of its region.
+func (g *workloadsRig) batchMembers(names ...string) {
+	var urls []string
+	for i, n := range names {
+		zone := "europe-west1-b"
+		if i%2 == 1 {
+			zone = "europe-west1-c"
+		}
+		urls = append(urls, computeURL+"zones/"+zone+"/instances/"+n)
+	}
+	g.s.ManagedInstances = map[string][]string{"regions/europe-west1/instanceGroupManagers/batch": urls}
+}
+
+// The load-balancer check (the plan's ruling, as wide as the manager's): a VM or a group's VM a backend service uses (through
+// an instance group, managed or not, or a zonal NEG holding it), a group with target pools, a VM in a target pool or behind a
+// target instance, is refused in the manager's words. Each is a case.
 func TestWorkloadsOnboardByResourceRefusesWhatALoadBalancerUses(t *testing.T) {
-	const compute = "https://www.googleapis.com/compute/v1/projects/dormeto-dev/"
-	agentURL := compute + "zones/europe-west1-b/instances/build-agent"
-	httpOne := ": it belongs to an HTTP workload: onboard its backend service."
-	noBackendService := ": it serves a load balancer that uses no backend service, which Dormeto does not onboard."
+	agentURL := computeURL + "zones/europe-west1-b/instances/build-agent"
 	cases := map[string]struct {
 		resource string
 		set      func(*workloadsRig)
 		want     string
 	}{
 		"group, global": {migPath, func(g *workloadsRig) {
-			g.s.ServiceBackends["global/batch-be"] = []string{compute + "regions/europe-west1/instanceGroups/batch"}
-		}, "Managed group batch (europe-west1) backs backend service batch-be (global)" + httpOne},
+			g.s.ServiceBackends["global/batch-be"] = []string{computeURL + "regions/europe-west1/instanceGroups/batch"}
+		}, "managed group batch backs backend service batch-be (global)" + wantHTTPWorkload},
 		"group, regional": {migPath, func(g *workloadsRig) {
-			g.s.ServiceBackends["europe-west1/batch-be"] = []string{compute + "regions/europe-west1/instanceGroups/batch"}
-		}, "Managed group batch (europe-west1) backs backend service batch-be (europe-west1)" + httpOne},
+			g.s.ServiceBackends["europe-west1/batch-be"] = []string{computeURL + "regions/europe-west1/instanceGroups/batch"}
+		}, "managed group batch backs backend service batch-be (europe-west1)" + wantHTTPWorkload},
 		"group, target pools": {migPath, func(g *workloadsRig) {
-			g.s.GroupTargetPools = map[string][]string{"regions/europe-west1/instanceGroupManagers/batch": {compute + "regions/europe-west1/targetPools/batch-pool"}}
-		}, "Managed group batch (europe-west1) feeds target pool batch-pool" + noBackendService},
+			g.s.GroupTargetPools = map[string][]string{"regions/europe-west1/instanceGroupManagers/batch": {computeURL + "regions/europe-west1/targetPools/batch-pool"}}
+		}, "managed group batch is in target pool batch-pool (europe-west1)" + wantLoadBalancer},
+		// A group's VMs in a NEG of an Application Load Balancer (GCE_VM_IP_PORT) or a passthrough one (GCE_VM_IP), in either of
+		// its zones, or in an unmanaged group of theirs.
+		"group, NEG of its VMs' ports": {migPath, func(g *workloadsRig) {
+			g.batchMembers("batch-b1", "batch-c1")
+			g.s.ServiceBackends["global/api"] = []string{computeURL + "zones/europe-west1-b/networkEndpointGroups/api-port-neg"}
+			g.s.NEGEndpoints = map[string][]string{"zones/europe-west1-b/networkEndpointGroups/api-port-neg": {"batch-b1"}}
+		}, "managed group batch backs backend service api (global)" + wantHTTPWorkload},
+		"group, NEG of its VMs' addresses": {migPath, func(g *workloadsRig) {
+			g.batchMembers("batch-b1", "batch-c1")
+			g.s.ServiceBackends["europe-west1/l4"] = []string{computeURL + "zones/europe-west1-c/networkEndpointGroups/l4-ip-neg"}
+			g.s.NEGEndpoints = map[string][]string{"zones/europe-west1-c/networkEndpointGroups/l4-ip-neg": {"batch-c1"}}
+		}, "managed group batch backs backend service l4 (europe-west1)" + wantHTTPWorkload},
+		"group, unmanaged group": {migPath, func(g *workloadsRig) {
+			g.batchMembers("batch-b1", "batch-c1")
+			g.s.ServiceBackends["global/web"] = []string{computeURL + "zones/europe-west1-c/instanceGroups/extra"}
+			g.s.GroupMembers = map[string][]string{"zones/europe-west1-c/instanceGroups/extra": {"batch-c1"}}
+		}, "managed group batch backs backend service web (global)" + wantHTTPWorkload},
+		"group, members paginated": {migPath, func(g *workloadsRig) {
+			g.batchMembers("batch-b1", "batch-c1", "batch-b2")
+			g.s.ManagedInstancesPage = 1
+			g.s.ServiceBackends["global/web"] = []string{computeURL + "zones/europe-west1-b/instanceGroups/extra"}
+			g.s.GroupMembers = map[string][]string{"zones/europe-west1-b/instanceGroups/extra": {"batch-b2"}}
+		}, "managed group batch backs backend service web (global)" + wantHTTPWorkload},
 		"vm, unmanaged group": {agentPath, func(g *workloadsRig) {
 			g.s.GroupMembers["zones/europe-west1-b/instanceGroups/web"] = []string{"web-1", "build-agent"}
-		},
-			"VM build-agent (europe-west1-b) backs backend service shop (global), through instance group web" + httpOne},
+		}, "VM build-agent backs backend service shop (global)" + wantHTTPWorkload},
 		"vm, regional group": {agentPath, func(g *workloadsRig) {
-			g.s.ServiceBackends["europe-west1/internal"] = []string{compute + "regions/europe-west1/instanceGroups/pool"}
+			g.s.ServiceBackends["europe-west1/internal"] = []string{computeURL + "regions/europe-west1/instanceGroups/pool"}
 			g.s.GroupMembers["regions/europe-west1/instanceGroups/pool"] = []string{"build-agent"}
-		}, "VM build-agent (europe-west1-b) backs backend service internal (europe-west1), through instance group pool" + httpOne},
+		}, "VM build-agent backs backend service internal (europe-west1)" + wantHTTPWorkload},
 		"vm, NEG": {agentPath, func(g *workloadsRig) {
-			g.s.ServiceBackends["europe-west1/api"] = []string{compute + "zones/europe-west1-b/networkEndpointGroups/api-neg"}
+			g.s.ServiceBackends["europe-west1/api"] = []string{computeURL + "zones/europe-west1-b/networkEndpointGroups/api-neg"}
 			g.s.NEGEndpoints = map[string][]string{"zones/europe-west1-b/networkEndpointGroups/api-neg": {"build-agent"}}
-		}, "VM build-agent (europe-west1-b) backs backend service api (europe-west1), through network endpoint group api-neg" + httpOne},
+		}, "VM build-agent backs backend service api (europe-west1)" + wantHTTPWorkload},
 		"vm, target pool": {agentPath, func(g *workloadsRig) {
 			g.s.TargetPools = map[string][]string{"europe-west1/agents": {agentURL}}
-		}, "VM build-agent (europe-west1-b) is in target pool agents (europe-west1)" + noBackendService},
+		}, "VM build-agent serves target pool agents (europe-west1)" + wantLoadBalancer},
 		"vm, target instance": {agentPath, func(g *workloadsRig) {
 			g.s.TargetInstances = map[string]string{"europe-west1-b/agent-ti": agentURL}
-		}, "VM build-agent (europe-west1-b) is the VM of target instance agent-ti (europe-west1-b)" + noBackendService},
+		}, "VM build-agent serves target instance agent-ti (europe-west1-b)" + wantLoadBalancer},
 	}
 	for name, c := range cases {
 		g := newStandaloneRig(t)
@@ -344,20 +400,44 @@ func TestWorkloadsOnboardByResourceRefusesWhatALoadBalancerUses(t *testing.T) {
 			t.Errorf("%s: exit %d:\n%s", name, code, out)
 		}
 	}
-	// Not used: onboarded (the VM is in no group, pool or target instance; the group feeds none).
+	// Not used: onboarded (the VM is in no group, pool or target instance; the group feeds none, nor do its VMs).
 	for _, path := range []string{agentPath, migPath} {
 		g := newStandaloneRig(t)
-		g.s.TargetPools = map[string][]string{"europe-west1/web-pool": {compute + "zones/europe-west1-b/instances/web-1"}}
+		g.batchMembers("batch-b1", "batch-c1")
+		g.s.TargetPools = map[string][]string{"europe-west1/web-pool": {computeURL + "zones/europe-west1-b/instances/web-1"}}
 		r := workloadsEurope
 		r.Resource = path
 		if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
 			t.Fatalf("%s, not used: exit %d:\n%s", path, code, out)
 		}
 	}
+	// The aggregated lists ask a partial answer, which says what they missed.
+	for _, c := range newStandaloneRigCalls(t) {
+		if strings.Contains(c, "/aggregated/") && !strings.Contains(c, "returnPartialSuccess=true") {
+			t.Errorf("no partial success asked: %s", c)
+		}
+	}
 }
 
-// A listing the caller may not make, or one that answers unreachable scopes, is not checked: the onboarding stops, naming the
-// listings not made, unless --unchecked, which says them and what it risks and goes on. A use found stops it all the same.
+// newStandaloneRigCalls are the calls of a VM's onboarding by resource.
+func newStandaloneRigCalls(t *testing.T) []string {
+	g := newStandaloneRig(t)
+	r := workloadsEurope
+	r.Resource = agentPath
+	mark := len(g.s.Calls())
+	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	var out []string
+	for _, c := range g.s.Calls()[mark:] {
+		out = append(out, c.Method+" "+c.URL)
+	}
+	return out
+}
+
+// A listing the caller may not make, or one that missed the resource's scope (unreachable, or a scope warning other than no
+// results), is not checked: the onboarding stops, naming the listings not made, unless --unchecked, which says them and what it
+// risks and goes on. A use found stops it all the same.
 func TestWorkloadsOnboardByResourceStopsWhenNotChecked(t *testing.T) {
 	cases := map[string]struct {
 		resource string
@@ -374,10 +454,14 @@ func TestWorkloadsOnboardByResourceStopsWhenNotChecked(t *testing.T) {
 			"instance group web (zones/europe-west1-b) (compute.instanceGroups.list: "},
 		"managed group refused": {migPath, func(g *workloadsRig) { g.s.Refused = map[string]bool{"instanceGroupManagers": true} },
 			"managed group batch (compute.instanceGroupManagers.get: "},
+		"managed instances refused": {migPath, func(g *workloadsRig) { g.s.Refused = map[string]bool{"listManagedInstances": true} },
+			"the VMs of managed group batch (compute.instanceGroupManagers.get: "},
 		"unreachable": {agentPath, func(g *workloadsRig) {
-			g.s.Unreachables = map[string][]string{"backendServices": {"regions/asia-east1"}}
-		},
-			"backend services (unreachable: regions/asia-east1)"},
+			g.s.Unreachables = map[string][]string{"backendServices": {"regions/europe-west1"}}
+		}, "backend services (not reached: regions/europe-west1)"},
+		"scope warning": {agentPath, func(g *workloadsRig) {
+			g.s.ScopeWarnings = map[string]map[string]string{"targetPools": {"regions/europe-west1": "UNREACHABLE"}}
+		}, "target pools (not reached: regions/europe-west1)"},
 	}
 	for name, c := range cases {
 		g := newStandaloneRig(t)
@@ -401,12 +485,20 @@ func TestWorkloadsOnboardByResourceStopsWhenNotChecked(t *testing.T) {
 			t.Errorf("%s, --unchecked: exit %d:\n%s", name, code, out)
 		}
 	}
-	// A use found in a listing made: refused, --unchecked or not.
+	// A scope another region's, or a scope's warning of no results, is no listing missed.
 	g := newStandaloneRig(t)
+	g.s.Unreachables = map[string][]string{"backendServices": {"regions/asia-east1"}}
+	g.s.ScopeWarnings = map[string]map[string]string{"targetPools": {"regions/europe-west1": "NO_RESULTS_ON_PAGE"}}
+	r := workloadsEurope
+	r.Resource = agentPath
+	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("another region's: exit %d:\n%s", code, out)
+	}
+	// A use found in a listing made: refused, --unchecked or not.
+	g = newStandaloneRig(t)
 	g.s.Refused = map[string]bool{"targetPools": true}
 	g.s.GroupMembers["zones/europe-west1-b/instanceGroups/web"] = []string{"build-agent"}
-	r := workloadsEurope
-	r.Resource, r.Unchecked = agentPath, true
+	r.Unchecked = true
 	if code, out := g.call(t, WorkloadsOnboard, r); code != 1 || !strings.Contains(out, "backs backend service shop (global)") {
 		t.Fatalf("found: exit %d:\n%s", code, out)
 	}

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -476,6 +477,14 @@ func (s *Server) serviceUsers(w http.ResponseWriter, r *http.Request, rest strin
 			}
 			list[field] = append(list[field].([]any), entries[key])
 		}
+		for scope, code := range s.ScopeWarnings[listing] {
+			list, _ := items[scope].(map[string]any)
+			if list == nil {
+				list = map[string]any{}
+				items[scope] = list
+			}
+			list["warning"] = map[string]any{"code": code, "message": "warned"}
+		}
 		out := map[string]any{"items": items}
 		if u := s.Unreachables[listing]; len(u) > 0 {
 			out["unreachables"] = u
@@ -516,6 +525,26 @@ func (s *Server) serviceUsers(w http.ResponseWriter, r *http.Request, rest strin
 			entries[key] = map[string]any{"name": strings.SplitN(key, "/", 2)[1], "instance": vm}
 		}
 		answer("targetInstances", "targetInstances", entries)
+		return true
+	case strings.HasSuffix(rest, "/listManagedInstances") && r.Method == http.MethodPost:
+		if refused("listManagedInstances") {
+			return true
+		}
+		all := s.ManagedInstances[strings.TrimSuffix(rest, "/listManagedInstances")]
+		start, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+		end := len(all)
+		if s.ManagedInstancesPage > 0 && start+s.ManagedInstancesPage < end {
+			end = start + s.ManagedInstancesPage
+		}
+		items := []any{}
+		for _, u := range all[min(start, len(all)):end] {
+			items = append(items, map[string]any{"instance": u})
+		}
+		answer := map[string]any{"managedInstances": items}
+		if end < len(all) {
+			answer["nextPageToken"] = strconv.Itoa(end)
+		}
+		Reply(w, answer)
 		return true
 	case strings.HasSuffix(rest, "/listInstances") && r.Method == http.MethodPost:
 		if refused("listInstances") {

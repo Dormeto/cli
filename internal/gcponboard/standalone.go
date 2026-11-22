@@ -2,16 +2,21 @@ package gcponboard
 
 // Google Cloud's standalone workloads (vision standalone workloads design §2, §5): `dormeto gcp workloads onboard --resource
 // <path>`, a VM, a managed group or a Cloud SQL instance by its path, in place of a URL map and a backend service. The router's
-// dry run checks the resource; the CLI checks, with the operator's own credentials, that no backend service uses it (a VM or a
-// group behind one is an HTTP workload's: Dormeto would stop it when its metrics are idle), then binds the tag dormeto=managed
-// to it and its companions, and onboards it.
+// dry run checks the resource; for a VM or a managed group the CLI then checks, with the operator's own credentials (the onboard
+// step resourceCheck), that no load balancer uses it or, for a group, any of its VMs: a backend service of any scheme, through
+// the group's own instance group, an instance group or a zonal network endpoint group holding one of the VMs; a group's target
+// pools; a target pool or a target instance naming the VM (Dormeto would stop what serves one when its metrics are idle). A
+// listing refused, or one that missed the resource's scope, stops the onboarding unless --unchecked. Then it binds the tag
+// dormeto=managed to the resource and its companions, and onboards it.
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Dormeto/cli/internal/gcp"
@@ -339,20 +344,26 @@ func containsDatabase(list []databaseRef, name string) bool {
 	return false
 }
 
-// notServing is the load-balancer check (the plan's ruling, as wide as the manager's), made as the operator: a VM or a group
-// that serves a load balancer is refused by name. A backend service of any scheme, global or regional, that uses it through an
-// instance group (managed or not) or a zonal network endpoint group holding it; for a group, its target pools; for a VM, a
-// target pool listing it or a target instance naming it. A listing refused or answered partial (unreachables) is not checked:
-// the onboarding stops, naming the listings not made, unless --unchecked, which says them and what it risks and goes on.
+// notServing is the load-balancer check (the plan's ruling, as wide as the manager's, gcp-backing.ts), made as the operator: a VM
+// or a group that serves a load balancer is refused, in the manager's words. The VMs checked are the VM, or the group's (its
+// managed instances, every page). A backend service of any scheme, global or regional, uses one through the group's own
+// instance group, an instance group (managed or not) holding it, or a zonal network endpoint group naming it; a group's target
+// pools; a target pool listing the VM or a target instance naming it. A listing refused, or one that missed the resource's
+// scope (unreachable, or a scope's warning but no results), is not checked: the onboarding stops, naming the listings not
+// made, unless --unchecked, which says them and what it risks and goes on.
 func (x *run) notServing(b backend) error {
 	label := googleLabel(b)
-	c := &lbCheck{x: x, b: b, base: "https://compute.googleapis.com/compute/v1/projects/" + esc(x.n.project) + "/", members: map[string][]string{}}
+	c := &lbCheck{x: x, b: b, base: "https://compute.googleapis.com/compute/v1/projects/" + esc(x.n.project) + "/", members: map[string][]vmAt{}}
+	c.region = b.Location
+	if !regionPattern.MatchString(c.region) {
+		c.region = c.region[:strings.LastIndex(c.region, "-")]
+	}
 	use, err := c.use()
 	switch {
 	case err != nil:
 		return err
 	case use != "":
-		return &stop{1, fmt.Sprintf("%s%s %s\nNothing was changed.", strings.ToUpper(label[:1]), label[1:], use)}
+		return &stop{1, fmt.Sprintf("%s %s\nNothing was changed.", sharedLabel(b), use)}
 	case len(c.missing) > 0 && x.r.Unchecked:
 		fmt.Fprintf(x.textOut(), "  ! Not checked (--unchecked): %s: if %s serves a load balancer, Dormeto stops it when its metrics are idle.\n", strings.Join(c.missing, "; "), label)
 	case len(c.missing) > 0:
@@ -363,19 +374,44 @@ func (x *run) notServing(b backend) error {
 	return nil
 }
 
-// The endings of a use found: a backend service's, and a load balancer's that has none.
+// sharedLabel names a VM or a group as the manager's refusals do: VM build-agent, managed group batch.
+func sharedLabel(b backend) string {
+	if b.Kind == "mig" {
+		return "managed group " + b.Name
+	}
+	return "VM " + b.Name
+}
+
+// The endings of a use found, the manager's (gcp-backing.ts).
 const (
-	httpWorkloads    = ": it belongs to an HTTP workload: onboard its backend service."
-	noBackendService = ": it serves a load balancer that uses no backend service, which Dormeto does not onboard."
+	httpWorkloads = ": it belongs to an HTTP workload"
+	loadBalancer  = ": it belongs to a load balancer"
 )
 
-// lbCheck is one run of the load-balancer check: the listings not made (missing) and the groups' VMs read (members).
+// vmAt is a VM by its zone and name.
+type vmAt struct{ zone, name string }
+
+var vmURL = regexp.MustCompile(`/zones/([a-z0-9-]+)/instances/([^/?]+)$`)
+
+// vmOf is the VM a URL names (false: none).
+func vmOf(u string) (vmAt, bool) {
+	m := vmURL.FindStringSubmatch(u)
+	if m == nil {
+		return vmAt{}, false
+	}
+	return vmAt{m[1], m[2]}, true
+}
+
+// lbCheck is one run of the load-balancer check: the resource's region, its VMs, the listings not made (missing) and the
+// groups' VMs read (members).
 type lbCheck struct {
 	x       *run
 	b       backend
 	base    string
+	region  string
+	vms     []vmAt
 	missing []string
-	members map[string][]string
+	members map[string][]vmAt
 }
 
 // notMade keeps a listing refused as not made, and passes any other error.
@@ -389,11 +425,21 @@ func (c *lbCheck) notMade(what, permissions string, err error) error {
 
 // use is what uses the VM or the group, ending with what it is ("" for none).
 func (c *lbCheck) use() (string, error) {
+	if c.b.Kind == "mig" {
+		if use, err := c.groupTargetPools(); use != "" || err != nil {
+			return use, err
+		}
+		if err := c.groupVMs(); err != nil {
+			return "", err
+		}
+	} else {
+		c.vms = []vmAt{{c.b.Location, c.b.Name}}
+	}
 	if use, err := c.backendServices(); use != "" || err != nil {
 		return use, err
 	}
 	if c.b.Kind == "mig" {
-		return c.groupTargetPools()
+		return "", nil
 	}
 	if use, err := c.targetPools(); use != "" || err != nil {
 		return use, err
@@ -401,27 +447,62 @@ func (c *lbCheck) use() (string, error) {
 	return c.targetInstances()
 }
 
-// aggregated reads an aggregated listing, every page: each scope's entries of field to each. A scope Google could not reach is
-// kept as not made.
+// unreachableScope is a scope as an unreachable entry names it, whole URL or not.
+var unreachableScope = regexp.MustCompile(`(?:^|/)(global|(?:regions|zones)/[a-z0-9-]+)$`)
+
+// concerns tells whether a scope can hold what uses the resource: global, its region or a zone of it.
+func (c *lbCheck) concerns(scope string) bool {
+	switch {
+	case scope == "global":
+		return true
+	case strings.HasPrefix(scope, "zones/"):
+		zone := strings.TrimPrefix(scope, "zones/")
+		return zone[:max(strings.LastIndex(zone, "-"), 0)] == c.region
+	}
+	return strings.TrimPrefix(scope, "regions/") == c.region
+}
+
+// aggregated reads an aggregated listing with a partial answer allowed, every page: each scope's entries of field to each. A
+// scope Google could not reach, or warned of but for no results, that concerns the resource is kept as not made.
 func (c *lbCheck) aggregated(listing, what, permissions, field string, each func(scope string, entries json.RawMessage) (string, error)) (string, error) {
 	token := ""
+	var missed []string
+	defer func() {
+		if len(missed) > 0 {
+			c.missing = append(c.missing, fmt.Sprintf("%s (not reached: %s)", what, strings.Join(missed, ", ")))
+		}
+	}()
 	for {
 		var page struct {
 			Items         map[string]map[string]json.RawMessage `json:"items"`
 			NextPageToken string                                `json:"nextPageToken"`
 			Unreachables  []string                              `json:"unreachables"`
 		}
-		u := c.base + "aggregated/" + listing
+		u := c.base + "aggregated/" + listing + "?returnPartialSuccess=true"
 		if token != "" {
-			u += "?pageToken=" + url.QueryEscape(token)
+			u += "&pageToken=" + url.QueryEscape(token)
 		}
 		if err := c.x.d.Google.Do(c.x.ctx, http.MethodGet, u, nil, &page); err != nil {
 			return "", c.notMade(what, permissions, err)
 		}
-		if len(page.Unreachables) > 0 {
-			c.missing = append(c.missing, fmt.Sprintf("%s (unreachable: %s)", what, strings.Join(page.Unreachables, ", ")))
+		for _, un := range page.Unreachables {
+			scope := "global"
+			if m := unreachableScope.FindStringSubmatch(un); m != nil {
+				scope = m[1]
+			}
+			if c.concerns(scope) && !containsString(missed, scope) {
+				missed = append(missed, scope)
+			}
 		}
-		for scope, item := range page.Items {
+		for _, scope := range slices.Sorted(maps.Keys(page.Items)) {
+			item := page.Items[scope]
+			var warning struct {
+				Code string `json:"code"`
+			}
+			if raw, ok := item["warning"]; ok && json.Unmarshal(raw, &warning) == nil && warning.Code != "" && warning.Code != "NO_RESULTS_ON_PAGE" &&
+				c.concerns(scope) && !containsString(missed, scope) {
+				missed = append(missed, scope)
+			}
 			if entries, ok := item[field]; ok {
 				if use, err := each(scope, entries); use != "" || err != nil {
 					return use, err
@@ -434,9 +515,13 @@ func (c *lbCheck) aggregated(listing, what, permissions, field string, each func
 	}
 }
 
-// isTheVM tells that a VM's URL names the checked VM.
-func (c *lbCheck) isTheVM(u string) bool {
-	return strings.HasSuffix(u, "/projects/"+c.x.n.project+"/zones/"+c.b.Location+"/instances/"+c.b.Name)
+func (c *lbCheck) holds(vms []vmAt) bool {
+	for _, v := range vms {
+		if slices.Contains(c.vms, v) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *lbCheck) backendServices() (string, error) {
@@ -453,14 +538,13 @@ func (c *lbCheck) backendServices() (string, error) {
 			}
 			where := strings.TrimPrefix(scope, "regions/")
 			for _, s := range services {
-				service := fmt.Sprintf("backs backend service %s (%s)", s.Name, where)
 				for _, be := range s.Backends {
-					through, used, err := c.groupUse(be.Group)
+					used, err := c.groupUse(be.Group)
 					if err != nil {
 						return "", err
 					}
 					if used {
-						return service + through + httpWorkloads, nil
+						return fmt.Sprintf("backs backend service %s (%s)%s", s.Name, where, httpWorkloads), nil
 					}
 				}
 			}
@@ -468,62 +552,96 @@ func (c *lbCheck) backendServices() (string, error) {
 		})
 }
 
-// groupUse tells whether a backend's group holds the VM (through names it) or is the group.
-func (c *lbCheck) groupUse(group string) (through string, used bool, err error) {
+// groupUse tells whether a backend's group is the managed group's own instance group, or holds one of the resource's VMs: an
+// instance group of a VM's zone or region, a zonal network endpoint group of a VM's zone.
+func (c *lbCheck) groupUse(group string) (bool, error) {
 	m := backendGroup.FindStringSubmatch(group)
 	if m == nil || m[1] != c.x.n.project {
-		return "", false, nil
+		return false, nil
 	}
 	place, location, kind, name := m[2], m[3], m[4], m[5]
-	if c.b.Kind == "mig" {
-		return "", kind == "instanceGroups" && location == c.b.Location && name == c.b.Name, nil
+	if c.b.Kind == "mig" && kind == "instanceGroups" && location == c.b.Location && name == c.b.Name {
+		return true, nil
 	}
-	// A VM: a zonal group or NEG of its zone, or a regional group of its region.
-	region := c.b.Location[:strings.LastIndex(c.b.Location, "-")]
-	if !(place == "zones" && location == c.b.Location) && !(place == "regions" && location == region && kind == "instanceGroups") {
-		return "", false, nil
+	near := false
+	for _, v := range c.vms {
+		if (place == "zones" && location == v.zone) || (place == "regions" && kind == "instanceGroups" && location == v.zone[:strings.LastIndex(v.zone, "-")]) {
+			near = true
+		}
+	}
+	if !near {
+		return false, nil
 	}
 	key := place + "/" + location + "/" + kind + "/" + name
 	vms, read := c.members[key]
 	if !read {
-		if vms, err = c.x.groupVMs(c.base+key, kind); err != nil {
+		var err error
+		if vms, err = c.x.groupMembers(c.base+key, kind, location); err != nil {
 			what, permission := fmt.Sprintf("instance group %s (%s/%s)", name, place, location), "compute.instanceGroups.list"
 			if kind == "networkEndpointGroups" {
 				what, permission = fmt.Sprintf("network endpoint group %s (%s/%s)", name, place, location), "compute.networkEndpointGroups.list"
 			}
-			return "", false, c.notMade(what, permission, err)
+			return false, c.notMade(what, permission, err)
 		}
 		c.members[key] = vms
 	}
-	if !containsString(vms, c.b.Name) {
-		return "", false, nil
-	}
-	if kind == "networkEndpointGroups" {
-		return ", through network endpoint group " + name, true, nil
-	}
-	return ", through instance group " + name, true, nil
+	return c.holds(vms), nil
 }
 
-// groupTargetPools: a managed group that feeds target pools serves a target-pool load balancer.
-func (c *lbCheck) groupTargetPools() (string, error) {
+// groupPath is the managed group's place: zones/<z> or regions/<r>, and its name.
+func (c *lbCheck) groupPath() string {
 	place := "zones/"
 	if regionPattern.MatchString(c.b.Location) {
 		place = "regions/"
 	}
+	return place + esc(c.b.Location) + "/instanceGroupManagers/" + esc(c.b.Name)
+}
+
+// groupTargetPools: a managed group that feeds target pools serves a target-pool load balancer.
+func (c *lbCheck) groupTargetPools() (string, error) {
 	var group struct {
 		TargetPools []string `json:"targetPools"`
 	}
-	if err := c.x.d.Google.Do(c.x.ctx, http.MethodGet, c.base+place+esc(c.b.Location)+"/instanceGroupManagers/"+esc(c.b.Name), nil, &group); err != nil {
+	if err := c.x.d.Google.Do(c.x.ctx, http.MethodGet, c.base+c.groupPath(), nil, &group); err != nil {
 		return "", c.notMade("managed group "+c.b.Name, "compute.instanceGroupManagers.get", err)
 	}
-	if len(group.TargetPools) == 0 {
-		return "", nil
-	}
-	var names []string
 	for _, p := range group.TargetPools {
-		names = append(names, p[strings.LastIndex(p, "/")+1:])
+		where := ""
+		if m := regexp.MustCompile(`/regions/([a-z0-9-]+)/targetPools/`).FindStringSubmatch(p); m != nil {
+			where = " (" + m[1] + ")"
+		}
+		return "is in target pool " + p[strings.LastIndex(p, "/")+1:] + where + loadBalancer, nil
 	}
-	return "feeds target pool " + strings.Join(names, ", ") + noBackendService, nil
+	return "", nil
+}
+
+// groupVMs reads the managed group's VMs, every page (listManagedInstances: compute.instanceGroupManagers.get, as the router's
+// compute.mjs names it).
+func (c *lbCheck) groupVMs() error {
+	token := ""
+	for {
+		var page struct {
+			ManagedInstances []struct {
+				Instance string `json:"instance"`
+			} `json:"managedInstances"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		u := c.base + c.groupPath() + "/listManagedInstances"
+		if token != "" {
+			u += "?pageToken=" + url.QueryEscape(token)
+		}
+		if err := c.x.d.Google.Do(c.x.ctx, http.MethodPost, u, map[string]any{}, &page); err != nil {
+			return c.notMade("the VMs of managed group "+c.b.Name, "compute.instanceGroupManagers.get", err)
+		}
+		for _, m := range page.ManagedInstances {
+			if v, ok := vmOf(m.Instance); ok {
+				c.vms = append(c.vms, v)
+			}
+		}
+		if token = page.NextPageToken; token == "" {
+			return nil
+		}
+	}
 }
 
 func (c *lbCheck) targetPools() (string, error) {
@@ -536,9 +654,9 @@ func (c *lbCheck) targetPools() (string, error) {
 			return "", fmt.Errorf("the target pools' list is not understood: %w", err)
 		}
 		for _, p := range pools {
-			for _, vm := range p.Instances {
-				if c.isTheVM(vm) {
-					return fmt.Sprintf("is in target pool %s (%s)%s", p.Name, strings.TrimPrefix(scope, "regions/"), noBackendService), nil
+			for _, u := range p.Instances {
+				if v, ok := vmOf(u); ok && c.holds([]vmAt{v}) {
+					return fmt.Sprintf("serves target pool %s (%s)%s", p.Name, strings.TrimPrefix(scope, "regions/"), loadBalancer), nil
 				}
 			}
 		}
@@ -556,18 +674,18 @@ func (c *lbCheck) targetInstances() (string, error) {
 			return "", fmt.Errorf("the target instances' list is not understood: %w", err)
 		}
 		for _, t := range targets {
-			if c.isTheVM(t.Instance) {
-				return fmt.Sprintf("is the VM of target instance %s (%s)%s", t.Name, strings.TrimPrefix(scope, "zones/"), noBackendService), nil
+			if v, ok := vmOf(t.Instance); ok && c.holds([]vmAt{v}) {
+				return fmt.Sprintf("serves target instance %s (%s)%s", t.Name, strings.TrimPrefix(scope, "zones/"), loadBalancer), nil
 			}
 		}
 		return "", nil
 	})
 }
 
-// groupVMs are the names of the VMs of an instance group (listInstances) or of a zonal network endpoint group
-// (listNetworkEndpoints), every page.
-func (x *run) groupVMs(groupURL, kind string) ([]string, error) {
-	var out []string
+// groupMembers are the VMs of an instance group (listInstances: their URLs) or of a zonal network endpoint group
+// (listNetworkEndpoints: their names, in its zone), every page.
+func (x *run) groupMembers(groupURL, kind, location string) ([]vmAt, error) {
+	var out []vmAt
 	token := ""
 	for {
 		var page struct {
@@ -591,14 +709,13 @@ func (x *run) groupVMs(groupURL, kind string) ([]string, error) {
 			return nil, err
 		}
 		for _, it := range page.Items {
-			name := it.Instance
-			if name == "" {
-				name = it.NetworkEndpoint.Instance
+			if kind == "networkEndpointGroups" {
+				if n := it.NetworkEndpoint.Instance; n != "" {
+					out = append(out, vmAt{location, n[strings.LastIndex(n, "/")+1:]})
+				}
+			} else if v, ok := vmOf(it.Instance); ok {
+				out = append(out, v)
 			}
-			if i := strings.LastIndex(name, "/"); i >= 0 {
-				name = name[i+1:]
-			}
-			out = append(out, name)
 		}
 		if token = page.NextPageToken; token == "" {
 			return out, nil

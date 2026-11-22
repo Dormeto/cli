@@ -138,6 +138,11 @@ type Server struct {
 	GroupTargetPools map[string][]string
 	Refused          map[string]bool
 	Unreachables     map[string][]string
+	// ScopeWarnings are the scopes' warnings an aggregated listing answers (scope: code), by its name; ManagedInstances a
+	// managed group's VMs (URLs) by its path, as listManagedInstances lists them, ManagedInstancesPage of them a page (0: one).
+	ScopeWarnings        map[string]map[string]string
+	ManagedInstances     map[string][]string
+	ManagedInstancesPage int
 	// Waking are the states a workload goes through after a wake, by ID: each GET /v1/workloads/<id> answers the next, the last
 	// one staying. None: the wake leaves it AWAKE at once.
 	Waking map[string][]string
