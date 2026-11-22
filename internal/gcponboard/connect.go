@@ -45,8 +45,8 @@ type Manager interface {
 	GoogleConnection(ctx context.Context) (*fleet.GoogleConnection, error)
 	PutGoogleConnection(ctx context.Context, rec fleet.GoogleConnection) (*fleet.GoogleConnection, error)
 	DeleteGoogleConnection(ctx context.Context) error
-	// Disconnected is when the manager's audit last recorded the disconnect of a host project, zero when it holds none.
-	Disconnected(ctx context.Context, host string) (time.Time, error)
+	// Disconnects are the disconnects of a host project the manager's audit records, newest first.
+	Disconnects(ctx context.Context, host string) ([]time.Time, error)
 }
 
 // ManagerInfo is what the manager says of itself: its version (/health), its AWS account (the caller's: the manager's API
@@ -172,6 +172,10 @@ type link struct {
 	left        map[string]planned // disconnect: each policy read, as its removals leave it, by place
 	kept        []string           // disconnect: the plan's lines of what it keeps
 	keptRoles   []string           // disconnect: the custom roles it leaves in place, as "role <id> in <where>"
+	stepsDone   int                // the steps applySteps finished
+	// The manager's audit's disconnects of the host, read once.
+	disconnects     []time.Time
+	disconnectsRead bool
 }
 
 // planned is a policy the disconnect's plan read: where it is, and as the removals leave it.
@@ -891,6 +895,12 @@ func (x *link) planManagerRoles() (*step, error) {
 		case !found:
 			changes = append(changes, change{at, "create", "", want})
 			lines = append(lines, fmt.Sprintf("+ role %s \"%s\" (%d permissions) in %s", at.id, want.Title, len(want.Permissions), at.where()))
+			// Google answers a role whose ID it blocks as not found: a disconnect that may have deleted it says so before the
+			// confirmation.
+			if when, err := x.deletingDisconnect(roleUndeleteDays, roleIDBlockedDays); err == nil && !when.IsZero() {
+				lines = append(lines, fmt.Sprintf("! role %s in %s: the manager's disconnect of %s may have deleted it; Google blocks a deleted role's ID until %s at the latest, and the create would then be refused",
+					at.id, at.where(), when.UTC().Format(time.DateOnly), when.UTC().AddDate(0, 0, roleIDBlockedDays).Format(time.DateOnly)))
+			}
 		case got.Deleted:
 			changes = append(changes, change{at, "undelete", got.Etag, want})
 			lines = append(lines, fmt.Sprintf("↺ role %s in %s: undelete, then update", at.id, at.where()))
@@ -948,11 +958,35 @@ func (x *link) planManagerRoles() (*step, error) {
 // avoidBlockedID says how not to meet a blocked ID again.
 const avoidBlockedID = "; a disconnect without --delete-roles keeps the roles, and a later connect reuses them"
 
+// roleUndeleteDays are the days Google lets a deleted custom role be undeleted.
+const roleUndeleteDays = 7
+
+// deletingDisconnect is the manager's disconnect of the host that may have deleted a role Google blocks now: the newest at
+// least from days old (a role deleted since is undeleted, never blocked) and less than to days old (Google has freed an ID
+// deleted before); zero when the audit holds none.
+func (x *link) deletingDisconnect(from, to int) (time.Time, error) {
+	if !x.disconnectsRead {
+		all, err := x.c.Manager.Disconnects(x.ctx, x.host)
+		if err != nil {
+			return time.Time{}, err
+		}
+		x.disconnects, x.disconnectsRead = all, true
+	}
+	all := x.disconnects
+	now := x.d.Now()
+	for _, at := range all {
+		if !at.After(now.AddDate(0, 0, -from)) && at.After(now.AddDate(0, 0, -to)) {
+			return at, nil
+		}
+	}
+	return time.Time{}, nil
+}
+
 // blocked is the refusal of a role ID that Google holds and will not undelete: deleted more than 7 days ago, it is freed at
 // the latest 44 days after its deletion, a date the manager's audit gives when its disconnect deleted it.
 func (x *link) blocked(at roleAt) error {
 	msg := fmt.Sprintf("Google blocks the ID of role %s in %s: it was deleted more than 7 days ago and can't be undeleted; ", at.id, at.where())
-	when, err := x.c.Manager.Disconnected(x.ctx, x.host)
+	when, err := x.deletingDisconnect(roleUndeleteDays, roleIDBlockedDays)
 	if err != nil || when.IsZero() {
 		return errors.New(msg + fmt.Sprintf("Google frees it at the latest %d days after its deletion%s", roleIDBlockedDays, avoidBlockedID))
 	}
@@ -1349,7 +1383,7 @@ func listed(items []string, word string) string {
 
 func (x *link) applyConnect() error {
 	if err := x.applySteps(); err != nil {
-		return err
+		return x.afterStoppedConnect(err)
 	}
 	warnings, err := x.verifyConnect()
 	if err != nil {
@@ -1388,6 +1422,7 @@ func (x *link) applyConnect() error {
 // applySteps runs the steps in order, every IAM change printed after its step. A refused step stops the run: what was done
 // and what was not are said, and the same command continues.
 func (x *link) applySteps() error {
+	x.stepsDone = 0
 	for i, s := range x.steps {
 		x.iam = nil
 		done, err := s.apply()
@@ -1403,8 +1438,30 @@ func (x *link) applySteps() error {
 		}
 		x.say("  ✓ %s: %s", s.name, done)
 		x.printIAM()
+		x.stepsDone = i + 1
 	}
 	return nil
+}
+
+// afterStoppedConnect ends a connect stopped at a step. A first connect (no record before it) that did no step removes the
+// record it wrote before its first step: nothing in Google Cloud is the connection's, and the manager would believe it
+// connected. Otherwise the record stays, for the rerun to continue from it and for disconnect to remove what was made.
+func (x *link) afterStoppedConnect(err error) error {
+	var s *stop
+	if !errors.As(err, &s) {
+		return err
+	}
+	if x.rec == nil && x.early != "" && x.stepsDone == 0 {
+		if derr := x.c.Manager.DeleteGoogleConnection(x.ctx); derr != nil {
+			x.say("  ✗ record: the connection written before the first step is not removed: %s", derr)
+			s.msg += "\nThe manager's record of the connection stays, though nothing was done in Google Cloud: dormeto gcp disconnect removes it."
+			return s
+		}
+		x.say("  ✓ record: removed the connection written before the first step: nothing was done in Google Cloud, nothing is left")
+		return s
+	}
+	s.msg += "\nThe manager's record of the connection stays: running the same command again continues from it, and dormeto gcp disconnect removes it."
+	return s
 }
 
 // verifyConnect reads again what the plan set up: the pool and its provider, the accounts, the roles and every grant; the

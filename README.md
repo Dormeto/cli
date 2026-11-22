@@ -1973,7 +1973,10 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   bindings Google added, and who connected with which CLI. A first connect writes it before its first step, without its
   routers, so that a run stopped partway leaves what it made for `gcp disconnect`; then whole at the end, once verified.
   A later connect that adds scopes writes them first too, with the routers already recorded, so that what it makes at a
-  new scope is disconnect's to remove. A run stopped after its steps says what the record holds then. The manager
+  new scope is disconnect's to remove. A first connect that stops before any step is done (`Done: none`) removes the
+  record it wrote (`✓ record: removed the connection written before the first step: nothing was done in Google Cloud,
+  nothing is left`); any other stopped run says `The manager's record of the connection stays: running the same command
+  again continues from it, and dormeto gcp disconnect removes it.` A run stopped after its steps says what the record holds then. The manager
   registers the record's routers at once. Run again, connect plans only the differences (a router installed since gets
   its grants), or says `up to date`. A router of the record no longer found is dropped from it. When its project holds
   no router any more at the scopes (the router uninstalled, or the project moved out of a folder scope), the command
@@ -1988,8 +1991,13 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   reused. Ones a `disconnect --delete-roles` deleted are undeleted within 7 days, then updated; a custom role deleted more
   than 7 days ago can't be undeleted, and Google blocks its ID until its permanent deletion ends, at the latest 44 days
   after the deletion. Connect then stops with `Google blocks the ID of role <id> in <where>: …; Google frees it by
-  <date>`, the date counted from the manager's last disconnect in its audit, followed by `; a disconnect without
-  --delete-roles keeps the roles, and a later connect reuses them`. A deleted service account is created again: its name is free at once.
+  <date>`, the date counted from the disconnect in the manager's audit that deleted it: the newest one at least 7 days
+  old (a role deleted since would have been undeleted) and less than 44; with none, `Google frees it at the latest 44 days
+  after its deletion`. That message is followed by `; a disconnect without
+  --delete-roles keeps the roles, and a later connect reuses them`. Google answers a blocked ID's role as not found, so the
+  plan can only warn, before the confirmation, when a role is to be created and such a disconnect exists: `! role <id> in
+  <where>: the manager's disconnect of <date> may have deleted it; Google blocks a deleted role's ID until <date> at the
+  latest, and the create would then be refused`. A deleted service account is created again: its name is free at once.
 - **`gcp disconnect`** reads the record back, under its names: a record whose pool and accounts are not `dmt-<env>`'s is
   refused (exit 2, the record kept). It tests the host for its bindings and roles too. It removes every binding of the
   two accounts on the recorded routers' controllers and tag values, on the projects (the project scopes, the router

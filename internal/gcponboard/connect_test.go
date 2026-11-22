@@ -25,6 +25,7 @@ type fakeManager struct {
 	puts         []fleet.GoogleConnection
 	deletes      int
 	disconnected time.Time
+	disconnects  []time.Time // the audit's disconnects of the host, besides disconnected
 	reads        int
 	refusedPut   int // the put, counted from 1, that the manager refuses (0: none)
 }
@@ -51,8 +52,12 @@ func (m *fakeManager) DeleteGoogleConnection(context.Context) error {
 	m.rec = nil
 	return nil
 }
-func (m *fakeManager) Disconnected(context.Context, string) (time.Time, error) {
-	return m.disconnected, nil
+func (m *fakeManager) Disconnects(context.Context, string) ([]time.Time, error) {
+	out := slices.Clone(m.disconnects)
+	if !m.disconnected.IsZero() {
+		out = append(out, m.disconnected)
+	}
+	return out, nil
 }
 
 func newFakeManager() *fakeManager {
@@ -1411,5 +1416,101 @@ func TestDisconnectAsksTheRolesDeleteOnlyWithDeleteRoles(t *testing.T) {
 		case deleting && (code != 1 || !strings.Contains(out, "iam.roles.delete") || m.rec == nil):
 			t.Errorf("with --delete-roles: exit %d:\n%s", code, out)
 		}
+	}
+}
+
+// blockedRefusal makes Google refuse to create dormetoDiscovery as it does an ID it blocks.
+func blockedRefusal(s *gcptest.Server) {
+	s.Refuse(gcptest.Refusal{Method: http.MethodPost, Host: "iam.googleapis.com", Path: "/v1/projects/dormeto-dev/roles", Code: 400,
+		Status: "FAILED_PRECONDITION", Message: "You can't create a role with role_id (dormetoDiscovery) where there is an existing role with that role_id in a deleted state."})
+}
+
+// The date a blocked ID frees counts from the disconnect that deleted the role: a role deleted less than 7 days ago is
+// undeleted, never blocked, so it is the newest disconnect at least 7 days old (the live case of 2026-11-22: a disconnect
+// that morning removed a record only, the role having gone with the one of 2026-11-10). None that old: no date.
+func TestABlockedIDsDateCountsFromTheDisconnectAtLeast7DaysOld(t *testing.T) {
+	s := connectServer(t)
+	blockedRefusal(s)
+	m := newFakeManager()
+	// connectDeps' clock: 2026-11-09T10:00Z.
+	m.disconnects = []time.Time{time.Date(2026, 11, 8, 8, 45, 0, 0, time.UTC), time.Date(2026, 10, 27, 18, 20, 0, 0, time.UTC), time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)}
+	_, out := runConnect(t, s, connectRequest(m))
+	if !strings.Contains(out, "Google frees it by 2026-12-10 (44 days after the manager's disconnect of 2026-10-27)") {
+		t.Fatalf("%s", out)
+	}
+	s = connectServer(t)
+	blockedRefusal(s)
+	m = newFakeManager()
+	m.disconnects = []time.Time{time.Date(2026, 11, 8, 8, 45, 0, 0, time.UTC)}
+	_, out = runConnect(t, s, connectRequest(m))
+	if !strings.Contains(out, "Google frees it at the latest 44 days after its deletion;") {
+		t.Fatalf("%s", out)
+	}
+}
+
+// A first connect that stops at its first step, nothing done in Google Cloud, removes the record it wrote before it: the
+// manager is not left believing it is connected. With a step done, or a record there before, the record stays, and the end
+// says so.
+func TestAFirstConnectStoppedBeforeAnyStepRemovesItsRecord(t *testing.T) {
+	s := connectServer(t)
+	s.Lock()
+	s.Enabled = append(s.Enabled, access.Load().Manager.APIs...) // no apis step: roles comes first
+	s.Unlock()
+	blockedRefusal(s)
+	m := newFakeManager()
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 1 || m.rec != nil || m.deletes != 1 || len(m.puts) != 1 {
+		t.Fatalf("exit %d, record %+v, deletes %d:\n%s", code, m.rec, m.deletes, out)
+	}
+	for _, w := range []string{"Done: none. Not done: roles,", "  ✓ record: removed the connection written before the first step: nothing was done in Google Cloud, nothing is left"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("no %q in:\n%s", w, out)
+		}
+	}
+	// A step done (apis): the record stays, said.
+	s = connectServer(t)
+	blockedRefusal(s)
+	m = newFakeManager()
+	code, out = runConnect(t, s, connectRequest(m))
+	if code != 1 || m.rec == nil || m.deletes != 0 || !strings.Contains(out, "Done: apis.") ||
+		!strings.Contains(out, "The manager's record of the connection stays: running the same command again continues from it, and dormeto gcp disconnect removes it.") {
+		t.Fatalf("a step done: exit %d, record %+v:\n%s", code, m.rec, out)
+	}
+	// A record there before: it stays, whatever was done.
+	s = connectServer(t)
+	m = newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	otherProject(s)
+	s.Refuse(gcptest.Refusal{Method: http.MethodPost, Host: "cloudresourcemanager.googleapis.com", Path: "/v3/projects/shop-prod:setIamPolicy",
+		Times: 1, Code: 403, Status: "PERMISSION_DENIED", Message: "refused"})
+	r := connectRequest(m)
+	r.Scopes = []string{"projects/shop-prod"}
+	code, out = runConnect(t, s, r)
+	if code != 1 || m.rec == nil || m.deletes != 0 || !strings.Contains(out, "The manager's record of the connection stays") {
+		t.Fatalf("a record before: exit %d, record %+v:\n%s", code, m.rec, out)
+	}
+}
+
+// While planning, a role to create and a disconnect between 7 and 44 days ago say that Google may block its ID, before the
+// confirmation (a read cannot tell: Google answers a blocked ID's role as not found).
+func TestTheConnectPlanWarnsOfAnIDGoogleMayBlock(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	m.disconnects = []time.Time{time.Date(2026, 10, 27, 18, 20, 0, 0, time.UTC)}
+	r := connectRequest(m)
+	r.DryRun = true
+	_, out := runConnect(t, s, r)
+	for _, w := range []string{
+		"  ! role dormetoDiscovery in project dormeto-dev: the manager's disconnect of 2026-10-27 may have deleted it; Google blocks a deleted role's ID until 2026-12-10 at the latest, and the create would then be refused",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("no %q in:\n%s", w, out)
+		}
+	}
+	m.disconnects = []time.Time{time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}
+	if _, out = runConnect(t, s, r); strings.Contains(out, "may have deleted it") {
+		t.Errorf("a disconnect older than 44 days:\n%s", out)
 	}
 }

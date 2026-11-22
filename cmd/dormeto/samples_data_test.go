@@ -251,8 +251,8 @@ func (m *memoryManager) PutGoogleConnection(_ context.Context, rec fleet.GoogleC
 	return &rec, nil
 }
 func (m *memoryManager) DeleteGoogleConnection(context.Context) error { m.rec = nil; return nil }
-func (m *memoryManager) Disconnected(context.Context, string) (time.Time, error) {
-	return time.Time{}, nil
+func (m *memoryManager) Disconnects(context.Context, string) ([]time.Time, error) {
+	return nil, nil
 }
 
 // routerReporting makes the controller's health answer where it reports to the manager (a router of 0.41.0 and above does),

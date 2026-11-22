@@ -100,17 +100,17 @@ func TestGcpConnectFlagsReadIntoTheRequestAndTheManagerIsRead(t *testing.T) {
 	}
 }
 
-// The manager's audit gives the last disconnect of the host: the date a blocked role ID frees is counted from it.
-func TestGcpManagerDisconnectedIsTheAuditsLastDisconnectOfTheHost(t *testing.T) {
+// The manager's audit gives the host's disconnects, newest first: the date a blocked role ID frees is counted from one.
+func TestGcpManagerDisconnectsAreTheAuditsDisconnectsOfTheHost(t *testing.T) {
 	calls, out := gcpConnectRan(t, 0, "gcp", "connect", "--project", "dormeto-dev", "--env", "dev")
 	if out.exit != 0 || len(calls) != 1 {
 		t.Fatalf("exit %d %q", out.exit, out.stderr)
 	}
-	at, err := calls[0].r.Manager.Disconnected(context.Background(), "dormeto-dev")
-	if err != nil || !at.Equal(time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)) {
+	at, err := calls[0].r.Manager.Disconnects(context.Background(), "dormeto-dev")
+	if err != nil || !slices.Equal(at, []time.Time{time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC), time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)}) {
 		t.Fatalf("%v %v", at, err)
 	}
-	if at, err := calls[0].r.Manager.Disconnected(context.Background(), "never"); err != nil || !at.IsZero() {
+	if at, err := calls[0].r.Manager.Disconnects(context.Background(), "never"); err != nil || len(at) != 0 {
 		t.Fatalf("%v %v", at, err)
 	}
 }

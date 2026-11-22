@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func (m connectedManager) DeleteGoogleConnection(ctx context.Context) error {
 }
 
 // Disconnected is the time of the newest disconnect of host in the manager's audit (its last 200 entries, 90 days).
-func (m connectedManager) Disconnected(ctx context.Context, host string) (time.Time, error) {
+func (m connectedManager) Disconnects(ctx context.Context, host string) ([]time.Time, error) {
 	var out struct {
 		Entries []struct {
 			At     string `json:"at"`
@@ -73,18 +74,19 @@ func (m connectedManager) Disconnected(ctx context.Context, host string) (time.T
 		} `json:"entries"`
 	}
 	if err := m.api.Get(ctx, "/audit", nil, &out); err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
-	var newest time.Time
+	var all []time.Time
 	for _, e := range out.Entries {
 		if e.Action != "google-connection" || e.Target != host || !strings.HasPrefix(e.Result, "disconnected") {
 			continue
 		}
-		if at, err := time.Parse(time.RFC3339, e.At); err == nil && at.After(newest) {
-			newest = at
+		if at, err := time.Parse(time.RFC3339, e.At); err == nil {
+			all = append(all, at)
 		}
 	}
-	return newest, nil
+	slices.SortFunc(all, func(a, b time.Time) int { return b.Compare(a) })
+	return all, nil
 }
 
 // gcpConnectFlags are the flags of connect and disconnect.
