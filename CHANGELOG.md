@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto aws install local [directory] [--env <env>] [--dry-run]` is new: it checks, plans and applies a Terraform configuration of the manager's source (its `infra/terraform/org` or `platform` stack) from this machine, the recommended way over `cd` and the Terraform commands by hand. Read-only checks first, each a ✓/✗ line, stopping before any Terraform call at the first that fails (exit 1): the directory holds `.tf` files; with an `env/` folder, `env/<env>.tfvars` exists (else the environments there are listed), `env/<env>.backend.hcl` and `env/<env>.local.tfvars` used when present; each file read from `${path.module}` exists (`build it first`); Terraform answers its version (`tfenv exec` when tfenv is on PATH, else `terraform`, with the configuration's `required_version` beside it). Then, in the directory and with `-input=false`, `init`, `plan -detailed-exitcode` saved to `<env>.tfplan`, and, when it has changes, that saved plan applied with no question: running the command is the confirmation. `--dry-run` stops after the plan. The install's `--profile`, `--region` and other flags are refused (exit 2); `--yes` is accepted and ignored. A failed Terraform step exits 1 and is named; Ctrl-C is passed to Terraform. `docs/samples` gains `aws-install-local.json` and `aws-install-local-dry-run.json`.
+
 ## 0.16.1
 
 `dormeto gcp routers install` installs router 0.42.0 by default, the first that knows standalone workloads, and accepts `--version 0.42.0`: CLI 0.16.0 stopped at router 0.41.0 ("router 0.42.0 needs a newer CLI"). Its shared cases are manager 0.25.0's.

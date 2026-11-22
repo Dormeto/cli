@@ -1,0 +1,6 @@
+{
+  "command": "aws install local",
+  "line": "dormeto aws install local infra/terraform/org --env dev",
+  "table": "Checks\n  ✓ directory: infra/terraform/org (2 .tf files)\n  ✓ environment dev: env/dev.tfvars, env/dev.backend.hcl, env/dev.local.tfvars\n  ✓ local files: ../../../router/dist/router-boundary.json\n  ✓ terraform: tfenv exec (Terraform v1.16.5; required_version ~> 1.16.5)\n\ninit: tfenv exec init -input=false -backend-config=env/dev.backend.hcl\nInitializing the backend...\n\nTerraform has been successfully initialized!\n\nplan: tfenv exec plan -input=false -detailed-exitcode -var-file=env/dev.tfvars -var-file=env/dev.local.tfvars -out=dev.tfplan\nTerraform will perform the following actions:\n\n  # module.org.aws_iam_policy.boundary will be created\n\nPlan: 1 to add, 0 to change, 0 to destroy.\n\nSaved the plan to: dev.tfplan\n\napply: tfenv exec apply -input=false dev.tfplan\nApply complete! Resources: 1 added, 0 changed, 0 destroyed.\n\nApplied dev.tfplan in infra/terraform/org.\n",
+  "json": null
+}

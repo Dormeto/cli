@@ -26,6 +26,7 @@ import (
 	"github.com/Dormeto/cli/internal/cli"
 	"github.com/Dormeto/cli/internal/install"
 	"github.com/Dormeto/cli/internal/installaws"
+	"github.com/Dormeto/cli/internal/installlocal"
 )
 
 // installRun is one of internal/install's commands.
@@ -33,7 +34,11 @@ type installRun func(ctx context.Context, d install.Deps, r install.Request) int
 
 // installRuns are the runs of install, install check, install apply, install status, uninstall and uninstall apply:
 // internal/install's, or a test's.
-type installRuns struct{ install, check, apply, status, uninstall, uninstallApply installRun }
+type installRuns struct {
+	install, check, apply, status, uninstall, uninstallApply installRun
+	// local is install local's (internal/installlocal's when nil).
+	local func(ctx context.Context, d installlocal.Deps, r installlocal.Request) int
+}
 
 // theInstallRuns are internal/install's.
 var theInstallRuns = installRuns{install: install.Install, check: install.InstallCheck, apply: install.Apply, status: install.Status,
@@ -115,6 +120,7 @@ func newInstall(runs installRuns, version string) *cobra.Command {
 				"followed. With --management-profile, organization access is deployed after it, or alone when there is no plan to\n"+
 				"apply. Running this command is the confirmation.", runs.apply),
 		status,
+		newInstallLocal(f, runs),
 	)
 
 	f.profileFlags(cmd, "take the suggested answers without asking; never confirms a plan")

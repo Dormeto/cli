@@ -96,7 +96,10 @@ func variantFileName(command, variant string) string {
 // externalSamples are the commands whose samples another package's test writes, with its fakes: the install's
 // (internal/install) and the estimate's (internal/cli).
 var externalSamples = []string{"aws install", "aws install apply", "aws install check", "aws install status", "aws uninstall",
-	"aws uninstall apply", "aws estimate"}
+	"aws uninstall apply", "aws estimate", "aws install local"}
+
+// externalVariants are the second samples another package's test writes: install local's dry run (internal/installlocal).
+var externalVariants = []string{"aws-install-local-dry-run.json"}
 
 // runnableCommands are the paths of the runnable commands under aws and gcp, the groups themselves left out.
 func runnableCommands(t *testing.T) []string {
@@ -179,6 +182,9 @@ func TestSamplesEveryCommandHasItsFile(t *testing.T) {
 			c, _ := commandOf(t, splitLine(s.line)[1:])
 			want[variantFileName(c, s.variant)] = true
 		}
+	}
+	for _, v := range externalVariants {
+		want[v] = true
 	}
 	entries, err := os.ReadDir(samplesDir)
 	if err != nil {

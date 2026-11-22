@@ -321,3 +321,6 @@ func ParseSettings(b []byte) (Settings, error) {
 	}
 	return s, nil
 }
+
+// ValidEnv is validEnv for the other install commands (install local): its message begins with --env.
+func ValidEnv(env string) error { return validEnv(env) }

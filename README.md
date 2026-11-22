@@ -490,6 +490,41 @@ dormeto aws install --profile <profile> --region <region> --env <env> --adopt-st
   adoption instead, remove `<env>/install.json` and `<env>/manager.tfstate` from the install's bucket; the source state
   is untouched, and the bootstrap can stay or be removed by hand.
 
+### Applying a Terraform configuration of the source
+
+To apply a Terraform configuration of the manager's source yourself (its `infra/terraform/org` or `platform` stack, or one
+laid out the same way), `dormeto aws install local` is the recommended way over `cd` and the Terraform commands by hand:
+
+```sh
+dormeto aws install local infra/terraform/org --env dev --dry-run   # the checks, init and the plan; nothing applied
+dormeto aws install local infra/terraform/org --env dev             # the same, then the saved plan applied, no question
+```
+
+- The directory is the argument (default: the current one), so no `cd` is needed. `--env` (default `prod`) names the
+  environment's files.
+- **Checks** first, read-only, each a ✓ or ✗ line, the run stopping at the first one that fails, before any Terraform
+  call (exit 1):
+  - the directory holds `.tf` files;
+  - with an `env/` folder, `env/<env>.tfvars` exists (else `the environments here:` lists them), and
+    `env/<env>.backend.hcl` and `env/<env>.local.tfvars` are used when present; without an `env/` folder, no var file and
+    no backend configuration are used;
+  - each file the configuration reads from `${path.module}` (`file`, `filebase64`, `templatefile`) exists: a missing one
+    is named with `build it first` (the org stack reads `router/dist/router-boundary.json`: `npm run package` in router);
+  - Terraform answers its version: `tfenv exec` when tfenv is on PATH, else `terraform` (neither: a ✗), with the
+    configuration's `required_version` shown beside it (Terraform enforces it).
+- **Then**, in the directory, with Terraform's own output and `-input=false`:
+  - `init` (`-backend-config=env/<env>.backend.hcl`);
+  - `plan -detailed-exitcode` with the var files, saved to `<env>.tfplan`;
+  - when the plan has changes, that saved plan is applied with no question: running the command is the confirmation (the
+    plan just shown is the one applied, Terraform's auto-approve without planning twice). No change says `No change:
+    nothing to apply.`
+- `--dry-run` stops after the plan (`Nothing was applied (--dry-run). The plan is saved in <dir>/<env>.tfplan; …`), exit 0
+  with or without changes.
+- It uses the credentials Terraform finds itself, as the configuration's providers and backend name the accounts:
+  `--profile`, `--region` and the install's other flags are refused (exit 2); `--yes` is accepted and ignored.
+- A Terraform step that fails exits 1 and names the step (`terraform plan failed (exit 1): nothing was applied.`); Ctrl-C
+  is passed to Terraform, and exits 128 and the signal's number.
+
 ### Permissions to install
 
 The install's profile needs administrator rights in the manager's account: the checks simulate the actions of the
