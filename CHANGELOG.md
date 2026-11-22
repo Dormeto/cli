@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`dormeto gcp routers show` says a router `not told where to report yet` gets it from the manager within about 5 minutes of a connect or a new install: the row no longer reads as if the connect had not been run.
+
 `dormeto gcp connect` fixes:
 - **Blocked role ID's date:** the date Google frees a blocked custom role's ID was counted from the manager's newest disconnect of the host, which may have deleted nothing (a disconnect of a record alone). It is now counted from the newest disconnect at least 7 days old and less than 44 (a role deleted since would have been undeleted): `Google frees it by <date> (44 days after the manager's disconnect of <date>)`, or without a date when there is none.
 - **Record of a failed first connect:** a first connect that stopped before any step was done left a connection record in the manager (the manager believed it was connected, and only `gcp disconnect` removed it). It now removes the record it wrote: `✓ record: removed the connection written before the first step: nothing was done in Google Cloud, nothing is left`. Any other stopped run ends `The manager's record of the connection stays: running the same command again continues from it, and dormeto gcp disconnect removes it.`

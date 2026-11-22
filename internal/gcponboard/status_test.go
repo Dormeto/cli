@@ -387,7 +387,7 @@ func TestStatusSaysWhereTheRouterReports(t *testing.T) {
 		{"a failing report never sent", map[string]any{"host": host, "lastSentAt": nil, "sentThrough": nil, "lastError": "timeout"}, true,
 			"  manager: reports to " + host + " failing: timeout, none sent yet\n"},
 		{"told nowhere", nil, true,
-			"  manager: not told where to report (no manager connected, or dormeto gcp connect not run since the router's install)\n"},
+			"  manager: not told where to report yet (no manager connected; after dormeto gcp connect or a new install, the manager tells it within about 5 minutes)\n"},
 		{"a state not read", map[string]any{"error": "firestore timed out"}, true,
 			"  manager: report state not read: firestore timed out\n"},
 		{"an older router", nil, false, ""},

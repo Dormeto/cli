@@ -319,7 +319,7 @@ func reportLine(raw json.RawMessage) string {
 		return "report state not read: " + err.Error()
 	}
 	if r == nil {
-		return "not told where to report (no manager connected, or dormeto gcp connect not run since the router's install)"
+		return "not told where to report yet (no manager connected; after dormeto gcp connect or a new install, the manager tells it within about 5 minutes)"
 	}
 	if r.Error != "" {
 		return "report state not read: " + r.Error
