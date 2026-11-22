@@ -90,3 +90,22 @@ func TestExecRunnerRunsInTheDirectoryWithoutInput(t *testing.T) {
 		t.Fatalf("%d %v %q", code, err, out.String())
 	}
 }
+
+// Its help names, of the install's flags, --env and --verbose alone; the install's own help keeps them all.
+func TestInstallLocalHelpListsItsFlagsAlone(t *testing.T) {
+	out, _, _ := executed(t, build{}, "aws", "install", "local", "--help")
+	for _, w := range []string{"--dry-run", "--yes", "--env", "--verbose"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("no %s in:\n%s", w, out)
+		}
+	}
+	_, flags, _ := strings.Cut(out, "\nUsage:")
+	for _, w := range []string{"--profile", "--region", "--admin-emails", "--management-profile"} {
+		if strings.Contains(flags, w+" ") {
+			t.Errorf("%s in:\n%s", w, out)
+		}
+	}
+	if out, _, _ := executed(t, build{}, "aws", "install", "--help"); !strings.Contains(out, "--profile") || !strings.Contains(out, "--admin-emails") {
+		t.Errorf("install's help lost its flags:\n%s", out)
+	}
+}

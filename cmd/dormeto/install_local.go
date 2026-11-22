@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/Dormeto/cli/internal/install"
 	"github.com/Dormeto/cli/internal/installlocal"
@@ -34,8 +35,8 @@ const installLocalLong = "Check, plan and apply a Terraform configuration of the
 	"question: running this command is the confirmation, the plan just shown being the one applied (Terraform's\n" +
 	"auto-approve, without planning twice). --dry-run stops after the plan and applies nothing. It uses the credentials\n" +
 	"Terraform finds itself: the configuration's providers and backend name the accounts, so the install's --profile,\n" +
-	"--region and other flags are refused (exit 2); --yes is accepted and ignored. Exit 0; 1 when a check or a Terraform step fails (the step named); 128\n" +
-	"and the signal's number when Ctrl-C stopped it, the signal passed to Terraform."
+	"--region and other flags are refused (exit 2); --yes is accepted and ignored. Exit 0; 1 when a check or a Terraform\n" +
+	"step fails (the step named); 128 and the signal's number when Ctrl-C stopped it, the signal passed to Terraform."
 
 func newInstallLocal(f *installFlags, runs installRuns) *cobra.Command {
 	var dryRun bool
@@ -87,6 +88,23 @@ func newInstallLocal(f *installFlags, runs installRuns) *cobra.Command {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		fmt.Fprintln(c.ErrOrStderr(), err)
 		return exitCode(2)
+	})
+	// Its help lists, of the install's flags, the two it takes: --env and --verbose.
+	parentHelp := cmd.HelpFunc()
+	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		var hidden []*pflag.Flag
+		c.InheritedFlags().VisitAll(func(fl *pflag.Flag) {
+			if fl.Name != "env" && fl.Name != "verbose" && !fl.Hidden {
+				fl.Hidden = true
+				hidden = append(hidden, fl)
+			}
+		})
+		defer func() {
+			for _, fl := range hidden {
+				fl.Hidden = false
+			}
+		}()
+		parentHelp(c, args)
 	})
 	return cmd
 }
