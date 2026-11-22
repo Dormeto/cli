@@ -451,7 +451,11 @@ func TestWorkloadsOnboardByResourceStopsWhenNotChecked(t *testing.T) {
 		"target instances refused": {agentPath, func(g *workloadsRig) { g.s.Refused = map[string]bool{"targetInstances": true} },
 			"target instances (compute.targetInstances.list: "},
 		"group members refused": {agentPath, func(g *workloadsRig) { g.s.Refused = map[string]bool{"listInstances": true} },
-			"instance group web (zones/europe-west1-b) (compute.instanceGroups.list: "},
+			"instance group web (zones/europe-west1-b) (compute.instanceGroups.get: "},
+		"NEG members refused": {agentPath, func(g *workloadsRig) {
+			g.s.ServiceBackends["europe-west1/api"] = []string{computeURL + "zones/europe-west1-b/networkEndpointGroups/api-neg"}
+			g.s.Refused = map[string]bool{"listNetworkEndpoints": true}
+		}, "network endpoint group api-neg (zones/europe-west1-b) (compute.networkEndpointGroups.get: "},
 		"managed group refused": {migPath, func(g *workloadsRig) { g.s.Refused = map[string]bool{"instanceGroupManagers": true} },
 			"managed group batch (compute.instanceGroupManagers.get: "},
 		"managed instances refused": {migPath, func(g *workloadsRig) { g.s.Refused = map[string]bool{"listManagedInstances": true} },

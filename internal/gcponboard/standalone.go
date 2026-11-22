@@ -44,8 +44,10 @@ var resourceCheckListings = map[string]string{
 	"compute.regionBackendServices.list": "backend services",
 	"compute.targetPools.list":           "target pools",
 	"compute.targetInstances.list":       "target instances",
-	"compute.instanceGroups.list":        "the instance groups' VMs",
-	"compute.networkEndpointGroups.list": "the network endpoint groups' VMs",
+	"compute.instanceGroups.list":        "instance groups",
+	"compute.instanceGroups.get":         "the instance groups' VMs",
+	"compute.networkEndpointGroups.list": "network endpoint groups",
+	"compute.networkEndpointGroups.get":  "the network endpoint groups' VMs",
 	"compute.instanceGroupManagers.get":  "a managed group's target pools",
 }
 
@@ -581,9 +583,10 @@ func (c *lbCheck) groupUse(group string) (bool, error) {
 	if !read {
 		var err error
 		if vms, err = c.x.groupMembers(c.base+key, kind, location); err != nil {
-			what, permission := fmt.Sprintf("instance group %s (%s/%s)", name, place, location), "compute.instanceGroups.list"
+			// Reading a group's members asks its .get (Google's reference for listInstances and listNetworkEndpoints).
+			what, permission := fmt.Sprintf("instance group %s (%s/%s)", name, place, location), "compute.instanceGroups.get"
 			if kind == "networkEndpointGroups" {
-				what, permission = fmt.Sprintf("network endpoint group %s (%s/%s)", name, place, location), "compute.networkEndpointGroups.list"
+				what, permission = fmt.Sprintf("network endpoint group %s (%s/%s)", name, place, location), "compute.networkEndpointGroups.get"
 			}
 			return false, c.notMade(what, permission, err)
 		}

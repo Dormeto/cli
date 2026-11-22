@@ -1822,7 +1822,7 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
   it` and exits 1. It reads the project as `gcp check` does and needs nothing more; it does not list the routers.
   `--json` prints `{account, configuration, project: {id, number, parent}}`.
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
-  otherwise (`onboard` is the HTTP onboarding's; the seven reads of a standalone resource's load-balancer check are a line
+  otherwise (`onboard` is the HTTP onboarding's; the nine reads of a standalone resource's load-balancer check are a line
   of their own, `onboard --resource … (needed to onboard a VM or a managed group by --resource)`, which does not make the check fail;
   `--json`: its entry has `"optional": true`), then the project's parent, the APIs already on and the warnings (the Compute Engine default service
   account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:
@@ -2204,7 +2204,9 @@ name when it is a valid ID. The onboarding:
    <permission> (<what it lists>)`, exit 1; `--unchecked` skips that test, `! --unchecked: the load-balancer check's
    permissions are not tested`):
    `compute.backendServices.list`, `compute.regionBackendServices.list`, `compute.instanceGroups.list`,
-   `compute.networkEndpointGroups.list`, `compute.targetPools.list`, `compute.targetInstances.list` and
+   `compute.instanceGroups.get` (an instance group's VMs, `listInstances`), `compute.networkEndpointGroups.list`,
+   `compute.networkEndpointGroups.get` (a NEG's endpoints, `listNetworkEndpoints`), `compute.targetPools.list`,
+   `compute.targetInstances.list` and
    `compute.instanceGroupManagers.get` (`roles/compute.viewer` has them all; a Cloud SQL instance's onboarding asks none of them). The
    aggregated lists ask a partial answer (`returnPartialSuccess`): a listing refused, or one that missed the resource's
    scope (global, its region or a zone of it: unreachable, or a scope's warning but `NO_RESULTS_ON_PAGE`), is not checked

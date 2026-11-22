@@ -30,9 +30,11 @@ func (g *workloadsRig) withoutTheCheck(lacking ...string) {
 	}
 }
 
-func TestTheResourceCheckReadsAreTheChecksSeven(t *testing.T) {
-	want := []string{"compute.backendServices.list", "compute.instanceGroupManagers.get", "compute.instanceGroups.list", "compute.networkEndpointGroups.list",
-		"compute.regionBackendServices.list", "compute.targetInstances.list", "compute.targetPools.list"}
+// The nine reads (router 6e0bf4a): Google's reference has listInstances and listNetworkEndpoints ask the groups' .get.
+func TestTheResourceCheckReadsAreTheChecksNine(t *testing.T) {
+	want := []string{"compute.backendServices.list", "compute.instanceGroupManagers.get", "compute.instanceGroups.get", "compute.instanceGroups.list",
+		"compute.networkEndpointGroups.get", "compute.networkEndpointGroups.list", "compute.regionBackendServices.list", "compute.targetInstances.list",
+		"compute.targetPools.list"}
 	got := resourceCheckReads()
 	slices.Sort(got)
 	if !slices.Equal(got, want) {
@@ -53,7 +55,7 @@ func TestAnHTTPOnboardingNeedsNoneOfTheResourceChecksReads(t *testing.T) {
 // saying so, and the check then says what it could not list.
 func TestAnOnboardingByResourceAsksTheChecksReadsUnlessUnchecked(t *testing.T) {
 	g := newStandaloneRig(t)
-	g.withoutTheCheck("compute.targetPools.list", "compute.instanceGroups.list")
+	g.withoutTheCheck("compute.targetPools.list", "compute.instanceGroups.get")
 	mark := len(g.s.Calls())
 	r := workloadsEurope
 	r.Resource = agentPath
@@ -61,7 +63,7 @@ func TestAnOnboardingByResourceAsksTheChecksReadsUnlessUnchecked(t *testing.T) {
 	if code != 1 || len(g.controllerCalls(mark)) != 0 || len(g.bindings()) != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	contains(t, out, "  ✗ onboard --resource: missing compute.instanceGroups.list (the instance groups' VMs), compute.targetPools.list (target pools)\n",
+	contains(t, out, "  ✗ onboard --resource: missing compute.instanceGroups.get (the instance groups' VMs), compute.targetPools.list (target pools)\n",
 		"The load-balancer check needs them to tell whether the resource serves a load balancer; --unchecked onboards without them.\nNothing was changed.")
 	r.Unchecked = true
 	code, out = g.call(t, WorkloadsOnboard, r)
@@ -82,7 +84,7 @@ func TestCheckSaysTheResourceChecksReadsOnALineOfTheirOwn(t *testing.T) {
 	if c := command(t, rep, "onboard"); !c.OK() || slices.Contains(c.Held, "compute.targetPools.list") {
 		t.Fatalf("onboard %+v", c)
 	}
-	if c := command(t, rep, "onboard --resource"); !c.Optional || !slices.Equal(c.Missing, []string{"compute.targetPools.list"}) || len(c.Held) != 6 {
+	if c := command(t, rep, "onboard --resource"); !c.Optional || !slices.Equal(c.Missing, []string{"compute.targetPools.list"}) || len(c.Held) != 8 {
 		t.Fatalf("onboard --resource %+v", c)
 	}
 	if !rep.OK() {
