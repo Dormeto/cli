@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.1
 
 `dormeto gcp routers install` installs router 0.42.0 by default, the first that knows standalone workloads, and accepts `--version 0.42.0`: CLI 0.16.0 stopped at router 0.41.0 ("router 0.42.0 needs a newer CLI"). Its shared cases are manager 0.25.0's.
 
