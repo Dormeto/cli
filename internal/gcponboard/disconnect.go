@@ -6,9 +6,10 @@ package gcponboard
 // controller, on each router project's tag value, on the projects (the project scopes, the router projects and the host),
 // the folders and the organizations of the scopes — then the two custom roles where connect defines them (one still granted
 // to another member is kept and said), the accounts with their impersonation grants, the provider and the pool (Google keeps
-// them deleted for 30 days, the roles for 7: a later connect undeletes them). It asks (or takes --yes), applies, verifies
+// them deleted for 30 days: a later connect undeletes them). The custom roles are left in place, granting nothing, unless
+// --delete-roles (Google blocks a deleted role's ID for up to 44 days). It asks (or takes --yes), applies, verifies
 // that no binding of the two accounts is left, clears the record (the manager unregisters its Google Cloud routers), and lists
-// what it leaves: the APIs (other things may use them) and the bindings Google added during the connects.
+// what it leaves: the APIs (other things may use them), the bindings Google added during the connects and the roles kept.
 
 import (
 	"cmp"
@@ -263,7 +264,13 @@ func (x *link) planRemovals(name string, places []place, members []string, note 
 	}}, nil
 }
 
-// planRoleRemovals deletes the two custom roles where connect defines them; one still granted to another member in a policy
+// What disconnect says of the custom roles: left in place by default, deleted with --delete-roles.
+const (
+	keptRolesSentence    = "The custom roles grant nothing without a binding: a later dormeto gcp connect updates and reuses them (--delete-roles deletes them)."
+	deletedRoleIDWarning = "Google keeps a deleted role's ID for up to 44 days: connecting this project again works within 7 days (undelete) or after the ID is freed"
+)
+
+// planRoleRemovals leaves the two custom roles where connect defines them in place, or with --delete-roles deletes them; one still granted to another member in a policy
 // this run read is kept, and one whose folder's organization is unknown is left.
 func (x *link) planRoleRemovals() (*step, error) {
 	for _, s := range x.unknownOrgs {
@@ -298,6 +305,15 @@ func (x *link) planRoleRemovals() (*step, error) {
 	if len(gone) == 0 {
 		return nil, nil
 	}
+	// The user's ruling of 2026-11-22: kept unless --delete-roles, as Google blocks a deleted role's ID for up to 44 days.
+	if !x.c.DeleteRoles {
+		for _, at := range gone {
+			x.kept = append(x.kept, fmt.Sprintf("= role %s in %s: left in place (--delete-roles deletes it)", at.id, at.where()))
+			x.keptRoles = append(x.keptRoles, fmt.Sprintf("role %s in %s", at.id, at.where()))
+		}
+		return nil, nil
+	}
+	lines = append(lines, "! "+deletedRoleIDWarning)
 	return &step{name: "roles", lines: lines, apply: func() (string, error) {
 		var done []string
 		for _, at := range gone {
@@ -461,6 +477,9 @@ func (x *link) leftInPlaceAfterDisconnect() {
 	}
 	for _, g := range x.rec.GoogleAdded {
 		lines = append(lines, g+" (added by Google)")
+	}
+	if len(x.keptRoles) > 0 {
+		lines = append(append(lines, x.keptRoles...), keptRolesSentence)
 	}
 	if len(lines) == 0 {
 		return

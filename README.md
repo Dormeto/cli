@@ -1860,8 +1860,14 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
 - **`gcp routers uninstall`** removes exactly what install added, in reverse order, from the record. It refuses while
   workloads are onboarded (`--force` offboards each first, tag bindings included, and names each VM it leaves on a
   fallback machine type), keeps the roles and the tag while another router of the project lists them, turns no API off,
-  and lists the APIs and Google's bindings as left in place. It removes every feature the record lists (their roles and
-  grants; their APIs are left too), and lists the Kubernetes access no offboarding removed as left in its cluster. It
+  and lists the APIs and Google's bindings as left in place. It leaves the custom roles (`dormetoRouter`,
+  `dormetoRouterBackends` and a feature's) in place, granting nothing once their grants are gone: `= role <id>: left in
+  place (--delete-roles deletes it)` in the plan, then under `Left in place:` a line each and `The custom roles grant
+  nothing without a binding: a later dormeto gcp routers install updates and reuses them (--delete-roles deletes
+  them).` Google keeps a deleted role's ID for up to 44 days, in which an install could not create it again.
+  `--delete-roles` deletes them with the last router, the plan warning `! Google keeps a deleted role's ID for up to 44
+  days: installing a router in this project again works within 7 days (undelete) or after the ID is freed`. It removes
+  every feature the record lists (their grants; their APIs and roles are left too), and lists the Kubernetes access no offboarding removed as left in its cluster. It
   prints every IAM change and warns of what the project's policy holds at the end beyond its bindings from before the
   install and Google's. `--with <features>` is only validated, and with `--force` it tests those features' offboard
   permissions too: the uninstall always removes every feature the record lists. When an install stopped while a database
@@ -1935,29 +1941,36 @@ dormeto gcp disconnect --project my-host --profile ops --env prod
   its grants), or says `up to date`. A router of the record no longer found is dropped from it. When its project holds
   no router any more at the scopes (the router uninstalled, or the project moved out of a folder scope), the command
   account's grants there are taken back (the routersGone step: on the project, its tag value and the recorded routers'
-  controllers), and its role `dormetoCommand` is left, granted to no one, for disconnect to delete (at the scopes). A
+  controllers), and its role `dormetoCommand` is left, granted to no one (disconnect keeps it too, unless `--delete-roles`). A
   record made for another environment (its pool and accounts not `dmt-<env>`'s) is refused, exit 2. The commands a run
   tells you to run name the manager as you did (`--profile`, `--env`, `--manager-region`, `--api-url`,
   `--gcloud-configuration`). `--json` prints the record on stdout (`{"connection": …}`; a dry run's `{"dryRun": true,
   "targets": [<host project>], "plan": […]}`) and the words on stderr.
-- **What Google keeps:** a connect after a disconnect undeletes the pool and its provider (Google keeps them 30 days) and
-  the custom roles (7 days), then updates them. A custom role deleted more than 7 days ago can't be undeleted, and Google
-  blocks its ID until its permanent deletion ends, at the latest 44 days after the deletion. Connect then stops with
-  `Google blocks the ID of role <id> in <where>: …; Google frees it by <date>`, the date counted from the manager's last
-  disconnect in its audit. A deleted service account is created again: its name is free at once.
+- **What Google keeps:** a connect after a disconnect undeletes the pool and its provider (Google keeps them 30 days). The
+  custom roles a disconnect left in place (its default) are updated to this CLI's definition, whatever their stage, and
+  reused. Ones a `disconnect --delete-roles` deleted are undeleted within 7 days, then updated; a custom role deleted more
+  than 7 days ago can't be undeleted, and Google blocks its ID until its permanent deletion ends, at the latest 44 days
+  after the deletion. Connect then stops with `Google blocks the ID of role <id> in <where>: …; Google frees it by
+  <date>`, the date counted from the manager's last disconnect in its audit, followed by `; a disconnect without
+  --delete-roles keeps the roles, and a later connect reuses them`. A deleted service account is created again: its name is free at once.
 - **`gcp disconnect`** reads the record back, under its names: a record whose pool and accounts are not `dmt-<env>`'s is
   refused (exit 2, the record kept). It tests the host for its bindings and roles too. It removes every binding of the
   two accounts on the recorded routers' controllers and tag values, on the projects (the project scopes, the router
   projects and the host), and on the folders and organizations of the scopes. A project at the scopes, or the host, that
   holds a `dormetoCommand` without a router of the record (a router there once, or a first connect that stopped before
   naming its routers) is a router project too: its command grants go, on its project, its tag value and the controllers
-  it holds. Then it deletes the two custom roles where connect defines them (one still granted to another member is
-  kept, and said), the two accounts with their impersonation grants, the provider and the pool. It verifies that no
+  it holds. Then it deletes the two accounts with their impersonation grants, the provider and the pool. The two custom
+  roles where connect defines them are left in place, granting nothing (`= role <id> in <where>: left in place
+  (--delete-roles deletes it)` in the plan, a line each under `Left in place:` and `The custom roles grant nothing
+  without a binding: a later dormeto gcp connect updates and reuses them (--delete-roles deletes them).`): Google keeps a
+  deleted role's ID for up to 44 days, in which a connect could not create it again. `--delete-roles` deletes them (one
+  still granted to another member is kept, and said: `= role <id> in <where>: kept, still granted to <member> on
+  <where>`), and the plan warns `! Google keeps a deleted role's ID for up to 44 days: connecting this project again
+  works within 7 days (undelete) or after the ID is freed`. It verifies that no
   binding of the accounts is left, then clears the record (`DELETE /iam/discovery/google`), which unregisters the
   manager's Google Cloud routers (`the manager's Google Cloud routers unregistered`). It turns no API off, and lists the
-  APIs and the bindings Google added as left in place. A project that has left the connection's scopes is not read:
-  after a disconnect it keeps the role `dormetoCommand` a connect left there, granted to no one, which you delete with
-  `gcloud iam roles delete dormetoCommand --project <id>`.
+  APIs, the bindings Google added and the roles it keeps as left in place. A project that has left the connection's
+  scopes is not read: it keeps the role `dormetoCommand` a connect left there, granted to no one.
 - **Exit codes** as `gcp routers install`: 0; 1 when the manager or a check refuses, a permission is missing or Google
   refuses; 2 for a bad flag (`--project` not a project ID, a `--scope` of another form) or `--yes` missing without a
   terminal; 128 and the signal's number when stopped.

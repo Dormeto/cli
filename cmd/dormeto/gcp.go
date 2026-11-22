@@ -67,6 +67,7 @@ type gcpFlags struct {
 	ipLists                                        []string
 	noIPLists                                      bool
 	customPages                                    bool
+	deleteRoles                                    bool // routers uninstall's --delete-roles
 }
 
 // gcpCommand is a gcp command calling run with the flags' request; a bad flag, an argument or a missing required flag
@@ -92,7 +93,7 @@ func gcpCommand(use, short, long string, f *gcpFlags, required []string, version
 			defer stop()
 			r := gcponboard.Request{
 				Project: f.project, Region: f.region, Image: f.image, Version: f.version, AccessOnly: f.accessOnly, Configuration: f.configuration, JSON: f.json, Yes: f.yes, DryRun: f.dryRun, Force: f.force, With: f.with,
-				IPLists: lists, NoIPLists: f.noIPLists}
+				IPLists: lists, NoIPLists: f.noIPLists, DeleteRoles: f.deleteRoles}
 			// Omitted, the switch is the install record's: only a given --custom-pages, =false included, sets it.
 			if c.Flags().Changed("custom-pages") {
 				on := f.customPages
@@ -242,8 +243,11 @@ func newGcpUninstall(run gcpRun, version string) *cobra.Command {
 		"Remove exactly what dormeto gcp routers install added for the router dmtr-<region>, from its install record: the check job,\n"+
 			"the waker's network endpoint group, the Cloud Run services, the queue, the database with the record, the grants it\n"+
 			"added to the project (never a binding that existed before it, nor someone else's member of a role), the secure tag,\n"+
-			"the service account and the custom roles dormetoRouter and dormetoRouterBackends. The roles and the tag stay while\n"+
-			"another router's record in the project lists them. It checks your permissions first, refuses while workloads are\n"+
+			"and the service account. The custom roles dormetoRouter and dormetoRouterBackends (and a feature's) are left in place,\n"+
+			"granting nothing once their grants are gone, and a later install updates and reuses them: Google keeps a deleted\n"+
+			"role's ID for up to 44 days, in which an install could not create it again. --delete-roles deletes them with the\n"+
+			"last router (an install then works within 7 days, undeleting them, or once Google frees the IDs). The roles and the\n"+
+			"tag stay while another router's record in the project lists them. It checks your permissions first, refuses while workloads are\n"+
 			"onboarded (--force offboards each one first, and checks the offboard permissions too), prints the plan, asks before\n"+
 			"applying (--yes without a terminal) and removes in reverse order. It turns no API off and lists the APIs and the\n"+
 			"bindings Google added as left in place. Run again after a stop, it continues.",
@@ -254,6 +258,7 @@ func newGcpUninstall(run gcpRun, version string) *cobra.Command {
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the plan and change nothing")
 	planJSON(cmd, &f)
 	fl.BoolVar(&f.force, "force", false, "offboard the onboarded workloads first")
+	fl.BoolVar(&f.deleteRoles, "delete-roles", false, "delete the custom roles too, unless another router lists them (Google then blocks their IDs for up to 44 days)")
 	withFlag(cmd, &f, "only validated and, with --force, tests these features' offboard permissions too: the uninstall always removes every feature the install record lists and tests theirs")
 	return cmd
 }

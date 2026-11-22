@@ -67,7 +67,7 @@ func TestUninstallRestoresTheProjectsPolicyExceptGooglesBindings(t *testing.T) {
 	if len(rec.Google) == 0 {
 		t.Fatal("the fake played no Google binding")
 	}
-	code, out := g.uninstall(t, uninstallEurope)
+	code, out := g.uninstall(t, deletingRouterRoles(uninstallEurope))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -227,7 +227,7 @@ func TestUninstallKeepsTheCustomRolesWhileAnotherRoutersRecordUsesThem(t *testin
 		t.Fatal("the other router's grant is gone")
 	}
 	// The last router takes the roles and the tag with it.
-	if code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west4", Yes: true}); code != 0 {
+	if code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west4", Yes: true, DeleteRoles: true}); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g.s.Lock()
@@ -370,7 +370,7 @@ func TestUninstallRemovesTheDeletedMembersOfAServiceAccountDeletedByHand(t *test
 func TestUninstallDryRunPrintsThePlanAndChangesNothing(t *testing.T) {
 	g := routerInstalled(t)
 	mark := len(g.s.Calls())
-	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true})
+	code, out := g.uninstall(t, Request{Project: "dormeto-dev", Region: "europe-west1", DryRun: true, DeleteRoles: true})
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -511,7 +511,7 @@ func TestUninstallLeavesATagValueGoogleRefusesToDeleteAndGoesOn(t *testing.T) {
 		v.Bound = true
 	}
 	g.s.Unlock()
-	code, out := g.uninstall(t, uninstallEurope)
+	code, out := g.uninstall(t, deletingRouterRoles(uninstallEurope))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -528,7 +528,7 @@ func TestUninstallLeavesATagValueGoogleRefusesToDeleteAndGoesOn(t *testing.T) {
 func TestUninstallStopsOnAnotherRefusalOfTheTag(t *testing.T) {
 	g := routerInstalled(t)
 	g.s.Refuse(gcptest.Refusal{Method: "DELETE", Host: "cloudresourcemanager.googleapis.com", Path: "/v3/tagValues", Code: 403, Status: "PERMISSION_DENIED", Message: "denied"})
-	code, out := g.uninstall(t, uninstallEurope)
+	code, out := g.uninstall(t, deletingRouterRoles(uninstallEurope))
 	if code != 1 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -905,7 +905,7 @@ func TestUninstallLeavesATagWhoseDeletionOperationFailsOnAPrecondition(t *testin
 		v.BoundLate = true
 	}
 	g.s.Unlock()
-	code, out := g.uninstall(t, uninstallEurope)
+	code, out := g.uninstall(t, deletingRouterRoles(uninstallEurope))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1148,7 +1148,7 @@ func TestUninstallRemovesWhatACreationWhoseAnswerWasLostLeft(t *testing.T) {
 			g.s.Lock()
 			c.plant(g.s)
 			g.s.Unlock()
-			code, out := g.uninstall(t, uninstallEurope)
+			code, out := g.uninstall(t, deletingRouterRoles(uninstallEurope))
 			if code != 0 {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
@@ -1189,7 +1189,7 @@ func TestUninstallARoleVanishingBetweenTwoReadsIsNoStep(t *testing.T) {
 		}
 		gcptest.Fail(w, 404, "NOT_FOUND", "The role was not found.")
 	})
-	code, out := g.uninstall(t, europe)
+	code, out := g.uninstall(t, deletingRouterRoles(europe))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1548,4 +1548,59 @@ func TestUninstallTakesACreationOperationAnsweringNotFoundAsNeverCreated(t *test
 	}
 	contains(t, out, "database dmtr-europe-west1 is gone")
 	g.cacheHoldsNoOperation(t)
+}
+
+// deletingRouterRoles is an uninstall with --delete-roles.
+func deletingRouterRoles(r Request) Request {
+	r.DeleteRoles = true
+	return r
+}
+
+// The user's ruling of 2026-11-22, applied to the router's roles: the last router's uninstall leaves dormetoRouter and
+// dormetoRouterBackends in place, granting nothing, and says so; a later install reuses them. --delete-roles deletes them
+// and warns of the ID Google blocks.
+func TestUninstallKeepsTheRoutersCustomRolesByDefault(t *testing.T) {
+	g := routerInstalled(t)
+	code, out := g.uninstall(t, uninstallEurope)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  = role dormetoRouter: left in place (--delete-roles deletes it)\n", "  = role dormetoRouterBackends: left in place (--delete-roles deletes it)\n",
+		"Left in place:\n", "  role dormetoRouter\n", "  role dormetoRouterBackends\n",
+		"  The custom roles grant nothing without a binding: a later dormeto gcp routers install updates and reuses them (--delete-roles deletes them).\n")
+	if strings.Contains(out, "- role ") || strings.Contains(out, "Google keeps a deleted role's ID") {
+		t.Fatalf("a role deleted:\n%s", out)
+	}
+	g.s.Lock()
+	for id, r := range g.s.Roles {
+		if r.Deleted {
+			t.Errorf("role %s deleted", id)
+		}
+	}
+	g.s.Unlock()
+	p := g.projectPolicy(t)
+	if slices.ContainsFunc(grantsOf(&p), func(x Grant) bool { return strings.Contains(x.Role, "/roles/dormetoRouter") }) {
+		t.Error("a router role is still granted")
+	}
+	mark := len(g.s.Calls())
+	if code, out := g.run(t, withImage); code != 0 {
+		t.Fatalf("install again: exit %d:\n%s", code, out)
+	}
+	for _, c := range g.s.Calls()[mark:] {
+		if c.Method == http.MethodPost && strings.Contains(c.URL, "/roles") && (strings.HasSuffix(c.URL, "/roles") || strings.HasSuffix(c.URL, ":undelete")) {
+			t.Errorf("%s %s", c.Method, c.URL)
+		}
+	}
+	code, out = g.uninstall(t, deletingRouterRoles(uninstallEurope))
+	if code != 0 {
+		t.Fatalf("--delete-roles: exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  - role dormetoRouter\n", "  ! Google keeps a deleted role's ID for up to 44 days: installing a router in this project again works within 7 days (undelete) or after the ID is freed\n")
+	g.s.Lock()
+	defer g.s.Unlock()
+	for id, r := range g.s.Roles {
+		if !r.Deleted {
+			t.Errorf("role %s not deleted", id)
+		}
+	}
 }

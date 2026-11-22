@@ -66,7 +66,9 @@ type ConnectRequest struct {
 	Profile, Env          string
 	ManagerRegion, APIURL string
 	Yes, DryRun, JSON     bool
-	Manager               Manager
+	// DeleteRoles is disconnect's --delete-roles: the custom roles deleted, not left in place.
+	DeleteRoles bool
+	Manager     Manager
 }
 
 const (
@@ -169,6 +171,7 @@ type link struct {
 	unknownOrgs []string           // disconnect: the folder scopes whose organization is not known
 	left        map[string]planned // disconnect: each policy read, as its removals leave it, by place
 	kept        []string           // disconnect: the plan's lines of what it keeps
+	keptRoles   []string           // disconnect: the custom roles it leaves in place, as "role <id> in <where>"
 }
 
 // planned is a policy the disconnect's plan read: where it is, and as the removals leave it.
@@ -923,16 +926,19 @@ func (x *link) planManagerRoles() (*step, error) {
 	}}, nil
 }
 
+// avoidBlockedID says how not to meet a blocked ID again.
+const avoidBlockedID = "; a disconnect without --delete-roles keeps the roles, and a later connect reuses them"
+
 // blocked is the refusal of a role ID that Google holds and will not undelete: deleted more than 7 days ago, it is freed at
 // the latest 44 days after its deletion, a date the manager's audit gives when its disconnect deleted it.
 func (x *link) blocked(at roleAt) error {
 	msg := fmt.Sprintf("Google blocks the ID of role %s in %s: it was deleted more than 7 days ago and can't be undeleted; ", at.id, at.where())
 	when, err := x.c.Manager.Disconnected(x.ctx, x.host)
 	if err != nil || when.IsZero() {
-		return errors.New(msg + fmt.Sprintf("Google frees it at the latest %d days after its deletion", roleIDBlockedDays))
+		return errors.New(msg + fmt.Sprintf("Google frees it at the latest %d days after its deletion%s", roleIDBlockedDays, avoidBlockedID))
 	}
-	return errors.New(msg + fmt.Sprintf("Google frees it by %s (%d days after the manager's disconnect of %s)",
-		when.UTC().AddDate(0, 0, roleIDBlockedDays).Format(time.DateOnly), roleIDBlockedDays, when.UTC().Format(time.DateOnly)))
+	return errors.New(msg + fmt.Sprintf("Google frees it by %s (%d days after the manager's disconnect of %s)%s",
+		when.UTC().AddDate(0, 0, roleIDBlockedDays).Format(time.DateOnly), roleIDBlockedDays, when.UTC().Format(time.DateOnly), avoidBlockedID))
 }
 
 // googlePool and googleProvider are a workload identity pool and its AWS provider as IAM answers them.

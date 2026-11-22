@@ -654,7 +654,7 @@ func TestReadmeGoogleCloudSaysConnectDisconnectRoutersPauseAndTheCloudColumn(t *
 		"The commands a run tells you to run name the manager as you did (`--profile`, `--env`, `--manager-region`, `--api-url`, `--gcloud-configuration`)",
 		// disconnect
 		"which unregisters the manager's Google Cloud routers (`the manager's Google Cloud routers unregistered`)",
-		"A project that has left the connection's scopes is not read: after a disconnect it keeps the role `dormetoCommand` a connect left there, granted to no one",
+		"A project that has left the connection's scopes is not read: it keeps the role `dormetoCommand` a connect left there, granted to no one",
 		// routers pause and resume, the name and the tags
 		"dormeto gcp routers pause --project my-project --region europe-west1 --reason \"release freeze\" --for 3h",
 		"`--json` (the controller's answer by router, `{\"<router>\": …}`, as AWS's)",

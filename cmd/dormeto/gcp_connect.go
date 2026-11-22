@@ -93,6 +93,7 @@ type gcpConnectFlags struct {
 	scopes                 []string
 	manager                fleetFlags
 	yes, dryRun, json      bool
+	deleteRoles            bool // disconnect's --delete-roles
 }
 
 // gcpConnectCommand is connect or disconnect: the flags' checks (a bad one exits 2), the manager's API found, then run.
@@ -118,7 +119,7 @@ func gcpConnectCommand(use, short, long string, f *gcpConnectFlags, deps fleetDe
 			}
 			r := gcponboard.ConnectRequest{Project: f.project, Scopes: f.scopes, Configuration: f.configuration, Profile: f.manager.profile,
 				Env: f.manager.env, ManagerRegion: f.manager.region, APIURL: f.manager.apiURL, Yes: f.yes, DryRun: f.dryRun, JSON: f.json,
-				Manager: connectedManager{api}}
+				DeleteRoles: f.deleteRoles, Manager: connectedManager{api}}
 			code := run(ctx, gcpDeps(c, f.configuration, version), r)
 			if s := signalled(); s != nil {
 				code = signalCode(s)
@@ -167,8 +168,9 @@ func newGcpConnect(run gcpConnectRun, deps fleetDeps, version string) *cobra.Com
 			"its project's command grants taken back.\n\n"+
 			"--scope is organizations/<n>, folders/<n> or projects/<id>, repeatable; the default is the host project. A later run\n"+
 			"keeps the recorded scopes and adds the ones given: to drop a scope, disconnect and connect again. What Google keeps\n"+
-			"after a disconnect is undeleted: the pool and its provider (30 days), the custom roles (7 days); a custom role's ID that\n"+
-			"Google blocks without an undelete stops the run with the date it frees. The manager never changes an IAM policy\n"+
+			"after a disconnect is undeleted: the pool and its provider (30 days). The custom roles a disconnect left are updated to\n"+
+			"this CLI's definition and reused; ones deleted with --delete-roles are undeleted within 7 days, and a custom role's ID\n"+
+			"that Google blocks without an undelete (up to 44 days after the delete) stops the run with the date it frees. The manager never changes an IAM policy\n"+
 			"itself: every change is this command's.",
 		&f, deps, version, run)
 	cmd.Flags().StringArrayVar(&f.scopes, "scope", nil, "what discovery sees: organizations/<n>, folders/<n> or projects/<id> (repeatable; default the host project; a later run adds to the recorded ones)")
@@ -177,14 +179,19 @@ func newGcpConnect(run gcpConnectRun, deps fleetDeps, version string) *cobra.Com
 
 func newGcpDisconnect(run gcpConnectRun, deps fleetDeps, version string) *cobra.Command {
 	var f gcpConnectFlags
-	return gcpConnectCommand("disconnect", "Remove what dormeto gcp connect set up, from the manager's record",
+	cmd := gcpConnectCommand("disconnect", "Remove what dormeto gcp connect set up, from the manager's record",
 		"Remove what dormeto gcp connect set up, from the connection's record in the manager: every binding of the two service\n"+
 			"accounts at the recorded scopes and router projects (on the projects, folders and organizations, the controllers and\n"+
-			"the tag values), the custom roles dormetoDiscovery and dormetoCommand where connect defines them (one still granted to\n"+
-			"another member is kept, and said), the two service accounts with their impersonation grants, the provider and the\n"+
-			"pool; then it verifies that no binding of the two accounts is left and clears the record, which unregisters the\n"+
-			"manager's Google Cloud routers. It turns no API off and lists the APIs and the bindings Google added as left in\n"+
-			"place. It checks your permissions first, prints the plan and asks before applying (--yes without a terminal). Google\n"+
-			"keeps the pool and its provider deleted for 30 days and the roles for 7: a later connect undeletes them.",
+			"the tag values), the two service accounts with their impersonation grants, the provider and the pool; then it verifies\n"+
+			"that no binding of the two accounts is left and clears the record, which unregisters the manager's Google Cloud routers.\n"+
+			"The custom roles dormetoDiscovery and dormetoCommand are left in place, granting nothing, and a later connect updates\n"+
+			"and reuses them: Google keeps a deleted role's ID for up to 44 days, in which a connect could not create it again.\n"+
+			"--delete-roles deletes them (one still granted to another member is kept, and said): a connect then works within 7\n"+
+			"days (it undeletes them) or once Google frees the IDs. It turns no API off and lists the APIs, the bindings Google\n"+
+			"added and the roles it keeps as left in place. It checks your permissions first, prints the plan and asks before\n"+
+			"applying (--yes without a terminal). Google keeps the pool and its provider deleted for 30 days: a later connect\n"+
+			"undeletes them.",
 		&f, deps, version, run)
+	cmd.Flags().BoolVar(&f.deleteRoles, "delete-roles", false, "delete the custom roles dormetoDiscovery and dormetoCommand too (Google then blocks their IDs for up to 44 days)")
+	return cmd
 }

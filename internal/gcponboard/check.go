@@ -122,6 +122,9 @@ type Request struct {
 	IPLists   []IPList
 	NoIPLists bool
 
+	// DeleteRoles is routers uninstall's --delete-roles: the custom roles deleted with the last router, not left in place.
+	DeleteRoles bool
+
 	// CustomPages is --custom-pages: the router's custom waiting pages on, or off with --custom-pages=false; nil when not
 	// given, the install record's switch kept.
 	CustomPages *bool

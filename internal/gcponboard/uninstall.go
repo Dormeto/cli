@@ -5,7 +5,7 @@ package gcponboard
 // refuses while workloads are onboarded (--force offboards each one first), prints the plan, asks (or takes --yes), then
 // removes in reverse order — offboard, job, neg, cloudRun (the waker, then the controller), queue, database, projectBindings
 // (the recorded grants that the project's bindings before the first install did not hold), logView (once the grant naming it
-// is gone), tag, serviceAccount, roles —
+// is gone), tag, serviceAccount, roles (left in place unless --delete-roles) —
 // and lists the APIs and the bindings Google added as left in place, and the Kubernetes access no offboarding removed as left
 // in the cluster, with the command to remove it (it reaches no other cluster), every IAM change printed, then reads the project's
 // policy and warns of what differs from its bindings before the install and Google's. The custom roles and the tag are the
@@ -647,8 +647,15 @@ func (x *run) planAccountRemoval() (*step, error) {
 	return x.withGrants(s, "serviceAccount"), err
 }
 
-// planRolesRemoval deletes the custom roles (IAM keeps a deleted role for 37 days, undeletable), unless another router
-// lists them.
+// What the uninstall says of the router's custom roles: left in place by default, deleted with --delete-roles.
+const (
+	keptRouterRolesSentence  = "The custom roles grant nothing without a binding: a later dormeto gcp routers install updates and reuses them (--delete-roles deletes them)."
+	deletedRouterRoleWarning = "Google keeps a deleted role's ID for up to 44 days: installing a router in this project again works within 7 days (undelete) or after the ID is freed"
+)
+
+// planRolesRemoval leaves the custom roles in place, granting nothing once the grants are gone, or with --delete-roles
+// deletes them (the user's ruling of 2026-11-22: Google blocks a deleted role's ID for up to 44 days); a role another
+// router lists is kept either way.
 func (x *run) planRolesRemoval() (*step, error) {
 	var steps []*step
 	for _, id := range allRoleIDs() {
@@ -670,6 +677,11 @@ func (x *run) planRolesRemoval() (*step, error) {
 			}
 			continue
 		}
+		if !x.r.DeleteRoles {
+			x.kept = append(x.kept, "= role "+id+": left in place (--delete-roles deletes it)")
+			x.keptRoles = append(x.keptRoles, "role "+id)
+			continue
+		}
 		s, err := x.removal("roles", "role", name, iamAPI, x.rolesURL()+"/"+id, "role "+id, func() error {
 			return x.call(http.MethodDelete, x.rolesURL()+"/"+id, nil, nil)
 		})
@@ -681,7 +693,11 @@ func (x *run) planRolesRemoval() (*step, error) {
 			steps = append(steps, s)
 		}
 	}
-	return combine("roles", steps), nil
+	s := combine("roles", steps)
+	if s != nil {
+		s.lines = append(s.lines, "! "+deletedRouterRoleWarning)
+	}
+	return s, nil
 }
 
 // applyUninstall runs the steps in order. A refused step stops the run: what was done and what was not are said; the
@@ -760,6 +776,9 @@ func (x *run) leftInPlace() {
 	}
 	for _, g := range x.rec.Google {
 		lines = append(lines, x.describe(Grant{Role: g.Role, Member: g.Member}, "project")+" (added by Google)")
+	}
+	if len(x.keptRoles) > 0 {
+		lines = append(append(lines, x.keptRoles...), keptRouterRolesSentence)
 	}
 	lines = append(lines, x.stranded...)
 	lines = append(lines, x.rbacLeft()...)

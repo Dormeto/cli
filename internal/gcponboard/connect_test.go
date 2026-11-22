@@ -442,7 +442,7 @@ func TestDisconnectRemovesEveryBindingOfTheTwoAccountsAndLeavesTheAPIs(t *testin
 	s.Lock()
 	s.Policy["bindings"] = append(s.Policy["bindings"].([]any), map[string]any{"role": "roles/viewer", "members": []any{"serviceAccount:" + commandEmail, "user:ann@example.com"}})
 	s.Unlock()
-	code, out := runDisconnect(t, s, connectRequest(m))
+	code, out := runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	t.Logf("\n%s", out)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -456,6 +456,7 @@ func TestDisconnectRemovesEveryBindingOfTheTwoAccountsAndLeavesTheAPIs(t *testin
 		"  - grant projects/dormeto-dev/roles/dormetoDiscovery to serviceAccount:" + discoveryEmail + " on project dormeto-dev",
 		"  - role dormetoDiscovery in project dormeto-dev",
 		"  - role dormetoCommand in project dormeto-dev",
+		"  ! Google keeps a deleted role's ID for up to 44 days: connecting this project again works within 7 days (undelete) or after the ID is freed",
 		"  - service account " + discoveryEmail,
 		"  - grant roles/iam.workloadIdentityUser to " + principal("dmt-dev-manager-discovery") + " on service account " + discoveryEmail + " (goes with it)",
 		"  - service account " + commandEmail,
@@ -516,7 +517,7 @@ func TestConnectAfterADisconnectUndeletesThePoolTheProviderAndTheRoles(t *testin
 	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if code, out := runDisconnect(t, s, connectRequest(m)); code != 0 {
+	if code, out := runDisconnect(t, s, deletingRoles(connectRequest(m))); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	creates := len(s.CallsTo("/workloadIdentityPools")) + len(s.CallsTo("/providers")) + len(s.CallsTo("/roles"))
@@ -551,7 +552,7 @@ func TestConnectStopsAtABlockedRoleIDWithTheDateItFrees(t *testing.T) {
 	s.Refuse(gcptest.Refusal{Method: http.MethodPost, Host: "iam.googleapis.com", Path: "/v1/projects/dormeto-dev/roles", Code: 400,
 		Status: "FAILED_PRECONDITION", Message: "You can't create a role with role_id (dormetoDiscovery) where there is an existing role with that role_id in a deleted state."})
 	code, out := runConnect(t, s, connectRequest(m))
-	if code != 1 || !strings.Contains(out, "  ✗ roles: Google blocks the ID of role dormetoDiscovery in project dormeto-dev: it was deleted more than 7 days ago and can't be undeleted; Google frees it by 2026-12-13 (44 days after the manager's disconnect of 2026-10-30)\n") ||
+	if code != 1 || !strings.Contains(out, "  ✗ roles: Google blocks the ID of role dormetoDiscovery in project dormeto-dev: it was deleted more than 7 days ago and can't be undeleted; Google frees it by 2026-12-13 (44 days after the manager's disconnect of 2026-10-30); a disconnect without --delete-roles keeps the roles, and a later connect reuses them\n") ||
 		!strings.Contains(out, "Done: apis. Not done: roles, federation, serviceAccounts, impersonation, projectBindings, controller, tag. Run the same command again to continue.\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -671,7 +672,7 @@ func TestAConnectStoppedPartwayIsRecordedAndDisconnectRemovesWhatItMade(t *testi
 	if s.ServiceAccounts[discoveryEmail] == nil || s.Pools["dmt-dev"] == nil || s.Roles["dormetoCommand"] == nil {
 		t.Fatal("not made")
 	}
-	code, out = runDisconnect(t, s, connectRequest(m))
+	code, out = runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	t.Logf("\n%s", out)
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -708,7 +709,7 @@ func TestAConnectAddingAScopeStoppedPartwayIsRecordedAndDisconnectRemovesWhatItM
 		!strings.Contains(out, "  ✓ record: wrote the connection's new scopes in manager dev before any change, its new routers to come at the end\n") {
 		t.Fatalf("puts %d, record %+v\n%s", len(m.puts), m.rec, out)
 	}
-	code, out = runDisconnect(t, s, connectRequest(m))
+	code, out = runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -864,7 +865,7 @@ func TestDisconnectAtAFolderRemovesItsGrantAndItsOrganizationsRole(t *testing.T)
 	if code, out := runConnect(t, s, r); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	code, out := runDisconnect(t, s, connectRequest(m))
+	code, out := runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -899,7 +900,7 @@ func TestDisconnectKeepsARoleStillGrantedToAnotherMember(t *testing.T) {
 	s.Lock()
 	s.Policy["bindings"] = append(s.Policy["bindings"].([]any), map[string]any{"role": "projects/dormeto-dev/roles/dormetoDiscovery", "members": []any{"user:ann@example.com"}})
 	s.Unlock()
-	code, out := runDisconnect(t, s, connectRequest(m))
+	code, out := runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	if code != 0 || !slices.Contains(lines(out), "  = role dormetoDiscovery in project dormeto-dev: kept, still granted to user:ann@example.com on project dormeto-dev") ||
 		slices.Contains(lines(out), "  - role dormetoDiscovery in project dormeto-dev") || !slices.Contains(lines(out), "  - role dormetoCommand in project dormeto-dev") {
 		t.Fatalf("exit %d:\n%s", code, out)
@@ -979,7 +980,7 @@ func TestDisconnectDeletesDormetoCommandInAFormerRouterProjectAtTheScopes(t *tes
 	s.OtherRoles["shop-prod/dormetoCommand"] = &gcptest.Role{Title: "Dormeto manager command", Stage: "GA"}
 	s.Policies["projects/shop-prod"]["bindings"] = []any{map[string]any{"role": "projects/shop-prod/roles/dormetoCommand", "members": []any{"serviceAccount:" + commandEmail}}}
 	s.Unlock()
-	code, out := runDisconnect(t, s, connectRequest(m))
+	code, out := runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1275,5 +1276,117 @@ func TestARecordOfAnOlderProviderNameIsRefusedNamingTheProvider(t *testing.T) {
 	}
 	if len(s.Mutations()) != before || m.deletes != 0 || m.rec == nil {
 		t.Fatalf("changes %d deletes %d", len(s.Mutations())-before, m.deletes)
+	}
+}
+
+// deletingRoles is a disconnect with --delete-roles.
+func deletingRoles(r ConnectRequest) ConnectRequest {
+	r.DeleteRoles = true
+	return r
+}
+
+// keptRolesLine is what disconnect says of the custom roles it leaves.
+const keptRolesLine = "  The custom roles grant nothing without a binding: a later dormeto gcp connect updates and reuses them (--delete-roles deletes them)."
+
+// The user's ruling of 2026-11-22: disconnect keeps the custom roles (Google blocks a deleted role's ID for up to 44 days). It
+// removes every binding, verifies none is left, and lists the two roles as left in place.
+func TestDisconnectKeepsTheCustomRolesByDefault(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := runDisconnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, w := range []string{
+		"  = role dormetoDiscovery in project dormeto-dev: left in place (--delete-roles deletes it)",
+		"  = role dormetoCommand in project dormeto-dev: left in place (--delete-roles deletes it)",
+		"  ✓ verified: no binding of " + discoveryEmail + " or " + commandEmail + " is left at the scopes and router projects",
+		"Left in place:",
+		"  role dormetoDiscovery in project dormeto-dev",
+		"  role dormetoCommand in project dormeto-dev",
+		keptRolesLine,
+	} {
+		if !slices.Contains(lines(out), w) {
+			t.Errorf("no line %q in\n%s", w, out)
+		}
+	}
+	for _, w := range []string{"  - role dormetoDiscovery in project dormeto-dev", "Google keeps a deleted role's ID"} {
+		if strings.Contains(out, w) {
+			t.Errorf("%q in\n%s", w, out)
+		}
+	}
+	if s.Roles["dormetoDiscovery"].Deleted || s.Roles["dormetoCommand"].Deleted || len(s.ServiceAccounts) != 0 || m.rec != nil {
+		t.Fatalf("roles %+v accounts %v record %+v", s.Roles, s.ServiceAccounts, m.rec)
+	}
+	for _, c := range s.Calls() {
+		if c.Method == http.MethodDelete && strings.Contains(c.URL, "/roles/") {
+			t.Fatalf("a role deleted: %s", c.URL)
+		}
+	}
+	// The dry run's JSON plan has the same lines.
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("connect again: exit %d:\n%s", code, out)
+	}
+	r := connectRequest(m)
+	r.DryRun, r.JSON = true, true
+	d, stdout, _ := connectDeps(s)
+	if code := Disconnect(context.Background(), d, r); code != 0 || !strings.Contains(stdout.String(), `"= role dormetoDiscovery in project dormeto-dev: left in place (--delete-roles deletes it)"`) {
+		t.Fatalf("dry run: exit %d:\n%s", code, stdout)
+	}
+}
+
+// --delete-roles deletes them, as before, and the plan warns of what Google keeps.
+func TestDisconnectDeleteRolesWarnsOfTheBlockedID(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	code, out := runDisconnect(t, s, deletingRoles(connectRequest(m)))
+	if code != 0 || !s.Roles["dormetoDiscovery"].Deleted ||
+		!slices.Contains(lines(out), "  ! Google keeps a deleted role's ID for up to 44 days: connecting this project again works within 7 days (undelete) or after the ID is freed") ||
+		strings.Contains(out, keptRolesLine) {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// A connect on a project where a disconnect left the roles, one disabled and one of an older definition, updates them to the
+// manifest and reuses them: no create, no undelete.
+func TestConnectReusesTheRolesADisconnectLeft(t *testing.T) {
+	s := connectServer(t)
+	m := newFakeManager()
+	if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if code, out := runDisconnect(t, s, connectRequest(m)); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	s.Lock()
+	s.Roles["dormetoDiscovery"].Stage = "DISABLED"
+	s.Roles["dormetoCommand"].Permissions = s.Roles["dormetoCommand"].Permissions[:3]
+	s.Unlock()
+	mark := len(s.Calls())
+	code, out := runConnect(t, s, connectRequest(m))
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, w := range []string{"  ~ role dormetoDiscovery in project dormeto-dev: stage GA", "  ~ role dormetoCommand in project dormeto-dev: + "} {
+		if !slices.ContainsFunc(lines(out), func(l string) bool { return strings.HasPrefix(l, w) }) {
+			t.Errorf("no line %q… in\n%s", w, out)
+		}
+	}
+	for id, r := range s.Roles {
+		want := access.Load().Manager.Roles[id]
+		if r.Stage != "GA" || !slices.Equal(r.Permissions, want.Permissions) || r.Deleted {
+			t.Errorf("%s: %+v", id, r)
+		}
+	}
+	for _, c := range s.Calls()[mark:] {
+		if c.Method == http.MethodPost && strings.Contains(c.URL, "/roles") && (strings.HasSuffix(c.URL, "/roles") || strings.HasSuffix(c.URL, ":undelete")) {
+			t.Errorf("%s %s", c.Method, c.URL)
+		}
 	}
 }

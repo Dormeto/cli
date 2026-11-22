@@ -199,7 +199,10 @@ func TestReadmeNamesTheFlagsOfConnectDisconnectAndRoutersPause(t *testing.T) {
 	root.AddCommand(newGcp(gcpRuns{}, fleetDeps{}, "1.2.3"))
 	want := flagNames(t, root, "gcp", "connect")
 	for _, f := range flagNames(t, root, "gcp", "disconnect") {
-		if !slices.Contains(want, f) {
+		// --delete-roles is disconnect's alone (the user's ruling of 2026-11-22).
+		if f == "delete-roles" {
+			want = append(want, f)
+		} else if !slices.Contains(want, f) {
 			t.Errorf("disconnect has --%s, which connect has not", f)
 		}
 	}
@@ -245,6 +248,36 @@ func TestReadmeNamesTheFlagsOfConnectDisconnectAndRoutersPause(t *testing.T) {
 	for _, f := range takes {
 		if !slices.Contains(common, f) && !slices.Contains(got, f) {
 			t.Errorf("the routers pause bullet doesn't name --%s", f)
+		}
+	}
+}
+
+// --delete-roles of disconnect and routers uninstall reads into the request; without it the roles are kept (false), and
+// connect has no such flag.
+func TestDeleteRolesReadsIntoDisconnectAndUninstall(t *testing.T) {
+	calls, _ := gcpConnectRan(t, 0, "gcp", "disconnect", "--project", "dormeto-dev", "--env", "dev", "--delete-roles", "--yes")
+	if len(calls) != 1 || !calls[0].r.DeleteRoles {
+		t.Fatalf("%+v", calls)
+	}
+	calls, _ = gcpConnectRan(t, 0, "gcp", "disconnect", "--project", "dormeto-dev", "--env", "dev", "--yes")
+	if len(calls) != 1 || calls[0].r.DeleteRoles {
+		t.Fatalf("%+v", calls)
+	}
+	if calls, _ = gcpConnectRan(t, 0, "gcp", "connect", "--project", "dormeto-dev", "--env", "dev", "--delete-roles"); len(calls) != 0 {
+		t.Fatalf("connect took --delete-roles: %+v", calls)
+	}
+	u, errs, exit := gcpRan(t, 0, "gcp", "routers", "uninstall", "--project", "p", "--region", "europe-west1", "--delete-roles", "--yes")
+	if exit != 0 || errs != "" || len(u) != 1 || !u[0].r.DeleteRoles {
+		t.Fatalf("%d %q %+v", exit, errs, u)
+	}
+	for _, args := range [][]string{{"gcp", "disconnect"}, {"gcp", "routers", "uninstall"}} {
+		c, _, err := newRoot(build{}).Find(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		long := strings.ReplaceAll(c.Long, "\n", " ")
+		if !strings.Contains(long, "--delete-roles") || !strings.Contains(long, "44 days") || strings.Contains(long, "the roles for 7: a later connect undeletes them") {
+			t.Errorf("%v: %q", args, c.Long)
 		}
 	}
 }

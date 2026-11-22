@@ -178,7 +178,7 @@ func TestUninstallRemovesTheFeaturesRolesAndGrantsAndListsTheirAPIsAsLeft(t *tes
 		t.Fatalf("install: exit %d:\n%s", code, out)
 	}
 	rec := g.record(t)
-	code, out := g.uninstall(t, uninstallEurope)
+	code, out := g.uninstall(t, deletingRouterRoles(uninstallEurope))
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}

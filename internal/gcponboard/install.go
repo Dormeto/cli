@@ -127,6 +127,7 @@ type run struct {
 
 	steps        []step
 	kept         []string          // the uninstall's plan lines of what it keeps
+	keptRoles    []string          // the uninstall's custom roles left in place, as "role <id>"
 	object       io.Writer         // install's and uninstall's --json: where it prints its object (the words then on stderr)
 	stranded     []string          // what the uninstall could not remove, with Google's reason
 	notGivenBack []string          // what the routers of its forced offboardings could not give back
