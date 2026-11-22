@@ -330,6 +330,9 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 			return access.NeedsWithout(command, r.With, append(skip, requestLogsStep)...)
 		}
 		out := access.NeedsWithout(command, r.With, append(skip, requestLogsStep)...)
+		if r.Resource != "" {
+			return out // an onboarding by resource reads no backend service: no request logs
+		}
 		for _, p := range backendServiceReads {
 			if slices.Contains(access.Needs(command), p) {
 				out = append(out, p)
@@ -494,9 +497,9 @@ func PrintText(w io.Writer, r Report) error {
 	for _, c := range r.Commands {
 		switch {
 		case c.Optional && c.OK():
-			fmt.Fprintf(&b, "  ✓ %s: every permission held (needed to onboard a standalone resource)\n", c.Command)
+			fmt.Fprintf(&b, "  ✓ %s: every permission held (needed to onboard a VM or a managed group by --resource)\n", c.Command)
 		case c.Optional:
-			fmt.Fprintf(&b, "  ✗ %s: missing %s (needed to onboard a standalone resource: without them it stops, unless --unchecked)\n", c.Command, strings.Join(c.Missing, ", "))
+			fmt.Fprintf(&b, "  ✗ %s: missing %s (needed to onboard a VM or a managed group by --resource: without them it stops, unless --unchecked)\n", c.Command, strings.Join(c.Missing, ", "))
 		case c.OK():
 			fmt.Fprintf(&b, "  ✓ %s: every permission held\n", c.Command)
 		default:

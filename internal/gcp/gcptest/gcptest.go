@@ -118,6 +118,8 @@ type Server struct {
 	// Statuses are the standalone workloads' statuses the controller's POST /v1/actions {action: status} answers, by ID
 	// (AWS's status keys); a workload without one is a 404.
 	Statuses map[string]map[string]any
+	// ActionsUnknown answers every action as the router does one it does not know (400 unknown action), ActionsFail with a 500.
+	ActionsUnknown, ActionsFail bool
 	// Standalone are the resources the controller's onboarding by resource finds, by path; StandaloneReasons why one is not
 	// eligible, by path.
 	Standalone        map[string]StandaloneResource

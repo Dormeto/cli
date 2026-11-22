@@ -730,8 +730,12 @@ func (s *Server) actions(w http.ResponseWriter, r *http.Request) {
 		WorkloadID string `json:"workloadId"`
 	}
 	body, _ := io.ReadAll(r.Body)
-	if json.Unmarshal(body, &in) != nil || in.Action != "status" {
-		Fail(w, 400, "INVALID_ARGUMENT", "unknown action")
+	switch {
+	case s.ActionsFail:
+		controllerFail(w, 500, "internal", "the store did not answer")
+		return
+	case json.Unmarshal(body, &in) != nil || in.Action != "status" || s.ActionsUnknown:
+		controllerFail(w, 400, "bad-request", "unknown action: "+in.Action)
 		return
 	}
 	status, ok := s.Statuses[in.WorkloadID]

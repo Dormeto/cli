@@ -440,7 +440,7 @@ func (x *run) print(raw json.RawMessage, text func(w workload)) error {
 
 func (x *run) list() error {
 	if k := x.r.Kind; k != "" && k != "http" && k != fleet.KindStandalone {
-		return &stop{2, "--kind: give http or standalone"}
+		return &stop{2, "kind must be http or standalone"}
 	}
 	if err := x.require("workloads"); err != nil {
 		return err
@@ -1743,8 +1743,13 @@ func (x *run) unbind(t target, value string) (bool, error) {
 func (x *run) showStandalone(w workload, raw json.RawMessage) error {
 	var status json.RawMessage
 	if err := x.controller(http.MethodPost, "/v1/actions", map[string]string{"action": "status", "workloadId": w.ID}, &status); err != nil {
-		if x.ctx.Err() != nil {
+		var e *gcp.Error
+		known := errors.As(err, &e) && (e.Code == http.StatusNotFound || (e.Code == http.StatusBadRequest && strings.Contains(e.Message, "unknown action")))
+		switch {
+		case x.ctx.Err() != nil:
 			return err
+		case !known:
+			fmt.Fprintf(x.d.Err, "the router's status was not read: %s\n", refusal(err))
 		}
 		status = nil
 	}

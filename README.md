@@ -1823,7 +1823,7 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
   `--json` prints `{account, configuration, project: {id, number, parent}}`.
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
   otherwise (`onboard` is the HTTP onboarding's; the seven reads of a standalone resource's load-balancer check are a line
-  of their own, `onboard --resource … (needed to onboard a standalone resource)`, which does not make the check fail;
+  of their own, `onboard --resource … (needed to onboard a VM or a managed group by --resource)`, which does not make the check fail;
   `--json`: its entry has `"optional": true`), then the project's parent, the APIs already on and the warnings (the Compute Engine default service
   account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:
   Google refuses to turn APIs on otherwise. `--image <image>` also tests what a router image of your own needs (see
@@ -2191,19 +2191,24 @@ name when it is a valid ID. The onboarding:
 1. asks the router for a dry run: `Resource <path> is not eligible:` and its reasons, exit 1 (a VM in a managed group, a
    GKE node, a GPU or a local SSD, a stateful group, a regional group whose VMs Google cannot stop one by one, a Cloud
    SQL replica, a resource or companion of another workload);
-2. checks, as you, that a VM or a group serves no load balancer, and refuses it naming what uses it (exit 1): a backend
-   service of any scheme, global or regional, internal passthrough included, that uses it through an instance group
-   (managed or not) or a zonal network endpoint group holding it (`… backs backend service <s> (<scope>), through
-   instance group <g>: it belongs to an HTTP workload: onboard its backend service.`); a managed group's target pools
-   (`… feeds target pool <p>: it serves a load balancer that uses no backend service, which Dormeto does not onboard.`);
-   a target pool listing the VM or a target instance naming it. It reads with your permissions, the onboard step
+2. checks, as you, that a VM or a group serves no load balancer, and refuses it in the manager's words (exit 1). The VMs
+   checked are the VM, or each VM of the group (its managed instances, every page, across the zones of a regional group).
+   A backend service of any scheme, global or regional, internal passthrough included, uses one through the group's own
+   instance group, an instance group (managed or not) holding it, or a zonal network endpoint group naming it (`VM <n>
+   backs backend service <s> (<scope>): it belongs to an HTTP workload`, `managed group <n> backs …`); a managed group's
+   target pools (`managed group <n> is in target pool <p> (<region>): it belongs to a load balancer`); a target pool
+   listing the VM (`VM <n> serves target pool <p> (<region>): it belongs to a load balancer`) or a target instance naming
+   it (`VM <n> serves target instance <t> (<zone>): …`). A Cloud SQL instance has no such check. It reads with your
+   permissions, the onboard step
    `resourceCheck` of the access manifest, which the onboarding's preflight tests first (`✗ onboard --resource: missing
    <permission> (<what it lists>)`, exit 1; `--unchecked` skips that test, `! --unchecked: the load-balancer check's
    permissions are not tested`):
    `compute.backendServices.list`, `compute.regionBackendServices.list`, `compute.instanceGroups.list`,
    `compute.networkEndpointGroups.list`, `compute.targetPools.list`, `compute.targetInstances.list` and
-   `compute.instanceGroupManagers.get` (`roles/compute.viewer` has them all). A listing refused, or answered partial
-   (`unreachables`), is not checked: the onboarding stops and names each (`Whether VM … serves a load balancer is not
+   `compute.instanceGroupManagers.get` (`roles/compute.viewer` has them all; a Cloud SQL instance's onboarding asks none of them). The
+   aggregated lists ask a partial answer (`returnPartialSuccess`): a listing refused, or one that missed the resource's
+   scope (global, its region or a zone of it: unreachable, or a scope's warning but `NO_RESULTS_ON_PAGE`), is not checked
+   (`backend services (not reached: regions/<r>)`): the onboarding stops and names each (`Whether VM … serves a load balancer is not
    checked: these listings were not made:`), unless `--unchecked`, which says them (`! Not checked (--unchecked): …`)
    and goes on: a VM or a group that serves a load balancer would then be stopped when its metrics are idle;
 3. binds the tag `dormeto=managed` to the resource and its `--database` companions, as you, then onboards it, and prints
@@ -2221,7 +2226,8 @@ metric is a Cloud Monitoring one, in Google Cloud's shape: `{"type": "custom.goo
 resource's id; `aligner` one of `ALIGN_MAX`, `ALIGN_MEAN`, `ALIGN_SUM`). The CLI checks a value's form; the router checks
 the rest, and its refusal is printed as it says it (`idleMetric: aligner must be ALIGN_MAX, ALIGN_MEAN or ALIGN_SUM`).
 
-`workloads list` says its `KIND`, `standalone` (`--json`: `kind`, `resource` and `resourceMissing`, an HTTP row without a
+`workloads list` says its `KIND`, `standalone` (`--kind` takes `http` or `standalone`, else `kind must be http or
+standalone`, exit 2) (`--json`: `kind`, `resource` and `resourceMissing`, an HTTP row without a
 `kind`). `workloads show` reads the router's status and prints it as `dormeto aws workloads show` does, `project` for
 `account` and the path for the ARN: its kind, resource (`(resource missing)` once Google no longer has it), settings with
 their levels, `idle signals` (each one's last value, threshold, since when it is under and its level), `nap` (when it may

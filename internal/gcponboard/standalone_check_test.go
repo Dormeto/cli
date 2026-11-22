@@ -93,7 +93,7 @@ func TestCheckSaysTheResourceChecksReadsOnALineOfTheirOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	contains(t, out.String(), "  ✓ onboard: every permission held\n",
-		"  ✗ onboard --resource: missing compute.targetPools.list (needed to onboard a standalone resource: without them it stops, unless --unchecked)\n")
+		"  ✗ onboard --resource: missing compute.targetPools.list (needed to onboard a VM or a managed group by --resource: without them it stops, unless --unchecked)\n")
 	b, _ := json.Marshal(rep)
 	if !strings.Contains(string(b), `{"command":"onboard --resource","held":[`) || !strings.Contains(string(b), `"optional":true`) {
 		t.Fatalf("%s", b)
@@ -102,5 +102,32 @@ func TestCheckSaysTheResourceChecksReadsOnALineOfTheirOwn(t *testing.T) {
 	rep, _ = Check(context.Background(), g.d, Request{Project: "dormeto-dev"})
 	out.Reset()
 	_ = PrintText(&out, rep)
-	contains(t, out.String(), "  ✓ onboard --resource: every permission held (needed to onboard a standalone resource)\n")
+	contains(t, out.String(), "  ✓ onboard --resource: every permission held (needed to onboard a VM or a managed group by --resource)\n")
+}
+
+// A Cloud SQL instance has no load-balancer check: its onboarding asks none of its reads, and says nothing of --unchecked.
+func TestACloudSQLOnboardingByResourceAsksNoneOfTheChecksReads(t *testing.T) {
+	g := newStandaloneRig(t)
+	g.withoutTheCheck(resourceCheckReads()...)
+	r := workloadsEurope
+	r.Resource = sqlPath
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 || len(g.bindings()) != 1 || strings.Contains(out, "--unchecked") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// An onboarding by resource reads no backend service (no request logs to read): its preflight does not ask their reads.
+func TestAnOnboardingByResourceAsksNoBackendServiceRead(t *testing.T) {
+	g := newStandaloneRig(t)
+	g.withoutTheCheck("compute.backendServices.get", "compute.regionBackendServices.get")
+	r := workloadsEurope
+	r.Resource = agentPath
+	if code, out := g.call(t, WorkloadsOnboard, r); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	// The HTTP onboarding still does.
+	if code, out := g.call(t, WorkloadsOnboard, shopOnboarding); code != 1 || !strings.Contains(out, "compute.backendServices.get") {
+		t.Fatalf("HTTP: exit %d:\n%s", code, out)
+	}
 }

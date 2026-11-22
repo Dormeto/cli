@@ -207,10 +207,14 @@ func (x *run) onboardResource() error {
 	if own.Kind == kindDatabase && !containsString(features, "cloud-sql") {
 		features = append(features, "cloud-sql")
 	}
-	commands := []string{"onboard", resourceCheckCommand}
-	if x.r.Unchecked {
-		commands = commands[:1]
+	// The load-balancer check's reads: a VM's or a group's only (a Cloud SQL instance backs no load balancer).
+	commands := []string{"onboard"}
+	switch {
+	case own.Kind == kindDatabase:
+	case x.r.Unchecked:
 		fmt.Fprintln(x.textOut(), "  ! --unchecked: the load-balancer check's permissions are not tested")
+	default:
+		commands = append(commands, resourceCheckCommand)
 	}
 	if err := x.requireAll(commands, features...); err != nil {
 		return err

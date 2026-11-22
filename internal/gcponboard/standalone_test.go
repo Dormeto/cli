@@ -76,7 +76,7 @@ func TestWorkloadsListSaysTheKindAndKeepsOne(t *testing.T) {
 		t.Fatalf("--kind http: exit %d:\n%s", code, out)
 	}
 	r.Kind = "vm"
-	if code, out = g.call(t, WorkloadsList, r); code != 2 || !strings.Contains(out, "--kind: give http or standalone") {
+	if code, out = g.call(t, WorkloadsList, r); code != 2 || !strings.Contains(out, "kind must be http or standalone") {
 		t.Fatalf("--kind vm: exit %d:\n%s", code, out)
 	}
 	r = workloadsEurope
@@ -556,5 +556,31 @@ func TestScheduleAddWakeOnAStandaloneWorkloadPrintsTheRoutersRefusal(t *testing.
 	code, stdout, stderr := g.split(t, WorkloadsScheduleChange, r)
 	if code != 1 || stdout != "" || stderr != "dmtr-dormeto-dev-europe-west1/build-agent: "+refusal+"\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+// show falls back to the REST workload only when the router does not know the action (404, or its unknown action answer);
+// another failure of the status read is said on stderr, and the REST workload shown.
+func TestWorkloadsShowOfAStandaloneWorkloadWithoutItsStatus(t *testing.T) {
+	r := workloadsEurope
+	r.ID = "build-agent"
+	for name, c := range map[string]struct {
+		set     func(*workloadsRig)
+		warning string
+	}{
+		"no such action": {func(g *workloadsRig) { g.s.Statuses = nil; g.s.ActionsUnknown = true }, ""},
+		"not found":      {func(g *workloadsRig) { g.s.Statuses = nil }, ""},
+		"failed":         {func(g *workloadsRig) { g.s.ActionsFail = true }, "the router's status was not read: "},
+	} {
+		g := newWorkloadsRig(t)
+		g.standaloneAgent()
+		c.set(g)
+		code, stdout, stderr := g.split(t, WorkloadsShow, r)
+		if code != 0 || !strings.Contains(stdout, agentPath+" (resource missing)") {
+			t.Errorf("%s: exit %d:\n%s", name, code, stdout)
+		}
+		if (c.warning == "") != (stderr == "") || !strings.Contains(stderr, c.warning) {
+			t.Errorf("%s: stderr %q", name, stderr)
+		}
 	}
 }
