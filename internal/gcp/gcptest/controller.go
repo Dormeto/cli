@@ -812,7 +812,17 @@ func (s *Server) onboardResource(w http.ResponseWriter, r *http.Request, in work
 		backends = append(backends, map[string]any{"kind": "cloudsql", "name": name})
 	}
 	s.Workloads[id] = "AWAKE"
-	s.WorkloadDocs[id] = map[string]any{"kind": "standalone", "resource": in.Resource, "backends": backends, "settings": in.Settings, "name": cmp.Or(in.Name, id)}
+	// The router's answer: the standalone keys resolved, each with its level (no rules: it has no waker).
+	settings := map[string]any{"idleMinutes": 120, "wakeTimeoutSeconds": 600, "idleCpuPercent": 5, "idleNetworkBytes": "off", "idleMetric": "off"}
+	from := map[string]any{}
+	for k := range settings {
+		from[k] = "default"
+	}
+	for k, v := range in.Settings {
+		settings[k], from[k] = v, "workload"
+	}
+	s.WorkloadDocs[id] = map[string]any{"kind": "standalone", "resource": in.Resource, "backends": backends, "settings": settings, "settingsFrom": from,
+		"name": cmp.Or(in.Name, id)}
 	if len(in.Tags) > 0 {
 		s.WorkloadDocs[id]["tags"] = in.Tags
 	}

@@ -26,14 +26,14 @@ func TestStepsFollowRuling1(t *testing.T) {
 		"check":          {"read"},
 		"install":        {"read", "apis", "roles", "serviceAccount", "projectBindings", "tag", "database", "queue", "logView"},
 		"install-router": {"image", "cloudRun", "neg", "job"},
-		"uninstall":      {"read", "job", "neg", "cloudRun", "logView", "queue", "database", "projectBindings", "tag", "serviceAccount", "roles"},
+		"uninstall":      {"read", "job", "neg", "cloudRun", "logView", "queue", "database", "projectBindings", "tag", "serviceAccount", "roles", "rolesDelete"},
 		"workloads":      {"invoke"},
 		"onboard":        {"invoke", "tag", "requestLogs", "resourceCheck"},
 		"offboard":       {"invoke", "tag", "requestLogs"},
 		"connect": {"read", "apis", "federation", "serviceAccounts", "roles", "projectBindings", "folderBindings", "organizationBindings",
 			"controller", "tag"},
-		"disconnect": {"read", "controller", "tag", "projectBindings", "folderBindings", "organizationBindings", "roles", "serviceAccounts",
-			"federation"},
+		"disconnect": {"read", "controller", "tag", "projectBindings", "folderBindings", "organizationBindings", "roles", "rolesDelete",
+			"serviceAccounts", "federation"},
 	}
 	for c, steps := range want {
 		if got := Steps(c); !reflect.DeepEqual(got, steps) {

@@ -1013,7 +1013,7 @@ func TestDisconnectTestsTheHostsBindingsAndRolesBeforeAnyChange(t *testing.T) {
 	s.Roles["dormetoCommand"] = &gcptest.Role{Title: "Dormeto manager command", Stage: "GA"}
 	s.Withheld["projects/dormeto-dev"] = map[string]bool{"iam.roles.delete": true}
 	s.Unlock()
-	code, out := runDisconnect(t, s, connectRequest(m))
+	code, out := runDisconnect(t, s, deletingRoles(connectRequest(m)))
 	if code != 1 || !strings.Contains(out, "  ✗ disconnect in project dormeto-dev: missing iam.roles.delete\nNothing was changed.\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -1387,6 +1387,29 @@ func TestConnectReusesTheRolesADisconnectLeft(t *testing.T) {
 	for _, c := range s.Calls()[mark:] {
 		if c.Method == http.MethodPost && strings.Contains(c.URL, "/roles") && (strings.HasSuffix(c.URL, "/roles") || strings.HasSuffix(c.URL, ":undelete")) {
 			t.Errorf("%s %s", c.Method, c.URL)
+		}
+	}
+}
+
+// iam.roles.delete is the step rolesDelete's (router 6456aff): disconnect asks it only with --delete-roles.
+func TestDisconnectAsksTheRolesDeleteOnlyWithDeleteRoles(t *testing.T) {
+	for _, deleting := range []bool{false, true} {
+		s := connectServer(t)
+		m := newFakeManager()
+		if code, out := runConnect(t, s, connectRequest(m)); code != 0 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		s.Lock()
+		s.Withheld["projects/dormeto-dev"] = map[string]bool{"iam.roles.delete": true}
+		s.Unlock()
+		r := connectRequest(m)
+		r.DeleteRoles = deleting
+		code, out := runDisconnect(t, s, r)
+		switch {
+		case !deleting && (code != 0 || m.rec != nil):
+			t.Errorf("without --delete-roles: exit %d:\n%s", code, out)
+		case deleting && (code != 1 || !strings.Contains(out, "iam.roles.delete") || m.rec == nil):
+			t.Errorf("with --delete-roles: exit %d:\n%s", code, out)
 		}
 	}
 }

@@ -303,7 +303,7 @@ func Check(ctx context.Context, d Deps, r Request) (Report, error) {
 	}
 	// It takes no onboarding flag: it tests the whole onboard list, --request-logs's too.
 	r.RequestLogs = true
-	rep, err := check(ctx, d, r, append(access.Commands(), resourceCheckCommand))
+	rep, err := check(ctx, d, r, append(access.Commands(), resourceCheckCommand, "uninstall "+deleteRolesFlag, "disconnect "+deleteRolesFlag))
 	if err == nil && warning != "" {
 		rep.Warnings = append(rep.Warnings, warning)
 	}
@@ -320,9 +320,16 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 		if command == resourceCheckCommand {
 			return access.StepNeeds("onboard", resourceCheckStep)
 		}
+		if base, ok := strings.CutSuffix(command, " "+deleteRolesFlag); ok {
+			return access.StepNeeds(base, rolesDeleteStep)
+		}
 		// connect's and disconnect's folder and organization bindings: Google refuses to test them on a project, and the
 		// commands test them at those scopes. The load-balancer check's reads are a line of their own, resourceCheckCommand.
 		skip := []string{"folderBindings", "organizationBindings", resourceCheckStep}
+		// The roles' deletion: uninstall's with --delete-roles only; gcp check tests it on lines of its own.
+		if !(command == "uninstall" && r.DeleteRoles) {
+			skip = append(skip, rolesDeleteStep)
+		}
 		if !ownImage {
 			skip = append(skip, imageStep)
 		}
@@ -380,7 +387,7 @@ func check(ctx context.Context, d Deps, r Request, commands []string) (Report, e
 		held = nil
 	}
 	for _, c := range commands {
-		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}, Optional: c == resourceCheckCommand}
+		cr := CommandReport{Command: c, Held: []string{}, Missing: []string{}, Optional: c == resourceCheckCommand || strings.HasSuffix(c, " "+deleteRolesFlag)}
 		for _, perm := range needs(c) {
 			if rep.Visible && slices.Contains(held, perm) {
 				cr.Held = append(cr.Held, perm)
@@ -500,9 +507,9 @@ func PrintText(w io.Writer, r Report) error {
 	for _, c := range r.Commands {
 		switch {
 		case c.Optional && c.OK():
-			fmt.Fprintf(&b, "  ✓ %s: every permission held (needed to onboard a VM or a managed group by --resource)\n", c.Command)
+			fmt.Fprintf(&b, "  ✓ %s: every permission held (%s)\n", c.Command, optionalWhy(c.Command))
 		case c.Optional:
-			fmt.Fprintf(&b, "  ✗ %s: missing %s (needed to onboard a VM or a managed group by --resource: without them it stops, unless --unchecked)\n", c.Command, strings.Join(c.Missing, ", "))
+			fmt.Fprintf(&b, "  ✗ %s: missing %s (%s: %s)\n", c.Command, strings.Join(c.Missing, ", "), optionalWhy(c.Command), optionalWithout(c.Command))
 		case c.OK():
 			fmt.Fprintf(&b, "  ✓ %s: every permission held\n", c.Command)
 		default:
@@ -571,4 +578,25 @@ func RunCheck(ctx context.Context, d Deps, r Request) int {
 		return 1
 	}
 	return 0
+}
+
+// The steps a flag adds, tested by gcp check on optional lines of their own: --delete-roles' rolesDelete (router 6456aff).
+const (
+	rolesDeleteStep = "rolesDelete"
+	deleteRolesFlag = "--delete-roles"
+)
+
+// optionalWhy and optionalWithout are what an optional line of gcp check is for, and what lacking it does.
+func optionalWhy(command string) string {
+	if command == resourceCheckCommand {
+		return "needed to onboard a VM or a managed group by --resource"
+	}
+	return "needed to delete the custom roles with --delete-roles"
+}
+
+func optionalWithout(command string) string {
+	if command == resourceCheckCommand {
+		return "without them it stops, unless --unchecked"
+	}
+	return "without them it is refused"
 }

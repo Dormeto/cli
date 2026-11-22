@@ -588,3 +588,21 @@ func TestWorkloadsShowOfAStandaloneWorkloadWithoutItsStatus(t *testing.T) {
 		}
 	}
 }
+
+// The onboarding's summary of a standalone workload: its settings with their levels, its wake timeout among them, and no
+// waker's lines (no-wake rules, wake rules): it has no waker.
+func TestWorkloadsOnboardByResourceSummaryHasNoWakersLines(t *testing.T) {
+	g := newStandaloneRig(t)
+	r := workloadsEurope
+	r.Resource = agentPath
+	code, out := g.call(t, WorkloadsOnboard, r)
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	contains(t, out, "  wake timeout: ")
+	for _, w := range []string{"no-wake rules", "wake rules", "wake mode"} {
+		if strings.Contains(out, w) {
+			t.Errorf("%q in:\n%s", w, out)
+		}
+	}
+}

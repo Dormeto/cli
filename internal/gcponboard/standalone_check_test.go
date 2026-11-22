@@ -133,3 +133,28 @@ func TestAnOnboardingByResourceAsksNoBackendServiceRead(t *testing.T) {
 		t.Fatalf("HTTP: exit %d:\n%s", code, out)
 	}
 }
+
+// gcp check: uninstall's and disconnect's lines are without rolesDelete, which has an optional line of its own each.
+func TestCheckSaysTheRolesDeleteOnLinesOfTheirOwn(t *testing.T) {
+	g := newWorkloadsRig(t)
+	g.withoutTheCheck("iam.roles.delete")
+	rep, err := Check(context.Background(), g.d, Request{Project: "dormeto-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"uninstall", "disconnect"} {
+		if r := command(t, rep, c); !r.OK() {
+			t.Errorf("%s %+v", c, r)
+		}
+		if r := command(t, rep, c+" --delete-roles"); !r.Optional || !slices.Equal(r.Missing, []string{"iam.roles.delete"}) {
+			t.Errorf("%s --delete-roles %+v", c, r)
+		}
+	}
+	if !rep.OK() {
+		t.Fatal("an optional line failed the check")
+	}
+	var out bytes.Buffer
+	_ = PrintText(&out, rep)
+	contains(t, out.String(), "  ✗ uninstall --delete-roles: missing iam.roles.delete (needed to delete the custom roles with --delete-roles: without them it is refused)\n",
+		"  ✗ disconnect --delete-roles: missing iam.roles.delete (needed to delete the custom roles with --delete-roles: without them it is refused)\n")
+}

@@ -553,6 +553,22 @@ func (x *link) hostSteps() []string {
 	return []string{"read", "apis", "federation", "serviceAccounts"}
 }
 
+// withRolesDelete adds disconnect's rolesDelete after roles, with --delete-roles only (router 6456aff): without it the roles
+// are only read.
+func (x *link) withRolesDelete(steps []string) []string {
+	if x.command != "disconnect" || !x.c.DeleteRoles {
+		return steps
+	}
+	var out []string
+	for _, s := range steps {
+		out = append(out, s)
+		if s == "roles" {
+			out = append(out, rolesDeleteStep)
+		}
+	}
+	return out
+}
+
 func scopeSteps(scope string) []string {
 	switch kind, _, _ := strings.Cut(scope, "/"); kind {
 	case "projects":
@@ -580,9 +596,9 @@ func (x *link) checkHostAndScopes() error {
 		return &stop{1, fmt.Sprintf("project %s is %s\nNothing was changed.", x.host, p.State)}
 	}
 	x.number, x.parent = strings.TrimPrefix(p.Name, "projects/"), p.Parent
-	needs := []need{{"projects/" + x.host, x.hostSteps()}}
+	needs := []need{{"projects/" + x.host, x.withRolesDelete(x.hostSteps())}}
 	for _, s := range x.scopes {
-		needs = append(needs, need{s, scopeSteps(s)})
+		needs = append(needs, need{s, x.withRolesDelete(scopeSteps(s))})
 	}
 	return x.test(needs)
 }
@@ -604,6 +620,9 @@ func (x *link) checkRest() error {
 	}
 	for _, p := range x.former {
 		needs = append(needs, need{"projects/" + p, []string{"controller", "tag", "roles", "projectBindings"}})
+	}
+	for i := range needs {
+		needs[i].steps = x.withRolesDelete(needs[i].steps)
 	}
 	if err := x.test(needs); err != nil {
 		return err

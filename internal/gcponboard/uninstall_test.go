@@ -1604,3 +1604,22 @@ func TestUninstallKeepsTheRoutersCustomRolesByDefault(t *testing.T) {
 		}
 	}
 }
+
+// iam.roles.delete is the step rolesDelete's: the uninstall asks it only with --delete-roles.
+func TestUninstallAsksTheRolesDeleteOnlyWithDeleteRoles(t *testing.T) {
+	for _, deleting := range []bool{false, true} {
+		g := routerInstalled(t)
+		g.s.Lock()
+		g.s.Withheld["projects/dormeto-dev"] = map[string]bool{"iam.roles.delete": true}
+		g.s.Unlock()
+		r := uninstallEurope
+		r.DeleteRoles = deleting
+		code, out := g.uninstall(t, r)
+		switch {
+		case !deleting && code != 0:
+			t.Errorf("without --delete-roles: exit %d:\n%s", code, out)
+		case deleting && (code != 1 || !strings.Contains(out, "missing iam.roles.delete")):
+			t.Errorf("with --delete-roles: exit %d:\n%s", code, out)
+		}
+	}
+}

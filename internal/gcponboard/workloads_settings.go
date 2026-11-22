@@ -262,6 +262,10 @@ func (x *run) levelDetails(w workload) {
 	if vms := w.onFallback(); len(vms) > 0 {
 		x.say("  running on a fallback type: %s", strings.Join(vms, ", "))
 	}
+	// A standalone workload has no waker: no rules to say (its wake timeout is its own, the scheduled wake's).
+	if w.Kind == fleet.KindStandalone {
+		return
+	}
 	for _, r := range []struct {
 		label string
 		rules []describedRule

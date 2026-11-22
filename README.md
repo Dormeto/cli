@@ -1824,7 +1824,9 @@ dormeto gcp routers uninstall --project my-project --region europe-west1
 - **`gcp check`** is read-only: for each command, ✓ when you hold every permission it needs, ✗ with the missing ones
   otherwise (`onboard` is the HTTP onboarding's; the nine reads of a standalone resource's load-balancer check are a line
   of their own, `onboard --resource … (needed to onboard a VM or a managed group by --resource)`, which does not make the check fail;
-  `--json`: its entry has `"optional": true`), then the project's parent, the APIs already on and the warnings (the Compute Engine default service
+  `--json`: its entry has `"optional": true`; so have `uninstall --delete-roles` and `disconnect --delete-roles`,
+  `iam.roles.delete`, `(needed to delete the custom roles with --delete-roles)`, which the two commands ask only with the
+  flag), then the project's parent, the APIs already on and the warnings (the Compute Engine default service
   account's Editor grant). It also checks that the project is linked to an open billing account, and exits 1 without one:
   Google refuses to turn APIs on otherwise. `--image <image>` also tests what a router image of your own needs (see
   [the router's image](#the-routers-image)). `--with <features>` also tests the [optional access](#optional-access-cloud-sql-and-gke) of
